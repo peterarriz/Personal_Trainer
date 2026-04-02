@@ -1,0 +1,12 @@
+{
+  "name": "personal-trainer",
+  "version": "1.0.0",
+  "description": "AI-powered personal training dashboard",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "dev": "npx serve . -p 3000"
+  },
+  "dependencies": {
+    "sucrase": "^3.35.0"
+  }
+}
