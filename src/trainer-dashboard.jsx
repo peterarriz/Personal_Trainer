@@ -2076,6 +2076,10 @@ export default function TrainerDashboard() {
     if (!loading) persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
   }, [goals]);
 
+  useEffect(() => {
+    if (!loading) persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+  }, [goals]);
+
   const saveLogs = async (newLogs) => {
     setLogs(newLogs);
     const derivedBase = derivePersonalization(newLogs, bodyweights, personalization);
