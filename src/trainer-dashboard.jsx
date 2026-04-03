@@ -156,7 +156,7 @@ const ACHILLES = [
 const getCurrentWeek = () => {
   const now = new Date();
   const diff = (now - PROFILE.startDate) / (1000 * 60 * 60 * 24 * 7);
-  return Math.min(Math.max(1, Math.ceil(diff)), 18);
+  return Math.max(1, Math.ceil(diff));
 };
 
 const getDayOfWeek = () => {
@@ -164,7 +164,7 @@ const getDayOfWeek = () => {
 };
 
 const getTodayWorkout = (weekNum, dayNum) => {
-  const week = WEEKS[weekNum - 1];
+  const week = WEEKS[(weekNum - 1) % WEEKS.length];
   if (!week) return null;
   const zones = PHASE_ZONES[week.phase];
   const dayMap = {
@@ -510,6 +510,146 @@ const getGoalContext = (goals) => {
   if (secondary.find(g => g.category === "body_comp")) tradeoffs.push("Body comp progress uses nutrition precision, not extra fatigue-heavy cardio.");
   if (active.find(g => g.category === "injury_prevention")) tradeoffs.push("Injury prevention can downgrade intensity before it removes consistency.");
   return { primary, secondary, maintenance, tradeoffs };
+};
+
+const daysUntil = (dateStr) => {
+  if (!dateStr) return 9999;
+  const t = new Date(`${dateStr}T12:00:00`).getTime();
+  if (Number.isNaN(t)) return 9999;
+  return Math.floor((t - Date.now()) / 86400000);
+};
+
+const composeGoalNativePlan = ({ goals, personalization, momentum, learningLayer, currentWeek, baseWeek }) => {
+  const active = (goals || []).filter(g => g.active).sort((a, b) => a.priority - b.priority);
+  const primary = active[0] || null;
+  const secondary = active.slice(1, 3);
+  const env = personalization?.travelState?.environmentMode || personalization?.travelState?.access || "home";
+  const hasGym = ["full gym", "limited gym"].includes(env);
+  const runningGoal = active.find(g => g.category === "running");
+  const strengthGoal = active.find(g => g.category === "strength");
+  const bodyCompGoal = active.find(g => g.category === "body_comp");
+  const raceNear = daysUntil(runningGoal?.targetDate) <= 56;
+  const inconsistencyRisk = momentum?.inconsistencyRisk || "medium";
+  const lowBandwidth = inconsistencyRisk === "high" || learningLayer?.adjustmentBias === "simplify";
+
+  const runningScore = (primary?.category === "running" ? 3 : 0) + (runningGoal ? 2 : 0) + (raceNear ? 2 : 0);
+  const strengthScore = (primary?.category === "strength" ? 3 : 0) + (strengthGoal ? 2 : 0) + (hasGym ? 1 : -1);
+  const bodyCompScore = (primary?.category === "body_comp" ? 3 : 0) + (bodyCompGoal ? 2 : 0) + (lowBandwidth ? 1 : 0);
+
+  let architecture = "hybrid_performance";
+  if (lowBandwidth) architecture = "maintenance_rebuild";
+  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && (raceNear || primary?.category === "running")) architecture = "race_prep_dominant";
+  else if (bodyCompScore >= Math.max(runningScore, strengthScore)) architecture = "body_comp_conditioning";
+  else if (strengthScore >= Math.max(runningScore, bodyCompScore)) architecture = hasGym ? "strength_dominant" : "hybrid_performance";
+
+  const splits = {
+    race_prep_dominant: { run: 4, strength: 2, conditioning: 1, recovery: 1 },
+    strength_dominant: { run: 2, strength: 4, conditioning: 1, recovery: 1 },
+    body_comp_conditioning: { run: 2, strength: 3, conditioning: 2, recovery: 1 },
+    hybrid_performance: { run: 3, strength: 3, conditioning: 1, recovery: 1 },
+    maintenance_rebuild: { run: 2, strength: 2, conditioning: 1, recovery: 2 },
+  };
+  const split = splits[architecture];
+
+  const constraints = [];
+  if (!hasGym && strengthGoal) constraints.push("Bench-specific progression constrained by no gym access; using home/limited-equipment substitutes.");
+  if (architecture !== "race_prep_dominant" && runningGoal) constraints.push("Running kept supportive/maintenance until running priority or race proximity increases.");
+  const why = [
+    `Primary goal: ${primary?.name || "none set"}.`,
+    `Environment: ${env}.`,
+    `Inconsistency risk: ${inconsistencyRisk}.`,
+    bodyCompGoal ? "Body-comp goal is active and materially affects split allocation." : null,
+    raceNear ? "Race date is near enough to increase running weight." : null,
+  ].filter(Boolean);
+
+  const dayTemplates = {
+    race_prep_dominant: {
+      1: { type: "run+strength", label: "Quality Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "hardRun" },
+      2: { type: "conditioning", label: "Conditioning / OTF", nutri: "otf" },
+      3: { type: "strength+prehab", label: "Strength + Prehab", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
+      4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
+      5: { type: "easy-run", label: "Easy Run", run: baseWeek.fri, nutri: "easyRun" },
+      6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: "longRun" },
+      0: { type: "rest", label: "Recovery / Mobility", nutri: "rest" },
+    },
+    strength_dominant: {
+      1: { type: "strength+prehab", label: "Strength Priority A", strSess: "A", nutri: "strength" },
+      2: { type: "easy-run", label: "Supportive Conditioning Run", run: { t: "Easy", d: "20-30 min zone-2" }, nutri: "easyRun" },
+      3: { type: "strength+prehab", label: "Strength Priority B", strSess: "B", nutri: "strength" },
+      4: { type: "strength+prehab", label: "Upper Push/Pull Strength", strSess: "A", nutri: "strength" },
+      5: { type: "easy-run", label: "Conditioning Support", run: { t: "Easy", d: "20-25 min + strides optional" }, nutri: "easyRun" },
+      6: { type: "strength+prehab", label: "Full-Body Strength", strSess: "B", nutri: "strength" },
+      0: { type: "rest", label: "Recovery / Mobility", nutri: "rest" },
+    },
+    body_comp_conditioning: {
+      1: { type: "strength+prehab", label: "Metabolic Strength A", strSess: "A", nutri: "strength" },
+      2: { type: "easy-run", label: "Conditioning (low-friction)", run: { t: "Easy", d: "25-35 min zone-2" }, nutri: "easyRun" },
+      3: { type: "strength+prehab", label: "Metabolic Strength B", strSess: "B", nutri: "strength" },
+      4: { type: "conditioning", label: "Conditioning Intervals / OTF", nutri: "otf" },
+      5: { type: "strength+prehab", label: "Strength Retention", strSess: "A", nutri: "strength" },
+      6: { type: "easy-run", label: "Supportive Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: "easyRun" },
+      0: { type: "rest", label: "Recovery / Steps + Mobility", nutri: "rest" },
+    },
+    hybrid_performance: {
+      1: { type: "run+strength", label: "Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "easyRun" },
+      2: { type: "conditioning", label: "Conditioning", nutri: "otf" },
+      3: { type: "strength+prehab", label: "Strength B + Prehab", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
+      4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
+      5: { type: "strength+prehab", label: "Strength Focus", strSess: baseWeek.str, nutri: "strength" },
+      6: { type: "easy-run", label: "Supportive Endurance", run: baseWeek.fri, nutri: "easyRun" },
+      0: { type: "rest", label: "Recovery", nutri: "rest" },
+    },
+    maintenance_rebuild: {
+      1: { type: "strength+prehab", label: "Minimum Viable Strength", strSess: "A", nutri: "strength" },
+      2: { type: "rest", label: "Recovery / Walk", nutri: "rest" },
+      3: { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: "easyRun" },
+      4: { type: "strength+prehab", label: "Minimum Viable Strength B", strSess: "B", nutri: "strength" },
+      5: { type: "rest", label: "Recovery", nutri: "rest" },
+      6: { type: "conditioning", label: "Optional Conditioning", nutri: "easyRun" },
+      0: { type: "rest", label: "Recovery", nutri: "rest" },
+    },
+  };
+
+  return {
+    architecture,
+    split,
+    why,
+    constraints,
+    drivers: [primary?.name, ...secondary.map(g => g.name)].filter(Boolean),
+    unlockMessage: !hasGym && strengthGoal ? "When gym access returns, bench-specific progression can move from foundation mode to direct loading." : "",
+    dayTemplates: dayTemplates[architecture],
+  };
+};
+
+const DEFAULT_PLANNING_HORIZON_WEEKS = 12;
+const getSpecificityBand = (offset) => offset <= 1 ? "high" : offset <= 5 ? "medium" : "directional";
+const getHorizonAnchor = (goals = [], horizonWeeks = DEFAULT_PLANNING_HORIZON_WEEKS) => {
+  const activeDated = (goals || []).filter(g => g.active && g.targetDate).map(g => ({ ...g, days: daysUntil(g.targetDate) })).filter(g => g.days >= 0).sort((a,b) => a.days - b.days);
+  const nearest = activeDated[0] || null;
+  if (!nearest) return { nearest: null, withinHorizon: false, weekIndex: null };
+  const weekIndex = Math.ceil((nearest.days + 1) / 7);
+  return { nearest, withinHorizon: weekIndex <= horizonWeeks, weekIndex };
+};
+
+const buildRollingHorizonWeeks = ({ currentWeek, horizonWeeks = DEFAULT_PLANNING_HORIZON_WEEKS, goals }) => {
+  const anchor = getHorizonAnchor(goals, horizonWeeks);
+  return Array.from({ length: horizonWeeks }).map((_, idx) => {
+    const absoluteWeek = currentWeek + idx;
+    const template = WEEKS[(absoluteWeek - 1) % WEEKS.length] || WEEKS[0];
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() + (idx * 7));
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + 6);
+    return {
+      slot: idx + 1,
+      absoluteWeek,
+      template,
+      specificity: getSpecificityBand(idx),
+      startDate,
+      endDate,
+      anchorHit: anchor.withinHorizon && anchor.weekIndex === (idx + 1),
+    };
+  });
 };
 
 const applyGoalNutritionTargets = (targets, dayType, goalContext) => {
@@ -1549,7 +1689,7 @@ const withConfidenceTone = (message, confidence = "moderate", voiceMode = "rebui
   return `${modePrefix} ${lead} ${message}`;
 };
 
-const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights = [], realWorldNutrition, recalibration }) => {
+const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights = [], realWorldNutrition, recalibration }) => {
   const s = detectCoachSignals(input);
   const voiceMode = inferCoachVoiceMode(momentum);
   const painLevel = inferPainLevel(input);
@@ -1564,6 +1704,11 @@ const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, body
     notices.push(failureMode.coachBehavior.primaryLine);
     addRecommendation(`Use only essential actions for the next ${failureMode.planningHorizonDays} days.`, "high");
     effects.push("Coaching automatically shifts to minimum viable planning with no guilt language.");
+  }
+  if (planComposer?.architecture && /status|plan|split|why|update/i.test(input.toLowerCase())) {
+    notices.unshift(`Goal-native architecture: ${planComposer.architecture.replaceAll("_"," ")}.`);
+    effects.unshift(`Current split is goal-weighted: run ${planComposer.split.run}, strength ${planComposer.split.strength}, conditioning ${planComposer.split.conditioning}, recovery ${planComposer.split.recovery}.`);
+    if (planComposer.constraints?.length) effects.unshift(`Constraint context: ${planComposer.constraints.join(" ")}`);
   }
   if (failureMode?.isReEntry) {
     notices.push("A re-entry week is active, so we are not resuming prior volume blindly.");
@@ -1629,7 +1774,7 @@ const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, body
     notices.push("Race prep anxiety detected.");
     addRecommendation("insert a deload week to improve confidence and freshness.", "moderate");
     effects.push("Next week volume is reduced and intensity capped.");
-    actions.push({ type: COACH_TOOL_ACTIONS.INSERT_DELOAD_WEEK, payload: { week: Math.min(18, currentWeek + 1) } });
+    actions.push({ type: COACH_TOOL_ACTIONS.INSERT_DELOAD_WEEK, payload: { week: currentWeek + 1 } });
   }
   if (s.busyDay || s.socialDay || s.lowEnergyDay) {
     notices.push("Life-constraint signal detected (busy/energy/social).");
@@ -1778,12 +1923,10 @@ export default function TrainerDashboard() {
   const currentWeek = getCurrentWeek();
   const dayOfWeek = getDayOfWeek();
   const baseTodayWorkout = getTodayWorkout(currentWeek, dayOfWeek);
+  const baseWeek = WEEKS[(currentWeek - 1) % WEEKS.length] || WEEKS[0];
   const todayKey = new Date().toISOString().split("T")[0];
   const dayOverride = coachPlanAdjustments.dayOverrides?.[todayKey];
   const nutritionOverride = coachPlanAdjustments.nutritionOverrides?.[todayKey];
-  const todayWorkoutBase = dayOverride ? { ...baseTodayWorkout, ...dayOverride, coachOverride: true, nutri: nutritionOverride || dayOverride.nutri || baseTodayWorkout?.week?.nutri } : { ...baseTodayWorkout, nutri: nutritionOverride || baseTodayWorkout?.week?.nutri };
-  const injuryRule = buildInjuryRuleResult(todayWorkoutBase, personalization.injuryPainState);
-  const todayWorkout = injuryRule.workout;
   const momentum = getMomentumEngineState({ logs, bodyweights, personalization });
   const patterns = detectBehaviorPatterns({ logs, bodyweights, personalization });
   const validationLayer = deriveClosedLoopValidationLayer({ coachActions, logs, dailyCheckins });
@@ -1791,6 +1934,13 @@ export default function TrainerDashboard() {
   const learningLayer = deriveLearningLayer({ dailyCheckins, logs, weeklyCheckins, momentum, personalization, validationLayer, optimizationLayer });
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
+  const planComposer = composeGoalNativePlan({ goals, personalization, momentum, learningLayer, currentWeek, baseWeek });
+  const rollingHorizon = buildRollingHorizonWeeks({ currentWeek, horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS, goals });
+  const horizonAnchor = getHorizonAnchor(goals, DEFAULT_PLANNING_HORIZON_WEEKS);
+  const goalNativeWorkout = planComposer?.dayTemplates?.[dayOfWeek] ? { ...baseTodayWorkout, ...planComposer.dayTemplates[dayOfWeek], week: baseWeek, zones: baseTodayWorkout?.zones } : baseTodayWorkout;
+  const todayWorkoutBase = dayOverride ? { ...goalNativeWorkout, ...dayOverride, coachOverride: true, nutri: nutritionOverride || dayOverride.nutri || goalNativeWorkout?.week?.nutri } : { ...goalNativeWorkout, nutri: nutritionOverride || goalNativeWorkout?.week?.nutri };
+  const injuryRule = buildInjuryRuleResult(todayWorkoutBase, personalization.injuryPainState);
+  const todayWorkout = injuryRule.workout;
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const strengthLayer = deriveStrengthLayer({ goals, momentum, personalization, logs });
   const progressEngine = deriveProgressEngine({ logs, bodyweights, momentum, strengthLayer });
@@ -2298,13 +2448,13 @@ export default function TrainerDashboard() {
         .slice(-14) // last 14 sessions
         .map(([date, l]) => `${date}: ${l.type} | ${l.miles||"?"}mi | pace:${l.pace||"?"} | feel:${l.feel||"?"}/5${l.notes ? " | "+l.notes : ""}`);
 
-      const currentWeekData = WEEKS[currentWeek - 1];
+      const currentWeekData = WEEKS[(currentWeek - 1) % WEEKS.length];
       const currentZones = getZones(currentWeekData?.phase || "BASE");
 
       const systemPrompt = `You are an AI running coach analyzing an athlete's training log to dynamically adjust their plan. Respond ONLY with valid JSON, no other text.
 
 ATHLETE: 30yo, 6'1", 190lbs, half marathon goal 1:45 (8:01/mi) on July 19 2026.
-CURRENT WEEK: ${currentWeek}/18, Phase: ${currentWeekData?.phase}
+CURRENT WEEK: ${currentWeek}, Phase: ${currentWeekData?.phase}
 PRESCRIBED PACES: Easy ${currentZones.easy}/mi, Tempo ${currentZones.tempo}/mi, Intervals ${currentZones.int}/mi, Long ${currentZones.long}/mi
 
 RECENT LOGS (newest last):
@@ -2442,7 +2592,7 @@ RULES:
               PERSONAL TRAINER
             </h1>
             <div style={{ fontSize:"0.58rem", color:"#334155", letterSpacing:"0.12em", marginTop:2 }}>
-              {fmtDate(today).toUpperCase()} · WEEK {currentWeek} OF 18 · GOAL 1:45:00 · RACE {PROFILE.goalRace.toUpperCase()}
+              {fmtDate(today).toUpperCase()} · 12-WEEK ROLLING PLAN · CURRENT WEEK {currentWeek} · ARCH {planComposer.architecture.replaceAll("_"," ").toUpperCase()}
             </div>
           </div>
           <div style={{ display:"flex", gap:"0.5rem", alignItems:"center" }}>
@@ -2474,12 +2624,12 @@ RULES:
         {/* ══════════════════════════════════════════════════════════
             TAB 0 — TODAY
         ══════════════════════════════════════════════════════════ */}
-        {tab === 0 && <TodayTab todayWorkout={todayWorkoutHardened} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} goals={goals} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={(id)=>setDismissedTriggers(prev=>[...prev,id])} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} saveBodyweights={saveBodyweights} />}
+        {tab === 0 && <TodayTab todayWorkout={todayWorkoutHardened} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} goals={goals} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={(id)=>setDismissedTriggers(prev=>[...prev,id])} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} />}
 
         {/* ══════════════════════════════════════════════════════════
             TAB 1 — PLAN
         ══════════════════════════════════════════════════════════ */}
-        {tab === 1 && <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goals} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} />}
+        {tab === 1 && <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goals} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} />}
 
         {/* ══════════════════════════════════════════════════════════
             TAB 2 — LOG
@@ -2494,7 +2644,7 @@ RULES:
         {/* ══════════════════════════════════════════════════════════
             TAB 4 — COACH
         ══════════════════════════════════════════════════════════ */}
-        {tab === 4 && <CoachTab logs={logs} currentWeek={currentWeek} todayWorkout={todayWorkoutHardened} bodyweights={bodyweights} personalization={personalization} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFeedback={nutritionFeedback} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+        {tab === 4 && <CoachTab logs={logs} currentWeek={currentWeek} todayWorkout={todayWorkoutHardened} bodyweights={bodyweights} personalization={personalization} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFeedback={nutritionFeedback} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
           setCoachPlanAdjustments(nextCoachPlanAdjustments);
@@ -2509,7 +2659,7 @@ RULES:
 }
 
 // ── TODAY TAB ─────────────────────────────────────────────────────────────────
-function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, setEnvironmentMode, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, saveBodyweights }) {
+function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, setEnvironmentMode, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights }) {
   const week = todayWorkout?.week;
   const zones = todayWorkout?.zones;
   const phaseName = week ? week.phase : "BASE";
@@ -2631,6 +2781,14 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
           Analyzing your training logs and adjusting plan...
         </div>
       )}
+
+      <div className="card" style={{ marginBottom:"0.75rem" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>GOAL-NATIVE PLAN ARCHITECTURE</div>
+        <div style={{ fontSize:"0.57rem", color:"#cbd5e1", marginBottom:"0.2rem" }}>Selected: {planComposer.architecture.replaceAll("_"," ")}</div>
+        <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginBottom:"0.15rem" }}>Drivers: {planComposer.drivers.join(" · ") || "none"}</div>
+        <div style={{ fontSize:"0.54rem", color:"#64748b" }}>Split: Run {planComposer.split.run} · Strength {planComposer.split.strength} · Conditioning {planComposer.split.conditioning} · Recovery {planComposer.split.recovery}</div>
+        {!!planComposer.constraints.length && <div style={{ marginTop:"0.2rem", fontSize:"0.53rem", color:C.amber }}>Constraint: {planComposer.constraints[0]}</div>}
+      </div>
 
       <div className="card" style={{ marginBottom:"0.75rem" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.45rem" }}>REAL-LIFE DAY OVERRIDES</div>
@@ -2889,7 +3047,7 @@ function WorkoutBlock({ title, color, items }) {
 }
 
 // ── PLAN TAB ──────────────────────────────────────────────────────────────────
-function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, weeklyCheckins, saveWeeklyCheckin }) {
+function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin }) {
   const [openWeek, setOpenWeek] = useState(null);
   const [newGoal, setNewGoal] = useState({ name:"", category:"running", priority:2, targetDate:"", measurableTarget:"", active:true });
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
@@ -2899,9 +3057,9 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
   const adjustedWeekMap = {};
-  WEEKS.forEach((w, idx) => {
-    const horizonWeeks = failureMode.planningHorizonDays <= 4 ? [currentWeek + 1] : [currentWeek + 1, currentWeek + 2];
-    if (horizonWeeks.includes(w.w)) {
+  (rollingHorizon || []).forEach((h) => {
+    const w = h.template;
+    if (h.slot >= 1) {
       const baseAdaptive = buildAdaptiveWeek(w, signals, personalization, memoryInsights);
       if (recalibration?.active && recalibration.aggressiveness === "lower") {
         baseAdaptive.changed.unshift("Recalibration: weekly density reduced for better consistency.");
@@ -2921,7 +3079,21 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
         baseAdaptive.adjusted.mon.d = scaleMilesString(baseAdaptive.adjusted.mon.d, 0.95);
         baseAdaptive.changed.push("Running volume trimmed slightly to protect strength progression.");
       }
-      adjustedWeekMap[w.w] = baseAdaptive;
+      if (planComposer.architecture !== "race_prep_dominant") {
+        const tpl = planComposer.dayTemplates || {};
+        const mapDayToField = { 1: "mon", 4: "thu", 5: "fri", 6: "sat" };
+        Object.entries(mapDayToField).forEach(([dayNum, field]) => {
+          const d = tpl[Number(dayNum)];
+          if (!d) return;
+          if (d.run?.t && d.run?.d) baseAdaptive.adjusted[field] = { t: d.run.t, d: d.run.d };
+          else if (field === "thu" && d.type !== "hard-run") baseAdaptive.adjusted[field] = { t: "Conditioning", d: "Goal-native conditioning focus" };
+          else if (!d.run) baseAdaptive.adjusted[field] = { t: "Strength / Recovery", d: d.label || "Goal-native split session" };
+        });
+        baseAdaptive.changed.push(`Goal-native composer applied (${planComposer.architecture.replaceAll("_"," ")}).`);
+      }
+      if (h.specificity === "medium") baseAdaptive.changed.push("Moderate-specificity planning zone (weeks 3-6).");
+      if (h.specificity === "directional") baseAdaptive.changed.push("Directional planning zone (weeks 7-12): focus is intentionally less precise.");
+      adjustedWeekMap[h.absoluteWeek] = baseAdaptive;
     }
   });
 
@@ -2937,6 +3109,14 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
             RESET PACE ADJUSTMENTS
           </button>
         )}
+      </div>
+      <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.blue+"45", background:"#0a1320" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>TRUE PLAN COMPOSER (GOAL-NATIVE)</div>
+        <div style={{ fontSize:"0.58rem", color:"#e2e8f0", marginBottom:"0.2rem" }}>Architecture: {planComposer.architecture.replaceAll("_"," ")}</div>
+        <div style={{ fontSize:"0.55rem", color:"#94a3b8", lineHeight:1.65 }}>{planComposer.why.join(" ")}</div>
+        <div style={{ marginTop:"0.22rem", fontSize:"0.54rem", color:"#64748b" }}>Goal-driven split → Run {planComposer.split.run}, Strength {planComposer.split.strength}, Conditioning {planComposer.split.conditioning}, Recovery {planComposer.split.recovery}.</div>
+        {!!planComposer.constraints.length && <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:C.amber }}>Environment constraints: {planComposer.constraints.join(" ")}</div>}
+        {!!planComposer.unlockMessage && <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:C.green }}>{planComposer.unlockMessage}</div>}
       </div>
 
       {salvageLayer.active && (
@@ -3111,37 +3291,49 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
           </div>
         ))}
       </div>
-      {WEEKS.map(week => {
+      <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.blue+"35" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>ROLLING HORIZON STATUS</div>
+        <div style={{ fontSize:"0.56rem", color:"#cbd5e1", lineHeight:1.65 }}>
+          Planning horizon: {DEFAULT_PLANNING_HORIZON_WEEKS} weeks · Specificity bands: weeks 1-2 high, 3-6 moderate, 7-12 directional.
+        </div>
+        <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:"#94a3b8" }}>
+          Current block: {planComposer.architecture.replaceAll("_"," ")} · Next recalibration: {recalibration?.active ? "active now" : `week ${currentWeek + (4 - (currentWeek % 4 || 4))}`}.
+        </div>
+        {horizonAnchor?.nearest && (
+          <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:horizonAnchor.withinHorizon ? C.amber : "#64748b" }}>
+            Hard-date influence: {horizonAnchor.nearest.name} in ~{horizonAnchor.weekIndex} weeks {horizonAnchor.withinHorizon ? "(within horizon emphasis)" : "(future anchor, not horizon cap)"}.
+          </div>
+        )}
+      </div>
+      {rollingHorizon.map(h => {
+        const week = h.template;
         const zones = getZones(week.phase);
-        const adaptive = adjustedWeekMap[week.w];
+        const adaptive = adjustedWeekMap[h.absoluteWeek] || adjustedWeekMap[week.w];
         const effectiveWeek = adaptive?.adjusted || week;
         const isAdjusted = !!(adaptive?.changed?.length);
         const isOverridden = paceOverrides[week.phase] && Object.keys(paceOverrides[week.phase]).length > 0;
-        const isCurrentWeek = week.w === currentWeek;
-        const isOpen = openWeek === week.w;
+        const isCurrentWeek = h.slot === 1;
+        const isOpen = openWeek === h.absoluteWeek;
         const phaseColor = zones.color;
-        const startDate = new Date(PROFILE.startDate);
-        startDate.setDate(startDate.getDate() + (week.w - 1) * 7);
-        const endDate = new Date(startDate);
-        endDate.setDate(endDate.getDate() + 6);
-        const weekDateStr = `${fmtDate(startDate)} – ${fmtDate(endDate)}`;
+        const weekDateStr = `${fmtDate(h.startDate)} – ${fmtDate(h.endDate)}`;
 
         return (
-          <div key={week.w} style={{ border:`1px solid ${isCurrentWeek ? phaseColor+"60" : week.race ? phaseColor+"40" : "#1e293b"}`, borderRadius:10, marginBottom:"0.4rem", overflow:"hidden", background: isCurrentWeek ? `${phaseColor}08` : "#0d1117" }}>
-            <div className="hov" onClick={() => setOpenWeek(isOpen ? null : week.w)}
+          <div key={h.absoluteWeek} style={{ border:`1px solid ${isCurrentWeek ? phaseColor+"60" : h.anchorHit ? C.amber+"45" : "#1e293b"}`, borderRadius:10, marginBottom:"0.4rem", overflow:"hidden", background: isCurrentWeek ? `${phaseColor}08` : "#0d1117" }}>
+            <div className="hov" onClick={() => setOpenWeek(isOpen ? null : h.absoluteWeek)}
               style={{ display:"flex", alignItems:"center", padding:"0.75rem 1rem", gap:"0.75rem", background: isOpen?"rgba(255,255,255,0.025)":"transparent" }}>
-              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.2rem", color: isCurrentWeek ? phaseColor : "#2d3748", minWidth:32 }}>
-                {week.race ? "🏁" : `W${week.w}`}
+              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.2rem", color: isCurrentWeek ? phaseColor : "#2d3748", minWidth:44 }}>
+                H{h.slot}
               </div>
               <div style={{ flex:1 }}>
-                <div style={{ fontSize:"0.68rem", color:"#e2e8f0" }}>{week.label}</div>
+                <div style={{ fontSize:"0.68rem", color:"#e2e8f0" }}>{week.label} · {h.specificity} specificity</div>
                 <div style={{ fontSize:"0.56rem", color:"#334155", marginTop:1 }}>{weekDateStr}</div>
-                {weekNotes[week.w] && (
-                  <div style={{ fontSize:"0.55rem", color:C.amber, marginTop:2 }}>↩ {weekNotes[week.w]}</div>
+                {weekNotes[h.absoluteWeek] && (
+                  <div style={{ fontSize:"0.55rem", color:C.amber, marginTop:2 }}>↩ {weekNotes[h.absoluteWeek]}</div>
                 )}
                 {isAdjusted && <div style={{ fontSize:"0.55rem", color:C.blue, marginTop:2 }}>Coach adjusted: {adaptive.changed[0]}</div>}
               </div>
               {isCurrentWeek && <div className="tag" style={{ background:`${phaseColor}20`, border:`1px solid ${phaseColor}40`, color:phaseColor }}>NOW</div>}
+              {h.anchorHit && <div className="tag" style={{ background:`${C.amber}18`, border:`1px solid ${C.amber}35`, color:C.amber }}>ANCHOR</div>}
               {isOverridden && <div className="tag" style={{ background:`${C.amber}15`, border:`1px solid ${C.amber}30`, color:C.amber }}>ADJUSTED</div>}
               {isAdjusted && <div className="tag" style={{ background:`${C.blue}15`, border:`1px solid ${C.blue}30`, color:C.blue }}>COACH ADJUSTED</div>}
               <div className="tag" style={{ background:`${phaseColor}12`, border:`1px solid ${phaseColor}25`, color:phaseColor }}>{week.phase}</div>
@@ -3168,8 +3360,8 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
                     <div key={d.day} style={{ display:"flex", gap:"0.6rem", alignItems:"center", padding:"6px 8px", background:"#0f172a", borderRadius:7 }}>
                       <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.1rem", color:d.color, minWidth:32 }}>{d.day}</div>
                       <div style={{ flex:1, fontSize:"0.65rem", color:"#cbd5e1" }}>
-                        {d.content}
-                        {isAdjusted && d.baseline && d.baseline !== d.content && <div style={{ fontSize:"0.53rem", color:"#475569" }}>baseline: {d.baseline}</div>}
+                        {h.specificity === "directional" ? `${d.day === "SUN" ? "Recovery emphasis" : "Directional focus block"} (${d.tags[0] || "focus"})` : d.content}
+                        {h.specificity !== "directional" && isAdjusted && d.baseline && d.baseline !== d.content && <div style={{ fontSize:"0.53rem", color:"#475569" }}>baseline: {d.baseline}</div>}
                       </div>
                       <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
                         {d.tags.map(t => <div key={t} className="tag" style={{ background:`${d.color}12`, border:`1px solid ${d.color}25`, color:d.color }}>{t}</div>)}
@@ -3792,7 +3984,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
 }
 
 // ── COACH TAB ─────────────────────────────────────────────────────────────────
-function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalization, momentum, arbitration, expectations, memoryInsights, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, nutritionLayer, realWorldNutrition, nutritionFeedback, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
+function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalization, momentum, arbitration, expectations, memoryInsights, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer, realWorldNutrition, nutritionFeedback, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -3810,7 +4002,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   useEffect(() => {
     setMessages([{
       role:"assistant",
-      packet: deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, realWorldNutrition, recalibration }),
+      packet: deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, realWorldNutrition, recalibration }),
       source: "deterministic"
     }]);
   }, []);
@@ -3929,7 +4121,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   };
 
   const getCoachResponse = async (userMsg) => {
-    const deterministic = deterministicCoachPacket({ input: userMsg, todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, realWorldNutrition, recalibration });
+    const deterministic = deterministicCoachPacket({ input: userMsg, todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, realWorldNutrition, recalibration });
     if (coachMode === "deterministic" || !apiKey) return { ...deterministic, source: "deterministic" };
     try {
       const res = await safeFetchWithTimeout("https://api.anthropic.com/v1/messages", {
@@ -4034,6 +4226,9 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       </div>
       <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
         Goal arbitration: primary {arbitration.priorityStack.primary} · secondary {arbitration.priorityStack.secondary} · maintained {arbitration.priorityStack.maintained}. {arbitration.shiftReason}
+      </div>
+      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
+        Plan composer: {planComposer.architecture.replaceAll("_"," ")} · Drivers: {planComposer.drivers.join(" · ") || "none"}.
       </div>
       <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
         Expectation outlook: {expectations.nextWindow} {expectations.conditionLine}
