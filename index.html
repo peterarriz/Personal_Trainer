@@ -3196,6 +3196,145 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         , [
           { label:"Current Weight", val: latestBW ? `${latestBW.w} lbs` : `${PROFILE.weight} lbs`, sub: latestBW ? `↓ ${(PROFILE.weight - latestBW.w).toFixed(1)} lbs from start` : "Starting weight", color:C.green },
           { label:"Workouts Logged", val: Object.keys(logs).length, sub:"Total sessions", color:C.blue },
+          { label:"Today's Nutrition", val: todayWorkout ? _optionalChain([NUTRITION, 'access', _313 => _313[todayWorkout.nutri || "easyRun"], 'optionalAccess', _314 => _314.cal]) : NUTRITION.rest.cal, sub:"Target calories", color:C.amber },
+          { label:"Phase", val: phaseName, sub:`Week ${currentWeek} of 18`, color:phaseColor },
+        ].map(s => (
+          React.createElement('div', { key: s.label, style: { border:`1px solid #1e293b`, borderRadius:8, padding:"0.65rem 0.85rem", background:"#0d1117" },}
+            , React.createElement('div', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.3rem", color:s.color, letterSpacing:"0.04em", lineHeight:1 },}, s.val)
+            , React.createElement('div', { style: { fontSize:"0.58rem", color:"#334155", letterSpacing:"0.08em", marginTop:3, textTransform:"uppercase" },}, s.label)
+            , React.createElement('div', { style: { fontSize:"0.56rem", color:"#1e293b", marginTop:1 },}, s.sub)
+          )
+        ))
+      )
+
+      , React.createElement('div', { className: "card", style: { marginBottom:"1rem" },}
+        , React.createElement('div', { className: "sect-title", style: { color:C.green, marginBottom:"0.6rem" },}, "15-SECOND CHECK-IN" )
+        , React.createElement('div', { style: { display:"grid", gap:"0.4rem" },}
+          , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" },}
+            , React.createElement('select', { value: checkin.status || "completed_as_planned", onChange: e=>setCheckin(c=>({ ...c, status: e.target.value })), style: { fontSize:"0.56rem" },}
+              , CHECKIN_STATUS_OPTIONS.map(opt => React.createElement('option', { key: opt.key, value: opt.key,}, opt.label))
+            )
+            , React.createElement('select', { value: checkin.sessionFeel || "about_right", onChange: e=>setCheckin(c=>({ ...c, sessionFeel: e.target.value })), style: { fontSize:"0.56rem" },}
+              , CHECKIN_FEEL_OPTIONS.map(opt => React.createElement('option', { key: opt.key, value: opt.key,}, opt.label))
+            )
+          )
+          , (checkin.status === "completed_modified" || checkin.status === "skipped") && (
+            React.createElement('select', { value: checkin.blocker || "", onChange: e=>setCheckin(c=>({ ...c, blocker: e.target.value })), style: { fontSize:"0.56rem" },}
+              , React.createElement('option', { value: "",}, "Main blocker (if any)"   )
+              , CHECKIN_BLOCKER_OPTIONS.map(b => React.createElement('option', { key: b.key, value: b.key,}, b.label))
+            )
+          )
+          , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"1fr 120px auto", gap:"0.35rem" },}
+            , React.createElement('input', { value: checkin.note || "", onChange: e=>setCheckin(c=>({ ...c, note: e.target.value })), placeholder: "Micro input: \"missed — busy\", \"felt hard\", \"good session\""        ,} )
+            , React.createElement('input', { type: "number", step: "0.1", value: checkin.bodyweight || "", onChange: e=>setCheckin(c=>({ ...c, bodyweight: e.target.value })), placeholder: "BW (opt)" ,} )
+            , React.createElement('button', { className: "btn btn-primary" , onClick: async ()=>{
+              const parsed = parseMicroCheckin(checkin.note || "");
+              const payload = parsed ? { ...checkin, ...parsed, passiveAssumed: false } : { ...checkin, passiveAssumed: false };
+              await saveDailyCheckin(todayKey, payload);
+              const ack = payload.status === "completed_as_planned"
+                ? "Saved — good day, you hit what mattered."
+                : payload.status === "completed_modified"
+                ? "Saved — not perfect, but momentum stayed alive."
+                : payload.status === "skipped"
+                ? "Saved — recovery noted. Tomorrow is a fresh restart."
+                : "Saved — check-in captured.";
+              setCheckinAck(ack);
+              if (checkin.bodyweight && !Number.isNaN(parseFloat(checkin.bodyweight))) {
+                const entry = { date: todayKey, w: parseFloat(checkin.bodyweight) };
+                const nextBW = [...bodyweights.filter(b => b.date !== todayKey), entry].sort((a,b) => a.date.localeCompare(b.date));
+                await saveBodyweights(nextBW);
+              }
+            }, style: { fontSize:"0.55rem" },}, "SAVE CHECK-IN" )
+          )
+          , checkinAck && React.createElement('div', { style: { fontSize:"0.54rem", color:C.green },}, checkinAck)
+          , React.createElement('div', { style: { fontSize:"0.53rem", color:"#475569" },}, "If you do nothing, today is auto-assumed completed as planned. Tap only to correct."             )
+        )
+      )
+
+      , React.createElement('div', { className: "card", style: { marginBottom:"1rem", borderColor:C.amber+"40", background:"#15120a" },}
+        , React.createElement('div', { className: "sect-title", style: { color:C.amber, marginBottom:"0.55rem" },}, "DAILY BRIEF" )
+        , React.createElement('div', { style: { fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.75, marginBottom:"0.4rem" },}
+          , dailyStory.brief
+        )
+        , React.createElement('div', { style: { fontSize:"0.56rem", color:C.green, lineHeight:1.7 },}
+          , React.createElement('span', { style: { color:"#94a3b8" },}, "Success today:" ), " " , dailyStory.success
+        )
+        , React.createElement('div', { style: { marginTop:"0.25rem", fontSize:"0.53rem", color:"#64748b" },}, "Priority mode: "
+            , dailyStory.priority, " · "  , arbitration.shiftReason
+        )
+        , proactiveTriggers[0] && (
+          React.createElement('div', { style: { marginTop:"0.3rem", fontSize:"0.54rem", color:"#94a3b8" },}, "Nudge: "
+             , proactiveTriggers[0].msg
+          )
+        )
+      )
+
+      , React.createElement('div', { className: "card", style: { marginBottom:"1rem" },}
+        , React.createElement('div', { className: "sect-title", style: { color:C.green, marginBottom:"0.55rem" },}, "MOMENTUM LOOP" )
+        , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:"0.4rem", marginBottom:"0.4rem" },}
+          , React.createElement('div', { style: { background:"#0f172a", border:`1px solid ${C.green}30`, borderRadius:7, padding:"0.45rem" },}
+            , React.createElement('div', { style: { fontSize:"0.5rem", color:"#334155" },}, "CONSISTENCY STREAK" )
+            , React.createElement('div', { style: { fontSize:"0.68rem", color:C.green },}, behaviorLoop.consistencyStreak, " days" )
+          )
+          , React.createElement('div', { style: { background:"#0f172a", border:`1px solid ${C.blue}30`, borderRadius:7, padding:"0.45rem" },}
+            , React.createElement('div', { style: { fontSize:"0.5rem", color:"#334155" },}, "MIN DAY STREAK"  )
+            , React.createElement('div', { style: { fontSize:"0.68rem", color:C.blue },}, behaviorLoop.minViableStreak, " days" )
+          )
+        )
+        , React.createElement('div', { style: { fontSize:"0.57rem", color:"#94a3b8", lineHeight:1.7, marginBottom:"0.2rem" },}, behaviorLoop.resolution)
+        , React.createElement('div', { style: { fontSize:"0.56rem", color:behaviorLoop.recoveryTone ? C.amber : C.green },}, behaviorLoop.identity)
+      )
+
+      , (_optionalChain([todayWorkout, 'optionalAccess', _315 => _315.type, 'optionalAccess', _316 => _316.includes, 'call', _317 => _317("strength")]) || _optionalChain([todayWorkout, 'optionalAccess', _318 => _318.label, 'optionalAccess', _319 => _319.toLowerCase, 'call', _320 => _320(), 'access', _321 => _321.includes, 'call', _322 => _322("strength")])) && (
+        React.createElement('div', { className: "card", style: { marginBottom:"1rem" },}
+          , React.createElement('div', { className: "sect-title", style: { color:C.purple, marginBottom:"0.5rem" },}, "STRENGTH FOCUS TODAY"  )
+          , React.createElement('div', { style: { fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.7 },}, "Focus: "
+             , React.createElement('span', { style: { color:"#e2e8f0" },}, strengthLayer.focus), " · Bench est "    , strengthLayer.benchEstimate, " · conservative TM "    , strengthLayer.trainingMax, "."
+          )
+          , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.56rem", color:"#64748b" },}, "Session: " , strengthLayer.progression[0])
+          , React.createElement('div', { style: { marginTop:"0.25rem", fontSize:"0.55rem", color:"#475569" },}, strengthLayer.tradeoff)
+        )
+      )
+
+      , React.createElement('div', { style: { marginBottom:"0.7rem", display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.35rem", alignItems:"center" },}
+        , React.createElement('select', { value: personalization.travelState.environmentMode || "home", onChange: e=>setEnvironmentMode(e.target.value), style: { fontSize:"0.58rem" },}
+          , ["full gym","limited gym","home","travel","outdoors only","no equipment"].map(m => React.createElement('option', { key: m, value: m,}, m))
+        )
+        , proactiveTriggers[0] && React.createElement('button', { className: "btn", onClick: ()=>onApplyTrigger(proactiveTriggers[0]), style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" },}, proactiveTriggers[0].actionLabel || "Apply nudge")
+        , proactiveTriggers[0] && React.createElement('button', { className: "btn", onClick: ()=>onDismissTrigger(proactiveTriggers[0].id), style: { fontSize:"0.52rem" },}, "Dismiss")
+      )
+
+      , React.createElement('div', { className: "card", style: { marginBottom:"1rem", borderColor: personalization.injuryPainState.level === "none" ? "#1e293b" : C.red + "50" },}
+        , React.createElement('div', { className: "sect-title", style: { color: personalization.injuryPainState.level === "none" ? C.slate : C.red, marginBottom:"0.6rem" },}, "INJURY / PAIN STATUS"
+
+        )
+        , React.createElement('div', { style: { fontSize:"0.62rem", color:"#94a3b8", marginBottom:"0.45rem" },}, "Status: "
+           , React.createElement('span', { style: { color:"#e2e8f0" },}, personalization.injuryPainState.level.replaceAll("_", " ")), " · Area: "   , React.createElement('span', { style: { color:"#e2e8f0" },}, personalization.injuryPainState.area)
+        )
+        , React.createElement('div', { style: { fontSize:"0.6rem", color:C.amber, lineHeight:1.7, marginBottom:"0.45rem" },}, "Active modifications: "
+            , injuryRule.mods.length ? injuryRule.mods.join(" · ") : "None"
+        )
+        , React.createElement('div', { style: { fontSize:"0.58rem", color:"#64748b", marginBottom:"0.55rem" },}, "Why this changed: "
+             , injuryRule.why
+        )
+        , React.createElement('div', { style: { marginBottom:"0.45rem" },}
+          , React.createElement('select', { value: injuryArea, onChange: e=>setInjuryArea(e.target.value), style: { fontSize:"0.58rem" },}
+            , AFFECTED_AREAS.map(a => React.createElement('option', { key: a, value: a,}, a))
+          )
+        )
+        , React.createElement('div', { style: { display:"flex", gap:"0.35rem", flexWrap:"wrap" },}
+          , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("none", injuryArea), style: { color:C.green, borderColor:C.green+"35" },}, "CLEAR")
+          , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("mild_tightness", injuryArea), style: { color:C.blue, borderColor:C.blue+"35" },}, "MILD")
+          , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("moderate_pain", injuryArea), style: { color:C.amber, borderColor:C.amber+"35" },}, "MODERATE")
+          , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("sharp_pain_stop", injuryArea), style: { color:C.red, borderColor:C.red+"35" },}, "SHARP / STOP"  )
+        )
+        , React.createElement('div', { style: { marginTop:"0.5rem", fontSize:"0.55rem", color:"#475569" },}, "Training adjustment logic only. Not medical diagnosis."
+
+      /* Quick stats row */
+      , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(130px,1fr))", gap:"0.5rem", marginBottom:"1rem" },}
+        , [
+          { label:"Current Weight", val: latestBW ? `${latestBW.w} lbs` : `${PROFILE.weight} lbs`, sub: latestBW ? `↓ ${(PROFILE.weight - latestBW.w).toFixed(1)} lbs from start` : "Starting weight", color:C.green },
+          { label:"Workouts Logged", val: Object.keys(logs).length, sub:"Total sessions", color:C.blue },
           { label:"Today's Nutrition", val: todayWorkout ? _optionalChain([NUTRITION, 'access', _336 => _336[todayWorkout.nutri || "easyRun"], 'optionalAccess', _337 => _337.cal]) : NUTRITION.rest.cal, sub:"Target calories", color:C.amber },
           { label:"Phase", val: phaseName, sub:`Week ${currentWeek} of 18`, color:phaseColor },
         ].map(s => (
