@@ -1922,8 +1922,15 @@ export default function TrainerDashboard() {
   };
 
   // ── SUPABASE STORAGE ─────────────────────────────────────────────────────
-  const SB_URL = "https://wtntlpfzfetixfzawxn.supabase.co";
-  const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0bnRubHBmemZldGl4Znphd3huIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNDQ1NDUsImV4cCI6MjA5MDcyMDU0NX0.iio486vj_x11WuRxOLV7JwmoZPuyov32x3nPbJ_oqdg";
+  const SB_URL = (typeof window !== "undefined" ? (window.__SUPABASE_URL || "") : "").trim();
+  const SB_KEY = (typeof window !== "undefined" ? (window.__SUPABASE_ANON_KEY || "") : "").trim();
+  const SB_CONFIG_ERROR = !SB_URL
+    ? "Missing Supabase URL. Set VITE_SUPABASE_URL."
+    : !/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(SB_URL)
+    ? `Malformed Supabase URL: ${SB_URL}`
+    : !SB_KEY
+    ? "Missing Supabase anon key. Set VITE_SUPABASE_ANON_KEY."
+    : "";
   const SB_ROW = "trainer_v1";
   const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
   const AUTH_CACHE_KEY = "trainer_auth_session_v1";
@@ -1945,6 +1952,7 @@ export default function TrainerDashboard() {
   };
 
   const authRequest = async (path, options = {}) => {
+    if (SB_CONFIG_ERROR) throw new Error(SB_CONFIG_ERROR);
     const res = await safeFetchWithTimeout(`${SB_URL}/auth/v1/${path}`, {
       ...options,
       headers: { "Content-Type": "application/json", "apikey": SB_KEY, ...(options.headers || {}) }
@@ -1990,6 +1998,7 @@ export default function TrainerDashboard() {
   };
 
   const sbLoad = async () => {
+    if (SB_CONFIG_ERROR) throw new Error(SB_CONFIG_ERROR);
     if (!authSession?.user?.id || !authSession?.access_token) throw new Error("No authenticated user");
     const h = sbUserHeaders(authSession.access_token);
     const res = await safeFetchWithTimeout(SB_URL + "/rest/v1/trainer_data?user_id=eq." + authSession.user.id, { headers: h });
@@ -2021,6 +2030,7 @@ export default function TrainerDashboard() {
   };
 
   const sbSave = async (payload) => {
+    if (SB_CONFIG_ERROR) throw new Error(SB_CONFIG_ERROR);
     if (!authSession?.user?.id || !authSession?.access_token) throw new Error("No authenticated user");
     const h = sbUserHeaders(authSession.access_token);
     const res = await safeFetchWithTimeout(SB_URL + "/rest/v1/trainer_data", {
@@ -2048,6 +2058,11 @@ export default function TrainerDashboard() {
   };
 
   useEffect(() => {
+    console.log("[supabase] resolved URL:", SB_URL || "(missing)");
+    if (SB_CONFIG_ERROR) {
+      setAuthError(`Supabase setup error: ${SB_CONFIG_ERROR}`);
+      setStorageStatus({ mode: "local", label: "CONFIG ERROR" });
+    }
     try {
       const raw = localStorage.getItem(AUTH_CACHE_KEY);
       if (raw) setAuthSession(JSON.parse(raw));
