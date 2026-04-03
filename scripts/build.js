@@ -14,6 +14,8 @@ const SRC = path.join(ROOT, "src", "trainer-dashboard.jsx");
 const OUT = path.join(ROOT, "index.html");
 const REACT = fs.readFileSync(path.join(__dirname, "react.min.js"), "utf8");
 const REACT_DOM = fs.readFileSync(path.join(__dirname, "react-dom.min.js"), "utf8");
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || "";
 
 console.log("Building...");
 
@@ -57,7 +59,9 @@ const html = `<!DOCTYPE html>
     <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a0f;color:#334155;font-family:monospace;font-size:0.7rem;letter-spacing:0.2em">LOADING...</div>
   </div>
   <script>
-const { useState, useEffect, useRef } = React;
+window.__SUPABASE_URL = ${JSON.stringify(SUPABASE_URL)};
+window.__SUPABASE_ANON_KEY = ${JSON.stringify(SUPABASE_ANON_KEY)};
+const { useState, useEffect, useRef, useMemo } = React;
 
 ${js}
 
