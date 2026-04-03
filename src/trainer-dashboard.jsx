@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 
 // ── PROFILE ──────────────────────────────────────────────────────────────────
 const PROFILE = {
@@ -295,6 +295,7 @@ const DEFAULT_PERSONALIZATION = {
     scheduleConstraints: ["variable gym access weekdays"],
     simplicityVsVariety: "simplicity on weekdays, variety on weekends",
     lastAdjustment: "Initial baseline loaded.",
+    longTermMemory: [],
   }
 };
 
@@ -453,7 +454,7 @@ const computeAdaptiveSignals = ({ logs, bodyweights, personalization }) => {
   return { adherenceScore, fatigueFlag, momentumFlag, readiness, needDeload, volumeTolerance, intensityTolerance, bwDropFast };
 };
 
-const buildAdaptiveWeek = (week, signals, personalization) => {
+const buildAdaptiveWeek = (week, signals, personalization, memoryInsights = []) => {
   const changed = [];
   const adjusted = JSON.parse(JSON.stringify(week));
   if (signals.volumeTolerance !== 1.0) {
@@ -484,6 +485,10 @@ const buildAdaptiveWeek = (week, signals, personalization) => {
   }
   if (env === "limited gym") {
     changed.push("Limited-gym substitutions prioritized (dumbbell/cable friendly).");
+  }
+  if (memoryInsights.some(m => m.key === "prefers_simpler_weeks")) {
+    adjusted.thu.t = adjusted.thu.t === "Intervals" ? "Tempo" : adjusted.thu.t;
+    changed.push("Long-term memory: simpler weekly density improves follow-through.");
   }
   return { adjusted, changed };
 };
@@ -531,12 +536,14 @@ const mapWorkoutToNutritionDayType = (todayWorkout, environmentMode) => {
   return "easyRun";
 };
 
-const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer }) => {
+const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer, failureMode }) => {
   const goalContext = getGoalContext(goals);
   const environmentMode = personalization.travelState.environmentMode || personalization.travelState.access || "home";
   const dayType = mapWorkoutToNutritionDayType(todayWorkout, environmentMode);
   let target = applyGoalNutritionTargets(NUTRITION[dayType] || NUTRITION.easyRun, dayType, goalContext);
   const feedback = Object.values(nutritionFeedback || {}).slice(-10);
+  const memory = personalization?.coachMemory?.longTermMemory || [];
+  const memorySimpleMeals = memory.some(m => m.key === "nutrition_simple_meals" && ["medium","high"].includes(m.confidence));
   const offTrackCount = feedback.filter(f => f.status === "off_track").length;
   const hungerHits = feedback.filter(f => f.issue === "hunger").length;
   const convenienceHits = feedback.filter(f => f.issue === "convenience").length;
@@ -563,7 +570,7 @@ const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalizatio
   if (endurancePrimary && ["longRun","hardRun","travelRun"].includes(dayType)) target = { ...target, c: target.c + 15 };
   if (hungerHits >= 2) target = { ...target, f: Math.max(target.f, 72) };
 
-  const uncertaintyHigh = offTrackCount >= 3 || ["drifting","falling off"].includes(momentum.momentumState) || convenienceHits >= 2;
+  const uncertaintyHigh = offTrackCount >= 3 || ["drifting","falling off"].includes(momentum.momentumState) || convenienceHits >= 2 || failureMode?.staleData;
   const calRange = uncertaintyHigh ? `${Math.max(2000, target.cal - 120)}-${target.cal + 120}` : `${target.cal - 60}-${target.cal + 60}`;
   const proteinTarget = `${target.p}-${target.p + 10}g`;
   const carbGuidance = ["longRun","hardRun","travelRun"].includes(dayType)
@@ -578,7 +585,7 @@ const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalizatio
     : dayType === "strength" || dayType === "otf"
     ? "Pre: light carb + protein snack. Post: 30-40g protein + carb meal."
     : "Prioritize protein at each meal; no special workout fueling needed.";
-  const mealStructure = salvageLayer?.active || extra.mealSimplicityMode || extra.defaultMealStructureDays > 0 || environmentMode === "travel" || convenienceHits >= 2
+  const mealStructure = failureMode?.chaotic || failureMode?.isLowEngagement || salvageLayer?.active || memorySimpleMeals || extra.mealSimplicityMode || extra.defaultMealStructureDays > 0 || environmentMode === "travel" || convenienceHits >= 2
     ? ["3 simple meals + 1 protein snack", "Use one saved safe default meal", "Anchor breakfast + protein-forward dinner"]
     : dayType === "longRun"
     ? ["Lighter pre-run meal", "Bigger post-run lunch", "Higher-carb dinner"]
@@ -606,6 +613,70 @@ const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalizatio
     mealStructure,
     tradeoff,
     why: `Day type ${dayType}, momentum ${momentum.momentumState}, environment ${environmentMode}, BW trend ${bwDelta14.toFixed(1)} lbs/14d.`,
+  };
+};
+
+const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext, nutritionLayer, momentum, favorites, travelMode, learningLayer }) => {
+  const city = location || "your area";
+  const perfBias = goalContext?.primary?.category === "running" || dayType === "longRun" || dayType === "hardRun";
+  const fatLossBias = [goalContext?.primary, ...(goalContext?.secondary || [])].filter(Boolean).some(g => g.category === "body_comp");
+  const lowFriction = ["drifting","falling off"].includes(momentum?.momentumState) || learningLayer?.adjustmentBias === "simplify";
+  const baseProteinAnchor = perfBias ? "35-45g protein" : "30-40g protein";
+
+  const mealStructure = {
+    breakfast: `${baseProteinAnchor} + easy carbs (${perfBias ? "oats/fruit/toast" : "fruit/toast optional"})`,
+    lunch: `${baseProteinAnchor} + veg + starch matched to training day`,
+    dinner: `${baseProteinAnchor} + produce + simple carb portion`,
+    proteinAnchor: baseProteinAnchor
+  };
+
+  const restaurantPool = travelMode
+    ? [
+      "Coffee chain: egg bites + protein box + fruit",
+      "Chipotle-style bowl: double protein, rice, fajita veg, salsa",
+      "Mediterranean bowl: chicken/lamb, rice, salad, extra protein",
+      "Deli/sandwich shop: turkey/chicken sandwich + side salad"
+    ]
+    : [
+      "Chipotle bowl: double protein, rice, beans, veggies",
+      "Sweetgreen-style salad: protein + grain base + olive oil on side",
+      "Subway-style order: double meat, whole grain bread, extra veg",
+      "Sushi combo: sashimi + rice + miso/salad"
+    ];
+
+  const groceryPool = [
+    "Rotisserie chicken + bagged salad + microwave rice",
+    "Greek yogurt bowl + fruit + granola + protein shake",
+    "Egg scramble + frozen veggies + toast",
+    "Lean ground meat + frozen stir-fry veg + rice"
+  ];
+
+  const fallback = [
+    "Protein shake + banana + nuts",
+    "Deli turkey wrap + fruit",
+    "Greek yogurt + protein bar"
+  ];
+
+  const favoriteMeals = (favorites?.safeMeals || []).map(m => typeof m === "string" ? m : `${m.name}: ${m.meal}`).slice(0, 2);
+  const favoriteRestaurants = (favorites?.restaurants || []).slice(0, 2);
+  const restaurantOptions = [...favoriteRestaurants, ...restaurantPool].slice(0, lowFriction ? 2 : 4);
+  const groceryOptions = [...favoriteMeals, ...groceryPool].slice(0, lowFriction ? 2 : 4);
+
+  const modeLabel = fatLossBias && !perfBias ? "fat-loss support mode" : perfBias ? "performance support mode" : "balanced mode";
+  const coachPrompt = lowFriction
+    ? "Keep this simple today — repeat something that already works."
+    : favoriteMeals.length
+    ? `You’ve done well with ${favoriteMeals[0]}; stick to that today.`
+    : "Use one repeatable default meal to reduce decision fatigue.";
+
+  return {
+    city,
+    modeLabel,
+    mealStructure,
+    restaurantOptions,
+    groceryOptions,
+    fallback,
+    coachPrompt
   };
 };
 
@@ -700,14 +771,15 @@ const getMomentumEngineState = ({ logs, bodyweights, personalization }) => {
   return { score, momentumState, coachMode: finalCoachMode, inconsistencyRisk, likelyAdherencePattern, completionRate, logGapDays, fatigueNotes };
 };
 
-const buildProactiveTriggers = ({ momentum, personalization, goals, learning, nutritionFeedback }) => {
+const buildProactiveTriggers = ({ momentum, personalization, goals, learning, nutritionFeedback, longTermMemory }) => {
   const triggers = [];
+  const dropFast = (longTermMemory || []).some(m => m.key === "drops_after_3_4_days" && m.confidence === "high");
   if (momentum.momentumState === "drifting") triggers.push({ id:"drift", msg:"Drift detected — want a simplified version of this week?", actionLabel:"Simplify week", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 12 }, priority:85 });
-  if (momentum.momentumState === "falling off") triggers.push({ id:"reset", msg:"You’ve missed key momentum signals — reset with a compressed week?", actionLabel:"Activate reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:95 });
+  if (momentum.momentumState === "falling off") triggers.push({ id:"reset", msg:"Momentum has dipped — want a compressed reset week to make execution easier?", actionLabel:"Activate reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:95 });
   if (momentum.score >= 80) triggers.push({ id:"progress", msg:"Consistency streak is strong — progress slightly this week?", actionLabel:"Progress slightly", actionType:"PROGRESS_STRENGTH_EMPHASIS", payload:{ weeks: 1 }, priority:70 });
   if (personalization.travelState.isTravelWeek) triggers.push({ id:"env", msg:"Environment changed — switch to travel/home assumptions?", actionLabel:"Switch travel mode", actionType:"SWITCH_TRAVEL_MODE", payload:{ mode:"travel" }, priority:72 });
   if (goals?.find(g=>g.category==="body_comp" && g.active) && momentum.logGapDays >= 3) triggers.push({ id:"nutrition", msg:"Nutrition drift risk is rising — simplify meals for a few days?", actionLabel:"Simplify meals", actionType:"SIMPLIFY_MEALS_THIS_WEEK", payload:{ days: 3 }, priority:78 });
-  if (momentum.logGapDays >= 3) triggers.push({ id:"nolog", msg:"No logs in 3 days — apply low-friction reset plan?", actionLabel:"Low-friction reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:88 });
+  if (momentum.logGapDays >= (dropFast ? 2 : 3)) triggers.push({ id:"nolog", msg:"No logs recently — apply low-friction reset plan?", actionLabel:"Low-friction reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:88 });
   if (learning?.stats?.timeBlockers >= 2) triggers.push({ id:"time_friction", msg:"Time blockers keep repeating — cap sessions and reduce density?", actionLabel:"Reduce density", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 15 }, priority:84 });
   if (learning?.stats?.harder >= 3) triggers.push({ id:"too_hard", msg:"Sessions are repeatedly harder than expected — lower aggressiveness?", actionLabel:"Lower aggressiveness", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 10 }, priority:80 });
   if ((learning?.stats?.equipBlockers || 0) + (learning?.stats?.travelBlockers || 0) >= 2) triggers.push({ id:"env_fast", msg:"Gym access pattern changed — switch environment assumptions faster?", actionLabel:"Use no-equipment mode", actionType:"SWITCH_ENV_MODE", payload:{ mode:"no equipment" }, priority:74 });
@@ -760,7 +832,7 @@ const generateDailyCoachBrief = ({ momentum, todayWorkout, arbitration, injurySt
   };
 };
 
-const generateWeeklyCoachReview = ({ momentum, arbitration, signals, personalization, patterns, learning, nutritionFeedback, expectations }) => ({
+const generateWeeklyCoachReview = ({ momentum, arbitration, signals, personalization, patterns, learning, nutritionFeedback, expectations, recalibration }) => ({
   ...(() => {
     const recentNutri = Object.values(nutritionFeedback || {}).slice(-7);
     const offTrack = recentNutri.filter(n => n.status === "off_track").length;
@@ -778,7 +850,10 @@ const generateWeeklyCoachReview = ({ momentum, arbitration, signals, personaliza
   arbitrationShift: arbitration.shiftReason,
   expectation: expectations?.nextWindow || "Near-term outlook still forming.",
   expectationCondition: expectations?.conditionLine || "Condition: maintain current structure and logging for clearer trend signal.",
-  expectationMotivation: expectations?.motivationLine || "Progress compounds with consistency."
+  expectationMotivation: expectations?.motivationLine || "Progress compounds with consistency.",
+  recalibrationSummary: recalibration?.summary || "No recalibration this week.",
+  recalibrationWhy: recalibration?.why || "",
+  recalibrationChanges: recalibration?.changes || []
     };
   })()
 });
@@ -880,6 +955,80 @@ const deriveBehaviorLoop = ({ dailyCheckins, logs, momentum, salvageLayer }) => 
     identity,
     recoveryTone: latest?.status === "skipped" || consistencyStreak === 0
   };
+};
+
+const deriveLongTermMemoryLayer = ({ logs, dailyCheckins, weeklyCheckins, nutritionFeedback, validationLayer, previousMemory = [] }) => {
+  const entries = Object.entries(logs || {}).sort((a,b)=>a[0].localeCompare(b[0]));
+  const checkins = Object.entries(dailyCheckins || {}).sort((a,b)=>a[0].localeCompare(b[0]));
+  const weekly = Object.values(weeklyCheckins || {});
+  const nutrition = Object.values(nutritionFeedback || {});
+  const last28Logs = entries.slice(-28).map(([,l])=>l || {});
+  const last28Checkins = checkins.slice(-28).map(([,c])=>c || {});
+
+  const makeMemory = (key, bucket, label, evidence) => {
+    const prev = (previousMemory || []).find(m => m.key === key);
+    const toConf = (n) => n >= 5 ? "high" : n >= 3 ? "medium" : n >= 2 ? "low" : null;
+    const conf = toConf(evidence);
+    if (!conf) return null;
+    const lastObserved = Date.now();
+    return { key, bucket, label, confidence: conf, evidenceCount: evidence, lastObserved };
+  };
+
+  const memories = [
+    makeMemory("prefers_simpler_weeks","behavior","stays more consistent when weeks are simpler", last28Checkins.filter(c => c.status === "completed_modified").length),
+    makeMemory("drops_after_3_4_days","behavior","often loses momentum after 3-4 hard days", Math.max(0, last28Logs.length - 4 >= 0 ? last28Checkins.filter(c => c.status === "skipped").length : 0)),
+    makeMemory("fatigue_sensitive","performance","fatigue rises quickly when load stacks too fast", weekly.filter(w => Number(w.energy || 3) <= 2 || Number(w.stress || 3) >= 4).length),
+    makeMemory("home_better_than_travel","environment","home setup yields higher completion than travel weeks", entries.filter(([,l]) => l.location !== "hotel").length >= 6 ? entries.filter(([,l]) => l.location === "hotel").length : 0),
+    makeMemory("nutrition_simple_meals","nutrition","adherence is better with simpler repeatable meals", nutrition.filter(n => n.status === "off_track" && ["convenience","travel"].includes(n.issue)).length >= 2 ? 3 : nutrition.filter(n => n.status === "decent" || n.status === "on_track").length),
+    makeMemory("validation_simplify_positive","validation","simplifying weeks tends to improve adherence/momentum", (validationLayer?.recentResolved || []).filter(r => r.strategy === "simplify_density" && r.impact === "positive").length),
+    makeMemory("validation_aggressive_negative","validation","aggressive progress blocks can reduce consistency", (validationLayer?.recentResolved || []).filter(r => r.strategy === "aggressive_progression" && r.impact === "negative").length),
+  ].filter(Boolean);
+
+  const decayedPrev = (previousMemory || []).map(m => {
+    const days = Math.floor((Date.now() - Number(m.lastObserved || Date.now())) / (1000*60*60*24));
+    if (days < 21) return m;
+    const downgraded = m.confidence === "high" ? "medium" : m.confidence === "medium" ? "low" : "low";
+    return { ...m, confidence: downgraded };
+  });
+
+  const merged = [...decayedPrev.filter(p => !memories.find(m => m.key === p.key)), ...memories]
+    .sort((a,b) => (b.evidenceCount || 0) - (a.evidenceCount || 0))
+    .slice(0, 10);
+  return merged;
+};
+
+const deriveRecalibrationEngine = ({ currentWeek, progress, momentum, learningLayer, memoryInsights, arbitration }) => {
+  const periodicTrigger = currentWeek > 1 && currentWeek % 4 === 0;
+  const prolongedInconsistency = ["drifting","falling off"].includes(momentum?.momentumState) && (progress?.adherenceRate || 0) < 60;
+  const majorPatternShift = (memoryInsights || []).some(m => ["drops_after_3_4_days","fatigue_sensitive"].includes(m.key) && m.confidence === "high");
+  const active = periodicTrigger || prolongedInconsistency || majorPatternShift;
+  const reasons = [
+    periodicTrigger ? "4-week checkpoint reached" : null,
+    prolongedInconsistency ? "consistency has been below target" : null,
+    majorPatternShift ? "new high-confidence behavior pattern detected" : null
+  ].filter(Boolean);
+
+  const changes = [];
+  if (prolongedInconsistency || learningLayer?.adjustmentBias === "simplify") changes.push("reduce weekly density and simplify session flow");
+  if (progress?.weightSignal?.includes("holding roughly steady")) changes.push("tighten nutrition structure with simpler repeatable meals");
+  if (progress?.runSignal?.includes("improving") && arbitration?.primary?.category === "running") changes.push("slightly progress run quality while maintaining recovery");
+  if (progress?.strengthSignal?.includes("deprioritized")) changes.push("rebuild strength with minimum effective progression");
+  if (!changes.length) changes.push("hold structure and sharpen execution quality");
+
+  const aggressiveness = prolongedInconsistency ? "lower" : progress?.adherenceRate >= 75 ? "slightly_higher" : "steady";
+  const summary = active
+    ? "We’re recalibrating your plan to keep progress aligned with current reality."
+    : "No recalibration needed this week.";
+  const why = active
+    ? `Trigger: ${reasons.join(" + ")}.`
+    : "Current assumptions are still working.";
+  const expect = aggressiveness === "lower"
+    ? "Expect smoother execution and recovery over the next 1-2 weeks."
+    : aggressiveness === "slightly_higher"
+    ? "Expect gradual progression with controlled load increases."
+    : "Expect steady progress if consistency holds.";
+
+  return { active, reasons, changes: changes.slice(0, 4), aggressiveness, summary, why, expect };
 };
 
 const deriveStrengthLayer = ({ goals, momentum, personalization, logs }) => {
@@ -1040,7 +1189,166 @@ const parseMicroCheckin = (text) => {
   return out;
 };
 
-const deriveLearningLayer = ({ dailyCheckins, logs, weeklyCheckins, momentum, personalization }) => {
+const CLOSED_LOOP_TRACKED_ACTIONS = {
+  REDUCE_WEEKLY_VOLUME: { strategy: "simplify_density", label: "reduced weekly density" },
+  ACTIVATE_SALVAGE: { strategy: "salvage_mode", label: "activated salvage mode" },
+  INCREASE_CALORIES_SLIGHTLY: { strategy: "increase_calories", label: "increased calories slightly" },
+  REDUCE_DEFICIT_AGGRESSIVENESS: { strategy: "reduce_deficit", label: "reduced deficit aggressiveness" },
+  SIMPLIFY_MEALS_THIS_WEEK: { strategy: "simplify_meals", label: "simplified meal structure" },
+  PROGRESS_STRENGTH_EMPHASIS: { strategy: "aggressive_progression", label: "increased strength aggressiveness" },
+};
+
+const getDateKeyFromTs = (ts) => {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().split("T")[0];
+};
+
+const getWindowMetrics = ({ logs, dailyCheckins, startTs, endTs }) => {
+  const checkins = Object.entries(dailyCheckins || {}).filter(([date]) => {
+    const t = new Date(`${date}T12:00:00`).getTime();
+    return t >= startTs && t <= endTs;
+  }).map(([, c]) => c || {});
+  const logRows = Object.entries(logs || {}).filter(([date]) => {
+    const t = new Date(`${date}T12:00:00`).getTime();
+    return t >= startTs && t <= endTs;
+  }).map(([, l]) => l || {});
+  const completed = checkins.filter(c => ["completed_as_planned", "completed_modified"].includes(c.status)).length;
+  const adherence = checkins.length ? completed / checkins.length : 0;
+  const avgFeel = logRows.length ? (logRows.reduce((s, l) => s + Number(l.feel || 3), 0) / logRows.length) : 3;
+  const progressHits = logRows.filter(l => /progress|solid|better|good|strong/i.test((l.notes || "").toLowerCase())).length;
+  return { adherence, avgFeel, progressHits, sample: checkins.length + logRows.length };
+};
+
+const classifyClosedLoopImpact = ({ baseline, outcome }) => {
+  if (!outcome || outcome.sample < 3) return { impact: "pending", score: 0, why: "Not enough 3–7 day evidence yet." };
+  const adherenceDelta = outcome.adherence - baseline.adherence;
+  const momentumDelta = outcome.avgFeel - baseline.avgFeel;
+  const progressDelta = outcome.progressHits - baseline.progressHits;
+  const score = (adherenceDelta * 1.3) + (momentumDelta * 0.35) + (progressDelta * 0.15);
+  if (score >= 0.35) return { impact: "positive", score, why: "Adherence/momentum improved after this adjustment." };
+  if (score <= -0.2) return { impact: "negative", score, why: "Execution quality declined after this adjustment." };
+  return { impact: "neutral", score, why: "No strong directional effect detected." };
+};
+
+const deriveClosedLoopValidationLayer = ({ coachActions, logs, dailyCheckins }) => {
+  const now = Date.now();
+  const tracked = (coachActions || [])
+    .filter(a => CLOSED_LOOP_TRACKED_ACTIONS[a.type])
+    .slice(0, 40);
+  const records = tracked.map((action) => {
+    const actionTs = Number(action.ts || now);
+    const actionType = CLOSED_LOOP_TRACKED_ACTIONS[action.type];
+    const baseline = getWindowMetrics({ logs, dailyCheckins, startTs: actionTs - (7 * 86400000), endTs: actionTs - 1 });
+    const outcome = getWindowMetrics({ logs, dailyCheckins, startTs: actionTs + (3 * 86400000), endTs: actionTs + (7 * 86400000) });
+    const cls = classifyClosedLoopImpact({ baseline, outcome });
+    return {
+      id: action.id || `act_${actionTs}`,
+      strategy: actionType.strategy,
+      actionType: action.type,
+      changed: actionType.label,
+      reason: action.reason || action.triggerReason || action.payload?.reason || "adaptive trigger",
+      actionDate: getDateKeyFromTs(actionTs),
+      baseline,
+      outcome,
+      ...cls,
+    };
+  });
+  const resolved = records.filter(r => r.impact !== "pending");
+  const strategyStats = resolved.reduce((acc, r) => {
+    const cur = acc[r.strategy] || { total: 0, positive: 0, neutral: 0, negative: 0, score: 0 };
+    cur.total += 1;
+    cur[r.impact] += 1;
+    cur.score += r.score;
+    acc[r.strategy] = cur;
+    return acc;
+  }, {});
+  const strategyAdjustments = Object.entries(strategyStats).reduce((acc, [strategy, s]) => {
+    const avg = s.total ? s.score / s.total : 0;
+    acc[strategy] = avg >= 0.25 ? "strengthen" : avg <= -0.15 ? "reduce" : "hold";
+    return acc;
+  }, {});
+  const topPositive = resolved.find(r => r.impact === "positive");
+  const topNegative = resolved.find(r => r.impact === "negative");
+  const coachNudges = [
+    topPositive ? `Simplifying your weeks has improved consistency recently.` : null,
+    topNegative ? `More aggressive weeks tend to reduce adherence right now.` : null,
+  ].filter(Boolean);
+  return {
+    records,
+    recentResolved: resolved.slice(0, 8),
+    strategyStats,
+    strategyAdjustments,
+    coachNudge: coachNudges[0] || "",
+    summary: resolved.length ? `Validated ${resolved.length} recent adjustments with 3–7 day outcomes.` : "Collecting validation data from recent adjustments.",
+  };
+};
+
+const parseSessionMinutes = (log) => {
+  const rt = String(log?.runTime || "").trim();
+  if (/^\d+$/.test(rt)) return Number(rt);
+  if (/^\d+:\d{2}$/.test(rt)) {
+    const [m, s] = rt.split(":").map(Number);
+    return m + Math.round((s || 0) / 60);
+  }
+  const txt = `${log?.type || ""} ${log?.notes || ""}`;
+  const m = txt.match(/(\d+)\s*min/i);
+  return m ? Number(m[1]) : null;
+};
+
+const derivePersonalOptimizationLayer = ({ logs, dailyCheckins, nutritionFeedback, coachActions, validationLayer }) => {
+  const logEntries = Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0]));
+  const last42 = logEntries.slice(-42).map(([, l]) => l || {});
+  const checkinEntries = Object.entries(dailyCheckins || {}).sort((a, b) => a[0].localeCompare(b[0]));
+  const last42Checkins = checkinEntries.slice(-42).map(([, c]) => c || {});
+  const weeklyCompleted = [];
+  for (let i = 0; i < last42Checkins.length; i += 7) {
+    const week = last42Checkins.slice(i, i + 7);
+    if (!week.length) continue;
+    weeklyCompleted.push(week.filter(c => ["completed_as_planned", "completed_modified"].includes(c.status)).length);
+  }
+  const avgWeeklySessions = weeklyCompleted.length ? weeklyCompleted.reduce((s, n) => s + n, 0) / weeklyCompleted.length : 3;
+  const optimalFrequency = avgWeeklySessions >= 4.2 ? "4-5 sessions/week" : avgWeeklySessions >= 3 ? "3-4 sessions/week" : "2-3 sessions/week";
+
+  const durations = last42.map(parseSessionMinutes).filter(Boolean);
+  const avgMinutes = durations.length ? Math.round(durations.reduce((s, n) => s + n, 0) / durations.length) : 35;
+  const optimalSessionLength = avgMinutes <= 35 ? "25-40 min" : avgMinutes <= 50 ? "35-50 min" : "45-60 min";
+
+  const recentNutrition = Object.values(nutritionFeedback || {}).slice(-21);
+  const hunger = recentNutrition.filter(n => n.issue === "hunger").length;
+  const offTrack = recentNutrition.filter(n => n.status === "off_track").length;
+  const optimalDeficitRange = hunger >= 2 || offTrack >= 4 ? "minimal deficit (0-150 kcal)" : "moderate deficit (120-250 kcal)";
+
+  const modifications = last42Checkins.filter(c => c.status === "completed_modified").length;
+  const skips = last42Checkins.filter(c => c.status === "skipped").length;
+  const optimalComplexity = (modifications + skips) >= 8 ? "low complexity" : "moderate complexity";
+
+  const experimentActions = (coachActions || []).filter(a => a.source === "optimization_experiment");
+  const lastExperimentTs = experimentActions[0]?.ts || 0;
+  const cooldownDays = Math.floor((Date.now() - Number(lastExperimentTs || 0)) / 86400000);
+  const canExperiment = cooldownDays >= 10 && last42Checkins.length >= 12;
+  const winningSignals = (validationLayer?.recentResolved || []).filter(r => r.impact === "positive").length;
+  const losingSignals = (validationLayer?.recentResolved || []).filter(r => r.impact === "negative").length;
+  const reinforcementBias = winningSignals > losingSignals ? "reinforce_winners" : losingSignals > winningSignals ? "reduce_losers" : "hold";
+
+  const pendingExperiment = canExperiment ? {
+    type: avgWeeklySessions >= 4 ? "volume_minus_small" : "volume_plus_small",
+    deltaPct: 6,
+    note: avgWeeklySessions >= 4 ? "Test slightly lower volume for better consistency." : "Test slightly higher volume if momentum is stable.",
+  } : null;
+
+  const coachLine = `You seem to perform best with ${optimalFrequency} and ${optimalSessionLength} sessions.`;
+  return {
+    optimalZones: { optimalFrequency, optimalSessionLength, optimalDeficitRange, optimalComplexity },
+    experimentation: { canExperiment, pendingExperiment, cooldownDays },
+    reinforcementBias,
+    coachLine,
+    confidence: last42Checkins.length >= 14 ? "medium" : "low",
+  };
+};
+
+const deriveLearningLayer = ({ dailyCheckins, logs, weeklyCheckins, momentum, personalization, validationLayer, optimizationLayer }) => {
   const checkins = Object.entries(dailyCheckins || {}).sort((a,b)=>a[0].localeCompare(b[0]));
   const last28 = checkins.slice(-28).map(([,v]) => v || {});
   const total = Math.max(1, last28.length);
@@ -1080,15 +1388,23 @@ const deriveLearningLayer = ({ dailyCheckins, logs, weeklyCheckins, momentum, pe
     simplifyStrength: mediumHigh.some(o => o.impact === "strength_simplify"),
     environmentFastSwitch: mediumHigh.some(o => o.impact === "simplify_environment"),
     pushSlightly: mediumHigh.some(o => o.impact === "modest_progress") && !mediumHigh.some(o => o.impact === "lower_aggressiveness"),
+    validationBias: validationLayer?.strategyAdjustments || {},
+    optimizationBias: optimizationLayer?.reinforcementBias || "hold",
   };
-  const adjustmentBias = harder >= 3 || skipped >= 3 || lowConfidenceWeeks >= 2
+  const validationSimplifyPenalty = Object.values(validationLayer?.strategyAdjustments || {}).filter(v => v === "reduce").length;
+  const validationProgressBoost = Object.values(validationLayer?.strategyAdjustments || {}).filter(v => v === "strengthen").length;
+  const optimizationReduce = optimizationLayer?.reinforcementBias === "reduce_losers";
+  const optimizationReinforce = optimizationLayer?.reinforcementBias === "reinforce_winners";
+  const adjustmentBias = harder >= 3 || skipped >= 3 || lowConfidenceWeeks >= 2 || optimizationReduce
     ? "simplify"
-    : easier >= 4 && modified <= 1 && skipped <= 1
+    : (easier >= 4 && modified <= 1 && skipped <= 1) || validationProgressBoost >= 2 || optimizationReinforce
     ? "progress"
+    : validationSimplifyPenalty >= 1
+    ? "simplify"
     : "hold";
   const explanation = topObservations.length
     ? `Based on ${last28.length} recent check-ins: ${topObservations.map(o => o.msg).join(" ")}`
-    : "Learning layer needs a few more quick check-ins before giving strong guidance.";
+    : validationLayer?.summary || "Learning layer needs a few more quick check-ins before giving strong guidance.";
 
   return {
     stats: { total, skipped, modified, harder, easier, timeBlockers, equipBlockers, travelBlockers },
@@ -1143,6 +1459,52 @@ const deriveSalvageLayer = ({ logs, momentum, dailyCheckins, weeklyCheckins, per
   return { active, triggerReasons, compressedPlan, exitReady, coachMessage };
 };
 
+const getLastDateKey = (obj = {}) => {
+  const keys = Object.keys(obj || {}).sort((a, b) => a.localeCompare(b));
+  return keys.length ? keys[keys.length - 1] : null;
+};
+
+const diffDaysFromKey = (dateKey) => {
+  if (!dateKey) return 999;
+  const ms = new Date(`${dateKey}T12:00:00`).getTime();
+  if (Number.isNaN(ms)) return 999;
+  return Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+};
+
+const deriveFailureModeHardening = ({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer }) => {
+  const lastLogGap = diffDaysFromKey(getLastDateKey(logs));
+  const lastCheckinGap = diffDaysFromKey(getLastDateKey(dailyCheckins));
+  const lastBWDate = bodyweights?.length ? bodyweights[bodyweights.length - 1]?.date : null;
+  const lastBWGap = diffDaysFromKey(lastBWDate);
+  const engagementGapDays = Math.min(lastLogGap, lastCheckinGap);
+  const isLowEngagement = engagementGapDays >= 5;
+  const isReEntry = engagementGapDays >= 10;
+  const recentOverrides = Object.keys(coachPlanAdjustments?.dayOverrides || {})
+    .filter(k => diffDaysFromKey(k) <= 14).length;
+  const recentSalvageActivations = (coachActions || [])
+    .filter(a => a.type === "ACTIVATE_SALVAGE" && (Date.now() - Number(a.ts || 0)) <= 21 * 86400000).length;
+  const chaotic = salvageLayer?.active || recentOverrides >= 3 || recentSalvageActivations >= 2;
+  const staleData = Math.min(lastLogGap, lastBWGap) >= 10 || (lastLogGap >= 7 && lastBWGap >= 21);
+  const mode = isReEntry ? "re_entry" : (chaotic ? "chaotic" : (isLowEngagement ? "low_engagement" : "normal"));
+  const planningHorizonDays = chaotic ? 3 : isLowEngagement ? 4 : 7;
+  const uncertainty = staleData ? "high" : isLowEngagement ? "medium" : "low";
+  const minimumViableStructure = {
+    sessions: ["1 key run/walk", "1 strength minimum session (20-35 min)", "1 optional recovery touchpoint"],
+    expectation: "Aim for consistency touchpoints, not full-volume perfection."
+  };
+  const coachBehavior = {
+    tone: "no-guilt-forward-looking",
+    primaryLine: isReEntry
+      ? "Welcome back — we reset from today and rebuild momentum with a re-entry week."
+      : chaotic
+      ? "Chaotic period detected — simplify immediately and protect consistency."
+      : isLowEngagement
+      ? "Low engagement detected — only essentials for now; keep it light and achievable."
+      : "Standard coaching mode.",
+  };
+  return { mode, engagementGapDays, planningHorizonDays, uncertainty, staleData, chaotic, isLowEngagement, isReEntry, minimumViableStructure, coachBehavior };
+};
+
 const detectCoachSignals = (input) => {
   const msg = input.toLowerCase();
   return {
@@ -1187,7 +1549,7 @@ const withConfidenceTone = (message, confidence = "moderate", voiceMode = "rebui
   return `${modePrefix} ${lead} ${message}`;
 };
 
-const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, momentum, strengthLayer, nutritionLayer, arbitration, expectations }) => {
+const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights = [], realWorldNutrition, recalibration }) => {
   const s = detectCoachSignals(input);
   const voiceMode = inferCoachVoiceMode(momentum);
   const painLevel = inferPainLevel(input);
@@ -1198,6 +1560,26 @@ const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, body
   const actions = [];
   const last7 = Object.keys(logs).filter(d => ((Date.now() - new Date(d + "T12:00:00").getTime()) / (1000*60*60*24)) <= 7).length;
   const latestBW = bodyweights.length ? bodyweights[bodyweights.length - 1].w : PROFILE.weight;
+  if (failureMode?.mode !== "normal") {
+    notices.push(failureMode.coachBehavior.primaryLine);
+    addRecommendation(`Use only essential actions for the next ${failureMode.planningHorizonDays} days.`, "high");
+    effects.push("Coaching automatically shifts to minimum viable planning with no guilt language.");
+  }
+  if (failureMode?.isReEntry) {
+    notices.push("A re-entry week is active, so we are not resuming prior volume blindly.");
+    addRecommendation("Start with a minimum viable week and rebuild after 3-4 consistent days.", "high");
+    effects.push("Expectations reset to momentum-first execution.");
+  }
+  if (failureMode?.staleData) {
+    notices.push("Recent inputs are stale, so confidence in old signals is reduced.");
+    addRecommendation("Use conservative defaults until new logs/check-ins refresh signal quality.", "moderate");
+    effects.push("Decision uncertainty is elevated; plan changes stay smaller.");
+  }
+  if (optimizationLayer?.confidence !== "low" && /status|update|plan|optimiz/i.test(input.toLowerCase())) {
+    notices.push(`Optimization insight: ${optimizationLayer.coachLine}`);
+    addRecommendation(`Keep structure near ${optimizationLayer.optimalZones.optimalComplexity} and deficit in ${optimizationLayer.optimalZones.optimalDeficitRange}.`, "moderate");
+    effects.push("Future adjustments are biased toward your historically effective zones.");
+  }
   if (s.achillesPain) {
     notices.push("You flagged Achilles discomfort, which is your highest injury-risk signal.");
     addRecommendation("shift today to recovery and keep aerobic work low-impact.", "high");
@@ -1349,6 +1731,16 @@ const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, body
     notices.unshift(expectations.coachLine);
     effects.unshift(`Expectation snapshot: ${expectations.weightExpectation} ${expectations.runExpectation}`);
   }
+  if (memoryInsights.length > 0 && /status|update|plan|why|coach/i.test(input.toLowerCase())) {
+    notices.unshift(`Memory insight: ${memoryInsights[0].label}.`);
+  }
+  if (realWorldNutrition?.coachPrompt && /nutrition|food|eat|meal|status|update/i.test(input.toLowerCase())) {
+    recommendations.unshift(realWorldNutrition.coachPrompt);
+  }
+  if (recalibration?.active && /status|update|plan|why|next/i.test(input.toLowerCase())) {
+    notices.unshift("We’re recalibrating your plan.");
+    effects.unshift(`Recalibration changes: ${recalibration.changes.join(" · ")}`);
+  }
   return { notices, recommendations, effects, actions: actions.slice(0, 3) };
 };
 
@@ -1374,6 +1766,11 @@ export default function TrainerDashboard() {
   const [storageStatus, setStorageStatus] = useState({ mode: "syncing", label: "SYNCING" });
   const [lastSaved, setLastSaved] = useState(null);
   const [dismissedTriggers, setDismissedTriggers] = useState([]);
+  const [authSession, setAuthSession] = useState(null);
+  const [authMode, setAuthMode] = useState("signin");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
   const DEBUG_MODE = typeof window !== "undefined" && localStorage.getItem("trainer_debug") === "1";
   const logDiag = (...args) => { if (DEBUG_MODE) console.log("[trainer-debug]", ...args); };
 
@@ -1389,18 +1786,73 @@ export default function TrainerDashboard() {
   const todayWorkout = injuryRule.workout;
   const momentum = getMomentumEngineState({ logs, bodyweights, personalization });
   const patterns = detectBehaviorPatterns({ logs, bodyweights, personalization });
-  const learningLayer = deriveLearningLayer({ dailyCheckins, logs, weeklyCheckins, momentum, personalization });
+  const validationLayer = deriveClosedLoopValidationLayer({ coachActions, logs, dailyCheckins });
+  const optimizationLayer = derivePersonalOptimizationLayer({ logs, dailyCheckins, nutritionFeedback, coachActions, validationLayer });
+  const learningLayer = deriveLearningLayer({ dailyCheckins, logs, weeklyCheckins, momentum, personalization, validationLayer, optimizationLayer });
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
+  const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const strengthLayer = deriveStrengthLayer({ goals, momentum, personalization, logs });
   const progressEngine = deriveProgressEngine({ logs, bodyweights, momentum, strengthLayer });
   const expectations = deriveExpectationEngine({ progress: progressEngine, momentum, arbitration });
   const behaviorLoop = deriveBehaviorLoop({ dailyCheckins, logs, momentum, salvageLayer });
-  const nutritionLayer = deriveAdaptiveNutrition({ todayWorkout, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer });
-  const dailyBrief = generateDailyCoachBrief({ momentum, todayWorkout, arbitration, injuryState: personalization.injuryPainState, patterns, learning: learningLayer, salvage: salvageLayer });
-  const dailyStory = buildUnifiedDailyStory({ todayWorkout, dailyBrief, progress: progressEngine, arbitration, expectations, salvage: salvageLayer, momentum });
-  const weeklyReview = generateWeeklyCoachReview({ momentum, arbitration, signals: computeAdaptiveSignals({ logs, bodyweights, personalization }), personalization, patterns, learning: learningLayer, nutritionFeedback, expectations });
-  const proactiveTriggers = buildProactiveTriggers({ momentum, personalization, goals, learning: learningLayer, nutritionFeedback }).filter(t => !dismissedTriggers.includes(t.id));
+  const longTermMemory = useMemo(
+    () => deriveLongTermMemoryLayer({
+      logs,
+      dailyCheckins,
+      weeklyCheckins,
+      nutritionFeedback,
+      validationLayer,
+      previousMemory: personalization?.coachMemory?.longTermMemory || []
+    }),
+    [logs, dailyCheckins, weeklyCheckins, nutritionFeedback, validationLayer]
+  );
+  const memoryInsights = longTermMemory.filter(m => m.confidence === "high").slice(0, 4);
+  const recalibration = deriveRecalibrationEngine({ currentWeek, progress: progressEngine, momentum, learningLayer, memoryInsights, arbitration });
+  const todayWorkoutHardened = failureMode.isReEntry
+    ? { ...todayWorkout, label: `Re-entry day: ${todayWorkout?.label || "minimum viable session"}`, minDay: true, success: "Re-entry week: complete one essential session and log it. Momentum first." }
+    : (failureMode.mode === "chaotic" || failureMode.isLowEngagement)
+    ? { ...todayWorkout, minDay: true, success: "Chaotic-week mode: complete the minimum viable session only." }
+    : todayWorkout;
+  const nutritionLayer = deriveAdaptiveNutrition({ todayWorkout: todayWorkoutHardened, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer, failureMode });
+  const realWorldNutrition = deriveRealWorldNutritionEngine({
+    location: personalization?.localFoodContext?.city,
+    dayType: nutritionLayer.dayType,
+    goalContext: getGoalContext(goals),
+    nutritionLayer,
+    momentum,
+    favorites: nutritionFavorites,
+    travelMode: personalization.travelState.isTravelWeek || (personalization.travelState.environmentMode || "").includes("travel"),
+    learningLayer
+  });
+  const dailyBrief = generateDailyCoachBrief({ momentum, todayWorkout: todayWorkoutHardened, arbitration, injuryState: personalization.injuryPainState, patterns, learning: learningLayer, salvage: salvageLayer });
+  const dailyStory = buildUnifiedDailyStory({ todayWorkout: todayWorkoutHardened, dailyBrief, progress: progressEngine, arbitration, expectations, salvage: salvageLayer, momentum });
+  const weeklyReview = generateWeeklyCoachReview({ momentum, arbitration, signals: computeAdaptiveSignals({ logs, bodyweights, personalization }), personalization, patterns, learning: learningLayer, nutritionFeedback, expectations, recalibration });
+  const baseProactiveTriggers = buildProactiveTriggers({ momentum, personalization, goals, learning: learningLayer, nutritionFeedback, longTermMemory }).filter(t => !dismissedTriggers.includes(t.id));
+  const optimizationTrigger = optimizationLayer.experimentation.canExperiment && optimizationLayer.experimentation.pendingExperiment
+    ? [{
+      id: "opt_micro",
+      msg: `Optional micro-test: ${optimizationLayer.experimentation.pendingExperiment.note}`,
+      actionLabel: "Run micro-test",
+      actionType: optimizationLayer.experimentation.pendingExperiment.type === "volume_minus_small" ? "REDUCE_WEEKLY_VOLUME" : "PROGRESS_STRENGTH_EMPHASIS",
+      payload: optimizationLayer.experimentation.pendingExperiment.type === "volume_minus_small"
+        ? { pct: optimizationLayer.experimentation.pendingExperiment.deltaPct, reason: "optimization_micro_test" }
+        : { weeks: 1, reason: "optimization_micro_test" },
+      source: "optimization",
+      priority: 52,
+    }]
+    : [];
+  const proactiveTriggers = [...optimizationTrigger, ...baseProactiveTriggers];
+
+  useEffect(() => {
+    if (loading) return;
+    const prev = JSON.stringify(personalization?.coachMemory?.longTermMemory || []);
+    const next = JSON.stringify(longTermMemory || []);
+    if (prev === next) return;
+    const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, longTermMemory } });
+    setPersonalization(updated);
+    persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+  }, [longTermMemory]);
 
   const setInjuryState = async (level, area = personalization.injuryPainState.area) => {
     const painScore = level === "none" ? 1 : level === "mild_tightness" ? 2 : level === "moderate_pain" ? 4 : 5;
@@ -1474,7 +1926,9 @@ export default function TrainerDashboard() {
   const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0bnRubHBmemZldGl4Znphd3huIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNDQ1NDUsImV4cCI6MjA5MDcyMDU0NX0.iio486vj_x11WuRxOLV7JwmoZPuyov32x3nPbJ_oqdg";
   const SB_ROW = "trainer_v1";
   const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
+  const AUTH_CACHE_KEY = "trainer_auth_session_v1";
   const sbH = { "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + SB_KEY };
+  const sbUserHeaders = (token) => ({ "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + token });
   const localLoad = () => {
     try {
       const raw = localStorage.getItem(LOCAL_CACHE_KEY);
@@ -1486,8 +1940,59 @@ export default function TrainerDashboard() {
     try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(payload)); } catch {}
   };
 
+  const saveAuthSession = (session) => {
+    try { localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(session || null)); } catch {}
+  };
+
+  const authRequest = async (path, options = {}) => {
+    const res = await safeFetchWithTimeout(`${SB_URL}/auth/v1/${path}`, {
+      ...options,
+      headers: { "Content-Type": "application/json", "apikey": SB_KEY, ...(options.headers || {}) }
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.status === 204 ? {} : res.json();
+  };
+
+  const handleSignIn = async () => {
+    setAuthError("");
+    try {
+      const data = await authRequest("token?grant_type=password", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
+      if (!data?.access_token || !data?.user) throw new Error("Invalid auth response");
+      const session = { access_token: data.access_token, user: data.user };
+      setAuthSession(session);
+      saveAuthSession(session);
+    } catch (e) { setAuthError("Sign in failed. Check email/password."); }
+  };
+
+  const handleSignUp = async () => {
+    setAuthError("");
+    try {
+      const data = await authRequest("signup", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
+      if (data?.access_token && data?.user) {
+        const session = { access_token: data.access_token, user: data.user };
+        setAuthSession(session);
+        saveAuthSession(session);
+      } else {
+        setAuthError("Account created. Confirm email, then sign in.");
+      }
+    } catch (e) { setAuthError("Sign up failed."); }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      if (authSession?.access_token) {
+        await authRequest("logout", { method: "POST", headers: { "Authorization": `Bearer ${authSession.access_token}` } });
+      }
+    } catch {}
+    setAuthSession(null);
+    saveAuthSession(null);
+    setStorageStatus({ mode: "local", label: "SIGNED OUT" });
+  };
+
   const sbLoad = async () => {
-    const res = await safeFetchWithTimeout(SB_URL + "/rest/v1/trainer_data?id=eq." + SB_ROW, { headers: sbH });
+    if (!authSession?.user?.id || !authSession?.access_token) throw new Error("No authenticated user");
+    const h = sbUserHeaders(authSession.access_token);
+    const res = await safeFetchWithTimeout(SB_URL + "/rest/v1/trainer_data?user_id=eq." + authSession.user.id, { headers: h });
     if (!res.ok) throw new Error("Load failed " + res.status + ": " + await res.text());
     const rows = await res.json();
     if (rows && rows.length > 0 && rows[0].data) {
@@ -1505,14 +2010,23 @@ export default function TrainerDashboard() {
       if (d.weeklyCheckins) setWeeklyCheckins(d.weeklyCheckins);
       if (d.nutritionFavorites) setNutritionFavorites(d.nutritionFavorites);
       if (d.nutritionFeedback) setNutritionFeedback(d.nutritionFeedback);
+    } else {
+      const cache = localLoad();
+      if (cache?.v) {
+        await sbSave(cache);
+      } else {
+        await persistAll({}, [], {}, {}, [], DEFAULT_PERSONALIZATION, [], { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} }, DEFAULT_MULTI_GOALS, {}, {}, { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] }, {});
+      }
     }
   };
 
   const sbSave = async (payload) => {
+    if (!authSession?.user?.id || !authSession?.access_token) throw new Error("No authenticated user");
+    const h = sbUserHeaders(authSession.access_token);
     const res = await safeFetchWithTimeout(SB_URL + "/rest/v1/trainer_data", {
       method: "POST",
-      headers: { ...sbH, "Prefer": "resolution=merge-duplicates" },
-      body: JSON.stringify({ id: SB_ROW, data: payload, updated_at: new Date().toISOString() }),
+      headers: { ...h, "Prefer": "resolution=merge-duplicates" },
+      body: JSON.stringify({ id: `${SB_ROW}_${authSession.user.id}`, user_id: authSession.user.id, data: payload, updated_at: new Date().toISOString() }),
     });
     if (!res.ok) throw new Error("Save failed " + res.status + ": " + await res.text());
   };
@@ -1520,6 +2034,10 @@ export default function TrainerDashboard() {
   const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionFeedback = nutritionFeedback) => {
     const payload = { logs: newLogs, bw: newBW, paceOverrides: newOvr, weekNotes: newNotes, planAlerts: newAlerts, personalization: newPersonalization, goals: newGoals, coachActions: newCoachActions, coachPlanAdjustments: newCoachPlanAdjustments, dailyCheckins: newDailyCheckins, weeklyCheckins: newWeeklyCheckins, nutritionFavorites: newNutritionFavorites, nutritionFeedback: newNutritionFeedback, v: 6, ts: Date.now() };
     localSave(payload);
+    if (!authSession?.user?.id) {
+      setStorageStatus({ mode: "local", label: "LOCAL MODE" });
+      return;
+    }
     try {
       await sbSave(payload);
       setStorageStatus({ mode: "cloud", label: "SYNCED" });
@@ -1530,21 +2048,33 @@ export default function TrainerDashboard() {
   };
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(AUTH_CACHE_KEY);
+      if (raw) setAuthSession(JSON.parse(raw));
+    } catch {}
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!authSession?.user?.id) return;
     (async () => {
+      setLoading(true);
       try {
         await sbLoad();
         setStorageStatus({ mode: "cloud", label: "SYNCED" });
       } catch(e) {
         logDiag("Cloud load failed:", e.message);
         const cache = localLoad();
-        if (cache) {
-          await importData(btoa(unescape(encodeURIComponent(JSON.stringify(cache)))));
-        }
+        if (cache) await importData(btoa(unescape(encodeURIComponent(JSON.stringify(cache)))));
         setStorageStatus({ mode: "local", label: "LOCAL MODE" });
       }
       setLoading(false);
     })();
-  }, []);
+  }, [authSession?.user?.id]);
+
+  useEffect(() => {
+    if (!loading) persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+  }, [goals]);
 
   useEffect(() => {
     if (!loading) persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
@@ -1650,7 +2180,15 @@ export default function TrainerDashboard() {
       nextAdjustments.extra.mealSimplicityMode = true;
       nextWeekNotes[currentWeek] = "Proactive nudge applied: salvage compression (core sessions only).";
     }
-    const nextCoachActions = [{ id:`nudge_${Date.now()}`, ts: Date.now(), type: trigger.actionType, payload: trigger.payload || {}, source: "proactive_nudge" }, ...coachActions].slice(0, 80);
+    const nextCoachActions = [{
+      id:`nudge_${Date.now()}`,
+      ts: Date.now(),
+      type: trigger.actionType,
+      payload: trigger.payload || {},
+      source: trigger.source === "optimization" ? "optimization_experiment" : "proactive_nudge",
+      reason: trigger.msg || "proactive trigger",
+      triggerReason: trigger.id || "trigger"
+    }, ...coachActions].slice(0, 80);
     setCoachActions(nextCoachActions);
     setCoachPlanAdjustments(nextAdjustments);
     setPersonalization(nextPersonalization);
@@ -1848,6 +2386,22 @@ RULES:
     </div>
   );
 
+  if (!authSession?.user?.id) return (
+    <div style={{ background:"#0a0a0f", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Mono',monospace", color:"#e2e8f0", padding:"1rem" }}>
+      <div style={{ width:"100%", maxWidth:380, border:"1px solid #1e293b", borderRadius:10, padding:"1rem", background:"#0d1117" }}>
+        <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.2rem", letterSpacing:"0.12em", color:"#f87171", marginBottom:"0.5rem" }}>ACCOUNT ACCESS</div>
+        <div style={{ fontSize:"0.58rem", color:"#64748b", marginBottom:"0.5rem" }}>Sign in to load your private training state.</div>
+        <input value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="email" style={{ marginBottom:"0.4rem" }} />
+        <input type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="password" style={{ marginBottom:"0.5rem" }} />
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+          <button className="btn btn-primary" onClick={handleSignIn} style={{ fontSize:"0.56rem" }}>SIGN IN</button>
+          <button className="btn" onClick={handleSignUp} style={{ fontSize:"0.56rem", color:"#94a3b8" }}>SIGN UP</button>
+        </div>
+        {authError && <div style={{ marginTop:"0.45rem", fontSize:"0.55rem", color:"#f59e0b" }}>{authError}</div>}
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ fontFamily:"'DM Mono','Courier New',monospace", background:"#0a0a0f", minHeight:"100vh", color:"#e2e8f0", padding:"1.25rem 1rem" }}>
       <style>{`
@@ -1890,7 +2444,9 @@ RULES:
                 color: storageStatus.mode === "cloud" ? "#4ade80" : storageStatus.mode === "local" ? "#f59e0b" : "#334155" }}>
                 {storageStatus.mode === "cloud" ? (lastSaved ? "● SAVED " + lastSaved : "● " + storageStatus.label) : storageStatus.mode === "local" ? "● OFFLINE SAFE MODE" : "● " + storageStatus.label}
               </div>
+              <div style={{ marginTop:4, fontSize:"0.5rem", color:"#64748b" }}>{authSession.user.email}</div>
             </div>
+            <button className="btn" onClick={handleSignOut} style={{ fontSize:"0.5rem" }}>SIGN OUT</button>
           </div>
         </div>
 
@@ -1907,12 +2463,12 @@ RULES:
         {/* ══════════════════════════════════════════════════════════
             TAB 0 — TODAY
         ══════════════════════════════════════════════════════════ */}
-        {tab === 0 && <TodayTab todayWorkout={todayWorkout} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} goals={goals} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={(id)=>setDismissedTriggers(prev=>[...prev,id])} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} saveBodyweights={saveBodyweights} />}
+        {tab === 0 && <TodayTab todayWorkout={todayWorkoutHardened} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} goals={goals} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={(id)=>setDismissedTriggers(prev=>[...prev,id])} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} saveBodyweights={saveBodyweights} />}
 
         {/* ══════════════════════════════════════════════════════════
             TAB 1 — PLAN
         ══════════════════════════════════════════════════════════ */}
-        {tab === 1 && <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goals} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} />}
+        {tab === 1 && <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goals} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} />}
 
         {/* ══════════════════════════════════════════════════════════
             TAB 2 — LOG
@@ -1922,12 +2478,12 @@ RULES:
         {/* ══════════════════════════════════════════════════════════
             TAB 3 — NUTRITION
         ══════════════════════════════════════════════════════════ */}
-        {tab === 3 && <NutritionTab todayWorkout={todayWorkout} personalization={personalization} goals={goals} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={nutritionLayer} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} nutritionFeedback={nutritionFeedback} saveNutritionFeedback={saveNutritionFeedback} />}
+        {tab === 3 && <NutritionTab todayWorkout={todayWorkoutHardened} personalization={personalization} goals={goals} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} nutritionFeedback={nutritionFeedback} saveNutritionFeedback={saveNutritionFeedback} />}
 
         {/* ══════════════════════════════════════════════════════════
             TAB 4 — COACH
         ══════════════════════════════════════════════════════════ */}
-        {tab === 4 && <CoachTab logs={logs} currentWeek={currentWeek} todayWorkout={todayWorkout} bodyweights={bodyweights} personalization={personalization} momentum={momentum} arbitration={arbitration} expectations={expectations} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} nutritionLayer={nutritionLayer} nutritionFeedback={nutritionFeedback} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+        {tab === 4 && <CoachTab logs={logs} currentWeek={currentWeek} todayWorkout={todayWorkoutHardened} bodyweights={bodyweights} personalization={personalization} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFeedback={nutritionFeedback} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
           setCoachPlanAdjustments(nextCoachPlanAdjustments);
@@ -1942,7 +2498,7 @@ RULES:
 }
 
 // ── TODAY TAB ─────────────────────────────────────────────────────────────────
-function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, setEnvironmentMode, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, saveBodyweights }) {
+function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, setEnvironmentMode, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, saveBodyweights }) {
   const week = todayWorkout?.week;
   const zones = todayWorkout?.zones;
   const phaseName = week ? week.phase : "BASE";
@@ -2093,6 +2649,27 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
           <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginBottom:"0.25rem" }}>What remains important: {salvageLayer.compressedPlan.keep.join(" · ")}</div>
           <div style={{ fontSize:"0.56rem", color:"#64748b", marginBottom:"0.25rem" }}>What was removed: {salvageLayer.compressedPlan.remove.join(" · ")}</div>
           <div style={{ fontSize:"0.56rem", color:C.green }}>Success this week: {salvageLayer.compressedPlan.success}</div>
+        </div>
+      )}
+      {validationLayer?.coachNudge && (
+        <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.blue+"40", background:"#09121f" }}>
+          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.3rem" }}>CLOSED-LOOP VALIDATION</div>
+          <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.65 }}>{validationLayer.coachNudge}</div>
+          <div style={{ fontSize:"0.54rem", color:"#64748b", marginTop:"0.2rem" }}>{validationLayer.summary}</div>
+        </div>
+      )}
+      {failureMode.mode !== "normal" && (
+        <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.green+"35", background:"#07140d" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:"0.3rem" }}>FAILURE-MODE HARDENING ACTIVE</div>
+          <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.65 }}>{failureMode.coachBehavior.primaryLine}</div>
+          <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" }}>
+            Horizon: {failureMode.planningHorizonDays} days · Uncertainty: {failureMode.uncertainty} · Expectation: {failureMode.minimumViableStructure.expectation}
+          </div>
+        </div>
+      )}
+      {optimizationLayer?.confidence !== "low" && (
+        <div style={{ marginBottom:"0.55rem", fontSize:"0.55rem", color:"#64748b" }}>
+          Optimization note: {optimizationLayer.coachLine}
         </div>
       )}
 
@@ -2301,7 +2878,7 @@ function WorkoutBlock({ title, color, items }) {
 }
 
 // ── PLAN TAB ──────────────────────────────────────────────────────────────────
-function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, weeklyCheckins, saveWeeklyCheckin }) {
+function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, weeklyCheckins, saveWeeklyCheckin }) {
   const [openWeek, setOpenWeek] = useState(null);
   const [newGoal, setNewGoal] = useState({ name:"", category:"running", priority:2, targetDate:"", measurableTarget:"", active:true });
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
@@ -2312,8 +2889,12 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
   const adjustedWeekMap = {};
   WEEKS.forEach((w, idx) => {
-    if (w.w === currentWeek + 1 || w.w === currentWeek + 2) {
-      const baseAdaptive = buildAdaptiveWeek(w, signals, personalization);
+    const horizonWeeks = failureMode.planningHorizonDays <= 4 ? [currentWeek + 1] : [currentWeek + 1, currentWeek + 2];
+    if (horizonWeeks.includes(w.w)) {
+      const baseAdaptive = buildAdaptiveWeek(w, signals, personalization, memoryInsights);
+      if (recalibration?.active && recalibration.aggressiveness === "lower") {
+        baseAdaptive.changed.unshift("Recalibration: weekly density reduced for better consistency.");
+      }
       if (learningLayer.adaptation?.reduceDensity) {
         baseAdaptive.adjusted.mon.d = scaleMilesString(baseAdaptive.adjusted.mon.d, 0.88);
         baseAdaptive.adjusted.fri.d = scaleMilesString(baseAdaptive.adjusted.fri.d, 0.88);
@@ -2354,6 +2935,19 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
           {salvageLayer.compressedPlan.keep.map((k,i)=><div key={i} style={{ fontSize:"0.57rem", color:"#e2e8f0", marginBottom:"0.15rem" }}>• Keep: {k}</div>)}
           {salvageLayer.compressedPlan.remove.map((r,i)=><div key={i} style={{ fontSize:"0.55rem", color:"#64748b", marginBottom:"0.1rem" }}>• Removed: {r}</div>)}
           <div style={{ fontSize:"0.56rem", color:C.green, marginTop:"0.2rem" }}>Success = {salvageLayer.compressedPlan.success}</div>
+        </div>
+      )}
+      {failureMode.mode !== "normal" && (
+        <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.green+"40", background:"#07140d" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:"0.4rem" }}>
+            {failureMode.isReEntry ? "RE-ENTRY WEEK ACTIVE" : "LOW-COMPLEXITY PLANNING MODE"}
+          </div>
+          <div style={{ fontSize:"0.57rem", color:"#cbd5e1", lineHeight:1.65, marginBottom:"0.25rem" }}>{failureMode.coachBehavior.primaryLine}</div>
+          <div style={{ fontSize:"0.55rem", color:"#94a3b8", marginBottom:"0.2rem" }}>Planning horizon shortened to {failureMode.planningHorizonDays} days.</div>
+          {failureMode.minimumViableStructure.sessions.map((s, i) => (
+            <div key={i} style={{ fontSize:"0.56rem", color:"#e2e8f0", marginBottom:"0.12rem" }}>• {s}</div>
+          ))}
+          <div style={{ fontSize:"0.54rem", color:"#64748b", marginTop:"0.15rem" }}>{failureMode.minimumViableStructure.expectation}</div>
         </div>
       )}
 
@@ -2476,6 +3070,9 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
           <div><span style={{ color:C.blue }}>Expectation:</span> {weeklyReview.expectation}</div>
           <div><span style={{ color:C.blue }}>Condition:</span> {weeklyReview.expectationCondition}</div>
           <div><span style={{ color:C.blue }}>Motivation:</span> {weeklyReview.expectationMotivation}</div>
+          <div><span style={{ color:C.blue }}>Recalibration:</span> {weeklyReview.recalibrationSummary}</div>
+          <div><span style={{ color:C.blue }}>Why:</span> {weeklyReview.recalibrationWhy}</div>
+          {weeklyReview.recalibrationChanges.map((c, i) => <div key={`rc_${i}`}><span style={{ color:C.blue }}>Change:</span> {c}</div>)}
         </div>
         {patterns.length > 0 && <div style={{ marginTop:"0.35rem", fontSize:"0.55rem", color:"#64748b" }}>Pattern signals: {patterns.join(" · ")}</div>}
       </div>
@@ -2487,6 +3084,14 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
           <div>• {expectations.strengthExpectation}</div>
         </div>
       </div>
+      {memoryInsights.length > 0 && (
+        <div className="card" style={{ marginBottom:"0.75rem" }}>
+          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>LONG-TERM MEMORY (HIGH CONFIDENCE)</div>
+          <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.7 }}>
+            {memoryInsights.slice(0,4).map((m, i) => <div key={m.key || i}>• {m.label}</div>)}
+          </div>
+        </div>
+      )}
       <div style={{ marginBottom:"0.75rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.6rem 0.75rem", display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.35rem" }}>
         {[["Adherence",(signals.adherenceScore*100).toFixed(0)+"%",C.green],["Fatigue",signals.fatigueFlag?"High":"Managed",signals.fatigueFlag?C.red:C.blue],["Momentum",signals.momentumFlag?"Up":"Neutral",signals.momentumFlag?C.green:"#64748b"],["Readiness",signals.readiness.toUpperCase(),C.amber]].map(([l,v,col])=>(
           <div key={l}>
@@ -2969,7 +3574,7 @@ const buildGroceryBasket = ({ store, city, days, dayType }) => {
 };
 
 // ── NUTRITION TAB ─────────────────────────────────────────────────────────────
-function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
+function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer, realWorldNutrition, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
   const [mode, setMode] = useState("home");
   const [dayType, setDayType] = useState(nutritionLayer.dayType || todayWorkout?.nutri || "easyRun");
   const [query, setQuery] = useState("");
@@ -3080,6 +3685,22 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
       </div>
 
       <div className="card" style={{ marginBottom:"0.8rem" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>REAL-WORLD NUTRITION ENGINE</div>
+        <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.7, marginBottom:"0.35rem" }}>
+          <div><span style={{ color:C.blue }}>Breakfast:</span> {realWorldNutrition.mealStructure.breakfast}</div>
+          <div><span style={{ color:C.blue }}>Lunch:</span> {realWorldNutrition.mealStructure.lunch}</div>
+          <div><span style={{ color:C.blue }}>Dinner:</span> {realWorldNutrition.mealStructure.dinner}</div>
+          <div><span style={{ color:C.blue }}>Protein anchor:</span> {realWorldNutrition.mealStructure.proteinAnchor}</div>
+        </div>
+        <div style={{ fontSize:"0.55rem", color:"#64748b", marginBottom:"0.2rem" }}>Restaurant-style options:</div>
+        {realWorldNutrition.restaurantOptions.slice(0,4).map((x, i) => <div key={`rw_rest_${i}`} style={{ fontSize:"0.56rem", color:"#94a3b8" }}>• {x}</div>)}
+        <div style={{ fontSize:"0.55rem", color:"#64748b", margin:"0.35rem 0 0.2rem" }}>Grocery-based options:</div>
+        {realWorldNutrition.groceryOptions.slice(0,4).map((x, i) => <div key={`rw_groc_${i}`} style={{ fontSize:"0.56rem", color:"#94a3b8" }}>• {x}</div>)}
+        <div style={{ fontSize:"0.55rem", color:C.amber, margin:"0.35rem 0 0.2rem" }}>Fallback no-thinking meals:</div>
+        {realWorldNutrition.fallback.map((x, i) => <div key={`rw_fb_${i}`} style={{ fontSize:"0.56rem", color:"#94a3b8" }}>• {x}</div>)}
+      </div>
+
+      <div className="card" style={{ marginBottom:"0.8rem" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.55rem" }}>BEST NEARBY OPTIONS</div>
         <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Try: best nearby lunch options / high-protein dinner near me" style={{ marginBottom:"0.5rem" }} />
         <div style={{ fontSize:"0.54rem", color: placesStatus === "live" ? C.green : "#475569", marginBottom:"0.35rem" }}>
@@ -3160,7 +3781,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
 }
 
 // ── COACH TAB ─────────────────────────────────────────────────────────────────
-function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalization, momentum, arbitration, expectations, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, nutritionLayer, nutritionFeedback, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
+function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalization, momentum, arbitration, expectations, memoryInsights, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, nutritionLayer, realWorldNutrition, nutritionFeedback, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -3178,7 +3799,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   useEffect(() => {
     setMessages([{
       role:"assistant",
-      packet: deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, momentum, strengthLayer, nutritionLayer, arbitration, expectations }),
+      packet: deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, realWorldNutrition, recalibration }),
       source: "deterministic"
     }]);
   }, []);
@@ -3281,7 +3902,13 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   const commitAction = async (action) => {
     const runtime = { adjustments: coachPlanAdjustments, weekNotes, planAlerts, personalization };
     const mutation = applyCoachAction(action, runtime);
-    const nextActions = [{ ...action, id:`coach_act_${Date.now()}`, ts: Date.now(), source: "coach_confirmed" }, ...coachActions].slice(0, 60);
+    const nextActions = [{
+      ...action,
+      id:`coach_act_${Date.now()}`,
+      ts: Date.now(),
+      source: "coach_confirmed",
+      reason: action.reason || action.rationale || action.payload?.reason || "coach-confirmed adaptation"
+    }, ...coachActions].slice(0, 60);
     setCoachActions(nextActions);
     setCoachPlanAdjustments(mutation.adjustments);
     setWeekNotes(mutation.weekNotes);
@@ -3291,7 +3918,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   };
 
   const getCoachResponse = async (userMsg) => {
-    const deterministic = deterministicCoachPacket({ input: userMsg, todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, momentum, strengthLayer, nutritionLayer, arbitration, expectations });
+    const deterministic = deterministicCoachPacket({ input: userMsg, todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, realWorldNutrition, recalibration });
     if (coachMode === "deterministic" || !apiKey) return { ...deterministic, source: "deterministic" };
     try {
       const res = await safeFetchWithTimeout("https://api.anthropic.com/v1/messages", {
@@ -3400,11 +4027,46 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
         Expectation outlook: {expectations.nextWindow} {expectations.conditionLine}
       </div>
+      {recalibration?.active && (
+        <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:C.amber, background:"#0d1117", border:`1px solid ${C.amber}35`, borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
+          Recalibration active: {recalibration.why} Next: {recalibration.expect}
+        </div>
+      )}
+      {memoryInsights.length > 0 && (
+        <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
+          Long-term memory guiding decisions: {memoryInsights.slice(0,3).map(m => m.label).join(" · ")}
+        </div>
+      )}
       <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#64748b", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem" }}>
         Learning bias: {learningLayer.adjustmentBias} · {(learningLayer.topObservations || []).slice(0,2).map(o => o.msg).join(" · ") || "Collecting check-ins."}
       </div>
+      {optimizationLayer?.confidence !== "low" && (
+        <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.65 }}>
+          Personal optimization: {optimizationLayer.coachLine}
+          <div style={{ marginTop:"0.2rem", color:"#64748b" }}>
+            Zones: {optimizationLayer.optimalZones.optimalDeficitRange} · {optimizationLayer.optimalZones.optimalComplexity}. Experiment cadence: {optimizationLayer.experimentation.canExperiment ? "eligible now" : `cooldown ${Math.max(0, 10 - optimizationLayer.experimentation.cooldownDays)}d`}.
+          </div>
+        </div>
+      )}
+      {failureMode.mode !== "normal" && (
+        <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:C.green, background:"#09170e", border:`1px solid ${C.green}35`, borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.65 }}>
+          Failure-mode coach behavior: {failureMode.coachBehavior.primaryLine}
+          <div style={{ marginTop:"0.2rem", color:"#94a3b8" }}>Guidance style: no guilt, simplify immediately, forward-looking momentum rebuild.</div>
+        </div>
+      )}
+      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.65 }}>
+        Closed-loop validation: {validationLayer.summary}
+        {(validationLayer.recentResolved || []).length > 0 && (
+          <div style={{ marginTop:"0.2rem", color:"#64748b" }}>
+            {(validationLayer.recentResolved || []).slice(0,2).map(r => `${r.changed} → ${r.impact}`).join(" · ")}
+          </div>
+        )}
+      </div>
       <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#64748b", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem" }}>
         Nutrition strategy: {nutritionLayer.calRange} cal · {nutritionLayer.carbGuidance} · {nutritionLayer.tradeoff}
+      </div>
+      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem" }}>
+        Real-world nutrition prompt: {realWorldNutrition.coachPrompt}
       </div>
       <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:salvageLayer.active ? C.amber : "#64748b", background:"#0d1117", border:`1px solid ${salvageLayer.active ? C.amber+"40" : "#1e293b"}`, borderRadius:8, padding:"0.45rem 0.65rem" }}>
         Salvage mode: {salvageLayer.active ? `ON — ${salvageLayer.triggerReasons.join(" · ")}` : "OFF"}.
