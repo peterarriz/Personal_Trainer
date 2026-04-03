@@ -1,4 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildRollingHorizonWeeks } from "./modules-planning.js";
+import { createAuthStorageModule } from "./modules-auth-storage.js";
+import { NUTRITION, getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, LOCAL_PLACE_TEMPLATES, explainMacroShift, getPlaceRecommendations, buildGroceryBasket } from "./modules-nutrition.js";
+import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer } from "./modules-checkins.js";
 
 // ── PROFILE ──────────────────────────────────────────────────────────────────
 const PROFILE = {
@@ -7,62 +11,6 @@ const PROFILE = {
   startDate: new Date("2026-03-23"),
   tdee: 3100,
   pushUpMax: 33,
-};
-
-// ── NUTRITION TARGETS ─────────────────────────────────────────────────────────
-const NUTRITION = {
-  longRun:   { cal: 2900, p: 190, c: 320, f: 70, label: "Long Run Day" },
-  hardRun:   { cal: 2700, p: 190, c: 280, f: 68, label: "Hard Run Day" },
-  easyRun:   { cal: 2600, p: 190, c: 255, f: 68, label: "Easy Run Day" },
-  otf:       { cal: 2650, p: 190, c: 265, f: 68, label: "OTF Day" },
-  strength:  { cal: 2500, p: 190, c: 220, f: 72, label: "Strength Only Day" },
-  rest:      { cal: 2350, p: 185, c: 195, f: 72, label: "Rest Day" },
-  travelRun: { cal: 2650, p: 185, c: 270, f: 68, label: "Travel + Run Day" },
-  travelRest:{ cal: 2300, p: 180, c: 190, f: 70, label: "Travel Rest Day" },
-};
-
-const MEAL_PLANS = {
-  home: {
-    longRun: [
-      { meal: "Pre-run (1hr before)", foods: ["1 cup oats + banana + honey", "Black coffee"], cal: 380, p: 12, c: 78, f: 4 },
-      { meal: "Post-run (within 30 min)", foods: ["Protein shake (40g protein)", "2 rice cakes + peanut butter"], cal: 480, p: 45, c: 42, f: 12 },
-      { meal: "Lunch", foods: ["8oz chicken breast", "1.5 cups white rice", "Broccoli + olive oil"], cal: 680, p: 60, c: 75, f: 14 },
-      { meal: "Snack", foods: ["Greek yogurt (plain, 2%)", "Berries + granola"], cal: 320, p: 22, c: 38, f: 8 },
-      { meal: "Dinner", foods: ["8oz salmon", "Sweet potato", "Mixed greens + avocado"], cal: 720, p: 52, c: 55, f: 28 },
-      { meal: "Before bed", foods: ["Cottage cheese (1 cup)", "Casein shake optional"], cal: 200, p: 24, c: 8, f: 5 },
-    ],
-    training: [
-      { meal: "Breakfast", foods: ["4 eggs scrambled", "2 slices sourdough", "Avocado"], cal: 580, p: 32, c: 48, f: 28 },
-      { meal: "Lunch", foods: ["Ground turkey bowl", "Brown rice", "Black beans + salsa"], cal: 650, p: 52, c: 68, f: 14 },
-      { meal: "Snack", foods: ["Protein bar or shake", "Apple"], cal: 300, p: 25, c: 32, f: 8 },
-      { meal: "Dinner", foods: ["8oz steak or chicken", "Roasted veg", "Quinoa"], cal: 680, p: 55, c: 55, f: 20 },
-      { meal: "Evening", foods: ["Greek yogurt or cottage cheese"], cal: 180, p: 22, c: 8, f: 4 },
-    ],
-    rest: [
-      { meal: "Breakfast", foods: ["3 eggs + 2 whites", "Spinach omelette", "1 slice toast"], cal: 420, p: 35, c: 28, f: 18 },
-      { meal: "Lunch", foods: ["Large salad + 6oz chicken", "Olive oil dressing"], cal: 480, p: 48, c: 18, f: 20 },
-      { meal: "Snack", foods: ["Protein shake", "Handful almonds"], cal: 310, p: 30, c: 14, f: 16 },
-      { meal: "Dinner", foods: ["6oz lean protein", "Roasted veg", "Small portion starch"], cal: 520, p: 45, c: 40, f: 16 },
-    ]
-  },
-  travel: {
-    tips: [
-      "Prioritize protein first at every meal — order the biggest lean protein option on the menu",
-      "Hotel breakfast: eggs + Greek yogurt + fruit. Skip pastries and waffles.",
-      "Bring: protein powder single-serve packets, protein bars (Quest/RXBar), mixed nuts",
-      "At restaurants: ask for sauces on the side, double protein, swap fries for veg or side salad",
-      "Airport: Chipotle (double chicken bowl, no sour cream), Subway (double meat on whole wheat), any salad with grilled protein",
-      "Hydration: aim for 100oz water on travel days — airports and hotels are dehydrating",
-      "Room service hack: grilled chicken or salmon + steamed veg + plain rice = clean macro hit",
-    ],
-    gym: {
-      chest: ["Barbell Bench Press 4×8", "Incline DB Press 3×10", "Cable Fly 3×12", "Dips 3×failure"],
-      back: ["Pull-ups 4×8", "Barbell Row 4×8", "Cable Row 3×12", "Face Pull 3×15"],
-      arms: ["EZ Bar Curl 4×10", "Hammer Curl 3×12", "Tricep Pushdown 4×12", "Skull Crushers 3×10"],
-      legs: ["Squat 4×8", "Romanian Deadlift 3×10", "Leg Press 3×12", "Calf Raise 4×15"],
-      full: ["Deadlift 4×5", "DB Bench 3×10", "Pull-up 3×8", "Lunge 3×12 each", "Plank 3×60sec"],
-    }
-  }
 };
 
 // ── PLAN DATA ─────────────────────────────────────────────────────────────────
@@ -499,326 +447,6 @@ const DEFAULT_MULTI_GOALS = [
   { id: "g_bench", name: "Bench 225 lbs", category: "strength", priority: 3, targetDate: "2026-09-01", measurableTarget: "225 x 1", active: true },
   { id: "g_injury", name: "Avoid injury flare-ups", category: "injury_prevention", priority: 1, targetDate: "", measurableTarget: "No flare-up weeks", active: true },
 ];
-
-const getGoalContext = (goals) => {
-  const active = (goals || []).filter(g => g.active).sort((a,b) => a.priority - b.priority);
-  const primary = active[0] || null;
-  const secondary = active.slice(1,3);
-  const maintenance = active.slice(3);
-  const tradeoffs = [];
-  if (primary?.category === "running" && secondary.find(g => g.category === "strength")) tradeoffs.push("Strength volume stays focused (2 sessions) to protect run quality.");
-  if (secondary.find(g => g.category === "body_comp")) tradeoffs.push("Body comp progress uses nutrition precision, not extra fatigue-heavy cardio.");
-  if (active.find(g => g.category === "injury_prevention")) tradeoffs.push("Injury prevention can downgrade intensity before it removes consistency.");
-  return { primary, secondary, maintenance, tradeoffs };
-};
-
-const daysUntil = (dateStr) => {
-  if (!dateStr) return 9999;
-  const t = new Date(`${dateStr}T12:00:00`).getTime();
-  if (Number.isNaN(t)) return 9999;
-  return Math.floor((t - Date.now()) / 86400000);
-};
-
-const composeGoalNativePlan = ({ goals, personalization, momentum, learningLayer, currentWeek, baseWeek }) => {
-  const active = (goals || []).filter(g => g.active).sort((a, b) => a.priority - b.priority);
-  const primary = active[0] || null;
-  const secondary = active.slice(1, 3);
-  const env = personalization?.travelState?.environmentMode || personalization?.travelState?.access || "home";
-  const hasGym = ["full gym", "limited gym"].includes(env);
-  const runningGoal = active.find(g => g.category === "running");
-  const strengthGoal = active.find(g => g.category === "strength");
-  const bodyCompGoal = active.find(g => g.category === "body_comp");
-  const raceNear = daysUntil(runningGoal?.targetDate) <= 56;
-  const inconsistencyRisk = momentum?.inconsistencyRisk || "medium";
-  const lowBandwidth = inconsistencyRisk === "high" || learningLayer?.adjustmentBias === "simplify";
-
-  const runningScore = (primary?.category === "running" ? 3 : 0) + (runningGoal ? 2 : 0) + (raceNear ? 2 : 0);
-  const strengthScore = (primary?.category === "strength" ? 3 : 0) + (strengthGoal ? 2 : 0) + (hasGym ? 1 : -1);
-  const bodyCompScore = (primary?.category === "body_comp" ? 3 : 0) + (bodyCompGoal ? 2 : 0) + (lowBandwidth ? 1 : 0);
-
-  let architecture = "hybrid_performance";
-  if (lowBandwidth) architecture = "maintenance_rebuild";
-  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && (raceNear || primary?.category === "running")) architecture = "race_prep_dominant";
-  else if (bodyCompScore >= Math.max(runningScore, strengthScore)) architecture = "body_comp_conditioning";
-  else if (strengthScore >= Math.max(runningScore, bodyCompScore)) architecture = hasGym ? "strength_dominant" : "hybrid_performance";
-
-  const splits = {
-    race_prep_dominant: { run: 4, strength: 2, conditioning: 1, recovery: 1 },
-    strength_dominant: { run: 2, strength: 4, conditioning: 1, recovery: 1 },
-    body_comp_conditioning: { run: 2, strength: 3, conditioning: 2, recovery: 1 },
-    hybrid_performance: { run: 3, strength: 3, conditioning: 1, recovery: 1 },
-    maintenance_rebuild: { run: 2, strength: 2, conditioning: 1, recovery: 2 },
-  };
-  const split = splits[architecture];
-
-  const constraints = [];
-  if (!hasGym && strengthGoal) constraints.push("Bench-specific progression constrained by no gym access; using home/limited-equipment substitutes.");
-  if (architecture !== "race_prep_dominant" && runningGoal) constraints.push("Running kept supportive/maintenance until running priority or race proximity increases.");
-  const why = [
-    `Primary goal: ${primary?.name || "none set"}.`,
-    `Environment: ${env}.`,
-    `Inconsistency risk: ${inconsistencyRisk}.`,
-    bodyCompGoal ? "Body-comp goal is active and materially affects split allocation." : null,
-    raceNear ? "Race date is near enough to increase running weight." : null,
-  ].filter(Boolean);
-
-  const dayTemplates = {
-    race_prep_dominant: {
-      1: { type: "run+strength", label: "Quality Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "hardRun" },
-      2: { type: "conditioning", label: "Conditioning / OTF", nutri: "otf" },
-      3: { type: "strength+prehab", label: "Strength + Prehab", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
-      4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
-      5: { type: "easy-run", label: "Easy Run", run: baseWeek.fri, nutri: "easyRun" },
-      6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: "longRun" },
-      0: { type: "rest", label: "Recovery / Mobility", nutri: "rest" },
-    },
-    strength_dominant: {
-      1: { type: "strength+prehab", label: "Strength Priority A", strSess: "A", nutri: "strength" },
-      2: { type: "easy-run", label: "Supportive Conditioning Run", run: { t: "Easy", d: "20-30 min zone-2" }, nutri: "easyRun" },
-      3: { type: "strength+prehab", label: "Strength Priority B", strSess: "B", nutri: "strength" },
-      4: { type: "strength+prehab", label: "Upper Push/Pull Strength", strSess: "A", nutri: "strength" },
-      5: { type: "easy-run", label: "Conditioning Support", run: { t: "Easy", d: "20-25 min + strides optional" }, nutri: "easyRun" },
-      6: { type: "strength+prehab", label: "Full-Body Strength", strSess: "B", nutri: "strength" },
-      0: { type: "rest", label: "Recovery / Mobility", nutri: "rest" },
-    },
-    body_comp_conditioning: {
-      1: { type: "strength+prehab", label: "Metabolic Strength A", strSess: "A", nutri: "strength" },
-      2: { type: "easy-run", label: "Conditioning (low-friction)", run: { t: "Easy", d: "25-35 min zone-2" }, nutri: "easyRun" },
-      3: { type: "strength+prehab", label: "Metabolic Strength B", strSess: "B", nutri: "strength" },
-      4: { type: "conditioning", label: "Conditioning Intervals / OTF", nutri: "otf" },
-      5: { type: "strength+prehab", label: "Strength Retention", strSess: "A", nutri: "strength" },
-      6: { type: "easy-run", label: "Supportive Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: "easyRun" },
-      0: { type: "rest", label: "Recovery / Steps + Mobility", nutri: "rest" },
-    },
-    hybrid_performance: {
-      1: { type: "run+strength", label: "Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "easyRun" },
-      2: { type: "conditioning", label: "Conditioning", nutri: "otf" },
-      3: { type: "strength+prehab", label: "Strength B + Prehab", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
-      4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
-      5: { type: "strength+prehab", label: "Strength Focus", strSess: baseWeek.str, nutri: "strength" },
-      6: { type: "easy-run", label: "Supportive Endurance", run: baseWeek.fri, nutri: "easyRun" },
-      0: { type: "rest", label: "Recovery", nutri: "rest" },
-    },
-    maintenance_rebuild: {
-      1: { type: "strength+prehab", label: "Minimum Viable Strength", strSess: "A", nutri: "strength" },
-      2: { type: "rest", label: "Recovery / Walk", nutri: "rest" },
-      3: { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: "easyRun" },
-      4: { type: "strength+prehab", label: "Minimum Viable Strength B", strSess: "B", nutri: "strength" },
-      5: { type: "rest", label: "Recovery", nutri: "rest" },
-      6: { type: "conditioning", label: "Optional Conditioning", nutri: "easyRun" },
-      0: { type: "rest", label: "Recovery", nutri: "rest" },
-    },
-  };
-
-  return {
-    architecture,
-    split,
-    why,
-    constraints,
-    drivers: [primary?.name, ...secondary.map(g => g.name)].filter(Boolean),
-    unlockMessage: !hasGym && strengthGoal ? "When gym access returns, bench-specific progression can move from foundation mode to direct loading." : "",
-    dayTemplates: dayTemplates[architecture],
-  };
-};
-
-const DEFAULT_PLANNING_HORIZON_WEEKS = 12;
-const getSpecificityBand = (offset) => offset <= 1 ? "high" : offset <= 5 ? "medium" : "directional";
-const getHorizonAnchor = (goals = [], horizonWeeks = DEFAULT_PLANNING_HORIZON_WEEKS) => {
-  const activeDated = (goals || []).filter(g => g.active && g.targetDate).map(g => ({ ...g, days: daysUntil(g.targetDate) })).filter(g => g.days >= 0).sort((a,b) => a.days - b.days);
-  const nearest = activeDated[0] || null;
-  if (!nearest) return { nearest: null, withinHorizon: false, weekIndex: null };
-  const weekIndex = Math.ceil((nearest.days + 1) / 7);
-  return { nearest, withinHorizon: weekIndex <= horizonWeeks, weekIndex };
-};
-
-const buildRollingHorizonWeeks = ({ currentWeek, horizonWeeks = DEFAULT_PLANNING_HORIZON_WEEKS, goals }) => {
-  const anchor = getHorizonAnchor(goals, horizonWeeks);
-  return Array.from({ length: horizonWeeks }).map((_, idx) => {
-    const absoluteWeek = currentWeek + idx;
-    const template = WEEKS[(absoluteWeek - 1) % WEEKS.length] || WEEKS[0];
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() + (idx * 7));
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + 6);
-    return {
-      slot: idx + 1,
-      absoluteWeek,
-      template,
-      specificity: getSpecificityBand(idx),
-      startDate,
-      endDate,
-      anchorHit: anchor.withinHorizon && anchor.weekIndex === (idx + 1),
-    };
-  });
-};
-
-const applyGoalNutritionTargets = (targets, dayType, goalContext) => {
-  if (!goalContext?.primary) return targets;
-  let t = { ...targets };
-  if (goalContext.secondary.find(g => g.category === "body_comp") && !["longRun","hardRun","travelRun"].includes(dayType)) {
-    t.cal = Math.max(2100, t.cal - 120);
-    t.c = Math.max(140, t.c - 20);
-  }
-  if (goalContext.secondary.find(g => g.category === "strength")) {
-    t.p = Math.max(t.p, 200);
-  }
-  return t;
-};
-
-const mapWorkoutToNutritionDayType = (todayWorkout, environmentMode) => {
-  const wt = (todayWorkout?.type || "").toLowerCase();
-  if (environmentMode === "travel" || environmentMode === "no equipment") return wt === "rest" ? "travelRest" : "travelRun";
-  if (wt === "long-run" || todayWorkout?.run?.t === "Long") return "longRun";
-  if (wt === "hard-run" || ["Tempo", "Intervals"].includes(todayWorkout?.run?.t)) return "hardRun";
-  if (wt === "run+strength") return "otf";
-  if (wt === "strength+prehab" || wt.includes("strength")) return "strength";
-  if (wt === "rest") return "rest";
-  return "easyRun";
-};
-
-const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer, failureMode }) => {
-  const goalContext = getGoalContext(goals);
-  const environmentMode = personalization.travelState.environmentMode || personalization.travelState.access || "home";
-  const dayType = mapWorkoutToNutritionDayType(todayWorkout, environmentMode);
-  let target = applyGoalNutritionTargets(NUTRITION[dayType] || NUTRITION.easyRun, dayType, goalContext);
-  const feedback = Object.values(nutritionFeedback || {}).slice(-10);
-  const memory = personalization?.coachMemory?.longTermMemory || [];
-  const memorySimpleMeals = memory.some(m => m.key === "nutrition_simple_meals" && ["medium","high"].includes(m.confidence));
-  const offTrackCount = feedback.filter(f => f.status === "off_track").length;
-  const hungerHits = feedback.filter(f => f.issue === "hunger").length;
-  const convenienceHits = feedback.filter(f => f.issue === "convenience").length;
-  const trend14 = (bodyweights || []).slice(-14);
-  const bwDelta14 = trend14.length >= 2 ? trend14[trend14.length - 1].w - trend14[0].w : 0;
-  const fatLossActive = [goalContext.primary, ...(goalContext.secondary || [])].filter(Boolean).some(g => g.category === "body_comp");
-  const strengthActive = [goalContext.primary, ...(goalContext.secondary || [])].filter(Boolean).some(g => g.category === "strength");
-  const endurancePrimary = goalContext.primary?.category === "running";
-
-  let deficitMode = "none";
-  if (fatLossActive && !["longRun","hardRun"].includes(dayType)) deficitMode = "moderate";
-  if (["drifting","falling off"].includes(momentum.momentumState) || learningLayer?.adjustmentBias === "simplify") deficitMode = "minimal";
-  if (bwDelta14 <= -2.2) deficitMode = "none";
-  if (hungerHits >= 2) deficitMode = "minimal";
-
-  if (deficitMode === "moderate") target = { ...target, cal: Math.max(2100, target.cal - 170), c: Math.max(150, target.c - 20) };
-  if (deficitMode === "minimal") target = { ...target, cal: Math.max(2200, target.cal - 70) };
-  if (bwDelta14 <= -2.2) target = { ...target, cal: target.cal + 140, c: target.c + 20 };
-  const extra = coachPlanAdjustments?.extra || {};
-  if (extra.nutritionCalorieDelta) target = { ...target, cal: target.cal + extra.nutritionCalorieDelta };
-  if (extra.nutritionDeficitReduction) target = { ...target, cal: target.cal + extra.nutritionDeficitReduction };
-  if (extra.carbShift?.pre || extra.carbShift?.post) target = { ...target, c: target.c + Math.round(((extra.carbShift.pre || 0) + (extra.carbShift.post || 0)) * 0.4) };
-  if (strengthActive && environmentMode === "no equipment") target = { ...target, p: Math.max(target.p, 195), c: Math.max(target.c, 210) };
-  if (endurancePrimary && ["longRun","hardRun","travelRun"].includes(dayType)) target = { ...target, c: target.c + 15 };
-  if (hungerHits >= 2) target = { ...target, f: Math.max(target.f, 72) };
-
-  const uncertaintyHigh = offTrackCount >= 3 || ["drifting","falling off"].includes(momentum.momentumState) || convenienceHits >= 2 || failureMode?.staleData;
-  const calRange = uncertaintyHigh ? `${Math.max(2000, target.cal - 120)}-${target.cal + 120}` : `${target.cal - 60}-${target.cal + 60}`;
-  const proteinTarget = `${target.p}-${target.p + 10}g`;
-  const carbGuidance = ["longRun","hardRun","travelRun"].includes(dayType)
-    ? "High carbs around key run (pre + post)."
-    : dayType === "strength"
-    ? "Moderate carbs around lifting window."
-    : "Balanced carbs; emphasize produce + easy starches.";
-  const fatGuidance = `Fat floor ${Math.max(60, target.f - 6)}g; keep fats lower pre-run and distribute later meals.`;
-  const hydration = environmentMode === "travel" ? "Hydration target: 100-120 oz + electrolytes while traveling." : "Hydration target: 90-110 oz + electrolytes on training days.";
-  const fueling = ["longRun","hardRun","travelRun"].includes(dayType)
-    ? "Pre: 30-60g carbs 60-90 min before. Post: 30-40g protein + 60-90g carbs."
-    : dayType === "strength" || dayType === "otf"
-    ? "Pre: light carb + protein snack. Post: 30-40g protein + carb meal."
-    : "Prioritize protein at each meal; no special workout fueling needed.";
-  const mealStructure = failureMode?.chaotic || failureMode?.isLowEngagement || salvageLayer?.active || memorySimpleMeals || extra.mealSimplicityMode || extra.defaultMealStructureDays > 0 || environmentMode === "travel" || convenienceHits >= 2
-    ? ["3 simple meals + 1 protein snack", "Use one saved safe default meal", "Anchor breakfast + protein-forward dinner"]
-    : dayType === "longRun"
-    ? ["Lighter pre-run meal", "Bigger post-run lunch", "Higher-carb dinner"]
-    : dayType === "rest"
-    ? ["3 meals + 1 protein snack", "Lower-energy-dense carbs", "Veg + protein at lunch/dinner"]
-    : ["3 meals + 1 protein snack", "Carb focus around training window", "Protein at every meal"];
-
-  const tradeoff = fatLossActive && endurancePrimary
-    ? "Tradeoff: moderate deficit while protecting run fueling quality."
-    : fatLossActive && strengthActive
-    ? "Tradeoff: fat loss pace is moderated to keep strength output stable."
-    : learningLayer?.adjustmentBias === "simplify"
-    ? "Tradeoff: simplicity beats precision this week to protect adherence."
-    : "Tradeoff: balanced fueling supports mixed-goal progress.";
-
-  return {
-    dayType,
-    targets: target,
-    calRange,
-    proteinTarget,
-    carbGuidance,
-    fatGuidance,
-    hydration,
-    fueling,
-    mealStructure,
-    tradeoff,
-    why: `Day type ${dayType}, momentum ${momentum.momentumState}, environment ${environmentMode}, BW trend ${bwDelta14.toFixed(1)} lbs/14d.`,
-  };
-};
-
-const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext, nutritionLayer, momentum, favorites, travelMode, learningLayer }) => {
-  const city = location || "your area";
-  const perfBias = goalContext?.primary?.category === "running" || dayType === "longRun" || dayType === "hardRun";
-  const fatLossBias = [goalContext?.primary, ...(goalContext?.secondary || [])].filter(Boolean).some(g => g.category === "body_comp");
-  const lowFriction = ["drifting","falling off"].includes(momentum?.momentumState) || learningLayer?.adjustmentBias === "simplify";
-  const baseProteinAnchor = perfBias ? "35-45g protein" : "30-40g protein";
-
-  const mealStructure = {
-    breakfast: `${baseProteinAnchor} + easy carbs (${perfBias ? "oats/fruit/toast" : "fruit/toast optional"})`,
-    lunch: `${baseProteinAnchor} + veg + starch matched to training day`,
-    dinner: `${baseProteinAnchor} + produce + simple carb portion`,
-    proteinAnchor: baseProteinAnchor
-  };
-
-  const restaurantPool = travelMode
-    ? [
-      "Coffee chain: egg bites + protein box + fruit",
-      "Chipotle-style bowl: double protein, rice, fajita veg, salsa",
-      "Mediterranean bowl: chicken/lamb, rice, salad, extra protein",
-      "Deli/sandwich shop: turkey/chicken sandwich + side salad"
-    ]
-    : [
-      "Chipotle bowl: double protein, rice, beans, veggies",
-      "Sweetgreen-style salad: protein + grain base + olive oil on side",
-      "Subway-style order: double meat, whole grain bread, extra veg",
-      "Sushi combo: sashimi + rice + miso/salad"
-    ];
-
-  const groceryPool = [
-    "Rotisserie chicken + bagged salad + microwave rice",
-    "Greek yogurt bowl + fruit + granola + protein shake",
-    "Egg scramble + frozen veggies + toast",
-    "Lean ground meat + frozen stir-fry veg + rice"
-  ];
-
-  const fallback = [
-    "Protein shake + banana + nuts",
-    "Deli turkey wrap + fruit",
-    "Greek yogurt + protein bar"
-  ];
-
-  const favoriteMeals = (favorites?.safeMeals || []).map(m => typeof m === "string" ? m : `${m.name}: ${m.meal}`).slice(0, 2);
-  const favoriteRestaurants = (favorites?.restaurants || []).slice(0, 2);
-  const restaurantOptions = [...favoriteRestaurants, ...restaurantPool].slice(0, lowFriction ? 2 : 4);
-  const groceryOptions = [...favoriteMeals, ...groceryPool].slice(0, lowFriction ? 2 : 4);
-
-  const modeLabel = fatLossBias && !perfBias ? "fat-loss support mode" : perfBias ? "performance support mode" : "balanced mode";
-  const coachPrompt = lowFriction
-    ? "Keep this simple today — repeat something that already works."
-    : favoriteMeals.length
-    ? `You’ve done well with ${favoriteMeals[0]}; stick to that today.`
-    : "Use one repeatable default meal to reduce decision fatigue.";
-
-  return {
-    city,
-    modeLabel,
-    mealStructure,
-    restaurantOptions,
-    groceryOptions,
-    fallback,
-    coachPrompt
-  };
-};
 
 const arbitrateGoals = ({ goals, momentum, personalization }) => {
   const active = (goals || []).filter(g => g.active).sort((a,b)=>a.priority-b.priority);
@@ -1283,146 +911,6 @@ const deriveExpectationEngine = ({ progress, momentum, arbitration }) => {
     : "Condition: outcomes hold if consistency, structure, and current intake stay similar.";
   const coachLine = `${nextWindow} ${motivationLine} ${conditionLine}`;
   return { weightExpectation, runExpectation, strengthExpectation, expectationStrength, nextWindow, motivationLine, conditionLine, coachLine };
-};
-
-const DEFAULT_DAILY_CHECKIN = {
-  status: "completed_as_planned",
-  sessionFeel: "about_right",
-  blocker: "",
-  note: "",
-  bodyweight: "",
-};
-
-const CHECKIN_STATUS_OPTIONS = [
-  { key: "completed_as_planned", label: "completed as planned" },
-  { key: "completed_modified", label: "completed modified" },
-  { key: "skipped", label: "skipped" },
-];
-const CHECKIN_FEEL_OPTIONS = [
-  { key: "easier_than_expected", label: "easier than expected" },
-  { key: "about_right", label: "about right" },
-  { key: "harder_than_expected", label: "harder than expected" },
-];
-const CHECKIN_BLOCKER_OPTIONS = [
-  { key: "time", label: "time" },
-  { key: "motivation", label: "motivation" },
-  { key: "soreness_fatigue", label: "soreness/fatigue" },
-  { key: "pain_injury", label: "pain/injury" },
-  { key: "no_equipment", label: "no equipment" },
-  { key: "schedule_travel", label: "schedule/travel" },
-  { key: "other", label: "other" },
-];
-
-const parseMicroCheckin = (text) => {
-  const x = (text || "").toLowerCase().trim();
-  if (!x) return null;
-  const out = { note: text };
-  if (/miss|skip|couldn.?t|didn.?t/.test(x)) out.status = "skipped";
-  else if (/modified|shortened|partial/.test(x)) out.status = "completed_modified";
-  else if (/good|done|completed|solid/.test(x)) out.status = "completed_as_planned";
-  if (/hard|rough|tough/.test(x)) out.sessionFeel = "harder_than_expected";
-  if (/easy|easier|smooth/.test(x)) out.sessionFeel = "easier_than_expected";
-  if (/busy|time|no time/.test(x)) out.blocker = "time";
-  if (/travel|schedule/.test(x)) out.blocker = "schedule_travel";
-  if (/pain|injury/.test(x)) out.blocker = "pain_injury";
-  if (/motivation|unmotivated/.test(x)) out.blocker = "motivation";
-  return out;
-};
-
-const CLOSED_LOOP_TRACKED_ACTIONS = {
-  REDUCE_WEEKLY_VOLUME: { strategy: "simplify_density", label: "reduced weekly density" },
-  ACTIVATE_SALVAGE: { strategy: "salvage_mode", label: "activated salvage mode" },
-  INCREASE_CALORIES_SLIGHTLY: { strategy: "increase_calories", label: "increased calories slightly" },
-  REDUCE_DEFICIT_AGGRESSIVENESS: { strategy: "reduce_deficit", label: "reduced deficit aggressiveness" },
-  SIMPLIFY_MEALS_THIS_WEEK: { strategy: "simplify_meals", label: "simplified meal structure" },
-  PROGRESS_STRENGTH_EMPHASIS: { strategy: "aggressive_progression", label: "increased strength aggressiveness" },
-};
-
-const getDateKeyFromTs = (ts) => {
-  if (!ts) return null;
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString().split("T")[0];
-};
-
-const getWindowMetrics = ({ logs, dailyCheckins, startTs, endTs }) => {
-  const checkins = Object.entries(dailyCheckins || {}).filter(([date]) => {
-    const t = new Date(`${date}T12:00:00`).getTime();
-    return t >= startTs && t <= endTs;
-  }).map(([, c]) => c || {});
-  const logRows = Object.entries(logs || {}).filter(([date]) => {
-    const t = new Date(`${date}T12:00:00`).getTime();
-    return t >= startTs && t <= endTs;
-  }).map(([, l]) => l || {});
-  const completed = checkins.filter(c => ["completed_as_planned", "completed_modified"].includes(c.status)).length;
-  const adherence = checkins.length ? completed / checkins.length : 0;
-  const avgFeel = logRows.length ? (logRows.reduce((s, l) => s + Number(l.feel || 3), 0) / logRows.length) : 3;
-  const progressHits = logRows.filter(l => /progress|solid|better|good|strong/i.test((l.notes || "").toLowerCase())).length;
-  return { adherence, avgFeel, progressHits, sample: checkins.length + logRows.length };
-};
-
-const classifyClosedLoopImpact = ({ baseline, outcome }) => {
-  if (!outcome || outcome.sample < 3) return { impact: "pending", score: 0, why: "Not enough 3–7 day evidence yet." };
-  const adherenceDelta = outcome.adherence - baseline.adherence;
-  const momentumDelta = outcome.avgFeel - baseline.avgFeel;
-  const progressDelta = outcome.progressHits - baseline.progressHits;
-  const score = (adherenceDelta * 1.3) + (momentumDelta * 0.35) + (progressDelta * 0.15);
-  if (score >= 0.35) return { impact: "positive", score, why: "Adherence/momentum improved after this adjustment." };
-  if (score <= -0.2) return { impact: "negative", score, why: "Execution quality declined after this adjustment." };
-  return { impact: "neutral", score, why: "No strong directional effect detected." };
-};
-
-const deriveClosedLoopValidationLayer = ({ coachActions, logs, dailyCheckins }) => {
-  const now = Date.now();
-  const tracked = (coachActions || [])
-    .filter(a => CLOSED_LOOP_TRACKED_ACTIONS[a.type])
-    .slice(0, 40);
-  const records = tracked.map((action) => {
-    const actionTs = Number(action.ts || now);
-    const actionType = CLOSED_LOOP_TRACKED_ACTIONS[action.type];
-    const baseline = getWindowMetrics({ logs, dailyCheckins, startTs: actionTs - (7 * 86400000), endTs: actionTs - 1 });
-    const outcome = getWindowMetrics({ logs, dailyCheckins, startTs: actionTs + (3 * 86400000), endTs: actionTs + (7 * 86400000) });
-    const cls = classifyClosedLoopImpact({ baseline, outcome });
-    return {
-      id: action.id || `act_${actionTs}`,
-      strategy: actionType.strategy,
-      actionType: action.type,
-      changed: actionType.label,
-      reason: action.reason || action.triggerReason || action.payload?.reason || "adaptive trigger",
-      actionDate: getDateKeyFromTs(actionTs),
-      baseline,
-      outcome,
-      ...cls,
-    };
-  });
-  const resolved = records.filter(r => r.impact !== "pending");
-  const strategyStats = resolved.reduce((acc, r) => {
-    const cur = acc[r.strategy] || { total: 0, positive: 0, neutral: 0, negative: 0, score: 0 };
-    cur.total += 1;
-    cur[r.impact] += 1;
-    cur.score += r.score;
-    acc[r.strategy] = cur;
-    return acc;
-  }, {});
-  const strategyAdjustments = Object.entries(strategyStats).reduce((acc, [strategy, s]) => {
-    const avg = s.total ? s.score / s.total : 0;
-    acc[strategy] = avg >= 0.25 ? "strengthen" : avg <= -0.15 ? "reduce" : "hold";
-    return acc;
-  }, {});
-  const topPositive = resolved.find(r => r.impact === "positive");
-  const topNegative = resolved.find(r => r.impact === "negative");
-  const coachNudges = [
-    topPositive ? `Simplifying your weeks has improved consistency recently.` : null,
-    topNegative ? `More aggressive weeks tend to reduce adherence right now.` : null,
-  ].filter(Boolean);
-  return {
-    records,
-    recentResolved: resolved.slice(0, 8),
-    strategyStats,
-    strategyAdjustments,
-    coachNudge: coachNudges[0] || "",
-    summary: resolved.length ? `Validated ${resolved.length} recent adjustments with 3–7 day outcomes.` : "Collecting validation data from recent adjustments.",
-  };
 };
 
 const parseSessionMinutes = (log) => {
@@ -1935,7 +1423,7 @@ export default function TrainerDashboard() {
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
   const planComposer = composeGoalNativePlan({ goals, personalization, momentum, learningLayer, currentWeek, baseWeek });
-  const rollingHorizon = buildRollingHorizonWeeks({ currentWeek, horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS, goals });
+  const rollingHorizon = buildRollingHorizonWeeks({ currentWeek, horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS, goals, weekTemplates: WEEKS });
   const horizonAnchor = getHorizonAnchor(goals, DEFAULT_PLANNING_HORIZON_WEEKS);
   const goalNativeWorkout = planComposer?.dayTemplates?.[dayOfWeek] ? { ...baseTodayWorkout, ...planComposer.dayTemplates[dayOfWeek], week: baseWeek, zones: baseTodayWorkout?.zones } : baseTodayWorkout;
   const todayWorkoutBase = dayOverride ? { ...goalNativeWorkout, ...dayOverride, coachOverride: true, nutri: nutritionOverride || dayOverride.nutri || goalNativeWorkout?.week?.nutri } : { ...goalNativeWorkout, nutri: nutritionOverride || goalNativeWorkout?.week?.nutri };
@@ -2072,139 +1560,53 @@ export default function TrainerDashboard() {
   };
 
   // ── SUPABASE STORAGE ─────────────────────────────────────────────────────
-  const SB_URL = (typeof window !== "undefined" ? (window.__SUPABASE_URL || "") : "").trim();
-  const SB_KEY = (typeof window !== "undefined" ? (window.__SUPABASE_ANON_KEY || "") : "").trim();
-  const SB_CONFIG_ERROR = !SB_URL
-    ? "Missing Supabase URL. Set VITE_SUPABASE_URL."
-    : !/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(SB_URL)
-    ? `Malformed Supabase URL: ${SB_URL}`
-    : !SB_KEY
-    ? "Missing Supabase anon key. Set VITE_SUPABASE_ANON_KEY."
-    : "";
-  const SB_ROW = "trainer_v1";
-  const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
-  const AUTH_CACHE_KEY = "trainer_auth_session_v1";
-  const sbH = { "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + SB_KEY };
-  const sbUserHeaders = (token) => ({ "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + token });
-  const localLoad = () => {
-    try {
-      const raw = localStorage.getItem(LOCAL_CACHE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
-  };
+  const authStorage = useMemo(() => createAuthStorageModule({
+    safeFetchWithTimeout,
+    logDiag,
+    mergePersonalization,
+    DEFAULT_PERSONALIZATION,
+    DEFAULT_MULTI_GOALS,
+  }), []);
 
-  const localSave = (payload) => {
-    try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(payload)); } catch {}
-  };
-
-  const saveAuthSession = (session) => {
-    try { localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(session || null)); } catch {}
-  };
-
-  const authRequest = async (path, options = {}) => {
-    if (SB_CONFIG_ERROR) throw new Error(SB_CONFIG_ERROR);
-    const res = await safeFetchWithTimeout(`${SB_URL}/auth/v1/${path}`, {
-      ...options,
-      headers: { "Content-Type": "application/json", "apikey": SB_KEY, ...(options.headers || {}) }
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.status === 204 ? {} : res.json();
-  };
+  const { SB_URL, SB_CONFIG_ERROR, localLoad } = authStorage;
 
   const handleSignIn = async () => {
-    setAuthError("");
-    try {
-      const data = await authRequest("token?grant_type=password", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
-      if (!data?.access_token || !data?.user) throw new Error("Invalid auth response");
-      const session = { access_token: data.access_token, user: data.user };
-      setAuthSession(session);
-      saveAuthSession(session);
-    } catch (e) { setAuthError("Sign in failed. Check email/password."); }
+    await authStorage.handleSignIn({ authEmail, authPassword, setAuthError, setAuthSession });
   };
 
   const handleSignUp = async () => {
-    setAuthError("");
-    try {
-      const data = await authRequest("signup", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
-      if (data?.access_token && data?.user) {
-        const session = { access_token: data.access_token, user: data.user };
-        setAuthSession(session);
-        saveAuthSession(session);
-      } else {
-        setAuthError("Account created. Confirm email, then sign in.");
-      }
-    } catch (e) { setAuthError("Sign up failed."); }
+    await authStorage.handleSignUp({ authEmail, authPassword, setAuthError, setAuthSession });
   };
 
   const handleSignOut = async () => {
-    try {
-      if (authSession?.access_token) {
-        await authRequest("logout", { method: "POST", headers: { "Authorization": `Bearer ${authSession.access_token}` } });
-      }
-    } catch {}
-    setAuthSession(null);
-    saveAuthSession(null);
-    setStorageStatus({ mode: "local", label: "SIGNED OUT" });
-  };
-
-  const sbLoad = async () => {
-    if (SB_CONFIG_ERROR) throw new Error(SB_CONFIG_ERROR);
-    if (!authSession?.user?.id || !authSession?.access_token) throw new Error("No authenticated user");
-    const h = sbUserHeaders(authSession.access_token);
-    const res = await safeFetchWithTimeout(SB_URL + "/rest/v1/trainer_data?user_id=eq." + authSession.user.id, { headers: h });
-    if (!res.ok) throw new Error("Load failed " + res.status + ": " + await res.text());
-    const rows = await res.json();
-    if (rows && rows.length > 0 && rows[0].data) {
-      const d = rows[0].data;
-      if (d.logs) setLogs(d.logs);
-      if (d.bw) setBodyweights(d.bw);
-      if (d.paceOverrides) setPaceOverrides(d.paceOverrides);
-      if (d.weekNotes) setWeekNotes(d.weekNotes);
-      if (d.planAlerts) setPlanAlerts(d.planAlerts);
-      if (d.personalization) setPersonalization(mergePersonalization(DEFAULT_PERSONALIZATION, d.personalization));
-      if (d.goals) setGoals(d.goals);
-      if (d.coachActions) setCoachActions(d.coachActions);
-      if (d.coachPlanAdjustments) setCoachPlanAdjustments(d.coachPlanAdjustments);
-      if (d.dailyCheckins) setDailyCheckins(d.dailyCheckins);
-      if (d.weeklyCheckins) setWeeklyCheckins(d.weeklyCheckins);
-      if (d.nutritionFavorites) setNutritionFavorites(d.nutritionFavorites);
-      if (d.nutritionFeedback) setNutritionFeedback(d.nutritionFeedback);
-    } else {
-      const cache = localLoad();
-      if (cache?.v) {
-        await sbSave(cache);
-      } else {
-        await persistAll({}, [], {}, {}, [], DEFAULT_PERSONALIZATION, [], { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} }, DEFAULT_MULTI_GOALS, {}, {}, { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] }, {});
-      }
-    }
-  };
-
-  const sbSave = async (payload) => {
-    if (SB_CONFIG_ERROR) throw new Error(SB_CONFIG_ERROR);
-    if (!authSession?.user?.id || !authSession?.access_token) throw new Error("No authenticated user");
-    const h = sbUserHeaders(authSession.access_token);
-    const res = await safeFetchWithTimeout(SB_URL + "/rest/v1/trainer_data", {
-      method: "POST",
-      headers: { ...h, "Prefer": "resolution=merge-duplicates" },
-      body: JSON.stringify({ id: `${SB_ROW}_${authSession.user.id}`, user_id: authSession.user.id, data: payload, updated_at: new Date().toISOString() }),
-    });
-    if (!res.ok) throw new Error("Save failed " + res.status + ": " + await res.text());
+    await authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
   };
 
   const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionFeedback = nutritionFeedback) => {
     const payload = { logs: newLogs, bw: newBW, paceOverrides: newOvr, weekNotes: newNotes, planAlerts: newAlerts, personalization: newPersonalization, goals: newGoals, coachActions: newCoachActions, coachPlanAdjustments: newCoachPlanAdjustments, dailyCheckins: newDailyCheckins, weeklyCheckins: newWeeklyCheckins, nutritionFavorites: newNutritionFavorites, nutritionFeedback: newNutritionFeedback, v: 6, ts: Date.now() };
-    localSave(payload);
-    if (!authSession?.user?.id) {
-      setStorageStatus({ mode: "local", label: "LOCAL MODE" });
-      return;
-    }
-    try {
-      await sbSave(payload);
-      setStorageStatus({ mode: "cloud", label: "SYNCED" });
-    } catch (e) {
-      logDiag("Cloud save failed, local fallback active:", e.message);
-      setStorageStatus({ mode: "local", label: "LOCAL MODE" });
-    }
+    await authStorage.persistAll({ payload, authSession, setStorageStatus });
+  };
+
+  const sbLoad = async () => {
+    await authStorage.sbLoad({
+      authSession,
+      setters: {
+        setLogs,
+        setBodyweights,
+        setPaceOverrides,
+        setWeekNotes,
+        setPlanAlerts,
+        setPersonalization,
+        setGoals,
+        setCoachActions,
+        setCoachPlanAdjustments,
+        setDailyCheckins,
+        setWeeklyCheckins,
+        setNutritionFavorites,
+        setNutritionFeedback,
+      },
+      persistAll,
+    });
   };
 
   useEffect(() => {
@@ -2213,12 +1615,10 @@ export default function TrainerDashboard() {
       setAuthError(`Supabase setup error: ${SB_CONFIG_ERROR}`);
       setStorageStatus({ mode: "local", label: "CONFIG ERROR" });
     }
-    try {
-      const raw = localStorage.getItem(AUTH_CACHE_KEY);
-      if (raw) setAuthSession(JSON.parse(raw));
-    } catch {}
+    const restored = authStorage.loadAuthSession();
+    if (restored) setAuthSession(restored);
     setLoading(false);
-  }, []);
+  }, [SB_URL, SB_CONFIG_ERROR, authStorage]);
 
   useEffect(() => {
     if (!authSession?.user?.id) return;
@@ -3733,50 +3133,6 @@ function MiniChart({ data, color, baseline }) {
   );
 }
 
-const LOCAL_PLACE_TEMPLATES = {
-  Chicago: {
-    fastCasual: [
-      { name: "Chipotle", meal: "Double chicken bowl, white rice, fajita veg, pico", tag: "high protein + carb control" },
-      { name: "Sweetgreen", meal: "Protein plate + roasted sweet potato + greens", tag: "lean protein + fiber" },
-      { name: "CAVA", meal: "Greens + rice + double chicken + hummus", tag: "balanced carbs/fat/protein" },
-      { name: "Roti", meal: "Chicken plate, rice, roasted veg, tahini on side", tag: "repeatable performance meal" },
-      { name: "Nando's", meal: "Quarter chicken + peri rice + side greens", tag: "simple dinner fallback" },
-    ],
-    groceries: {
-      "Trader Joe's": ["Pre-cooked grilled chicken", "Microwave jasmine rice", "Greek yogurt cups", "Frozen berries", "Bagged salad kits", "Egg white cartons"],
-      "Whole Foods": ["365 rotisserie chicken", "Prepared quinoa bowls", "Salmon portions", "Skyr yogurt", "Ready-cut fruit", "Overnight oats"],
-      "Jewel": ["Deli turkey breast", "Microwave potatoes", "Fairlife shakes", "Steam-in-bag veggies", "Oikos triple zero", "Bananas"],
-      "Target": ["Good & Gather chicken strips", "Kodiak oatmeal cups", "Core Power shakes", "Frozen veggie blend", "Avocado cups", "Protein bars"],
-    },
-    convenience: ["Starbucks egg bites + protein box", "7-Eleven Greek yogurt + nuts + fruit", "Airport: salad + double protein"],
-  }
-};
-
-const explainMacroShift = (dayType) => {
-  if (["longRun", "hardRun", "travelRun"].includes(dayType)) return "Higher carbs support quality run output and glycogen restoration. Fat stays moderate to keep digestion smooth around sessions.";
-  if (["rest", "travelRest"].includes(dayType)) return "Carbs come down on lower-output days while protein stays high to protect recovery and body composition.";
-  return "Balanced carbs and fats support consistent training energy without overcomplicating daily choices.";
-};
-
-const getPlaceRecommendations = ({ city, dayType, favorites, mode, query }) => {
-  const cityData = LOCAL_PLACE_TEMPLATES[city] || LOCAL_PLACE_TEMPLATES.Chicago;
-  const base = mode === "nearby" ? cityData.fastCasual : cityData.fastCasual;
-  const filtered = query ? base.filter(p => (p.name + " " + p.meal).toLowerCase().includes(query.toLowerCase())) : base;
-  const favoriteBoost = [...(favorites.restaurants || []), ...(favorites.safeMeals || [])].slice(0, 2).map(f => ({ name: f.name || f, meal: f.meal || "Saved default meal", tag: "favorite" }));
-  return [...favoriteBoost, ...filtered].slice(0, 6).map((p, idx) => ({ ...p, id: `${p.name}_${idx}_${dayType}` }));
-};
-
-const buildGroceryBasket = ({ store, city, days, dayType }) => {
-  const cityData = LOCAL_PLACE_TEMPLATES[city] || LOCAL_PLACE_TEMPLATES.Chicago;
-  const items = cityData.groceries[store] || cityData.groceries["Trader Joe's"];
-  return {
-    title: `${store} ${days}-day basket`,
-    items: items.slice(0, 6),
-    note: dayType === "longRun" || dayType === "hardRun" ? "Include extra quick carbs (fruit + rice + oats)." : "Prioritize protein + produce + simple carbs.",
-  };
-};
-
-// ── NUTRITION TAB ─────────────────────────────────────────────────────────────
 function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer, realWorldNutrition, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
   const [mode, setMode] = useState("home");
   const [dayType, setDayType] = useState(nutritionLayer.dayType || todayWorkout?.nutri || "easyRun");

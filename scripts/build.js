@@ -19,7 +19,29 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || "";
 
 console.log("Building...");
 
-let jsx = fs.readFileSync(SRC, "utf8");
+const inlineLocalImports = (sourceCode, sourceFile) => {
+  let code = sourceCode;
+  const dir = path.dirname(sourceFile);
+  let inlined = "";
+  const importRe = /^import\s+\{[^}]+\}\s+from\s+['"](.+?)['"];?\n/gm;
+  let match;
+  while ((match = importRe.exec(sourceCode)) !== null) {
+    const importPath = match[1];
+    if (!importPath.startsWith(".")) continue;
+    const full = path.resolve(dir, importPath);
+    const raw = fs.readFileSync(full, "utf8");
+    const nested = inlineLocalImports(raw, full);
+    const normalized = nested
+      .replace(/^export\s+const\s+/gm, "const ")
+      .replace(/^export\s+function\s+/gm, "function ")
+      .replace(/^export\s+\{[^}]+\};?\n/gm, "");
+    inlined += `\n// inlined: ${path.relative(ROOT, full)}\n${normalized}\n`;
+  }
+  code = code.replace(importRe, (line, p1) => (p1.startsWith(".") ? "" : line));
+  return inlined + code;
+};
+
+let jsx = inlineLocalImports(fs.readFileSync(SRC, "utf8"), SRC);
 
 // Remove React import — we use the inlined global
 jsx = jsx.replace(/^import \{[^}]+\} from ['"]react['"];?\n/m, "");
