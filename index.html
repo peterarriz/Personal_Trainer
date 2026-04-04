@@ -3744,17 +3744,20 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
   const goalContext = getGoalContext(goals) || { primary: null, secondary: [] };
   const dayType = _optionalChain([nutritionLayer, 'optionalAccess', _409 => _409.dayType]) || _optionalChain([todayWorkout, 'optionalAccess', _410 => _410.nutri]) || "easyRun";
   const city = localFoodContext.city || "Chicago";
-  const nearby = (getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" }) || []).filter(x => _optionalChain([x, 'optionalAccess', _411 => _411.id]) !== lastKey).slice(0, 2);
+  const nearby = (getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" }) || [])
+    .map((x, i) => ({ id: _optionalChain([x, 'optionalAccess', _411 => _411.id]) || `nearby_${i}_${_optionalChain([x, 'optionalAccess', _412 => _412.name]) || "option"}`, name: _optionalChain([x, 'optionalAccess', _413 => _413.name]) || "Nearby option", meal: _optionalChain([x, 'optionalAccess', _414 => _414.meal]) || "Protein + carbs + produce" }))
+    .filter(x => x.id !== lastKey)
+    .slice(0, 2);
   const basket = buildGroceryBasket({ store, city, days: 3, dayType });
   const fastest = nearby[0] || { name: "Saved default", meal: "Protein shake + fruit + sandwich", tag: "fallback" };
   const travelBreakfast = ["Starbucks: egg bites + oatmeal + banana", "Hotel breakfast: eggs + Greek yogurt + fruit", "Airport: wrap + extra protein + water"];
-  const bodyCompActive = _optionalChain([goals, 'optionalAccess', _412 => _412.some, 'call', _413 => _413(g => g.active && g.category === "body_comp")]);
-  const strengthActive = _optionalChain([goals, 'optionalAccess', _414 => _414.some, 'call', _415 => _415(g => g.active && g.category === "strength")]);
-  const runningActive = _optionalChain([goals, 'optionalAccess', _416 => _416.some, 'call', _417 => _417(g => g.active && g.category === "running")]);
-  const hardDay = ["hardRun", "longRun"].includes(dayType) || ["hard-run", "long-run"].includes(_optionalChain([todayWorkout, 'optionalAccess', _418 => _418.type]));
-  const recoveryDay = dayType === "rest" || _optionalChain([todayWorkout, 'optionalAccess', _419 => _419.type]) === "rest";
-  const strengthDay = dayType === "strength" || ["run+strength", "strength+prehab"].includes(_optionalChain([todayWorkout, 'optionalAccess', _420 => _420.type]));
-  const simplifiedWeek = ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _421 => _421.momentumState])) || _optionalChain([learningLayer, 'optionalAccess', _422 => _422.adjustmentBias]) === "simplify";
+  const bodyCompActive = _optionalChain([goals, 'optionalAccess', _415 => _415.some, 'call', _416 => _416(g => g.active && g.category === "body_comp")]);
+  const strengthActive = _optionalChain([goals, 'optionalAccess', _417 => _417.some, 'call', _418 => _418(g => g.active && g.category === "strength")]);
+  const runningActive = _optionalChain([goals, 'optionalAccess', _419 => _419.some, 'call', _420 => _420(g => g.active && g.category === "running")]);
+  const hardDay = ["hardRun", "longRun"].includes(dayType) || ["hard-run", "long-run"].includes(_optionalChain([todayWorkout, 'optionalAccess', _421 => _421.type]));
+  const recoveryDay = dayType === "rest" || _optionalChain([todayWorkout, 'optionalAccess', _422 => _422.type]) === "rest";
+  const strengthDay = dayType === "strength" || ["run+strength", "strength+prehab"].includes(_optionalChain([todayWorkout, 'optionalAccess', _423 => _423.type]));
+  const simplifiedWeek = ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _424 => _424.momentumState])) || _optionalChain([learningLayer, 'optionalAccess', _425 => _425.adjustmentBias]) === "simplify";
   const nutritionUnavailable = !nutritionLayer || !realWorldNutrition;
 
   const proteinLevel = strengthActive || bodyCompActive ? "high" : "moderate";
@@ -3782,14 +3785,14 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
     ? "Hydrate early and add carbs around harder sessions."
     : "Pick meals you can repeat on busy days.";
 
-  const breakfast = _optionalChain([realWorldNutrition, 'optionalAccess', _423 => _423.mealStructure, 'optionalAccess', _424 => _424.breakfast]) || "Greek yogurt + fruit + granola";
-  const lunch = _optionalChain([realWorldNutrition, 'optionalAccess', _425 => _425.mealStructure, 'optionalAccess', _426 => _426.lunch]) || "Protein bowl with rice/potatoes + veggies";
-  const dinner = _optionalChain([realWorldNutrition, 'optionalAccess', _427 => _427.mealStructure, 'optionalAccess', _428 => _428.dinner]) || "Lean protein + carb + vegetable";
+  const breakfast = _optionalChain([realWorldNutrition, 'optionalAccess', _426 => _426.mealStructure, 'optionalAccess', _427 => _427.breakfast]) || "Greek yogurt + fruit + granola";
+  const lunch = _optionalChain([realWorldNutrition, 'optionalAccess', _428 => _428.mealStructure, 'optionalAccess', _429 => _429.lunch]) || "Protein bowl with rice/potatoes + veggies";
+  const dinner = _optionalChain([realWorldNutrition, 'optionalAccess', _430 => _430.mealStructure, 'optionalAccess', _431 => _431.dinner]) || "Lean protein + carb + vegetable";
   const snack = hardDay ? "Banana + protein shake" : "Apple + string cheese";
 
   const todayKey = new Date().toISOString().split("T")[0];
-  const feedbackToday = _optionalChain([nutritionFeedback, 'optionalAccess', _429 => _429[todayKey]]);
-  useEffect(() => { if (feedbackToday) setNutritionCheck(feedbackToday); }, [_optionalChain([feedbackToday, 'optionalAccess', _430 => _430.ts])]);
+  const feedbackToday = _optionalChain([nutritionFeedback, 'optionalAccess', _432 => _432[todayKey]]);
+  useEffect(() => { if (feedbackToday) setNutritionCheck(feedbackToday); }, [_optionalChain([feedbackToday, 'optionalAccess', _433 => _433.ts])]);
 
   return (
     React.createElement('div', { className: "fi",}
@@ -3814,14 +3817,8 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
             , simplifiedWeek ? "simplified meals and consistency" : hardDay ? "hard training fuel" : recoveryDay ? "recovery and appetite control" : strengthDay ? "protein-led recovery" : "steady intake and consistency", "."
         )
         , React.createElement('div', { style: { marginTop:"0.15rem", fontSize:"0.55rem", color:"#64748b" },}, "Goals covered: "
-            , _optionalChain([goalContext, 'access', _431 => _431.primary, 'optionalAccess', _432 => _432.name]) || "general fitness", _optionalChain([goalContext, 'access', _433 => _433.secondary, 'optionalAccess', _434 => _434.length]) ? ` + ${(goalContext.secondary || []).map(g=>_optionalChain([g, 'optionalAccess', _435 => _435.name])).filter(Boolean).join(" · ")}` : "", "."
+            , _optionalChain([goalContext, 'access', _434 => _434.primary, 'optionalAccess', _435 => _435.name]) || "general fitness", _optionalChain([goalContext, 'access', _436 => _436.secondary, 'optionalAccess', _437 => _437.length]) ? ` + ${(goalContext.secondary || []).map(g=>_optionalChain([g, 'optionalAccess', _438 => _438.name])).filter(Boolean).join(" · ")}` : "", "."
         )
-        , React.createElement('div', { style: { fontSize:"0.55rem", color:"#64748b", marginBottom:"0.2rem" },}, "Restaurant-style options:" )
-        , realWorldNutrition.restaurantOptions.slice(0,4).map((x, i) => React.createElement('div', { key: `rw_rest_${i}`, style: { fontSize:"0.56rem", color:"#94a3b8" },}, "• " , x))
-        , React.createElement('div', { style: { fontSize:"0.55rem", color:"#64748b", margin:"0.35rem 0 0.2rem" },}, "Grocery-based options:" )
-        , realWorldNutrition.groceryOptions.slice(0,4).map((x, i) => React.createElement('div', { key: `rw_groc_${i}`, style: { fontSize:"0.56rem", color:"#94a3b8" },}, "• " , x))
-        , React.createElement('div', { style: { fontSize:"0.55rem", color:C.amber, margin:"0.35rem 0 0.2rem" },}, "Fallback no-thinking meals:"  )
-        , realWorldNutrition.fallback.map((x, i) => React.createElement('div', { key: `rw_fb_${i}`, style: { fontSize:"0.56rem", color:"#94a3b8" },}, "• " , x))
       )
 
       , React.createElement('div', { className: "card", style: { marginBottom:"0.8rem" },}
@@ -3852,14 +3849,14 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
         , React.createElement('div', { style: { fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.65 },}
           , React.createElement('div', null, React.createElement('span', { style: { color:C.blue },}, "Fastest good choice:"  ), " " , fastest.name, " — "  , fastest.meal)
           , React.createElement('div', null, React.createElement('span', { style: { color:C.blue },}, "Travel backup:" ), " " , travelBreakfast[0])
-          , React.createElement('div', null, React.createElement('span', { style: { color:C.blue },}, "Grocery reset:" ), " " , _optionalChain([basket, 'access', _436 => _436.items, 'optionalAccess', _437 => _437[0]]) || "pre-cooked protein + fruit + easy carbs")
+          , React.createElement('div', null, React.createElement('span', { style: { color:C.blue },}, "Grocery reset:" ), " " , _optionalChain([basket, 'access', _439 => _439.items, 'optionalAccess', _440 => _440[0]]) || "pre-cooked protein + fruit + easy carbs")
         )
       )
 
       , React.createElement('div', { className: "card", style: { marginBottom:"0.8rem" },}
         , React.createElement('div', { className: "sect-title", style: { color:C.purple, marginBottom:"0.5rem" },}, "QUICK GROCERY RESET"  )
         , React.createElement('select', { value: store, onChange: e=>setStore(e.target.value), style: { marginBottom:"0.35rem" },}
-          , [...new Set([...(localFoodContext.groceryOptions || []), ...Object.keys(_optionalChain([LOCAL_PLACE_TEMPLATES, 'access', _438 => _438[city], 'optionalAccess', _439 => _439.groceries]) || {})])].map(s => React.createElement('option', { key: s,}, s))
+          , [...new Set([...(localFoodContext.groceryOptions || []), ...Object.keys(_optionalChain([LOCAL_PLACE_TEMPLATES, 'access', _441 => _441[city], 'optionalAccess', _442 => _442.groceries]) || {})])].map(s => React.createElement('option', { key: s,}, s))
         )
         , React.createElement('div', { style: { fontSize:"0.56rem", color:"#94a3b8", marginBottom:"0.3rem" },}, basket.title || "Simple 3-day list")
         , (basket.items || []).slice(0, 5).map((it,i)=>React.createElement('div', { key: i, style: { fontSize:"0.56rem", color:"#64748b", lineHeight:1.6 },}, "• " , it))
@@ -3872,35 +3869,6 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
             React.createElement('button', { key: k, className: "btn", onClick: ()=>setNutritionCheck(prev=>({ ...prev, status:k })),
               style: { fontSize:"0.55rem", borderColor:nutritionCheck.status===k?C.blue:"#1e293b", color:nutritionCheck.status===k?C.blue:"#64748b" },}, lab)
           ))
-        )
-        , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" },}
-          , React.createElement('input', { value: nutritionCheck.note || "", onChange: e=>setNutritionCheck(prev=>({ ...prev, note:e.target.value })), placeholder: "Quick note (optional)"  ,} )
-          , React.createElement('button', { className: "btn btn-primary" , onClick: ()=>saveNutritionFeedback(todayKey, nutritionCheck), style: { fontSize:"0.55rem" },}, "SAVE")
-        )
-      )
-
-      , React.createElement('div', { className: "card", style: { marginTop:"0.8rem" },}
-        , React.createElement('div', { className: "sect-title", style: { color:C.green, marginBottom:"0.5rem" },}, "FASTEST GOOD OPTION"  )
-        , React.createElement('div', { style: { fontSize:"0.64rem", color:"#e2e8f0" },}, fastest.name)
-        , React.createElement('div', { style: { fontSize:"0.6rem", color:"#94a3b8", marginTop:2 },}, fastest.meal)
-        , React.createElement('button', { className: "btn", onClick: ()=>saveNutritionFavorites({ ...favorites, safeMeals: [{ name: fastest.name, meal: fastest.meal }, ...favorites.safeMeals].slice(0,8) }), style: { marginTop:"0.4rem", fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" },}, "SAVE SAFE DEFAULT MEAL"
-
-        )
-        , React.createElement('div', { style: { marginTop:"0.45rem", fontSize:"0.55rem", color:"#475569" },}, "Practical rule: staple breakfast + varied lunch/dinner + one emergency default meal."
-
-        )
-      )
-      , React.createElement('div', { className: "card", style: { marginTop:"0.8rem" },}
-        , React.createElement('div', { className: "sect-title", style: { color:C.blue, marginBottom:"0.5rem" },}, "NUTRITION REFLECTION" )
-        , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem", marginBottom:"0.35rem" },}
-          , [["on_track","on track"],["decent","decent"],["off_track","off track"]].map(([k,lab]) => (
-            React.createElement('button', { key: k, className: "btn", onClick: ()=>setNutritionCheck(prev=>({ ...prev, status:k })),
-              style: { fontSize:"0.55rem", borderColor:nutritionCheck.status===k?C.blue:"#1e293b", color:nutritionCheck.status===k?C.blue:"#64748b" },}, lab)
-          ))
-        )
-        , React.createElement('select', { value: nutritionCheck.issue || "", onChange: e=>setNutritionCheck(prev=>({ ...prev, issue:e.target.value })), style: { marginBottom:"0.35rem", fontSize:"0.56rem" },}
-          , React.createElement('option', { value: "",}, "Biggest issue (optional)"  )
-          , ["hunger","convenience","cravings","travel","social_eating","underprepared","low_appetite"].map(i => React.createElement('option', { key: i, value: i,}, i.replaceAll("_"," ")))
         )
         , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" },}
           , React.createElement('input', { value: nutritionCheck.note || "", onChange: e=>setNutritionCheck(prev=>({ ...prev, note:e.target.value })), placeholder: "Quick note (optional)"  ,} )
@@ -3945,7 +3913,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       id:`coach_act_${Date.now()}`,
       ts: Date.now(),
       source: "coach_confirmed",
-      reason: action.reason || action.rationale || _optionalChain([action, 'access', _440 => _440.payload, 'optionalAccess', _441 => _441.reason]) || "coach-confirmed adaptation"
+      reason: action.reason || action.rationale || _optionalChain([action, 'access', _443 => _443.payload, 'optionalAccess', _444 => _444.reason]) || "coach-confirmed adaptation"
     }, ...coachActions].slice(0, 60);
     setCoachActions(nextActions);
     setCoachPlanAdjustments(mutation.adjustments);
@@ -3970,12 +3938,12 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
           model: "claude-3-5-haiku-latest",
           max_tokens: 700,
           system: `Return strict JSON with keys notices[], recommendations[], effects[], actions[]. Actions must use these types only: ${Object.values(COACH_TOOL_ACTIONS).join(", ")}.`,
-          messages: [{ role: "user", content: `Week ${currentWeek}, today ${_optionalChain([todayWorkout, 'optionalAccess', _442 => _442.label])}. User said: "${userMsg}".` }]
+          messages: [{ role: "user", content: `Week ${currentWeek}, today ${_optionalChain([todayWorkout, 'optionalAccess', _445 => _445.label])}. User said: "${userMsg}".` }]
         })
       });
       if (!res.ok) throw new Error("API unavailable");
       const data = await res.json();
-      const text = _optionalChain([data, 'optionalAccess', _443 => _443.content, 'optionalAccess', _444 => _444[0], 'optionalAccess', _445 => _445.text]) || "{}";
+      const text = _optionalChain([data, 'optionalAccess', _446 => _446.content, 'optionalAccess', _447 => _447[0], 'optionalAccess', _448 => _448.text]) || "{}";
       const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
       return { ...deterministic, ...parsed, source: "llm" };
     } catch (e8) {
@@ -3983,7 +3951,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     }
   };
 
-  useEffect(() => { _optionalChain([bottomRef, 'access', _446 => _446.current, 'optionalAccess', _447 => _447.scrollIntoView, 'call', _448 => _448({ behavior:"smooth" })]); }, [messages, pendingActions]);
+  useEffect(() => { _optionalChain([bottomRef, 'access', _449 => _449.current, 'optionalAccess', _450 => _450.scrollIntoView, 'call', _451 => _451({ behavior:"smooth" })]); }, [messages, pendingActions]);
 
   const send = async (preset) => {
     const userMsg = (preset || input).trim();
@@ -4016,7 +3984,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   ];
 
   const latestAssistant = [...messages].reverse().find(m => m.role === "assistant");
-  const activePacket = _optionalChain([latestAssistant, 'optionalAccess', _449 => _449.packet]) || deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, realWorldNutrition, recalibration });
+  const activePacket = _optionalChain([latestAssistant, 'optionalAccess', _452 => _452.packet]) || deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, realWorldNutrition, recalibration });
   const suggestedActions = (pendingActions.length ? pendingActions : (activePacket.actions || [])).slice(0, 2);
   const readableDecision = (action) => {
     if (!action) return "Keep the current plan.";
@@ -4047,7 +4015,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       , React.createElement('div', { className: "card",}
         , React.createElement('div', { className: "sect-title", style: { color:C.green, marginBottom:"0.35rem" },}, "WHY")
         , React.createElement('div', { style: { fontSize:"0.6rem", color:"#cbd5e1", lineHeight:1.7 },}
-          , _optionalChain([activePacket, 'optionalAccess', _450 => _450.recommendations, 'optionalAccess', _451 => _451[0]]) || _optionalChain([activePacket, 'optionalAccess', _452 => _452.notices, 'optionalAccess', _453 => _453[0]]) || "Recent patterns show better follow-through with a simpler, clearer plan."
+          , _optionalChain([activePacket, 'optionalAccess', _453 => _453.recommendations, 'optionalAccess', _454 => _454[0]]) || _optionalChain([activePacket, 'optionalAccess', _455 => _455.notices, 'optionalAccess', _456 => _456[0]]) || "Recent patterns show better follow-through with a simpler, clearer plan."
         )
       )
 
@@ -4062,7 +4030,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       , React.createElement('details', { className: "card",}
         , React.createElement('summary', { style: { cursor:"pointer", fontSize:"0.58rem", color:"#94a3b8", letterSpacing:"0.06em" },}, "What I’m watching"  )
         , React.createElement('div', { style: { marginTop:"0.4rem", fontSize:"0.57rem", color:"#94a3b8", lineHeight:1.7 },}
-          , (_optionalChain([activePacket, 'optionalAccess', _454 => _454.notices]) || []).slice(0,2).map((n, i)=>React.createElement('div', { key: i,}, "• " , n))
+          , (_optionalChain([activePacket, 'optionalAccess', _457 => _457.notices]) || []).slice(0,2).map((n, i)=>React.createElement('div', { key: i,}, "• " , n))
         )
       )
 
@@ -4085,7 +4053,7 @@ function CoachSection({ title, items, color }) {
   return (
     React.createElement('div', { style: { background:"#0f172a", borderRadius:6, padding:"6px 8px", border:`1px solid ${color}25` },}
       , React.createElement('div', { style: { fontSize:"0.55rem", color, letterSpacing:"0.1em", marginBottom:"0.2rem" },}, title)
-      , (_optionalChain([items, 'optionalAccess', _455 => _455.length]) ? items : ["No issues detected."]).map((item, idx) => (
+      , (_optionalChain([items, 'optionalAccess', _458 => _458.length]) ? items : ["No issues detected."]).map((item, idx) => (
         React.createElement('div', { key: idx, style: { fontSize:"0.61rem", color:"#cbd5e1", lineHeight:1.55 },}, "• " , item)
       ))
     )
