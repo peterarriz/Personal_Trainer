@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildRollingHorizonWeeks } from "./modules-planning.js";
 import { createAuthStorageModule } from "./modules-auth-storage.js";
-import { NUTRITION, getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, LOCAL_PLACE_TEMPLATES, explainMacroShift, getPlaceRecommendations, buildGroceryBasket } from "./modules-nutrition.js";
+import { getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket } from "./modules-nutrition.js";
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer } from "./modules-checkins.js";
 import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, withConfidenceTone, deterministicCoachPacket, applyCoachActionMutation } from "./modules-coach-engine.js";
 
@@ -419,7 +419,7 @@ const DEFAULT_MULTI_GOALS = [
 const arbitrateGoals = ({ goals, momentum, personalization }) => {
   const active = (goals || []).filter(g => g.active).sort((a,b)=>a.priority-b.priority);
   const primary = active[0] || null;
-  const secondary = active.slice(1,3);
+  const secondary = active.filter(g => g.id !== primary?.id).slice(0,3);
   const maintenance = active.slice(3);
   const deprioritized = [];
   const conflicts = [];
@@ -457,6 +457,34 @@ const arbitrateGoals = ({ goals, momentum, personalization }) => {
     secondary: secondary?.[0]?.name || "None",
     maintained: maintenance?.[0]?.name || secondary?.[1]?.name || "None"
   };
+  const maintainGoals = secondary
+    .filter(g => g.category !== "injury_prevention")
+    .slice(0, 2)
+    .map(g => g.name);
+  const minimizeGoal = active.find(g => g.category === "injury_prevention")?.name || (secondary[2]?.name || "non-primary extras");
+  const goalAllocation = {
+    primary: primary?.name || "Consistency",
+    maintained: maintainGoals.length ? maintainGoals : ["General fitness"],
+    minimized: minimizeGoal,
+  };
+  const prioritizedCategory = primary?.category === "running"
+    ? "running"
+    : primary?.category === "strength"
+    ? "strength"
+    : primary?.category === "body_comp"
+    ? "body composition"
+    : "consistency";
+  const allocationNarrative = `This block prioritizes ${prioritizedCategory}. ${goalAllocation.maintained[0]} is maintained. ${active.some(g => g.category === "body_comp") ? "Core work is kept minimal but consistent." : `${goalAllocation.minimized} is minimized this block.`}`;
+  const strengthSessionsTarget = primary?.category === "strength" && !consistencyThreatened ? 2 : 1;
+  const strengthInclusion = {
+    sessionsPerWeek: strengthSessionsTarget === 2 ? "1–2" : "1",
+    dose: primary?.category === "strength" && !consistencyThreatened ? "full_progression" : "maintenance_short",
+    duration: primary?.category === "strength" && !consistencyThreatened ? "40-55 min" : "20-35 min",
+    label: primary?.category === "strength" && !consistencyThreatened ? "Strength progression session" : "Short strength maintenance session",
+  };
+  const aestheticInclusion = active.some(g => g.category === "body_comp")
+    ? { active: true, optionalLine: "Optional: 10 min core", weeklyTarget: "2-4 short finishers" }
+    : { active: false, optionalLine: "" };
   const shiftReason = consistencyThreatened
     ? "This week is consistency-first to rebuild execution."
     : primary?.category === "running" && secondary.find(g => g.category === "body_comp")
@@ -477,10 +505,11 @@ const arbitrateGoals = ({ goals, momentum, personalization }) => {
       ? "Strength progression is pushed this block with controlled fatigue."
       : "Strength progression is slowed to protect run quality and recovery."
   ];
-  const explanation = `Primary: ${priorityStack.primary}. We push ${pushes[0] || "consistency"}, maintain ${maintains[0] || "secondary goals"}, and deprioritize ${reduces[0] || "non-essential load"} this week.`;
+  const explanation = `Primary: ${priorityStack.primary}. We push ${pushes[0] || "consistency"}, maintain ${maintains[0] || "secondary goals"}, and deprioritize ${reduces[0] || "non-essential load"} this week. ${allocationNarrative}`;
   const todayLine = `Goal arbitration: push ${pushes[0] || "consistency"}; maintain ${maintains[0] || "secondary goals"}; reduce ${reduces[0] || "non-essential load"}.`;
+  const coachTradeoffLine = `Tradeoff: ${shiftReason} Strength is ${strengthInclusion.dose === "full_progression" ? "progressed" : "kept lighter"} (${strengthInclusion.duration}) so recovery supports ${priorityStack.primary}.`;
   const coachSummary = `${shiftReason} Decision links: ${decisionLinks.join(" ")}`;
-  return { primary, secondary, maintenance, deprioritized, conflicts, pushes, maintains, reduces, explanation, priorityStack, shiftReason, decisionLinks, todayLine, coachSummary };
+  return { primary, secondary, maintenance, deprioritized, conflicts, pushes, maintains, reduces, explanation, priorityStack, shiftReason, decisionLinks, todayLine, coachSummary, goalAllocation, allocationNarrative, strengthInclusion, aestheticInclusion, coachTradeoffLine };
 };
 
 const getMomentumEngineState = ({ logs, bodyweights, personalization }) => {
@@ -560,7 +589,7 @@ const generateDailyCoachBrief = ({ momentum, todayWorkout, arbitration, injurySt
   return {
     focus: salvage?.active ? "Salvage week: execute the compressed essentials only." : momentum.momentumState.includes("drifting") ? "Preserve momentum, not perfection." : `Execute ${todayWorkout?.label || "today's session"} cleanly.`,
     why: arbitration.explanation,
-    arbitrationLine: arbitration.todayLine,
+    arbitrationLine: `${arbitration.todayLine} ${arbitration.coachTradeoffLine || ""}`.trim(),
     warning,
     success: todayWorkout?.minDay ? (todayWorkout?.success || "Today = minimum viable day and momentum preserved.") : salvage?.active ? salvage.compressedPlan.success : todayWorkout?.type === "rest" ? "Log recovery, mobility, and tomorrow plan." : "Complete the planned session and log how it felt.",
     optionalAdjustment,
@@ -1333,6 +1362,39 @@ export default function TrainerDashboard() {
     });
   };
 
+  const sbLoad = async () => {
+    await authStorage.sbLoad({
+      authSession,
+      setters: {
+        setLogs,
+        setBodyweights,
+        setPaceOverrides,
+        setWeekNotes,
+        setPlanAlerts,
+        setPersonalization,
+        setGoals,
+        setCoachActions,
+        setCoachPlanAdjustments,
+        setDailyCheckins,
+        setWeeklyCheckins,
+        setNutritionFavorites,
+        setNutritionFeedback,
+      },
+      persistAll,
+    });
+  };
+
+  useEffect(() => {
+    console.log("[supabase] resolved URL:", SB_URL || "(missing)");
+    if (SB_CONFIG_ERROR) {
+      setAuthError(`Supabase setup error: ${SB_CONFIG_ERROR}`);
+      setStorageStatus({ mode: "local", label: "CONFIG ERROR" });
+    }
+    const restored = authStorage.loadAuthSession();
+    if (restored) setAuthSession(restored);
+    setLoading(false);
+  }, [SB_URL, SB_CONFIG_ERROR, authStorage]);
+
   useEffect(() => {
     console.log("[supabase] resolved URL:", SB_URL || "(missing)");
     if (SB_CONFIG_ERROR) {
@@ -1688,13 +1750,13 @@ RULES:
   );
 
   return (
-    <div style={{ fontFamily:"'DM Mono','Courier New',monospace", background:"#0a0a0f", minHeight:"100vh", color:"#e2e8f0", padding:"1.5rem 1.1rem" }}>
+    <div style={{ fontFamily:"'DM Mono','Courier New',monospace", background:"#0a0a0f", minHeight:"100vh", color:"#e2e8f0", padding:"1.65rem 1.2rem" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Bebas+Neue&display=swap');
         :root{
           --bg:#0a0a0f;
-          --panel:#0d1117;
-          --panel-2:#101826;
+          --panel:#0f141d;
+          --panel-2:#121926;
           --border:#1e293b;
           --muted:#64748b;
           --text:#e2e8f0;
@@ -1704,24 +1766,24 @@ RULES:
         ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:#0a0a0f} ::-webkit-scrollbar-thumb{background:#1e293b;border-radius:2px}
         .fi{animation:fi 0.22s ease forwards}
         .hov{transition:all 0.2s ease;cursor:pointer} .hov:hover{background:rgba(255,255,255,0.04)!important}
-        .btn{background:linear-gradient(180deg,#0f172a,#0c1220);border:1px solid var(--border);border-radius:8px;font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:0.06em;cursor:pointer;padding:6px 11px;transition:all 0.2s ease;color:#94a3b8}
+        .btn{background:#111827;border:1px solid #253246;border-radius:8px;font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:0.05em;cursor:pointer;padding:6px 11px;transition:all 0.2s ease;color:#a9b6c9}
         .btn:hover{border-color:#334155;color:#e2e8f0;transform:translateY(-1px)}
         .btn:active{transform:translateY(0)}
-        .btn-primary{background:linear-gradient(180deg,#5df08f,#35cc73)!important;border-color:#5df08f!important;color:#06110a!important;font-weight:600;box-shadow:0 6px 18px rgba(74,222,128,0.25)}
-        .btn-primary:hover{filter:brightness(1.04);box-shadow:0 8px 22px rgba(74,222,128,0.28)}
+        .btn-primary{background:#47d87f!important;border-color:#47d87f!important;color:#06110a!important;font-weight:600;box-shadow:0 4px 14px rgba(71,216,127,0.22)}
+        .btn-primary:hover{filter:brightness(1.04);box-shadow:0 6px 16px rgba(71,216,127,0.24)}
         input,textarea,select{background:#0f172a;border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'DM Mono',monospace;font-size:0.68rem;padding:7px 10px;outline:none;width:100%;transition:border-color 0.2s ease, box-shadow 0.2s ease}
         input:focus,textarea:focus,select:focus{border-color:#3b4c63;box-shadow:0 0 0 3px rgba(96,165,250,0.08)}
         @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
         .tag{font-size:0.56rem;padding:3px 7px;border-radius:999px;letter-spacing:0.03em;white-space:nowrap;background:#0f172a}
-        .card{background:linear-gradient(180deg,var(--panel),#0b1018);border:1px solid var(--border);border-radius:12px;padding:1rem;box-shadow:0 12px 24px rgba(0,0,0,0.16);transition:transform 0.2s ease, border-color 0.2s ease}
-        .card:hover{border-color:#2b3a4f}
-        .sect-title{font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:0.06em;text-transform:none}
+        .card{background:var(--panel);border:0;border-radius:12px;padding:1.05rem;box-shadow:0 8px 20px rgba(0,0,0,0.12);transition:transform 0.2s ease, box-shadow 0.2s ease}
+        .card:hover{box-shadow:0 10px 24px rgba(0,0,0,0.14)}
+        .sect-title{font-family:'Bebas Neue',sans-serif;font-size:1.02rem;letter-spacing:0.04em;text-transform:none;color:#dbe7f6}
         details > summary{list-style:none}
         details > summary::-webkit-details-marker{display:none}
         details[open]{animation:fi 0.18s ease}
       `}</style>
 
-      <div style={{ maxWidth:820, margin:"0 auto" }}>
+      <div style={{ maxWidth:820, margin:"0 auto", background:"radial-gradient(120% 90% at 50% 0%, rgba(30,41,59,0.28), transparent 55%)" }}>
 
         {/* ── HEADER BAR ── */}
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"1.25rem", flexWrap:"wrap", gap:"0.5rem" }}>
@@ -1803,7 +1865,6 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
   const todayKey = new Date().toISOString().split("T")[0];
   const todayLog = logs[todayKey];
   const dayColor = todayWorkout ? (dayColors[todayWorkout.type] || C.green) : C.slate;
-  const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const [injuryArea, setInjuryArea] = useState(personalization.injuryPainState.area || "Achilles");
   const defaultCheckin = dailyCheckins?.[todayKey] || (todayLog?.checkin || DEFAULT_DAILY_CHECKIN);
   const [checkin, setCheckin] = useState(defaultCheckin);
@@ -1821,16 +1882,14 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
 
   return (
     <div className="fi">
-      <div style={{ border:`1px solid ${dayColor}35`, borderRadius:14, overflow:"hidden", background:`${dayColor}06`, marginBottom:"0.85rem" }}>
-        <div style={{ padding:"1rem 1.1rem", borderBottom:`1px solid ${dayColor}18`, display:"grid", gap:"0.35rem" }}>
-          <div style={{ fontSize:"0.56rem", color:dayColor, letterSpacing:"0.18em", textTransform:"uppercase" }}>Today’s priority</div>
-          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.75rem", color:"#e2e8f0", letterSpacing:"0.04em", lineHeight:1 }}>{todayWorkout?.label || "Rest Day"}</div>
-          <div style={{ fontSize:"0.62rem", color:"#cbd5e1", lineHeight:1.7 }}>{dailyStory?.brief}</div>
-          <div style={{ fontSize:"0.58rem", color:C.green }}><span style={{ color:"#94a3b8" }}>Success today:</span> {dailyStory?.success}</div>
-        </div>
+      <div style={{ marginBottom:"1rem", display:"grid", gap:"0.28rem" }}>
+        <div style={{ fontSize:"0.56rem", color:"#64748b", letterSpacing:"0.14em" }}>TODAY</div>
+        <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"2rem", color:"#f8fafc", letterSpacing:"0.03em", lineHeight:1 }}>{todayWorkout?.label || "Rest Day"}</div>
+        <div style={{ fontSize:"0.61rem", color:"#cbd5e1", lineHeight:1.6 }}>{dailyStory?.focus || dailyStory?.brief}</div>
+        <div style={{ fontSize:"0.58rem", color:C.green }}>{dailyStory?.success}</div>
       </div>
 
-      <div className="card" style={{ marginBottom:"0.75rem" }}>
+      <div className="card" style={{ marginBottom:"1.05rem", padding:"1.35rem", background:"#121a27", border:"1px solid rgba(96,165,250,0.2)" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.45rem" }}>MAIN WORKOUT</div>
         {todayWorkout?.run && (
           <WorkoutBlock
@@ -1848,21 +1907,17 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             Strength add-on: {(STRENGTH[todayWorkout.strSess || "A"]?.home || []).slice(0,3).map(x => `${x.ex} (${x.sets})`).join(" · ")}
           </div>
         )}
+        {(todayWorkout?.optionalSecondary || planComposer?.aestheticAllocation?.active) && (
+          <div style={{ marginTop:"0.45rem", fontSize:"0.56rem", color:"#cbd5e1" }}>
+            + {todayWorkout?.optionalSecondary || "Optional: 10 min core"}
+          </div>
+        )}
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.65rem", marginBottom:"0.75rem" }}>
-        <div className="card">
-          <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>COACH NOTE</div>
-          <div style={{ fontSize:"0.61rem", color:"#e2e8f0", lineHeight:1.7 }}>{dailyStory?.focus || arbitration.shiftReason}</div>
-        </div>
-        <div className="card">
-          <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>EASIEST FALLBACK</div>
-          <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.7, marginBottom:"0.35rem" }}>{todayWorkout?.fallback || "Minimum viable day: short session + momentum preserved."}</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
-            <button className="btn" onClick={()=>applyDayContextOverride("minimum_viable_day")} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}>Min day</button>
-            <button className="btn" onClick={()=>shiftTodayWorkout(1)} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"30" }}>Shift tomorrow</button>
-          </div>
-        </div>
+      <div style={{ marginBottom:"0.85rem", display:"grid", gridTemplateColumns:"1fr auto auto", alignItems:"center", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" }}>
+        <div style={{ fontSize:"0.58rem", color:"#94a3b8" }}>Not feeling it?</div>
+        <button className="btn" onClick={()=>applyDayContextOverride("minimum_viable_day")} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}>Minimum version</button>
+        <button className="btn" onClick={()=>shiftTodayWorkout(1)} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"30" }}>Move to tomorrow</button>
       </div>
 
       <div className="card" style={{ marginBottom:"0.75rem" }}>
@@ -1965,9 +2020,21 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
       <div className="card" style={{ marginBottom:"0.85rem", borderColor:C.blue+"40", background:"#0a1320" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>YOUR PROGRAM</div>
         <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.7 }}>Current block: <span style={{ color:C.blue }}>{planComposer.architecture.replaceAll("_"," ")}</span></div>
-        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.2rem" }}>Prioritized: {arbitration.pushes?.[0] || arbitration.priorityStack.primary}</div>
-        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.15rem" }}>Maintained: {arbitration.maintains?.[0] || arbitration.priorityStack.maintained}</div>
-        <div style={{ fontSize:"0.58rem", color:C.amber, marginTop:"0.25rem" }}>Tradeoff: {arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
+        <div style={{ fontSize:"0.58rem", color:"#cbd5e1", marginTop:"0.25rem", lineHeight:1.7 }}>
+          {planComposer?.blockIntent?.narrative || arbitration.allocationNarrative}
+        </div>
+        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.2rem" }}>Prioritized: {planComposer?.blockIntent?.prioritized || arbitration.goalAllocation.primary}</div>
+        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.15rem" }}>Maintained: {(planComposer?.blockIntent?.maintained || arbitration.goalAllocation.maintained || []).join(" · ")}</div>
+        <div style={{ fontSize:"0.58rem", color:C.amber, marginTop:"0.15rem" }}>Minimized: {planComposer?.blockIntent?.minimized || arbitration.goalAllocation.minimized}</div>
+        <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.25rem" }}>
+          Strength inclusion: {planComposer?.strengthAllocation?.sessionsPerWeek || 1} session{(planComposer?.strengthAllocation?.sessionsPerWeek || 1) > 1 ? "s" : ""}/week · {planComposer?.strengthAllocation?.targetSessionDuration || arbitration.strengthInclusion.duration}
+        </div>
+        {planComposer?.aestheticAllocation?.active && (
+          <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.15rem" }}>
+            Aesthetic support: {planComposer.aestheticAllocation.dosage} ({planComposer.aestheticAllocation.weeklyCoreFinishers}/week target).
+          </div>
+        )}
+        <div style={{ fontSize:"0.58rem", color:C.amber, marginTop:"0.25rem" }}>Tradeoff: {arbitration.coachTradeoffLine || arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
       </div>
 
       <div className="card" style={{ marginBottom:"0.85rem" }}>
@@ -2298,191 +2365,130 @@ function MiniChart({ data, color, baseline }) {
 }
 
 function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer, realWorldNutrition, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
-  const [mode, setMode] = useState("home");
-  const [dayType, setDayType] = useState(nutritionLayer.dayType || todayWorkout?.nutri || "easyRun");
-  const [query, setQuery] = useState("");
-  const [store, setStore] = useState(personalization.localFoodContext.groceryOptions?.[0] || "Trader Joe's");
-  const [liveNearby, setLiveNearby] = useState([]);
-  const [placesStatus, setPlacesStatus] = useState("template");
+  const localFoodContext = personalization?.localFoodContext || { city: "Chicago", groceryOptions: ["Trader Joe's"] };
+  const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || "Trader Joe's");
   const favorites = nutritionFavorites || { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] };
   const [nutritionCheck, setNutritionCheck] = useState({ status: "on_track", issue: "", note: "" });
   const [lastKey, setLastKey] = useState("");
-  const goalContext = getGoalContext(goals);
-  const arbitration = arbitrateGoals({ goals, momentum, personalization });
-  const adaptiveForSelected = deriveAdaptiveNutrition({ todayWorkout: { ...todayWorkout, type: dayType === "rest" ? "rest" : todayWorkout?.type }, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments: { extra: {} }, salvageLayer: { active: false } });
-  const targets = dayType === nutritionLayer.dayType ? nutritionLayer.targets : adaptiveForSelected.targets;
-  const calRange = dayType === nutritionLayer.dayType ? nutritionLayer.calRange : adaptiveForSelected.calRange;
-  const proteinTarget = dayType === nutritionLayer.dayType ? nutritionLayer.proteinTarget : `${targets.p}-${targets.p + 10}g`;
-  const carbGuidance = dayType === nutritionLayer.dayType ? nutritionLayer.carbGuidance : adaptiveForSelected.carbGuidance;
-  const fatGuidance = dayType === nutritionLayer.dayType ? nutritionLayer.fatGuidance : adaptiveForSelected.fatGuidance;
-  const hydration = dayType === nutritionLayer.dayType ? nutritionLayer.hydration : adaptiveForSelected.hydration;
-  const fueling = dayType === nutritionLayer.dayType ? nutritionLayer.fueling : adaptiveForSelected.fueling;
-  const mealStructure = dayType === nutritionLayer.dayType ? nutritionLayer.mealStructure : adaptiveForSelected.mealStructure;
-  const tradeoff = dayType === nutritionLayer.dayType ? nutritionLayer.tradeoff : adaptiveForSelected.tradeoff;
-  const whyLine = dayType === nutritionLayer.dayType ? nutritionLayer.why : adaptiveForSelected.why;
-  const macroWhy = explainMacroShift(dayType);
-  const city = personalization.localFoodContext.city || "Chicago";
-  const nearbyTemplate = getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query }).filter(x => x.id !== lastKey);
-  const nearby = liveNearby.length ? liveNearby : nearbyTemplate;
+  const goalContext = getGoalContext(goals) || { primary: null, secondary: [] };
+  const dayType = nutritionLayer?.dayType || todayWorkout?.nutri || "easyRun";
+  const city = localFoodContext.city || "Chicago";
+  const nearby = (getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" }) || []).filter(x => x?.id !== lastKey).slice(0, 2);
   const basket = buildGroceryBasket({ store, city, days: 3, dayType });
   const fastest = nearby[0] || { name: "Saved default", meal: "Protein shake + fruit + sandwich", tag: "fallback" };
   const travelBreakfast = ["Starbucks: egg bites + oatmeal + banana", "Hotel breakfast: eggs + Greek yogurt + fruit", "Airport: wrap + extra protein + water"];
+  const bodyCompActive = goals?.some(g => g.active && g.category === "body_comp");
+  const strengthActive = goals?.some(g => g.active && g.category === "strength");
+  const runningActive = goals?.some(g => g.active && g.category === "running");
+  const hardDay = ["hardRun", "longRun"].includes(dayType) || ["hard-run", "long-run"].includes(todayWorkout?.type);
+  const recoveryDay = dayType === "rest" || todayWorkout?.type === "rest";
+  const strengthDay = dayType === "strength" || ["run+strength", "strength+prehab"].includes(todayWorkout?.type);
+  const simplifiedWeek = ["drifting","falling off"].includes(momentum?.momentumState) || learningLayer?.adjustmentBias === "simplify";
+  const nutritionUnavailable = !nutritionLayer || !realWorldNutrition;
+
+  const proteinLevel = strengthActive || bodyCompActive ? "high" : "moderate";
+  const carbLevel = hardDay ? "high" : recoveryDay ? "low" : "moderate";
+  const calorieLevel = hardDay ? "higher" : recoveryDay && bodyCompActive ? "lower" : "normal";
+  const topGuidance = nutritionUnavailable
+    ? "Keep it simple today. Prioritize protein and eat normally."
+    : simplifiedWeek
+    ? "Keep this very simple today. Repeat easy meals and stay consistent."
+    : hardDay
+    ? "Eat a little more today. Fuel the run."
+    : recoveryDay && bodyCompActive
+    ? "Keep this day tight. High protein, avoid extra snacking."
+    : "Eat normally today. Prioritize protein.";
+  const secondGuidance = simplifiedWeek
+    ? "Use 2–3 default meals so nutrition is automatic."
+    : hardDay
+    ? "Center meals around easy carbs before and after training."
+    : strengthDay
+    ? "Keep protein steady across the day to support recovery."
+    : "Keep meals simple and repeatable so consistency stays easy.";
+  const thirdGuidance = bodyCompActive
+    ? "Use one planned snack so cravings don’t run the day."
+    : runningActive
+    ? "Hydrate early and add carbs around harder sessions."
+    : "Pick meals you can repeat on busy days.";
+
+  const breakfast = realWorldNutrition?.mealStructure?.breakfast || "Greek yogurt + fruit + granola";
+  const lunch = realWorldNutrition?.mealStructure?.lunch || "Protein bowl with rice/potatoes + veggies";
+  const dinner = realWorldNutrition?.mealStructure?.dinner || "Lean protein + carb + vegetable";
+  const snack = hardDay ? "Banana + protein shake" : "Apple + string cheese";
 
   const todayKey = new Date().toISOString().split("T")[0];
   const feedbackToday = nutritionFeedback?.[todayKey];
   useEffect(() => { if (feedbackToday) setNutritionCheck(feedbackToday); }, [feedbackToday?.ts]);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      const api = typeof window !== "undefined" ? window.__TRAINER_CONFIG?.placesApi : null;
-      if (!api || mode !== "nearby") { setLiveNearby([]); setPlacesStatus("template"); return; }
-      try {
-        const res = await safeFetchWithTimeout(`${api}?q=${encodeURIComponent(query || "healthy high protein meals")}&city=${encodeURIComponent(city)}`, {}, 4500);
-        if (!res.ok) throw new Error("places unavailable");
-        const data = await res.json();
-        if (!active) return;
-        setLiveNearby((data?.results || []).slice(0, 6).map((r, i) => ({ id:`live_${i}_${r.name}`, name:r.name, meal:r.reco || "Lean protein + carb-balanced bowl", tag:"live nearby" })));
-        setPlacesStatus("live");
-      } catch {
-        if (!active) return;
-        setLiveNearby([]);
-        setPlacesStatus("template");
-      }
-    })();
-    return () => { active = false; };
-  }, [mode, query, city]);
-
   return (
     <div className="fi">
-      <div style={{ display:"flex", gap:"0.35rem", marginBottom:"0.8rem", flexWrap:"wrap" }}>
-        {["home","travel","grocery","nearby"].map(m => (
-          <button key={m} className="btn" onClick={()=>setMode(m)}
-            style={{ color:mode===m?"#0a0a0f":C.amber, background:mode===m?C.amber:"transparent", borderColor:mode===m?C.amber:"#1e293b", fontSize:"0.58rem" }}>
-            {m.toUpperCase()} MODE
-          </button>
-        ))}
-      </div>
-
-      <div style={{ display:"flex", gap:"0.3rem", marginBottom:"0.8rem", flexWrap:"wrap" }}>
-        {Object.entries(NUTRITION).map(([k,v]) => (
-          <button key={k} className="btn" onClick={()=>setDayType(k)}
-            style={{ color:dayType===k?"#0a0a0f":C.green, background:dayType===k?C.green:"transparent", borderColor:dayType===k?C.green:"#1e293b", fontSize:"0.55rem" }}>
-            {v.label}
-          </button>
-        ))}
+      <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.green+"35", background:"#0f1622" }}>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>TODAY'S DIRECTION</div>
+        <div style={{ fontSize:"0.66rem", color:"#e2e8f0", lineHeight:1.65 }}>{topGuidance}</div>
+        <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.65, marginTop:"0.2rem" }}>{secondGuidance}</div>
+        <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.65, marginTop:"0.2rem" }}>{thirdGuidance}</div>
       </div>
 
       <div className="card" style={{ marginBottom:"0.8rem" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.55rem" }}>TODAY'S NUTRITION TARGET</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.4rem" }}>
-          {[["CAL",calRange,C.amber],["P",targets.p+"g",C.red],["C",targets.c+"g",C.green],["F",targets.f+"g",C.blue]].map(([l,v,col])=>(
-            <div key={l} style={{ background:"#0f172a", border:`1px solid ${col}30`, borderRadius:8, textAlign:"center", padding:"0.55rem 0.45rem" }}>
-              <div style={{ fontFamily:"'Bebas Neue',sans-serif", color:col, fontSize:"1.2rem" }}>{v}</div>
-              <div style={{ fontSize:"0.53rem", color:"#334155" }}>{l}</div>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.45rem" }}>SIMPLE TARGETS</div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.4rem" }}>
+          {[["Protein", proteinLevel, C.red], ["Carbs", carbLevel, C.green], ["Calories", calorieLevel, C.amber]].map(([label, value, col]) => (
+            <div key={label} style={{ background:"#0f172a", border:`1px solid ${col}30`, borderRadius:8, padding:"0.55rem 0.45rem", textAlign:"center" }}>
+              <div style={{ fontSize:"0.53rem", color:"#64748b", letterSpacing:"0.06em" }}>{label}</div>
+              <div style={{ fontFamily:"'Bebas Neue',sans-serif", color:col, fontSize:"1.05rem", marginTop:"0.1rem" }}>{value}</div>
             </div>
           ))}
         </div>
-        <div style={{ marginTop:"0.55rem", fontSize:"0.59rem", color:"#94a3b8", lineHeight:1.7 }}>
-          Why today's macros changed: {macroWhy}
+        <div style={{ marginTop:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.65 }}>
+          Focus today: {simplifiedWeek ? "simplified meals and consistency" : hardDay ? "hard training fuel" : recoveryDay ? "recovery and appetite control" : strengthDay ? "protein-led recovery" : "steady intake and consistency"}.
         </div>
-        <div style={{ marginTop:"0.35rem", fontSize:"0.58rem", color:"#94a3b8" }}>Protein target: {proteinTarget}</div>
-        <div style={{ marginTop:"0.2rem", fontSize:"0.56rem", color:"#64748b" }}>{carbGuidance}</div>
-        <div style={{ marginTop:"0.2rem", fontSize:"0.56rem", color:"#64748b" }}>{fatGuidance}</div>
-        <div style={{ marginTop:"0.2rem", fontSize:"0.56rem", color:"#64748b" }}>{hydration}</div>
-        <div style={{ marginTop:"0.2rem", fontSize:"0.56rem", color:"#64748b" }}>{fueling}</div>
-        <div style={{ marginTop:"0.35rem", fontSize:"0.55rem", color:"#64748b" }}>
-          Goal balance: primary {goalContext.primary?.name || "none"}; supporting {(goalContext.secondary||[]).map(g=>g.name).join(" · ") || "none"}.
-        </div>
-        <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:"#475569" }}>
-          Tradeoff this week: {tradeoff || arbitration.conflicts[0] || "No major conflicts"}.
-        </div>
-        <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:"#475569" }}>
-          Why this target: {whyLine}
+        <div style={{ marginTop:"0.15rem", fontSize:"0.55rem", color:"#64748b" }}>
+          Goals covered: {goalContext.primary?.name || "general fitness"}{goalContext.secondary?.length ? ` + ${(goalContext.secondary || []).map(g=>g?.name).filter(Boolean).join(" · ")}` : ""}.
         </div>
       </div>
 
       <div className="card" style={{ marginBottom:"0.8rem" }}>
-        <div className="sect-title" style={{ color:C.amber, marginBottom:"0.5rem" }}>SIMPLE MEAL STRUCTURE FOR TODAY</div>
-        {mealStructure.map((x, i) => <div key={i} style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.6 }}>• {x}</div>)}
+        <div className="sect-title" style={{ color:C.amber, marginBottom:"0.5rem" }}>WHAT THIS LOOKS LIKE</div>
+        <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.7 }}>
+          <div><span style={{ color:C.amber }}>Breakfast:</span> {breakfast}</div>
+          <div><span style={{ color:C.amber }}>Lunch:</span> {lunch}</div>
+          <div><span style={{ color:C.amber }}>Dinner:</span> {dinner}</div>
+          <div><span style={{ color:C.amber }}>Optional snack:</span> {snack}</div>
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom:"0.8rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>PRACTICAL EATING PLAN</div>
-        <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.7, marginBottom:"0.35rem" }}>
-          <div><span style={{ color:C.blue }}>Breakfast:</span> {realWorldNutrition.mealStructure.breakfast}</div>
-          <div><span style={{ color:C.blue }}>Lunch:</span> {realWorldNutrition.mealStructure.lunch}</div>
-          <div><span style={{ color:C.blue }}>Dinner:</span> {realWorldNutrition.mealStructure.dinner}</div>
-          <div><span style={{ color:C.blue }}>Protein anchor:</span> {realWorldNutrition.mealStructure.proteinAnchor}</div>
-        </div>
-        <div style={{ fontSize:"0.55rem", color:"#64748b", marginBottom:"0.2rem" }}>Restaurant-style options:</div>
-        {realWorldNutrition.restaurantOptions.slice(0,4).map((x, i) => <div key={`rw_rest_${i}`} style={{ fontSize:"0.56rem", color:"#94a3b8" }}>• {x}</div>)}
-        <div style={{ fontSize:"0.55rem", color:"#64748b", margin:"0.35rem 0 0.2rem" }}>Grocery-based options:</div>
-        {realWorldNutrition.groceryOptions.slice(0,4).map((x, i) => <div key={`rw_groc_${i}`} style={{ fontSize:"0.56rem", color:"#94a3b8" }}>• {x}</div>)}
-        <div style={{ fontSize:"0.55rem", color:C.amber, margin:"0.35rem 0 0.2rem" }}>Fallback no-thinking meals:</div>
-        {realWorldNutrition.fallback.map((x, i) => <div key={`rw_fb_${i}`} style={{ fontSize:"0.56rem", color:"#94a3b8" }}>• {x}</div>)}
-      </div>
-
-      <div className="card" style={{ marginBottom:"0.8rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.55rem" }}>BEST NEARBY OPTIONS</div>
-        <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Try: best nearby lunch options / high-protein dinner near me" style={{ marginBottom:"0.5rem" }} />
-        <div style={{ fontSize:"0.54rem", color: placesStatus === "live" ? C.green : "#475569", marginBottom:"0.35rem" }}>
-          Source: {placesStatus === "live" ? "Live places service" : "Saved favorites + local templates fallback"}
-        </div>
-        <div style={{ display:"grid", gap:"0.35rem" }}>
-          {nearby.length ? nearby.map(p => (
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.55rem" }}>REAL-LIFE BACKUPS</div>
+        <div style={{ display:"grid", gap:"0.35rem", marginBottom:"0.45rem" }}>
+          {nearby.map(p => (
             <div key={p.id} style={{ background:"#0f172a", borderRadius:7, padding:"7px 9px", display:"flex", justifyContent:"space-between", gap:"0.6rem" }}>
               <div>
-                <div style={{ fontSize:"0.63rem", color:"#e2e8f0" }}>{p.name}</div>
-                <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:2 }}>{p.meal}</div>
-                <div style={{ fontSize:"0.54rem", color:"#475569" }}>{p.tag}</div>
+                <div style={{ fontSize:"0.63rem", color:"#e2e8f0" }}>{p.name || "Nearby option"}</div>
+                <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:2 }}>{p.meal || "Protein + carbs + produce"}</div>
               </div>
-              <button className="btn" onClick={()=>{ setLastKey(p.id); saveNutritionFavorites({ ...favorites, restaurants: [{ name: p.name, meal: p.meal }, ...favorites.restaurants].slice(0, 8) }); }} style={{ color:C.green, borderColor:C.green+"30", fontSize:"0.52rem" }}>
+              <button className="btn" onClick={()=>{ setLastKey(p.id || `${Date.now()}`); saveNutritionFavorites({ ...favorites, restaurants: [{ name: p.name || "Nearby option", meal: p.meal || "Protein + carbs + produce" }, ...favorites.restaurants].slice(0, 8) }); }} style={{ color:C.green, borderColor:C.green+"30", fontSize:"0.52rem" }}>
                 SAVE
               </button>
             </div>
-          )) : <div style={{ fontSize:"0.6rem", color:"#475569" }}>No direct matches. Using saved defaults and curated local options.</div>}
+          ))}
+        </div>
+        <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.65 }}>
+          <div><span style={{ color:C.blue }}>Fastest good choice:</span> {fastest.name} — {fastest.meal}</div>
+          <div><span style={{ color:C.blue }}>Travel backup:</span> {travelBreakfast[0]}</div>
+          <div><span style={{ color:C.blue }}>Grocery reset:</span> {basket.items?.[0] || "pre-cooked protein + fruit + easy carbs"}</div>
         </div>
       </div>
 
-      <div style={{ display:"grid", gap:"0.8rem", gridTemplateColumns:"1fr 1fr" }}>
-        <div className="card">
-          <div className="sect-title" style={{ color:C.purple, marginBottom:"0.5rem" }}>GROCERY FALLBACK</div>
-          <select value={store} onChange={e=>setStore(e.target.value)} style={{ marginBottom:"0.45rem" }}>
-            {[...new Set([...personalization.localFoodContext.groceryOptions, ...Object.keys(LOCAL_PLACE_TEMPLATES[city]?.groceries || {})])].map(s => <option key={s}>{s}</option>)}
-          </select>
-          <button className="btn" onClick={()=>saveNutritionFavorites({ ...favorites, groceries: [store, ...favorites.groceries.filter(g=>g!==store)].slice(0,6) })} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"35", marginBottom:"0.45rem" }}>
-            SAVE STORE
-          </button>
-          <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginBottom:"0.35rem" }}>{basket.title}</div>
-          {basket.items.map((it,i)=><div key={i} style={{ fontSize:"0.58rem", color:"#64748b", lineHeight:1.6 }}>• {it}</div>)}
-          <div style={{ marginTop:"0.35rem", fontSize:"0.55rem", color:"#475569" }}>{basket.note}</div>
-        </div>
-
-        <div className="card">
-          <div className="sect-title" style={{ color:C.amber, marginBottom:"0.5rem" }}>TRAVEL FALLBACK</div>
-          {travelBreakfast.map((t,i)=><div key={i} style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.65 }}>• {t}</div>)}
-          <button className="btn" onClick={()=>saveNutritionFavorites({ ...favorites, travelMeals: [...new Set([travelBreakfast[0], ...(favorites.travelMeals || [])])].slice(0, 8) })} style={{ marginTop:"0.4rem", fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" }}>
-            SAVE TRAVEL FALLBACK
-          </button>
-          <div style={{ marginTop:"0.45rem", fontSize:"0.58rem", color:"#64748b" }}>
-            Travel breakfast near hotel: use nearest coffee chain + eggs/protein + fruit. Keep it repeatable.
-          </div>
-        </div>
+      <div className="card" style={{ marginBottom:"0.8rem" }}>
+        <div className="sect-title" style={{ color:C.purple, marginBottom:"0.5rem" }}>QUICK GROCERY RESET</div>
+        <select value={store} onChange={e=>setStore(e.target.value)} style={{ marginBottom:"0.35rem" }}>
+          {[...new Set([...(localFoodContext.groceryOptions || []), ...Object.keys(LOCAL_PLACE_TEMPLATES[city]?.groceries || {})])].map(s => <option key={s}>{s}</option>)}
+        </select>
+        <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginBottom:"0.3rem" }}>{basket.title || "Simple 3-day list"}</div>
+        {(basket.items || []).slice(0, 5).map((it,i)=><div key={i} style={{ fontSize:"0.56rem", color:"#64748b", lineHeight:1.6 }}>• {it}</div>)}
       </div>
 
-      <div className="card" style={{ marginTop:"0.8rem" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.5rem" }}>FASTEST GOOD OPTION</div>
-        <div style={{ fontSize:"0.64rem", color:"#e2e8f0" }}>{fastest.name}</div>
-        <div style={{ fontSize:"0.6rem", color:"#94a3b8", marginTop:2 }}>{fastest.meal}</div>
-        <button className="btn" onClick={()=>saveNutritionFavorites({ ...favorites, safeMeals: [{ name: fastest.name, meal: fastest.meal }, ...favorites.safeMeals].slice(0,8) })} style={{ marginTop:"0.4rem", fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" }}>
-          SAVE SAFE DEFAULT MEAL
-        </button>
-        <div style={{ marginTop:"0.45rem", fontSize:"0.55rem", color:"#475569" }}>
-          Practical rule: staple breakfast + varied lunch/dinner + one emergency default meal.
-        </div>
-      </div>
-      <div className="card" style={{ marginTop:"0.8rem" }}>
+      <div className="card">
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>NUTRITION REFLECTION</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem", marginBottom:"0.35rem" }}>
           {[["on_track","on track"],["decent","decent"],["off_track","off track"]].map(([k,lab]) => (
@@ -2490,10 +2496,6 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
               style={{ fontSize:"0.55rem", borderColor:nutritionCheck.status===k?C.blue:"#1e293b", color:nutritionCheck.status===k?C.blue:"#64748b" }}>{lab}</button>
           ))}
         </div>
-        <select value={nutritionCheck.issue || ""} onChange={e=>setNutritionCheck(prev=>({ ...prev, issue:e.target.value }))} style={{ marginBottom:"0.35rem", fontSize:"0.56rem" }}>
-          <option value="">Biggest issue (optional)</option>
-          {["hunger","convenience","cravings","travel","social_eating","underprepared","low_appetite"].map(i => <option key={i} value={i}>{i.replaceAll("_"," ")}</option>)}
-        </select>
         <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
           <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck(prev=>({ ...prev, note:e.target.value }))} placeholder="Quick note (optional)" />
           <button className="btn btn-primary" onClick={()=>saveNutritionFeedback(todayKey, nutritionCheck)} style={{ fontSize:"0.55rem" }}>SAVE</button>
@@ -2607,177 +2609,66 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     "Use default meal structure for 3 days",
   ];
 
+  const latestAssistant = [...messages].reverse().find(m => m.role === "assistant");
+  const activePacket = latestAssistant?.packet || deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, realWorldNutrition, recalibration });
+  const suggestedActions = (pendingActions.length ? pendingActions : (activePacket.actions || [])).slice(0, 2);
+  const readableDecision = (action) => {
+    if (!action) return "Keep the current plan.";
+    if (action.type === COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME) return "Reducing weekly volume slightly.";
+    if (action.type === COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS) return "Keeping strength minimal but progressing where tolerated.";
+    if (action.type === COACH_TOOL_ACTIONS.SIMPLIFY_MEALS_THIS_WEEK) return "Simplifying meals this week.";
+    if (action.type === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) return "Adjusting today’s fueling target.";
+    if (action.type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE) return "Switching to travel nutrition mode.";
+    return action.type.replaceAll("_", " ").toLowerCase();
+  };
+  const acceptChanges = async () => {
+    for (const action of suggestedActions) {
+      await commitAction(action);
+    }
+    setPendingActions([]);
+    setMessages(m => [...m, { role:"assistant", packet:{ notices:["Changes applied."], recommendations:["We’ll monitor execution over the next few days."], effects:["Plan and nutrition now reflect this decision."], actions:[] }, source:"deterministic" }]);
+  };
+
   return (
-    <div className="fi" style={{ display:"flex", flexDirection:"column", height:"calc(100vh - 200px)", minHeight:400 }}>
-      <div style={{ marginBottom:"0.55rem", display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.4rem", alignItems:"center" }}>
-        <div style={{ fontSize:"0.58rem", color:"#64748b" }}>Coach mode ({momentum.coachMode})</div>
-        <select value={coachMode} onChange={e=>setCoachMode(e.target.value)} style={{ fontSize:"0.58rem", padding:"4px 6px" }}>
-          <option value="auto">AUTO</option>
-          <option value="deterministic">DETERMINISTIC</option>
-        </select>
-        <input value={apiKey} onChange={e=>{ setApiKey(e.target.value); if (typeof window !== "undefined") localStorage.setItem("coach_api_key", e.target.value); }} placeholder="Anthropic key (optional)" style={{ fontSize:"0.56rem", padding:"4px 6px" }} />
+    <div className="fi" style={{ display:"grid", gap:"0.75rem" }}>
+      <div className="card" style={{ borderColor:C.blue+"45", background:"#0a1320" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>WHAT I’M CHANGING</div>
+        <div style={{ display:"grid", gap:"0.2rem", fontSize:"0.62rem", color:"#e2e8f0", lineHeight:1.7 }}>
+          {(suggestedActions.length ? suggestedActions : [null]).slice(0,2).map((a, i)=><div key={i}>• {readableDecision(a)}</div>)}
+        </div>
       </div>
 
-      <div style={{ marginBottom:"0.5rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.55rem 0.7rem" }}>
-        <div style={{ fontSize:"0.56rem", color:C.blue, marginBottom:"0.3rem" }}>COACH NOTES</div>
-        <div style={{ display:"grid", gap:"0.3rem" }}>
-          <input value={memoryDraft.failurePatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, failurePatterns:e.target.value })} placeholder="Failure patterns" />
-          <input value={memoryDraft.commonBarriers} onChange={e=>setMemoryDraft({ ...memoryDraft, commonBarriers:e.target.value })} placeholder="Common barriers/excuses" />
-          <input value={memoryDraft.preferredFoodPatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, preferredFoodPatterns:e.target.value })} placeholder="Preferred food patterns" />
-          <input value={memoryDraft.simplicityVsVariety} onChange={e=>setMemoryDraft({ ...memoryDraft, simplicityVsVariety:e.target.value })} placeholder="Simplicity vs variety" />
-          <button className="btn" onClick={async ()=>{
-            const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, failurePatterns: memoryDraft.failurePatterns.split(",").map(x=>x.trim()).filter(Boolean), commonBarriers: memoryDraft.commonBarriers.split(",").map(x=>x.trim()).filter(Boolean), preferredFoodPatterns: memoryDraft.preferredFoodPatterns.split(",").map(x=>x.trim()).filter(Boolean), simplicityVsVariety: memoryDraft.simplicityVsVariety } });
-            setPersonalization(updated);
-            await onPersist(updated, coachActions, coachPlanAdjustments, weekNotes, planAlerts);
-          }} style={{ color:C.green, borderColor:C.green+"35" }}>
-            SAVE MEMORY
-          </button>
+      <div className="card">
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>WHY</div>
+        <div style={{ fontSize:"0.6rem", color:"#cbd5e1", lineHeight:1.7 }}>
+          {activePacket?.recommendations?.[0] || activePacket?.notices?.[0] || "Recent patterns show better follow-through with a simpler, clearer plan."}
         </div>
-        {patterns.length > 0 && <div style={{ marginTop:"0.35rem", fontSize:"0.55rem", color:"#64748b" }}>Detected patterns: {patterns.join(" · ")}</div>}
       </div>
 
-      {/* Chat messages */}
-      {proactiveTriggers.length > 0 && (
-        <div style={{ marginBottom:"0.5rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.55rem 0.7rem" }}>
-          <div style={{ fontSize:"0.56rem", color:C.amber, marginBottom:"0.3rem" }}>SUGGESTED INTERVENTIONS</div>
-          {proactiveTriggers.map(t => (
-            <div key={t.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.4rem", marginBottom:"0.2rem" }}>
-              <div style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.6 }}>• {t.msg}</div>
-              <button className="btn" onClick={()=>onApplyTrigger(t)} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"30" }}>{t.actionLabel || "Apply"}</button>
-            </div>
-          ))}
+      <div className="card">
+        <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>ACTION OPTIONS</div>
+        <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+          <button className="btn btn-primary" onClick={acceptChanges} disabled={!suggestedActions.length}>Accept change</button>
+          <button className="btn" onClick={()=>setPendingActions([])}>Keep current plan</button>
         </div>
-      )}
-      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#64748b", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem" }}>
-        Strength mode: {strengthLayer.focus} · Bench TM {strengthLayer.trainingMax} · {strengthLayer.tradeoff}
-      </div>
-      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
-        Goal arbitration: primary {arbitration.priorityStack.primary} · secondary {arbitration.priorityStack.secondary} · maintained {arbitration.priorityStack.maintained}. {arbitration.shiftReason}
-      </div>
-      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
-        Weekly strategy: {arbitration.shiftReason}
-      </div>
-      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
-        Tradeoff: {strengthLayer.tradeoff}
-      </div>
-      {recalibration?.active && (
-        <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:C.amber, background:"#0d1117", border:`1px solid ${C.amber}35`, borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
-          Recalibration active: {recalibration.why} Next: {recalibration.expect}
-        </div>
-      )}
-      {memoryInsights.length > 0 && (
-        <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
-          Long-term memory guiding decisions: {memoryInsights.slice(0,3).map(m => m.label).join(" · ")}
-        </div>
-      )}
-      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#64748b", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem" }}>
-        Learning bias: {learningLayer.adjustmentBias} · {(learningLayer.topObservations || []).slice(0,2).map(o => o.msg).join(" · ") || "Collecting check-ins."}
-      </div>
-      {optimizationLayer?.confidence !== "low" && (
-        <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.65 }}>
-          Personal optimization: {optimizationLayer.coachLine}
-          <div style={{ marginTop:"0.2rem", color:"#64748b" }}>
-            Zones: {optimizationLayer.optimalZones.optimalDeficitRange} · {optimizationLayer.optimalZones.optimalComplexity}. Experiment cadence: {optimizationLayer.experimentation.canExperiment ? "eligible now" : `cooldown ${Math.max(0, 10 - optimizationLayer.experimentation.cooldownDays)}d`}.
-          </div>
-        </div>
-      )}
-      {failureMode.mode !== "normal" && (
-        <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:C.green, background:"#09170e", border:`1px solid ${C.green}35`, borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.65 }}>
-          Failure-mode coach behavior: {failureMode.coachBehavior.primaryLine}
-          <div style={{ marginTop:"0.2rem", color:"#94a3b8" }}>Guidance style: no guilt, simplify immediately, forward-looking momentum rebuild.</div>
-        </div>
-      )}
-      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.65 }}>
-        Closed-loop validation: {validationLayer.summary}
-        {(validationLayer.recentResolved || []).length > 0 && (
-          <div style={{ marginTop:"0.2rem", color:"#64748b" }}>
-            {(validationLayer.recentResolved || []).slice(0,2).map(r => `${r.changed} → ${r.impact}`).join(" · ")}
-          </div>
-        )}
-      </div>
-      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#64748b", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem" }}>
-        Nutrition strategy: {nutritionLayer.calRange} cal · {nutritionLayer.carbGuidance} · {nutritionLayer.tradeoff}
-      </div>
-      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem" }}>
-        Real-world nutrition prompt: {realWorldNutrition.coachPrompt}
-      </div>
-      <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:salvageLayer.active ? C.amber : "#64748b", background:"#0d1117", border:`1px solid ${salvageLayer.active ? C.amber+"40" : "#1e293b"}`, borderRadius:8, padding:"0.45rem 0.65rem" }}>
-        Salvage mode: {salvageLayer.active ? `ON — ${salvageLayer.triggerReasons.join(" · ")}` : "OFF"}.
-      </div>
-      <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:"0.6rem", paddingBottom:"0.75rem", paddingRight:"0.25rem" }}>
-        {messages.map((msg, i) => (
-          <div key={i} style={{ display:"flex", justifyContent:msg.role==="user"?"flex-end":"flex-start" }}>
-            <div style={{
-              maxWidth:"82%",
-              padding:"0.7rem 0.9rem",
-              borderRadius:msg.role==="user"?"10px 10px 3px 10px":"10px 10px 10px 3px",
-              background:msg.role==="user"?"#0f2a1a":  "#0d1117",
-              border:`1px solid ${msg.role==="user"?C.green+"40":"#1e293b"}`,
-              fontSize:"0.68rem",
-              color:msg.role==="user"?"#e2e8f0":"#cbd5e1",
-              lineHeight:1.75,
-            }}>
-              {msg.role==="assistant" && <div style={{ fontSize:"0.55rem", color:C.green, letterSpacing:"0.12em", marginBottom:"0.35rem" }}>COACH · {msg.source || "deterministic"}</div>}
-              {msg.role === "assistant" ? (
-                <div style={{ display:"grid", gap:"0.4rem" }}>
-                  <CoachSection title="WHAT I NOTICED" items={msg.packet?.notices || []} color={C.blue} />
-                  <CoachSection title="WHAT I RECOMMEND" items={msg.packet?.recommendations || []} color={C.green} />
-                  <CoachSection title="WHAT CHANGES IF APPLIED" items={msg.packet?.effects || []} color={C.amber} />
-                </div>
-              ) : msg.text}
-            </div>
-          </div>
-        ))}
-        {loading && (
-          <div style={{ display:"flex", gap:4, padding:"0.7rem 0.9rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:"10px 10px 10px 3px", width:"fit-content" }}>
-            {[0,1,2].map(i=>(
-              <div key={i} style={{ width:6, height:6, borderRadius:"50%", background:C.green, opacity:0.6, animation:`pulse 1.2s ${i*0.2}s infinite`, }} />
-            ))}
-          </div>
-        )}
-        <div ref={bottomRef} />
       </div>
 
-      {pendingActions.length > 0 && (
-        <div style={{ marginBottom:"0.55rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.65rem" }}>
-          <div style={{ fontSize:"0.58rem", color:C.amber, letterSpacing:"0.08em", marginBottom:"0.4rem" }}>CONFIRM COACH DECISIONS</div>
-          <div style={{ display:"grid", gap:"0.35rem" }}>
-            {pendingActions.map((a, idx) => (
-              <div key={idx} style={{ display:"flex", gap:"0.4rem", alignItems:"center", justifyContent:"space-between", background:"#0f172a", borderRadius:6, padding:"6px 8px" }}>
-                <div style={{ fontSize:"0.6rem", color:"#cbd5e1" }}>{a.type} {a.payload ? `· ${Object.entries(a.payload).map(([k,v])=>`${k}:${v}`).join(" ")}` : ""}</div>
-                <div style={{ display:"flex", gap:"0.35rem" }}>
-                  <button className="btn" onClick={async ()=>{ await commitAction(a); setPendingActions(p => p.filter((_,i)=>i!==idx)); }} style={{ color:C.green, borderColor:C.green+"40" }}>APPLY</button>
-                  <button className="btn" onClick={()=>setPendingActions(p => p.filter((_,i)=>i!==idx))} style={{ color:"#64748b" }}>NOT NOW</button>
-                  <button className="btn" onClick={()=>setMessages(m => [...m, { role:"assistant", packet:{ notices:["You asked why."], recommendations:[`Action ${a.type} is proposed because it improves adherence and protects recovery.`], effects:["If applied, plan load and nutrition targets adjust for sustainability."], actions:[] }, source:"deterministic" }])} style={{ color:C.blue, borderColor:C.blue+"30" }}>ASK WHY</button>
-                </div>
-              </div>
-            ))}
-          </div>
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#94a3b8", letterSpacing:"0.06em" }}>What I’m watching</summary>
+        <div style={{ marginTop:"0.4rem", fontSize:"0.57rem", color:"#94a3b8", lineHeight:1.7 }}>
+          {(activePacket?.notices || []).slice(0,2).map((n, i)=><div key={i}>• {n}</div>)}
         </div>
-      )}
+      </details>
 
-      {/* Quick prompts */}
-      <div style={{ display:"flex", gap:"0.3rem", overflowX:"auto", paddingBottom:"0.4rem", marginBottom:"0.4rem" }}>
-        {quickPrompts.map(q => (
-          <button key={q} className="btn" onClick={()=>send(q)} style={{ whiteSpace:"nowrap", fontSize:"0.58rem", flexShrink:0, color:C.blue, borderColor:`${C.blue}30` }}>
-            {q}
-          </button>
+      <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" }}>
+        {quickPrompts.slice(0, 6).map(q => (
+          <button key={q} className="btn" onClick={()=>send(q)} style={{ whiteSpace:"nowrap", fontSize:"0.55rem" }}>{q}</button>
         ))}
       </div>
 
-      {/* Input */}
       <div style={{ display:"flex", gap:"0.5rem" }}>
-        <input
-          value={input}
-          onChange={e=>setInput(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}
-          placeholder="Ask your coach anything..."
-          style={{ flex:1 }}
-          disabled={loading}
-        />
-        <button className="btn btn-primary" onClick={()=>send()} disabled={loading} style={{ flexShrink:0, opacity:loading?0.5:1 }}>
-          SEND
-        </button>
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Ask coach for a decision" style={{ flex:1 }} disabled={loading} />
+        <button className="btn btn-primary" onClick={()=>send()} disabled={loading} style={{ opacity:loading?0.5:1 }}>Send</button>
       </div>
       <div style={{ marginTop:"0.55rem", fontSize:"0.56rem", color:"#475569", lineHeight:1.7 }}>
         Current coaching context: Week {currentWeek} · Today {todayWorkout?.label || "Rest"} · Logs {Object.keys(logs).length} · Weight entries {bodyweights.length} · Last coach action {coachActions[0]?.type || "none"}.
@@ -2797,4 +2688,3 @@ function CoachSection({ title, items, color }) {
     </div>
   );
 }
-  const addRecommendation = (msg, confidence = "moderate") => recommendations.push(withConfidenceTone(msg, confidence, voiceMode));

@@ -19,6 +19,8 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
   const raceNear = daysUntil(runningGoal?.targetDate) <= 56;
   const inconsistencyRisk = momentum?.inconsistencyRisk || "medium";
   const lowBandwidth = inconsistencyRisk === "high" || learningLayer?.adjustmentBias === "simplify";
+  const strengthPriority = primary?.category === "strength" && !lowBandwidth;
+  const bodyCompActive = !!bodyCompGoal;
 
   const runningScore = (primary?.category === "running" ? 3 : 0) + (runningGoal ? 2 : 0) + (raceNear ? 2 : 0);
   const strengthScore = (primary?.category === "strength" ? 3 : 0) + (strengthGoal ? 2 : 0) + (hasGym ? 1 : -1);
@@ -98,6 +100,44 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     },
   };
 
+  const annotateTemplate = (template) => {
+    const out = Object.fromEntries(Object.entries(template || {}).map(([day, session]) => {
+      const nextSession = { ...session };
+      const isStrengthSession = ["run+strength", "strength+prehab"].includes(nextSession.type);
+      if (isStrengthSession && !strengthPriority && !/short strength/i.test(nextSession.label || "")) {
+        nextSession.label = `${nextSession.label} (Short Strength)`;
+      }
+      if (isStrengthSession) {
+        nextSession.strengthDose = strengthPriority ? "40-55 min strength progression" : "20-35 min maintenance strength";
+      }
+      const allowsOptionalCore = nextSession.type !== "rest";
+      if (bodyCompActive && allowsOptionalCore) {
+        nextSession.optionalSecondary = "Optional: 10 min core finisher";
+      }
+      return [day, nextSession];
+    }));
+    return out;
+  };
+
+  const annotatedTemplates = annotateTemplate(dayTemplates[architecture]);
+  let strengthSessionsPerWeek = Object.values(annotatedTemplates).filter(s => ["run+strength", "strength+prehab"].includes(s?.type)).length;
+  if (strengthGoal && strengthSessionsPerWeek < 1) {
+    annotatedTemplates[3] = { type: "strength+prehab", label: "Minimum Strength Touchpoint (Short Strength)", strSess: "A", nutri: "strength", strengthDose: "20-30 min maintenance strength" };
+    strengthSessionsPerWeek = 1;
+  }
+
+  const maintainedGoals = active
+    .filter(g => g.id !== primary?.id && g.category !== "injury_prevention")
+    .slice(0, 2)
+    .map(g => g.name);
+  const minimizedGoal = active.find(g => g.category === "injury_prevention")?.name || "non-primary volume";
+  const blockIntent = {
+    prioritized: primary?.name || "Consistency and execution",
+    maintained: maintainedGoals.length ? maintainedGoals : ["general fitness"],
+    minimized: minimizedGoal,
+    narrative: `This block prioritizes ${primary?.category || "consistency"}. ${maintainedGoals[0] ? `${maintainedGoals[0]} is maintained.` : "Secondary goals are maintained."} ${bodyCompActive ? "Core work stays minimal but consistent." : "Non-primary accessories stay intentionally limited."}`,
+  };
+
   return {
     architecture,
     split,
@@ -105,7 +145,18 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     constraints,
     drivers: [primary?.name, ...secondary.map(g => g.name)].filter(Boolean),
     unlockMessage: !hasGym && strengthGoal ? "When gym access returns, bench-specific progression can move from foundation mode to direct loading." : "",
-    dayTemplates: dayTemplates[architecture],
+    dayTemplates: annotatedTemplates,
+    blockIntent,
+    strengthAllocation: {
+      sessionsPerWeek: strengthSessionsPerWeek,
+      dosing: strengthPriority ? "full" : "maintenance",
+      targetSessionDuration: strengthPriority ? "40-55 min" : "20-35 min",
+    },
+    aestheticAllocation: bodyCompActive ? {
+      active: true,
+      weeklyCoreFinishers: 3,
+      dosage: "8-12 min optional finishers",
+    } : { active: false },
   };
 };
 
