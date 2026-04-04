@@ -14,10 +14,34 @@ const SRC = path.join(ROOT, "src", "trainer-dashboard.jsx");
 const OUT = path.join(ROOT, "index.html");
 const REACT = fs.readFileSync(path.join(__dirname, "react.min.js"), "utf8");
 const REACT_DOM = fs.readFileSync(path.join(__dirname, "react-dom.min.js"), "utf8");
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || "";
 
 console.log("Building...");
 
-let jsx = fs.readFileSync(SRC, "utf8");
+const inlineLocalImports = (sourceCode, sourceFile) => {
+  let code = sourceCode;
+  const dir = path.dirname(sourceFile);
+  let inlined = "";
+  const importRe = /^import\s+\{[^}]+\}\s+from\s+['"](.+?)['"];?\n/gm;
+  let match;
+  while ((match = importRe.exec(sourceCode)) !== null) {
+    const importPath = match[1];
+    if (!importPath.startsWith(".")) continue;
+    const full = path.resolve(dir, importPath);
+    const raw = fs.readFileSync(full, "utf8");
+    const nested = inlineLocalImports(raw, full);
+    const normalized = nested
+      .replace(/^export\s+const\s+/gm, "const ")
+      .replace(/^export\s+function\s+/gm, "function ")
+      .replace(/^export\s+\{[^}]+\};?\n/gm, "");
+    inlined += `\n// inlined: ${path.relative(ROOT, full)}\n${normalized}\n`;
+  }
+  code = code.replace(importRe, (line, p1) => (p1.startsWith(".") ? "" : line));
+  return inlined + code;
+};
+
+let jsx = inlineLocalImports(fs.readFileSync(SRC, "utf8"), SRC);
 
 // Remove React import — we use the inlined global
 jsx = jsx.replace(/^import \{[^}]+\} from ['"]react['"];?\n/m, "");
@@ -57,7 +81,9 @@ const html = `<!DOCTYPE html>
     <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a0f;color:#334155;font-family:monospace;font-size:0.7rem;letter-spacing:0.2em">LOADING...</div>
   </div>
   <script>
-const { useState, useEffect, useRef } = React;
+window.__SUPABASE_URL = ${JSON.stringify(SUPABASE_URL)};
+window.__SUPABASE_ANON_KEY = ${JSON.stringify(SUPABASE_ANON_KEY)};
+const { useState, useEffect, useRef, useMemo } = React;
 
 ${js}
 
