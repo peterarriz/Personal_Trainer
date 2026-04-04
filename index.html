@@ -3569,6 +3569,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             )
             , React.createElement('button', { className: "btn btn-primary" , onClick: async ()=>{ await setEnvironmentMode(envDraft); setShowEnvEditor(false); }, style: { width:"100%" },}, "Apply changes" )
           )
+          , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" },}, "Status: " , personalization.injuryPainState.level.replaceAll("_"," "), " · "  , injuryRule.why)
         )
       )
     )
@@ -3638,6 +3639,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
           , React.createElement('button', { className: "btn", onClick: ()=>setEnvironmentMode({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _439 => _439.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _440 => _440.time]) || "30", scope: "week" }), style: { fontSize:"0.5rem" },}, "This week" )
           , React.createElement('button', { className: "btn", onClick: ()=>setEnvironmentMode({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _441 => _441.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _442 => _442.time]) || "30", scope: "base" }), style: { fontSize:"0.5rem" },}, "Set default" )
         )
+        , React.createElement('div', { style: { fontSize:"0.58rem", color:C.amber, marginTop:"0.25rem" },}, "Tradeoff: " , arbitration.coachTradeoffLine || _optionalChain([arbitration, 'access', _396 => _396.conflicts, 'optionalAccess', _397 => _397[0]]) || strengthLayer.tradeoff)
       )
 
       , React.createElement('div', { className: "card card-soft" , style: { marginBottom:"0.85rem" },}
