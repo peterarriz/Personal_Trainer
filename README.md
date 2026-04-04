@@ -35,6 +35,59 @@ npm run dev
 - `scripts/react-dom.min.js` — ReactDOM 18 (inlined at build time)
 - `vercel.json` — Vercel build config
 
+## Personalization OS (v3)
+
+### 1) Architecture changes
+- Added a **state-layered personalization engine** in `TrainerDashboard` that derives adaptive state from logs/bodyweight and stores it alongside existing plan data.
+- Preserved the existing tab layout and visual language while adding reason-driven recommendation surfaces.
+- Introduced a controlled coach action pathway so Coach can update state with explicit action types instead of free-form mutation.
+
+### 2) Data model
+Persisted payload now includes:
+- `personalization`
+  - `profile`
+  - `goalState`
+  - `trainingState`
+  - `injuryPainState`
+  - `travelState`
+  - `adherenceMomentumState`
+  - `nutritionPreferenceState`
+  - `localFoodContext`
+  - `coachMemory`
+- `coachActions[]` (auditable action log with timestamps)
+- existing fields: `logs`, `bw`, `paceOverrides`, `weekNotes`, `planAlerts`
+- schema version `v: 3`
+
+### 3) Coach action system
+Supported action types:
+- `SET_GOAL`
+- `SET_TRAVEL`
+- `SET_PAIN`
+- `ADD_MEMORY`
+- `UPDATE_NUTRITION_PREF`
+
+Manual commands in Coach tab:
+- `/pain 1-5`
+- `/travel on|off`
+
+### 4) File-by-file implementation plan
+- `src/trainer-dashboard.jsx`
+  - Add personalization defaults and derivation helpers
+  - Extend Supabase load/save for v3
+  - Show recommendation reasons in Today
+  - Personalize Nutrition context/reasoning
+  - Add controlled coach actions + memory updates
+- `README.md`
+  - Document architecture, model, actions, and migration notes
+
+### 5) Code changes
+- Implemented directly in `src/trainer-dashboard.jsx` and documented here.
+
+### 6) Migrations
+- Backward compatible load path:
+  - If `personalization`/`coachActions` missing, app initializes defaults and persists next save as `v:3`.
+- Existing `v:2` backups can be imported; missing v3 fields are synthesized.
+
 ## Adding to iPhone home screen
 1. Open your Vercel URL in Safari
 2. Tap Share → Add to Home Screen
