@@ -1523,6 +1523,39 @@ export default function TrainerDashboard() {
     });
   };
 
+  const sbLoad = async () => {
+    await authStorage.sbLoad({
+      authSession,
+      setters: {
+        setLogs,
+        setBodyweights,
+        setPaceOverrides,
+        setWeekNotes,
+        setPlanAlerts,
+        setPersonalization,
+        setGoals,
+        setCoachActions,
+        setCoachPlanAdjustments,
+        setDailyCheckins,
+        setWeeklyCheckins,
+        setNutritionFavorites,
+        setNutritionFeedback,
+      },
+      persistAll,
+    });
+  };
+
+  useEffect(() => {
+    console.log("[supabase] resolved URL:", SB_URL || "(missing)");
+    if (SB_CONFIG_ERROR) {
+      setAuthError(`Supabase setup error: ${SB_CONFIG_ERROR}`);
+      setStorageStatus({ mode: "local", label: "CONFIG ERROR" });
+    }
+    const restored = authStorage.loadAuthSession();
+    if (restored) setAuthSession(restored);
+    setLoading(false);
+  }, [SB_URL, SB_CONFIG_ERROR, authStorage]);
+
   useEffect(() => {
     console.log("[supabase] resolved URL:", SB_URL || "(missing)");
     if (SB_CONFIG_ERROR) {
@@ -2136,6 +2169,34 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             <button className="btn" onClick={()=>setInjuryState("mild_tightness", injuryArea)} style={{ color:C.blue, borderColor:C.blue+"35" }}>Mild</button>
             <button className="btn" onClick={()=>setInjuryState("moderate_pain", injuryArea)} style={{ color:C.amber, borderColor:C.amber+"35" }}>Moderate</button>
             <button className="btn" onClick={()=>setInjuryState("sharp_pain_stop", injuryArea)} style={{ color:C.red, borderColor:C.red+"35" }}>Sharp/Stop</button>
+          </div>
+          <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>Status: {personalization.injuryPainState.level.replaceAll("_"," ")} · {injuryRule.why}</div>
+        </div>
+      </details>
+      {showEnvEditor && (
+        <div onClick={()=>setShowEnvEditor(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"flex-end", zIndex:50 }}>
+          <div onClick={e=>e.stopPropagation()} className="card card-strong" style={{ width:"100%", borderRadius:"14px 14px 0 0", padding:"0.9rem 0.9rem 1rem", maxHeight:"82vh", overflowY:"auto" }}>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>Environment</div>
+            <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Adjust for real-world constraints.</div>
+            <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Equipment</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem", marginBottom:"0.55rem" }}>
+              {[["none","None"],["dumbbells","Dumbbells"],["basic_gym","Basic gym"],["full_gym","Full gym"]].map(([v,l]) => (
+                <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, equipment:v }))} style={{ fontSize:"0.54rem", color:envDraft.equipment===v?C.green:"#94a3b8", borderColor:envDraft.equipment===v?C.green+"40":"#334155" }}>{l}</button>
+              ))}
+            </div>
+            <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Time available</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.3rem", marginBottom:"0.55rem" }}>
+              {[["20","20 min"],["30","30 min"],["45+","45+ min"]].map(([v,l]) => (
+                <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, time:v }))} style={{ fontSize:"0.54rem", color:envDraft.time===v?C.blue:"#94a3b8", borderColor:envDraft.time===v?C.blue+"40":"#334155" }}>{l}</button>
+              ))}
+            </div>
+            <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Apply scope</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem", marginBottom:"0.65rem" }}>
+              {[["today","Just today"],["week","This week"]].map(([v,l]) => (
+                <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, scope:v }))} style={{ fontSize:"0.54rem", color:envDraft.scope===v?C.amber:"#94a3b8", borderColor:envDraft.scope===v?C.amber+"40":"#334155" }}>{l}</button>
+              ))}
+            </div>
+            <button className="btn btn-primary" onClick={async ()=>{ await setEnvironmentMode(envDraft); setShowEnvEditor(false); }} style={{ width:"100%" }}>Apply changes</button>
           </div>
           <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>Status: {personalization.injuryPainState.level.replaceAll("_"," ")} · {injuryRule.why}</div>
         </div>
@@ -2814,7 +2875,8 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
 
   const todayKey = new Date().toISOString().split("T")[0];
   const env = resolveEnvironmentSelection({ personalization, todayKey, currentWeek });
-  const dayType = todayWorkout?.type === "long-run" ? "long" : todayWorkout?.type === "hard-run" ? "tempo" : todayWorkout?.type === "easy-run" ? "easy" : todayWorkout?.type === "strength+prehab" ? "strength" : todayWorkout?.type === "rest" ? "recovery" : "hybrid";
+  const dayTypeMap = { "long-run":"long", "hard-run":"tempo", "easy-run":"easy", "strength+prehab":"strength", rest:"recovery" };
+  const dayType = dayTypeMap[todayWorkout?.type] || "hybrid";
   const weekState = failureMode?.mode === "chaotic" ? "chaotic" : momentum?.fatigueNotes >= 2 ? "fatigued" : "normal";
   const adherenceTrend = momentum?.completionRate >= 0.72 ? "stable" : momentum?.completionRate >= 0.5 ? "mixed" : "slipping";
   const fatigueSignal = (personalization?.trainingState?.fatigueScore || 1) >= 4 || momentum?.fatigueNotes >= 2;
@@ -2835,7 +2897,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Protect") return {
       stance: `Do the condensed ${dayLabel} version today and keep intensity controlled.`,
       why: `Recovery signals are elevated, so we protect consistency while keeping ${goalPriority} on track.`,
-      watch: "I’m watching pain and session feel after this workout.",
+      watch: "I'm watching pain and session feel after this workout.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 10, reason: "protect_mode" } }, primary: true },
         { label: "Move to tomorrow", action: { type: COACH_TOOL_ACTIONS.MOVE_LONG_RUN, payload: { days: 1, reason: "protect_shift" } } }
@@ -2844,7 +2906,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Simplify") return {
       stance: `Keep this simple: complete the short ${dayLabel} version.`,
       why: `Time and adherence say simplify now, then rebuild consistency.`,
-      watch: "I’m watching completion rate over the next 3 days.",
+      watch: "I'm watching completion rate over the next 3 days.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 12, reason: "simplify_mode" } }, primary: true },
         { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "simplify_week" } } }
@@ -2853,7 +2915,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Rebuild") return {
       stance: `Take the minimum viable ${dayLabel} session and rebuild rhythm first.`,
       why: `Recent execution dipped, so we rebuild frequency before adding load.`,
-      watch: "I’m watching whether you can stack 2-3 clean sessions.",
+      watch: "I'm watching whether you can stack 2-3 clean sessions.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "rebuild_mode" } }, primary: true },
         { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 18, reason: "rebuild_week" } } }
@@ -2862,7 +2924,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Push") return {
       stance: `Keep the full ${dayLabel} session and add one small progression.`,
       why: `Stability is strong enough to push while still protecting recovery.`,
-      watch: "I’m watching session quality and next-day fatigue.",
+      watch: "I'm watching session quality and next-day fatigue.",
       options: [
         { label: "Keep full session", action: null, primary: true },
         { label: "Push slightly", action: { type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 1, reason: "push_mode" } } }
@@ -2871,7 +2933,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     return {
       stance: `Keep the full ${dayLabel} session as written.`,
       why: `Current signals support staying steady and executing cleanly.`,
-      watch: "I’m watching consistency and workout quality this week.",
+      watch: "I'm watching consistency and workout quality this week.",
       options: [
         { label: "Keep full session", action: null, primary: true },
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 8, reason: "hold_condense" } } }
@@ -2916,7 +2978,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       </div>
 
       <div className="card card-soft">
-        <div className="sect-title" style={{ color:"#94a3b8", marginBottom:"0.2rem" }}>WHAT I’M WATCHING</div>
+        <div className="sect-title" style={{ color:"#94a3b8", marginBottom:"0.2rem" }}>WHAT I'M WATCHING</div>
         <div style={{ fontSize:"0.58rem", color:"#a7b4c6" }}>{coachDecision.watch}</div>
       </div>
 

@@ -4219,19 +4219,20 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
 
   const todayKey = new Date().toISOString().split("T")[0];
   const env = resolveEnvironmentSelection({ personalization, todayKey, currentWeek });
-  const dayType = _optionalChain([todayWorkout, 'optionalAccess', _497 => _497.type]) === "long-run" ? "long" : _optionalChain([todayWorkout, 'optionalAccess', _498 => _498.type]) === "hard-run" ? "tempo" : _optionalChain([todayWorkout, 'optionalAccess', _499 => _499.type]) === "easy-run" ? "easy" : _optionalChain([todayWorkout, 'optionalAccess', _500 => _500.type]) === "strength+prehab" ? "strength" : _optionalChain([todayWorkout, 'optionalAccess', _501 => _501.type]) === "rest" ? "recovery" : "hybrid";
-  const weekState = _optionalChain([failureMode, 'optionalAccess', _502 => _502.mode]) === "chaotic" ? "chaotic" : _optionalChain([momentum, 'optionalAccess', _503 => _503.fatigueNotes]) >= 2 ? "fatigued" : "normal";
-  const adherenceTrend = _optionalChain([momentum, 'optionalAccess', _504 => _504.completionRate]) >= 0.72 ? "stable" : _optionalChain([momentum, 'optionalAccess', _505 => _505.completionRate]) >= 0.5 ? "mixed" : "slipping";
-  const fatigueSignal = (_optionalChain([personalization, 'optionalAccess', _506 => _506.trainingState, 'optionalAccess', _507 => _507.fatigueScore]) || 1) >= 4 || _optionalChain([momentum, 'optionalAccess', _508 => _508.fatigueNotes]) >= 2;
-  const injuryFlag = _optionalChain([personalization, 'optionalAccess', _509 => _509.injuryPainState, 'optionalAccess', _510 => _510.level]) || "none";
-  const goalPriority = _optionalChain([arbitration, 'optionalAccess', _511 => _511.priorityStack, 'optionalAccess', _512 => _512.primary]) || "Consistency";
+  const dayTypeMap = { "long-run":"long", "hard-run":"tempo", "easy-run":"easy", "strength+prehab":"strength", rest:"recovery" };
+  const dayType = dayTypeMap[_optionalChain([todayWorkout, 'optionalAccess', _497 => _497.type])] || "hybrid";
+  const weekState = _optionalChain([failureMode, 'optionalAccess', _498 => _498.mode]) === "chaotic" ? "chaotic" : _optionalChain([momentum, 'optionalAccess', _499 => _499.fatigueNotes]) >= 2 ? "fatigued" : "normal";
+  const adherenceTrend = _optionalChain([momentum, 'optionalAccess', _500 => _500.completionRate]) >= 0.72 ? "stable" : _optionalChain([momentum, 'optionalAccess', _501 => _501.completionRate]) >= 0.5 ? "mixed" : "slipping";
+  const fatigueSignal = (_optionalChain([personalization, 'optionalAccess', _502 => _502.trainingState, 'optionalAccess', _503 => _503.fatigueScore]) || 1) >= 4 || _optionalChain([momentum, 'optionalAccess', _504 => _504.fatigueNotes]) >= 2;
+  const injuryFlag = _optionalChain([personalization, 'optionalAccess', _505 => _505.injuryPainState, 'optionalAccess', _506 => _506.level]) || "none";
+  const goalPriority = _optionalChain([arbitration, 'optionalAccess', _507 => _507.priorityStack, 'optionalAccess', _508 => _508.primary]) || "Consistency";
   const recentLogCount = Object.keys(logs || {}).slice(-7).length;
 
   const coachMode = (() => {
     if (injuryFlag !== "none" || fatigueSignal) return "Protect";
     if (weekState === "chaotic" || env.time === "20" || adherenceTrend === "slipping") return "Simplify";
-    if (_optionalChain([momentum, 'optionalAccess', _513 => _513.logGapDays]) >= 4 || recentLogCount <= 2) return "Rebuild";
-    if ((_optionalChain([momentum, 'optionalAccess', _514 => _514.score]) || 0) >= 74 && weekState === "normal" && env.time !== "20") return "Push";
+    if (_optionalChain([momentum, 'optionalAccess', _509 => _509.logGapDays]) >= 4 || recentLogCount <= 2) return "Rebuild";
+    if ((_optionalChain([momentum, 'optionalAccess', _510 => _510.score]) || 0) >= 74 && weekState === "normal" && env.time !== "20") return "Push";
     return "Hold";
   })();
 
@@ -4240,7 +4241,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Protect") return {
       stance: `Do the condensed ${dayLabel} version today and keep intensity controlled.`,
       why: `Recovery signals are elevated, so we protect consistency while keeping ${goalPriority} on track.`,
-      watch: "I’m watching pain and session feel after this workout.",
+      watch: "I'm watching pain and session feel after this workout.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 10, reason: "protect_mode" } }, primary: true },
         { label: "Move to tomorrow", action: { type: COACH_TOOL_ACTIONS.MOVE_LONG_RUN, payload: { days: 1, reason: "protect_shift" } } }
@@ -4249,7 +4250,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Simplify") return {
       stance: `Keep this simple: complete the short ${dayLabel} version.`,
       why: `Time and adherence say simplify now, then rebuild consistency.`,
-      watch: "I’m watching completion rate over the next 3 days.",
+      watch: "I'm watching completion rate over the next 3 days.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 12, reason: "simplify_mode" } }, primary: true },
         { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "simplify_week" } } }
@@ -4258,7 +4259,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Rebuild") return {
       stance: `Take the minimum viable ${dayLabel} session and rebuild rhythm first.`,
       why: `Recent execution dipped, so we rebuild frequency before adding load.`,
-      watch: "I’m watching whether you can stack 2-3 clean sessions.",
+      watch: "I'm watching whether you can stack 2-3 clean sessions.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "rebuild_mode" } }, primary: true },
         { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 18, reason: "rebuild_week" } } }
@@ -4267,7 +4268,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Push") return {
       stance: `Keep the full ${dayLabel} session and add one small progression.`,
       why: `Stability is strong enough to push while still protecting recovery.`,
-      watch: "I’m watching session quality and next-day fatigue.",
+      watch: "I'm watching session quality and next-day fatigue.",
       options: [
         { label: "Keep full session", action: null, primary: true },
         { label: "Push slightly", action: { type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 1, reason: "push_mode" } } }
@@ -4276,7 +4277,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     return {
       stance: `Keep the full ${dayLabel} session as written.`,
       why: `Current signals support staying steady and executing cleanly.`,
-      watch: "I’m watching consistency and workout quality this week.",
+      watch: "I'm watching consistency and workout quality this week.",
       options: [
         { label: "Keep full session", action: null, primary: true },
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 8, reason: "hold_condense" } } }
@@ -4285,12 +4286,12 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   })();
 
   const applyDecisionOption = async (opt) => {
-    if (!_optionalChain([opt, 'optionalAccess', _515 => _515.action])) {
+    if (!_optionalChain([opt, 'optionalAccess', _511 => _511.action])) {
       setMessages(m => [...m, { role:"assistant", packet:{ notices:["Staying with the full plan."], recommendations:["Execute cleanly and log it."], effects:[`Mode: ${coachMode}.`], actions:[] }, source:"deterministic" }]);
       setPendingActions([]);
       return;
     }
-    await commitAction({ ...opt.action, reason: _optionalChain([opt, 'access', _516 => _516.action, 'access', _517 => _517.payload, 'optionalAccess', _518 => _518.reason]) || "coach_decision" });
+    await commitAction({ ...opt.action, reason: _optionalChain([opt, 'access', _512 => _512.action, 'access', _513 => _513.payload, 'optionalAccess', _514 => _514.reason]) || "coach_decision" });
     setPendingActions([]);
     setMessages(m => [...m, { role:"assistant", packet:{ notices:["Decision applied."], recommendations:["Execute this version today."], effects:[`Mode: ${coachMode}.`], actions:[] }, source:"deterministic" }]);
   };
@@ -4321,22 +4322,11 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       )
 
       , React.createElement('div', { className: "card card-soft" ,}
-        , React.createElement('div', { className: "sect-title", style: { color:"#94a3b8", marginBottom:"0.2rem" },}, "WHAT I’M WATCHING"  )
+        , React.createElement('div', { className: "sect-title", style: { color:"#94a3b8", marginBottom:"0.2rem" },}, "WHAT I'M WATCHING"  )
         , React.createElement('div', { style: { fontSize:"0.58rem", color:"#a7b4c6" },}, coachDecision.watch)
       )
 
       , React.createElement('div', { style: { fontSize:"0.54rem", color:"#94a3b8", letterSpacing:"0.06em" },}, "ASK FOR A QUICK CALL"    )
-      , React.createElement('div', { style: { display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" },}
-        , quickPrompts.slice(0, 6).map(q => (
-          React.createElement('button', { key: q, className: "btn", onClick: ()=>send(q), style: { whiteSpace:"nowrap", fontSize:"0.55rem" },}, q)
-        ))
-      )
-
-      , React.createElement('div', { style: { display:"flex", gap:"0.5rem" },}
-        , React.createElement('input', { value: input, onChange: e=>setInput(e.target.value), onKeyDown: e=>e.key==="Enter"&&!e.shiftKey&&send(), placeholder: "Ask coach for a decision"    , style: { flex:1 }, disabled: loading,} )
-        , React.createElement('button', { className: "btn btn-primary" , onClick: ()=>send(), disabled: loading, style: { opacity:loading?0.5:1 },}, "Send")
-      )
-
       , React.createElement('div', { style: { display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" },}
         , quickPrompts.slice(0, 6).map(q => (
           React.createElement('button', { key: q, className: "btn", onClick: ()=>send(q), style: { whiteSpace:"nowrap", fontSize:"0.55rem" },}, q)
@@ -4356,7 +4346,7 @@ function CoachSection({ title, items, color }) {
   return (
     React.createElement('div', { style: { background:"#0f172a", borderRadius:6, padding:"6px 8px", border:`1px solid ${color}25` },}
       , React.createElement('div', { style: { fontSize:"0.55rem", color, letterSpacing:"0.1em", marginBottom:"0.2rem" },}, title)
-      , (_optionalChain([items, 'optionalAccess', _519 => _519.length]) ? items : ["No issues detected."]).map((item, idx) => (
+      , (_optionalChain([items, 'optionalAccess', _515 => _515.length]) ? items : ["No issues detected."]).map((item, idx) => (
         React.createElement('div', { key: idx, style: { fontSize:"0.61rem", color:"#cbd5e1", lineHeight:1.55 },}, "• " , item)
       ))
     )
