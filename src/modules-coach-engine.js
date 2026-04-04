@@ -62,7 +62,7 @@ export const withConfidenceTone = (message, confidence = "moderate", voiceMode =
   return `${tonePrefix} ${message} ${confidenceTag}`;
 };
 
-export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights = [], realWorldNutrition, recalibration }) => {
+export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights = [], coachMemoryContext = null, realWorldNutrition, recalibration }) => {
   const s = detectCoachSignals(input);
   const voiceMode = inferCoachVoiceMode(momentum);
   const painLevel = inferPainLevel(input);
@@ -196,6 +196,19 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
     effects.push(`Expectation engine: ${expectations?.coachLine || "not available"}`);
   }
 
+  if (coachMemoryContext?.injuryHistory?.length) {
+    notices.push(`Injury history in view: ${coachMemoryContext.injuryHistory[0]}.`);
+    addRecommendation("keep warm-up and tissue prep non-negotiable before intensity.", "moderate");
+  }
+  if (coachMemoryContext?.preferredMotivationStyle) {
+    effects.push(`Coaching tone bias: ${coachMemoryContext.preferredMotivationStyle}.`);
+  }
+  if (coachMemoryContext?.recurringBreakdowns?.length) {
+    const b = coachMemoryContext.recurringBreakdowns[0];
+    notices.push(`Pattern remembered: week ${b.week} broke down from ${b.why}.`);
+    addRecommendation(`front-load friction control for ${b.why} this week (shorter sessions + clearer anchors).`, "high");
+  }
+
   if (memoryInsights?.length) {
     const m = memoryInsights[0];
     notices.push(`Memory cue: ${m.msg || m.key}`);
@@ -235,6 +248,7 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
       optimizationBias: optimizationLayer?.adjustmentBias || "hold",
       failureMode: failureMode?.mode || "normal",
       nutritionMode: nutritionLayer?.simplified ? "simplified" : "full",
+      memoryApplied: !!coachMemoryContext,
     }
   };
 };
