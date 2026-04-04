@@ -2686,39 +2686,6 @@ function TrainerDashboard() {
     });
   };
 
-  const sbLoad = async () => {
-    await authStorage.sbLoad({
-      authSession,
-      setters: {
-        setLogs,
-        setBodyweights,
-        setPaceOverrides,
-        setWeekNotes,
-        setPlanAlerts,
-        setPersonalization,
-        setGoals,
-        setCoachActions,
-        setCoachPlanAdjustments,
-        setDailyCheckins,
-        setWeeklyCheckins,
-        setNutritionFavorites,
-        setNutritionFeedback,
-      },
-      persistAll,
-    });
-  };
-
-  useEffect(() => {
-    console.log("[supabase] resolved URL:", SB_URL || "(missing)");
-    if (SB_CONFIG_ERROR) {
-      setAuthError(`Supabase setup error: ${SB_CONFIG_ERROR}`);
-      setStorageStatus({ mode: "local", label: "CONFIG ERROR" });
-    }
-    const restored = authStorage.loadAuthSession();
-    if (restored) setAuthSession(restored);
-    setLoading(false);
-  }, [SB_URL, SB_CONFIG_ERROR, authStorage]);
-
   useEffect(() => {
     console.log("[supabase] resolved URL:", SB_URL || "(missing)");
     if (SB_CONFIG_ERROR) {
@@ -3419,12 +3386,6 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
               , openWeek === h.absoluteWeek && _optionalChain([adaptive, 'access', _361 => _361.changed, 'optionalAccess', _362 => _362.length]) > 0 && (
                 React.createElement('div', { style: { marginTop:"0.4rem", fontSize:"0.55rem", color:"#64748b", lineHeight:1.6 },}
                   , adaptive.changed.slice(0,3).map((line, i)=>React.createElement('div', { key: i,}, "• " , line))
-                )
-                , isAdjusted && (
-                  React.createElement('div', { style: { marginTop:"0.45rem", fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.6 },}, "Why this changed: "
-                       , adaptive.changed.join(" · "), "."
-                    , signals.bwDropFast && React.createElement('span', { style: { color:C.amber },}, " Bodyweight trend is dropping quickly — recovery fuel warning active."          )
-                  )
                 )
               )
             )
