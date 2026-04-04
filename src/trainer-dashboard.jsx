@@ -1523,6 +1523,39 @@ export default function TrainerDashboard() {
     });
   };
 
+  const sbLoad = async () => {
+    await authStorage.sbLoad({
+      authSession,
+      setters: {
+        setLogs,
+        setBodyweights,
+        setPaceOverrides,
+        setWeekNotes,
+        setPlanAlerts,
+        setPersonalization,
+        setGoals,
+        setCoachActions,
+        setCoachPlanAdjustments,
+        setDailyCheckins,
+        setWeeklyCheckins,
+        setNutritionFavorites,
+        setNutritionFeedback,
+      },
+      persistAll,
+    });
+  };
+
+  useEffect(() => {
+    console.log("[supabase] resolved URL:", SB_URL || "(missing)");
+    if (SB_CONFIG_ERROR) {
+      setAuthError(`Supabase setup error: ${SB_CONFIG_ERROR}`);
+      setStorageStatus({ mode: "local", label: "CONFIG ERROR" });
+    }
+    const restored = authStorage.loadAuthSession();
+    if (restored) setAuthSession(restored);
+    setLoading(false);
+  }, [SB_URL, SB_CONFIG_ERROR, authStorage]);
+
   useEffect(() => {
     console.log("[supabase] resolved URL:", SB_URL || "(missing)");
     if (SB_CONFIG_ERROR) {
@@ -2165,8 +2198,37 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             </div>
             <button className="btn btn-primary" onClick={async ()=>{ await setEnvironmentMode(envDraft); setShowEnvEditor(false); }} style={{ width:"100%" }}>Apply changes</button>
           </div>
+          <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>Status: {personalization.injuryPainState.level.replaceAll("_"," ")} · {injuryRule.why}</div>
         </div>
-      )}
+      </details>
+      {showEnvEditor && (
+        <div onClick={()=>setShowEnvEditor(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"flex-end", zIndex:50 }}>
+          <div onClick={e=>e.stopPropagation()} className="card card-strong" style={{ width:"100%", borderRadius:"14px 14px 0 0", padding:"0.9rem 0.9rem 1rem", maxHeight:"82vh", overflowY:"auto" }}>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>Environment</div>
+            <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Adjust for real-world constraints.</div>
+            <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Equipment</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem", marginBottom:"0.55rem" }}>
+              {[["none","None"],["dumbbells","Dumbbells"],["basic_gym","Basic gym"],["full_gym","Full gym"]].map(([v,l]) => (
+                <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, equipment:v }))} style={{ fontSize:"0.54rem", color:envDraft.equipment===v?C.green:"#94a3b8", borderColor:envDraft.equipment===v?C.green+"40":"#334155" }}>{l}</button>
+              ))}
+            </div>
+            <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Time available</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.3rem", marginBottom:"0.55rem" }}>
+              {[["20","20 min"],["30","30 min"],["45+","45+ min"]].map(([v,l]) => (
+                <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, time:v }))} style={{ fontSize:"0.54rem", color:envDraft.time===v?C.blue:"#94a3b8", borderColor:envDraft.time===v?C.blue+"40":"#334155" }}>{l}</button>
+              ))}
+            </div>
+            <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Apply scope</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem", marginBottom:"0.65rem" }}>
+              {[["today","Just today"],["week","This week"]].map(([v,l]) => (
+                <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, scope:v }))} style={{ fontSize:"0.54rem", color:envDraft.scope===v?C.amber:"#94a3b8", borderColor:envDraft.scope===v?C.amber+"40":"#334155" }}>{l}</button>
+              ))}
+            </div>
+            <button className="btn btn-primary" onClick={async ()=>{ await setEnvironmentMode(envDraft); setShowEnvEditor(false); }} style={{ width:"100%" }}>Apply changes</button>
+          </div>
+          <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>Status: {personalization.injuryPainState.level.replaceAll("_"," ")} · {injuryRule.why}</div>
+        </div>
+      </details>
     </div>
   );
 }
