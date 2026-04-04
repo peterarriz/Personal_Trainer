@@ -2823,7 +2823,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   const goalPriority = arbitration?.priorityStack?.primary || "Consistency";
   const recentLogCount = Object.keys(logs || {}).slice(-7).length;
 
-  const coachMode = (() => {
+  const coachDecisionMode = (() => {
     if (injuryFlag !== "none" || fatigueSignal) return "Protect";
     if (weekState === "chaotic" || env.time === "20" || adherenceTrend === "slipping") return "Simplify";
     if (momentum?.logGapDays >= 4 || recentLogCount <= 2) return "Rebuild";
@@ -2833,7 +2833,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
 
   const coachDecision = (() => {
     const dayLabel = dayType === "tempo" ? "quality run" : dayType === "long" ? "long-run" : dayType === "easy" ? "easy run" : dayType === "strength" ? "strength" : dayType === "recovery" ? "recovery" : "hybrid";
-    if (coachMode === "Protect") return {
+    if (coachDecisionMode === "Protect") return {
       stance: `Do the condensed ${dayLabel} version today and keep intensity controlled.`,
       why: `Recovery signals are elevated, so we protect consistency while keeping ${goalPriority} on track.`,
       watch: "I am watching pain and session feel after this workout.",
@@ -2842,7 +2842,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
         { label: "Move to tomorrow", action: { type: COACH_TOOL_ACTIONS.MOVE_LONG_RUN, payload: { days: 1, reason: "protect_shift" } } }
       ]
     };
-    if (coachMode === "Simplify") return {
+    if (coachDecisionMode === "Simplify") return {
       stance: `Keep this simple: complete the short ${dayLabel} version.`,
       why: `Time and adherence say simplify now, then rebuild consistency.`,
       watch: "I am watching completion rate over the next 3 days.",
@@ -2851,7 +2851,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
         { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "simplify_week" } } }
       ]
     };
-    if (coachMode === "Rebuild") return {
+    if (coachDecisionMode === "Rebuild") return {
       stance: `Take the minimum viable ${dayLabel} session and rebuild rhythm first.`,
       why: `Recent execution dipped, so we rebuild frequency before adding load.`,
       watch: "I am watching whether you can stack 2-3 clean sessions.",
@@ -2860,7 +2860,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
         { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 18, reason: "rebuild_week" } } }
       ]
     };
-    if (coachMode === "Push") return {
+    if (coachDecisionMode === "Push") return {
       stance: `Keep the full ${dayLabel} session and add one small progression.`,
       why: `Stability is strong enough to push while still protecting recovery.`,
       watch: "I am watching session quality and next-day fatigue.",
