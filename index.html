@@ -1021,6 +1021,343 @@ const deriveClosedLoopValidationLayer = ({ coachActions, logs, dailyCheckins }) 
 };
 
 
+// inlined: src/modules-coach-engine.js
+const COACH_TOOL_ACTIONS = {
+  SET_PAIN_STATE: "SET_PAIN_STATE",
+  CLEAR_PAIN_STATE: "CLEAR_PAIN_STATE",
+  PROGRESS_STRENGTH_EMPHASIS: "PROGRESS_STRENGTH_EMPHASIS",
+  REDUCE_LONG_RUN_AGGRESSIVENESS: "REDUCE_LONG_RUN_AGGRESSIVENESS",
+  SWAP_TODAY_RECOVERY: "SWAP_TODAY_RECOVERY",
+  REDUCE_WEEKLY_VOLUME: "REDUCE_WEEKLY_VOLUME",
+  CONVERT_RUN_TO_LOW_IMPACT: "CONVERT_RUN_TO_LOW_IMPACT",
+  REPLACE_SPEED_EASY: "REPLACE_SPEED_EASY",
+  ADD_ACHILLES_BLOCK: "ADD_ACHILLES_BLOCK",
+  CHANGE_NUTRITION_DAY: "CHANGE_NUTRITION_DAY",
+  INCREASE_PRELONGRUN_CARBS: "INCREASE_PRELONGRUN_CARBS",
+  SWITCH_TRAVEL_MEALS: "SWITCH_TRAVEL_MEALS",
+  INCREASE_CALORIES_SLIGHTLY: "INCREASE_CALORIES_SLIGHTLY",
+  REDUCE_DEFICIT_AGGRESSIVENESS: "REDUCE_DEFICIT_AGGRESSIVENESS",
+  SHIFT_CARBS_AROUND_WORKOUT: "SHIFT_CARBS_AROUND_WORKOUT",
+  SIMPLIFY_MEALS_THIS_WEEK: "SIMPLIFY_MEALS_THIS_WEEK",
+  SWITCH_TRAVEL_NUTRITION_MODE: "SWITCH_TRAVEL_NUTRITION_MODE",
+  USE_DEFAULT_MEAL_STRUCTURE_3_DAYS: "USE_DEFAULT_MEAL_STRUCTURE_3_DAYS",
+  MOVE_LONG_RUN: "MOVE_LONG_RUN",
+  INSERT_DELOAD_WEEK: "INSERT_DELOAD_WEEK",
+};
+
+const PAIN_LEVELS = ["none", "mild_tightness", "moderate_pain", "sharp_pain_stop"];
+const AFFECTED_AREAS = ["Achilles", "calf", "knee", "shin", "hip", "general fatigue"];
+
+const inferPainLevel = (msg) => {
+  const x = msg.toLowerCase();
+  if (/sharp|stabbing|stop/.test(x)) return "sharp_pain_stop";
+  if (/moderate|painful|hurts/.test(x)) return "moderate_pain";
+  if (/tight|mild|stiff/.test(x)) return "mild_tightness";
+  return "none";
+};
+
+const detectCoachSignals = (input) => {
+  const msg = String(input || "").toLowerCase();
+  return {
+    pain: /(pain|hurt|achilles|knee|shin|calf|injury|flare)/.test(msg),
+    travel: /(travel|hotel|airport|trip|road)/.test(msg),
+    missed: /(missed|skip|couldn't|didn't)/.test(msg),
+    fatigue: /(fatigue|tired|exhausted|sleep|burned)/.test(msg),
+    nutrition: /(nutrition|food|meal|calorie|hungry|macro)/.test(msg),
+    strength: /(bench|strength|upper|lower|lift|gym)/.test(msg),
+    running: /(run|tempo|interval|long run|pace)/.test(msg),
+    simplify: /(simple|simplify|easier|overwhelmed|busy)/.test(msg),
+    progress: /(progress|push|harder|advance|increase)/.test(msg),
+    why: /(why|reason|because|explain)/.test(msg),
+  };
+};
+
+const inferCoachVoiceMode = (momentum) => {
+  if (_optionalChain([momentum, 'optionalAccess', _60 => _60.coachMode]) === "protect mode") return "protect";
+  if (_optionalChain([momentum, 'optionalAccess', _61 => _61.momentumState]) === "falling off") return "reset";
+  if (_optionalChain([momentum, 'optionalAccess', _62 => _62.momentumState]) === "drifting") return "simplify";
+  if (_optionalChain([momentum, 'optionalAccess', _63 => _63.momentumState]) === "building momentum") return "push";
+  return "rebuild";
+};
+
+const withConfidenceTone = (message, confidence = "moderate", voiceMode = "rebuild") => {
+  const tonePrefix = voiceMode === "protect" ? "Protective adjustment:" : voiceMode === "reset" ? "Reset move:" : voiceMode === "simplify" ? "Simplify move:" : voiceMode === "push" ? "Progression move:" : "Coaching move:";
+  const confidenceTag = confidence === "high" ? "[high confidence]" : confidence === "low" ? "[exploratory]" : "[moderate confidence]";
+  return `${tonePrefix} ${message} ${confidenceTag}`;
+};
+
+const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights = [], realWorldNutrition, recalibration }) => {
+  const s = detectCoachSignals(input);
+  const voiceMode = inferCoachVoiceMode(momentum);
+  const painLevel = inferPainLevel(input);
+  const area = AFFECTED_AREAS.find(a => input.toLowerCase().includes(a.toLowerCase())) || "Achilles";
+
+  const notices = [];
+  const recommendations = [];
+  const effects = [];
+  const actions = [];
+  const addRecommendation = (msg, confidence = "moderate") => recommendations.push(withConfidenceTone(msg, confidence, voiceMode));
+
+  const last7 = Object.entries(logs || {}).filter(([d]) => ((Date.now() - new Date(`${d}T12:00:00`).getTime()) / 86400000) <= 7).length;
+  const bwTrend = (bodyweights || []).length >= 2 ? (bodyweights[bodyweights.length - 1].w - bodyweights[0].w) : 0;
+
+  if (s.pain || PAIN_LEVELS.includes(painLevel) && painLevel !== "none") {
+    notices.push(`Pain signal detected (${painLevel.replaceAll("_", " ")} in ${area}).`);
+    addRecommendation("de-load intensity today and switch to low-impact recovery while preserving momentum.", "high");
+    effects.push("Hard run intensity is removed; recovery and tendon load management are prioritized.");
+    actions.push(
+      { type: COACH_TOOL_ACTIONS.SET_PAIN_STATE, payload: { level: painLevel === "none" ? "mild_tightness" : painLevel, area } },
+      { type: COACH_TOOL_ACTIONS.SWAP_TODAY_RECOVERY, payload: { reason: "Achilles tightness detected" } },
+      { type: COACH_TOOL_ACTIONS.ADD_ACHILLES_BLOCK, payload: { block: "extra_achilles_8min" } }
+    );
+  }
+
+  if (s.travel || _optionalChain([personalization, 'optionalAccess', _64 => _64.travelState, 'optionalAccess', _65 => _65.isTravelWeek])) {
+    notices.push("Travel context detected or active.");
+    addRecommendation("switch to travel-ready training and meal defaults for consistency.", "moderate");
+    effects.push("Plan friction is reduced with simpler sessions and portable meal options.");
+    actions.push(
+      { type: COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS, payload: { enabled: true } },
+      { type: COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY, payload: { dayType: "travelRun" } }
+    );
+  }
+
+  if (s.missed || s.fatigue || _optionalChain([learning, 'optionalAccess', _66 => _66.stats, 'optionalAccess', _67 => _67.harder]) >= 2 || _optionalChain([salvage, 'optionalAccess', _68 => _68.active])) {
+    notices.push(`Recovery signal detected (${s.missed ? "missed session + " : ""}${s.fatigue ? "fatigue" : "soreness"}).`);
+    addRecommendation("reduce weekly density and prioritize completion of core sessions.", "high");
+    effects.push("Hard sessions are down-shifted; consistency is prioritized over intensity.");
+    actions.push(
+      { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15 } },
+      { type: COACH_TOOL_ACTIONS.REPLACE_SPEED_EASY, payload: { week: currentWeek } }
+    );
+  }
+
+  if ((s.running || _optionalChain([todayWorkout, 'optionalAccess', _69 => _69.type]) === "long") && _optionalChain([nutritionLayer, 'optionalAccess', _70 => _70.dayType]) === "longRun") {
+    notices.push("Long-run fueling context active.");
+    addRecommendation("increase pre-long-run carbs to improve quality and recovery.", "moderate");
+    effects.push("Higher carb availability should improve long-run quality and reduce late-session fade.");
+    actions.push({ type: COACH_TOOL_ACTIONS.INCREASE_PRELONGRUN_CARBS, payload: { grams: 40 } });
+  }
+
+  if (s.nutrition && _optionalChain([nutritionLayer, 'optionalAccess', _71 => _71.simplified])) {
+    notices.push("Nutrition friction detected; simplification mode already favored.");
+    addRecommendation("anchor meals to defaults for 3-7 days and reduce decision load.", "high");
+    actions.push({ type: COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY, payload: { dayType: _optionalChain([todayWorkout, 'optionalAccess', _72 => _72.type]) === "rest" ? "rest" : "easyRun" } });
+  }
+
+  if (_optionalChain([optimizationLayer, 'optionalAccess', _73 => _73.adaptiveRecommendations, 'optionalAccess', _74 => _74.reduceDensity])) {
+    notices.push("Optimization layer suggests density reduction.");
+    addRecommendation("insert a deload week to improve confidence and freshness.", "moderate");
+    effects.push("Expected: better adherence and improved session quality in the next 7-14 days.");
+    actions.push({ type: COACH_TOOL_ACTIONS.INSERT_DELOAD_WEEK, payload: { week: currentWeek + 1 } });
+  }
+
+  if (_optionalChain([failureMode, 'optionalAccess', _75 => _75.mode]) === "chaotic" || _optionalChain([failureMode, 'optionalAccess', _76 => _76.isLowEngagement])) {
+    notices.push("Failure-mode hardening detected: chaotic or low engagement state.");
+    addRecommendation("simplify the next 7 days with minimum-dose sessions and lower aggressiveness.", "high");
+    effects.push("Expected: reduced overwhelm and improved follow-through this week.");
+    actions.push({ type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 10 } });
+  } else if (_optionalChain([momentum, 'optionalAccess', _77 => _77.momentumState]) === "building momentum") {
+    notices.push("Momentum is building.");
+    addRecommendation("apply a modest progression where readiness is high.", "moderate");
+    actions.push({ type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 1 } });
+  }
+
+  if ((_optionalChain([arbitration, 'optionalAccess', _78 => _78.primary, 'optionalAccess', _79 => _79.category]) === "strength" || s.strength) && _optionalChain([momentum, 'optionalAccess', _80 => _80.momentumState]) !== "falling off") {
+    notices.push("Strength priority is active.");
+    addRecommendation("shift one session toward pressing progression while keeping run quality protected.", "moderate");
+    effects.push("Upper-body strength should progress with limited endurance interference.");
+    actions.push({ type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 2 } });
+  }
+
+  if (_optionalChain([arbitration, 'optionalAccess', _81 => _81.primary, 'optionalAccess', _82 => _82.category]) === "running" && (s.running || _optionalChain([momentum, 'optionalAccess', _83 => _83.fatigueNotes]) >= 2)) {
+    notices.push("Run performance priority with fatigue constraints.");
+    addRecommendation("dial back long run load slightly to protect consistency and recovery.", "high");
+    effects.push("Run quality should remain higher across the week with lower burnout risk.");
+    actions.push({ type: COACH_TOOL_ACTIONS.REDUCE_LONG_RUN_AGGRESSIVENESS, payload: { pct: 10 } });
+  }
+
+  if (_optionalChain([arbitration, 'optionalAccess', _84 => _84.primary, 'optionalAccess', _85 => _85.category]) === "body_comp") {
+    if (bwTrend <= -2.2 || _optionalChain([nutritionLayer, 'optionalAccess', _86 => _86.targets, 'optionalAccess', _87 => _87.cal]) < 2300) {
+      notices.push("Weight trend suggests deficit may be too aggressive.");
+      addRecommendation("increase calories slightly to support adherence and performance.", "high");
+      effects.push("Recovery and session quality should improve with minimal body-comp downside.");
+      actions.push({ type: COACH_TOOL_ACTIONS.INCREASE_CALORIES_SLIGHTLY, payload: { kcal: 120 } });
+    }
+    if (_optionalChain([learning, 'optionalAccess', _88 => _88.stats, 'optionalAccess', _89 => _89.skipped]) >= 2 || _optionalChain([momentum, 'optionalAccess', _90 => _90.inconsistencyRisk]) === "high") {
+      notices.push("Adherence risk is elevated during body-comp phase.");
+      addRecommendation("reduce deficit aggressiveness and simplify the food environment.", "high");
+      actions.push({ type: COACH_TOOL_ACTIONS.REDUCE_DEFICIT_AGGRESSIVENESS, payload: { kcal: 100 } });
+    }
+  }
+
+  if (_optionalChain([nutritionLayer, 'optionalAccess', _91 => _91.dayType]) && ["hardRun", "longRun", "travelRun"].includes(nutritionLayer.dayType)) {
+    addRecommendation("shift more carbs pre/post workout to support quality output.", "moderate");
+    actions.push({ type: COACH_TOOL_ACTIONS.SHIFT_CARBS_AROUND_WORKOUT, payload: { pre: 30, post: 40 } });
+  }
+
+  if (_optionalChain([learning, 'optionalAccess', _92 => _92.adjustmentBias]) === "simplify" || s.simplify) {
+    notices.push("Check-ins show repeated friction (time/stress/hard sessions).");
+    addRecommendation("run a simplified meal structure this week to lower cognitive load.", "high");
+    actions.push({ type: COACH_TOOL_ACTIONS.SIMPLIFY_MEALS_THIS_WEEK, payload: { days: 7 } });
+  }
+
+  if (_optionalChain([realWorldNutrition, 'optionalAccess', _93 => _93.constraints, 'optionalAccess', _94 => _94.includes, 'call', _95 => _95("travel_logistics")])) {
+    notices.push("Real-world nutrition engine detects travel logistics constraints.");
+    addRecommendation("activate travel nutrition mode with portable defaults.", "moderate");
+    actions.push({ type: COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE, payload: { enabled: true } });
+  }
+
+  if (_optionalChain([realWorldNutrition, 'optionalAccess', _96 => _96.constraints, 'optionalAccess', _97 => _97.includes, 'call', _98 => _98("time_pressure")])) {
+    notices.push("Time pressure is likely to disrupt meal execution.");
+    addRecommendation("use a default meal structure for 3 days to stabilize adherence.", "moderate");
+    actions.push({ type: COACH_TOOL_ACTIONS.USE_DEFAULT_MEAL_STRUCTURE_3_DAYS, payload: { days: 3 } });
+  }
+
+  if (s.why) {
+    effects.push(`Decision basis: momentum=${_optionalChain([momentum, 'optionalAccess', _99 => _99.momentumState]) || "unknown"}, risk=${_optionalChain([momentum, 'optionalAccess', _100 => _100.inconsistencyRisk]) || "unknown"}, salvage=${_optionalChain([salvage, 'optionalAccess', _101 => _101.active]) ? "on" : "off"}, coachMode=${_optionalChain([momentum, 'optionalAccess', _102 => _102.coachMode]) || "n/a"}.`);
+    effects.push(`Goal arbitration: ${_optionalChain([arbitration, 'optionalAccess', _103 => _103.todayLine]) || "not available"}`);
+    effects.push(`Expectation engine: ${_optionalChain([expectations, 'optionalAccess', _104 => _104.coachLine]) || "not available"}`);
+  }
+
+  if (_optionalChain([memoryInsights, 'optionalAccess', _105 => _105.length])) {
+    const m = memoryInsights[0];
+    notices.push(`Memory cue: ${m.msg || m.key}`);
+    effects.push(`Applied long-term memory (${m.key}) with ${m.confidence || "moderate"} confidence.`);
+  }
+
+  if (_optionalChain([recalibration, 'optionalAccess', _106 => _106.changes, 'optionalAccess', _107 => _107.length])) {
+    notices.push(`Recalibration suggests: ${recalibration.changes[0]}`);
+    effects.push(`Recalibration confidence: ${recalibration.confidence || "moderate"}.`);
+  }
+
+  if (!notices.length) notices.push(`You logged ${last7} sessions in the last 7 days with ${personalization.trainingState.loadStatus} load.`);
+  if (!recommendations.length) addRecommendation("continue this week as planned and tighten execution quality.", "moderate");
+  if (!effects.length) effects.push("Primary effect: better consistency with controlled fatigue and clearer nutrition anchors.");
+
+  const dedupedActions = [];
+  const seen = new Set();
+  for (const a of actions) {
+    const key = `${a.type}|${JSON.stringify(a.payload || {})}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    dedupedActions.push(a);
+    if (dedupedActions.length >= 4) break;
+  }
+
+  return {
+    notices: notices.slice(0, 5),
+    recommendations: recommendations.slice(0, 5),
+    effects: effects.slice(0, 5),
+    actions: dedupedActions,
+    meta: {
+      mode: voiceMode,
+      momentum: _optionalChain([momentum, 'optionalAccess', _108 => _108.momentumState]) || "unknown",
+      risk: _optionalChain([momentum, 'optionalAccess', _109 => _109.inconsistencyRisk]) || "unknown",
+      salvage: !!_optionalChain([salvage, 'optionalAccess', _110 => _110.active]),
+      planFocus: _optionalChain([planComposer, 'optionalAccess', _111 => _111.focus]) || "balanced",
+      optimizationBias: _optionalChain([optimizationLayer, 'optionalAccess', _112 => _112.adjustmentBias]) || "hold",
+      failureMode: _optionalChain([failureMode, 'optionalAccess', _113 => _113.mode]) || "normal",
+      nutritionMode: _optionalChain([nutritionLayer, 'optionalAccess', _114 => _114.simplified]) ? "simplified" : "full",
+    }
+  };
+};
+
+const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWorkout, mergePersonalization, buildInjuryRuleResult, dateKey = new Date().toISOString().split("T")[0] }) => {
+  let nextAdjustments = { ...runtime.adjustments, dayOverrides: { ...(runtime.adjustments.dayOverrides || {}) }, nutritionOverrides: { ...(runtime.adjustments.nutritionOverrides || {}) }, weekVolumePct: { ...(runtime.adjustments.weekVolumePct || {}) }, extra: { ...(runtime.adjustments.extra || {}) } };
+  let nextWeekNotes = { ...runtime.weekNotes };
+  let nextAlerts = [...runtime.planAlerts];
+  let nextPersonalization = runtime.personalization;
+
+  if (action.type === COACH_TOOL_ACTIONS.SWAP_TODAY_RECOVERY) {
+    nextAdjustments.dayOverrides[dateKey] = { label: "Recovery Day Override", type: "rest", reason: action.payload.reason, nutri: "rest" };
+    nextAlerts = [{ id:`coach_${Date.now()}`, type:"warning", msg:"Coach swapped today to recovery based on risk signals." }, ...nextAlerts].slice(0, 10);
+  }
+  if (action.type === COACH_TOOL_ACTIONS.SET_PAIN_STATE) {
+    nextPersonalization = mergePersonalization(nextPersonalization, {
+      injuryPainState: {
+        ...nextPersonalization.injuryPainState,
+        level: action.payload.level,
+        area: action.payload.area || "Achilles",
+        activeModifications: buildInjuryRuleResult(todayWorkout, { level: action.payload.level, area: action.payload.area || "Achilles" }).mods,
+      }
+    });
+  }
+  if (action.type === COACH_TOOL_ACTIONS.CLEAR_PAIN_STATE) {
+    nextPersonalization = mergePersonalization(nextPersonalization, {
+      injuryPainState: {
+        ...nextPersonalization.injuryPainState,
+        level: "none",
+        activeModifications: [],
+      }
+    });
+  }
+  if (action.type === COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME) {
+    nextAdjustments.weekVolumePct[currentWeek] = 100 - (action.payload.pct || 10);
+    nextWeekNotes[currentWeek] = `Coach reduced this week volume by ${action.payload.pct || 10}% for recovery control.`;
+  }
+  if (action.type === COACH_TOOL_ACTIONS.CONVERT_RUN_TO_LOW_IMPACT || action.type === COACH_TOOL_ACTIONS.REPLACE_SPEED_EASY) {
+    nextWeekNotes[currentWeek] = "Coach converted high intensity session to easy aerobic / low-impact work.";
+  }
+  if (action.type === COACH_TOOL_ACTIONS.ADD_ACHILLES_BLOCK) {
+    nextAdjustments.extra.achillesBlock = "8-min protocol added daily";
+    nextPersonalization = mergePersonalization(nextPersonalization, { injuryPainState: { ...nextPersonalization.injuryPainState, achilles: { ...nextPersonalization.injuryPainState.achilles, status: "watch", painScore: Math.max(2, nextPersonalization.injuryPainState.achilles.painScore) } } });
+  }
+  if (action.type === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) {
+    nextAdjustments.nutritionOverrides[dateKey] = action.payload.dayType;
+  }
+  if (action.type === COACH_TOOL_ACTIONS.INCREASE_PRELONGRUN_CARBS) {
+    nextAdjustments.extra.preLongRunCarbBonus = action.payload.grams || 30;
+    nextWeekNotes[currentWeek] = `Coach added +${action.payload.grams || 30}g carbs before long run.`;
+  }
+  if (action.type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS) {
+    nextPersonalization = mergePersonalization(nextPersonalization, { travelState: { ...nextPersonalization.travelState, isTravelWeek: true, access: "hotel" } });
+    nextAdjustments.nutritionOverrides[dateKey] = "travelRun";
+  }
+  if (action.type === COACH_TOOL_ACTIONS.MOVE_LONG_RUN) {
+    nextWeekNotes[action.payload.week || currentWeek] = `Coach moved long run to ${action.payload.toDay || "Sunday"} this week.`;
+  }
+  if (action.type === COACH_TOOL_ACTIONS.INSERT_DELOAD_WEEK) {
+    nextWeekNotes[action.payload.week] = "Coach inserted deload intent: reduce volume + cap intensity this week.";
+    nextAdjustments.weekVolumePct[action.payload.week] = 85;
+  }
+  if (action.type === COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS) {
+    nextWeekNotes[currentWeek] = "Coach emphasized strength progression for next 2 weeks (pressing priority).";
+    nextAdjustments.extra.strengthEmphasisWeeks = action.payload.weeks || 2;
+  }
+  if (action.type === COACH_TOOL_ACTIONS.REDUCE_LONG_RUN_AGGRESSIVENESS) {
+    nextWeekNotes[currentWeek] = `Coach reduced long-run aggressiveness by ${action.payload.pct || 10}% next week.`;
+    nextAdjustments.extra.longRunReductionPct = action.payload.pct || 10;
+  }
+  if (action.type === COACH_TOOL_ACTIONS.INCREASE_CALORIES_SLIGHTLY) {
+    nextAdjustments.extra.nutritionCalorieDelta = (nextAdjustments.extra.nutritionCalorieDelta || 0) + (action.payload.kcal || 120);
+    nextWeekNotes[currentWeek] = `Coach increased nutrition target by ~${action.payload.kcal || 120} kcal/day.`;
+  }
+  if (action.type === COACH_TOOL_ACTIONS.REDUCE_DEFICIT_AGGRESSIVENESS) {
+    nextAdjustments.extra.nutritionDeficitReduction = action.payload.kcal || 100;
+    nextWeekNotes[currentWeek] = "Coach reduced deficit aggressiveness to protect adherence/performance.";
+  }
+  if (action.type === COACH_TOOL_ACTIONS.SHIFT_CARBS_AROUND_WORKOUT) {
+    nextAdjustments.extra.carbShift = { pre: action.payload.pre || 30, post: action.payload.post || 40 };
+    nextWeekNotes[currentWeek] = "Coach shifted carbs toward workout windows.";
+  }
+  if (action.type === COACH_TOOL_ACTIONS.SIMPLIFY_MEALS_THIS_WEEK) {
+    nextAdjustments.extra.mealSimplicityMode = true;
+    nextWeekNotes[currentWeek] = "Coach enabled simplified meal structure this week.";
+  }
+  if (action.type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE) {
+    nextAdjustments.extra.travelNutritionMode = true;
+    nextAdjustments.nutritionOverrides[dateKey] = "travelRun";
+    nextWeekNotes[currentWeek] = "Coach switched nutrition strategy to travel mode.";
+  }
+  if (action.type === COACH_TOOL_ACTIONS.USE_DEFAULT_MEAL_STRUCTURE_3_DAYS) {
+    nextAdjustments.extra.defaultMealStructureDays = action.payload.days || 3;
+    nextWeekNotes[currentWeek] = `Coach enabled default meal structure for ${action.payload.days || 3} days.`;
+  }
+  return { adjustments: nextAdjustments, weekNotes: nextWeekNotes, planAlerts: nextAlerts, personalization: nextPersonalization };
+};
+
+
 // ── PROFILE ──────────────────────────────────────────────────────────────────
 const PROFILE = {
   name: "Athlete", height: "6'1\"", weight: 190, age: 30,
@@ -1136,7 +1473,7 @@ const getTodayWorkout = (weekNum, dayNum) => {
     1: { type: "run+strength", run: week.mon, strSess: week.str, label: "Easy Run + Strength A" },
     2: { type: "otf", label: "Orange Theory — Hybrid Day" },
     3: { type: "strength+prehab", strSess: week.str === "A" ? "B" : "A", label: "Strength B + Achilles Prehab" },
-    4: { type: "hard-run", run: week.thu, label: `${_optionalChain([week, 'access', _60 => _60.thu, 'optionalAccess', _61 => _61.t])} Run` },
+    4: { type: "hard-run", run: week.thu, label: `${_optionalChain([week, 'access', _115 => _115.thu, 'optionalAccess', _116 => _116.t])} Run` },
     5: { type: "easy-run", run: week.fri, label: "Easy Run" },
     6: { type: "long-run", run: week.sat, label: "Long Run" },
     0: { type: "rest", label: "Full Rest + Mobility" },
@@ -1275,11 +1612,11 @@ const PERSONALIZATION_ACTIONS = {
 const mergePersonalization = (base, patch) => ({
   ...base,
   ...patch,
-  injuryPainState: { ...base.injuryPainState, ...(_optionalChain([patch, 'optionalAccess', _62 => _62.injuryPainState]) || {}), achilles: { ...base.injuryPainState.achilles, ...(_optionalChain([patch, 'optionalAccess', _63 => _63.injuryPainState, 'optionalAccess', _64 => _64.achilles]) || {}) } },
-  travelState: { ...base.travelState, ...(_optionalChain([patch, 'optionalAccess', _65 => _65.travelState]) || {}) },
-  nutritionPreferenceState: { ...base.nutritionPreferenceState, ...(_optionalChain([patch, 'optionalAccess', _66 => _66.nutritionPreferenceState]) || {}) },
-  localFoodContext: { ...base.localFoodContext, ...(_optionalChain([patch, 'optionalAccess', _67 => _67.localFoodContext]) || {}) },
-  coachMemory: { ...base.coachMemory, ...(_optionalChain([patch, 'optionalAccess', _68 => _68.coachMemory]) || {}), wins: _optionalChain([patch, 'optionalAccess', _69 => _69.coachMemory, 'optionalAccess', _70 => _70.wins]) || base.coachMemory.wins, constraints: _optionalChain([patch, 'optionalAccess', _71 => _71.coachMemory, 'optionalAccess', _72 => _72.constraints]) || base.coachMemory.constraints },
+  injuryPainState: { ...base.injuryPainState, ...(_optionalChain([patch, 'optionalAccess', _117 => _117.injuryPainState]) || {}), achilles: { ...base.injuryPainState.achilles, ...(_optionalChain([patch, 'optionalAccess', _118 => _118.injuryPainState, 'optionalAccess', _119 => _119.achilles]) || {}) } },
+  travelState: { ...base.travelState, ...(_optionalChain([patch, 'optionalAccess', _120 => _120.travelState]) || {}) },
+  nutritionPreferenceState: { ...base.nutritionPreferenceState, ...(_optionalChain([patch, 'optionalAccess', _121 => _121.nutritionPreferenceState]) || {}) },
+  localFoodContext: { ...base.localFoodContext, ...(_optionalChain([patch, 'optionalAccess', _122 => _122.localFoodContext]) || {}) },
+  coachMemory: { ...base.coachMemory, ...(_optionalChain([patch, 'optionalAccess', _123 => _123.coachMemory]) || {}), wins: _optionalChain([patch, 'optionalAccess', _124 => _124.coachMemory, 'optionalAccess', _125 => _125.wins]) || base.coachMemory.wins, constraints: _optionalChain([patch, 'optionalAccess', _126 => _126.coachMemory, 'optionalAccess', _127 => _127.constraints]) || base.coachMemory.constraints },
 });
 
 const derivePersonalization = (logs, bodyweights, previous) => {
@@ -1329,42 +1666,9 @@ const derivePersonalization = (logs, bodyweights, previous) => {
   });
 };
 
-const COACH_TOOL_ACTIONS = {
-  SET_PAIN_STATE: "SET_PAIN_STATE",
-  CLEAR_PAIN_STATE: "CLEAR_PAIN_STATE",
-  PROGRESS_STRENGTH_EMPHASIS: "PROGRESS_STRENGTH_EMPHASIS",
-  REDUCE_LONG_RUN_AGGRESSIVENESS: "REDUCE_LONG_RUN_AGGRESSIVENESS",
-  SWAP_TODAY_RECOVERY: "SWAP_TODAY_RECOVERY",
-  REDUCE_WEEKLY_VOLUME: "REDUCE_WEEKLY_VOLUME",
-  CONVERT_RUN_TO_LOW_IMPACT: "CONVERT_RUN_TO_LOW_IMPACT",
-  REPLACE_SPEED_EASY: "REPLACE_SPEED_EASY",
-  ADD_ACHILLES_BLOCK: "ADD_ACHILLES_BLOCK",
-  CHANGE_NUTRITION_DAY: "CHANGE_NUTRITION_DAY",
-  INCREASE_PRELONGRUN_CARBS: "INCREASE_PRELONGRUN_CARBS",
-  SWITCH_TRAVEL_MEALS: "SWITCH_TRAVEL_MEALS",
-  INCREASE_CALORIES_SLIGHTLY: "INCREASE_CALORIES_SLIGHTLY",
-  REDUCE_DEFICIT_AGGRESSIVENESS: "REDUCE_DEFICIT_AGGRESSIVENESS",
-  SHIFT_CARBS_AROUND_WORKOUT: "SHIFT_CARBS_AROUND_WORKOUT",
-  SIMPLIFY_MEALS_THIS_WEEK: "SIMPLIFY_MEALS_THIS_WEEK",
-  SWITCH_TRAVEL_NUTRITION_MODE: "SWITCH_TRAVEL_NUTRITION_MODE",
-  USE_DEFAULT_MEAL_STRUCTURE_3_DAYS: "USE_DEFAULT_MEAL_STRUCTURE_3_DAYS",
-  MOVE_LONG_RUN: "MOVE_LONG_RUN",
-  INSERT_DELOAD_WEEK: "INSERT_DELOAD_WEEK",
-};
-
-const PAIN_LEVELS = ["none", "mild_tightness", "moderate_pain", "sharp_pain_stop"];
-const AFFECTED_AREAS = ["Achilles", "calf", "knee", "shin", "hip", "general fatigue"];
-const inferPainLevel = (msg) => {
-  const x = msg.toLowerCase();
-  if (/sharp|stabbing|stop/.test(x)) return "sharp_pain_stop";
-  if (/moderate|painful|hurts/.test(x)) return "moderate_pain";
-  if (/tight|mild|stiff/.test(x)) return "mild_tightness";
-  return "none";
-};
-
 const buildInjuryRuleResult = (todayWorkout, injuryState) => {
-  const level = _optionalChain([injuryState, 'optionalAccess', _73 => _73.level]) || "none";
-  const area = _optionalChain([injuryState, 'optionalAccess', _74 => _74.area]) || "Achilles";
+  const level = _optionalChain([injuryState, 'optionalAccess', _128 => _128.level]) || "none";
+  const area = _optionalChain([injuryState, 'optionalAccess', _129 => _129.area]) || "Achilles";
   if (level === "none") return { workout: todayWorkout, mods: [], why: "No active injury modifiers.", caution: null };
   const base = { ...(todayWorkout || { label: "Recovery Mode", type: "rest" }) };
   if (level === "mild_tightness") {
@@ -1478,7 +1782,7 @@ const arbitrateGoals = ({ goals, momentum, personalization }) => {
   const consistencyThreatened = ["drifting","falling off"].includes(momentum.momentumState);
   const env = personalization.travelState.environmentMode || "home";
 
-  if (_optionalChain([primary, 'optionalAccess', _75 => _75.category]) === "body_comp" && secondary.find(g=>g.category==="running")) {
+  if (_optionalChain([primary, 'optionalAccess', _130 => _130.category]) === "body_comp" && secondary.find(g=>g.category==="running")) {
     conflicts.push("Fat loss vs run performance");
     pushes.push("Run quality sessions");
     maintains.push("Moderate deficit only");
@@ -1502,27 +1806,27 @@ const arbitrateGoals = ({ goals, momentum, personalization }) => {
     reduces.push("Barbell-specific progression assumptions");
   }
   const priorityStack = {
-    primary: _optionalChain([primary, 'optionalAccess', _76 => _76.name]) || "None",
-    secondary: _optionalChain([secondary, 'optionalAccess', _77 => _77[0], 'optionalAccess', _78 => _78.name]) || "None",
-    maintained: _optionalChain([maintenance, 'optionalAccess', _79 => _79[0], 'optionalAccess', _80 => _80.name]) || _optionalChain([secondary, 'optionalAccess', _81 => _81[1], 'optionalAccess', _82 => _82.name]) || "None"
+    primary: _optionalChain([primary, 'optionalAccess', _131 => _131.name]) || "None",
+    secondary: _optionalChain([secondary, 'optionalAccess', _132 => _132[0], 'optionalAccess', _133 => _133.name]) || "None",
+    maintained: _optionalChain([maintenance, 'optionalAccess', _134 => _134[0], 'optionalAccess', _135 => _135.name]) || _optionalChain([secondary, 'optionalAccess', _136 => _136[1], 'optionalAccess', _137 => _137.name]) || "None"
   };
   const shiftReason = consistencyThreatened
     ? "This week is consistency-first to rebuild execution."
-    : _optionalChain([primary, 'optionalAccess', _83 => _83.category]) === "running" && secondary.find(g => g.category === "body_comp")
+    : _optionalChain([primary, 'optionalAccess', _138 => _138.category]) === "running" && secondary.find(g => g.category === "body_comp")
     ? "This week is slightly run-focused while fat loss is supported through nutrition precision."
-    : _optionalChain([primary, 'optionalAccess', _84 => _84.category]) === "body_comp" && active.find(g => g.category === "running")
+    : _optionalChain([primary, 'optionalAccess', _139 => _139.category]) === "body_comp" && active.find(g => g.category === "running")
     ? "This week is cut-focused while run quality is protected."
-    : _optionalChain([primary, 'optionalAccess', _85 => _85.category]) === "strength"
+    : _optionalChain([primary, 'optionalAccess', _140 => _140.category]) === "strength"
     ? "This week is slightly strength-focused while endurance is maintained."
     : "This week keeps a balanced mixed-goal bias.";
   const decisionLinks = [
     consistencyThreatened
       ? "Volume is lower because adherence risk is elevated right now."
       : "Volume stays targeted so primary-goal sessions remain high quality.",
-    _optionalChain([primary, 'optionalAccess', _86 => _86.category]) === "body_comp" || active.some(g => g.category === "body_comp")
+    _optionalChain([primary, 'optionalAccess', _141 => _141.category]) === "body_comp" || active.some(g => g.category === "body_comp")
       ? "Calories use a moderate deficit to keep fat loss moving without crashing performance."
       : "Calories stay closer to maintenance/performance support on quality training days.",
-    _optionalChain([primary, 'optionalAccess', _87 => _87.category]) === "strength" && !consistencyThreatened
+    _optionalChain([primary, 'optionalAccess', _142 => _142.category]) === "strength" && !consistencyThreatened
       ? "Strength progression is pushed this block with controlled fatigue."
       : "Strength progression is slowed to protect run quality and recovery."
   ];
@@ -1563,16 +1867,16 @@ const buildProactiveTriggers = ({ momentum, personalization, goals, learning, nu
   if (momentum.momentumState === "falling off") triggers.push({ id:"reset", msg:"Momentum has dipped — want a compressed reset week to make execution easier?", actionLabel:"Activate reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:95 });
   if (momentum.score >= 80) triggers.push({ id:"progress", msg:"Consistency streak is strong — progress slightly this week?", actionLabel:"Progress slightly", actionType:"PROGRESS_STRENGTH_EMPHASIS", payload:{ weeks: 1 }, priority:70 });
   if (personalization.travelState.isTravelWeek) triggers.push({ id:"env", msg:"Environment changed — switch to travel/home assumptions?", actionLabel:"Switch travel mode", actionType:"SWITCH_TRAVEL_MODE", payload:{ mode:"travel" }, priority:72 });
-  if (_optionalChain([goals, 'optionalAccess', _88 => _88.find, 'call', _89 => _89(g=>g.category==="body_comp" && g.active)]) && momentum.logGapDays >= 3) triggers.push({ id:"nutrition", msg:"Nutrition drift risk is rising — simplify meals for a few days?", actionLabel:"Simplify meals", actionType:"SIMPLIFY_MEALS_THIS_WEEK", payload:{ days: 3 }, priority:78 });
+  if (_optionalChain([goals, 'optionalAccess', _143 => _143.find, 'call', _144 => _144(g=>g.category==="body_comp" && g.active)]) && momentum.logGapDays >= 3) triggers.push({ id:"nutrition", msg:"Nutrition drift risk is rising — simplify meals for a few days?", actionLabel:"Simplify meals", actionType:"SIMPLIFY_MEALS_THIS_WEEK", payload:{ days: 3 }, priority:78 });
   if (momentum.logGapDays >= (dropFast ? 2 : 3)) triggers.push({ id:"nolog", msg:"No logs recently — apply low-friction reset plan?", actionLabel:"Low-friction reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:88 });
-  if (_optionalChain([learning, 'optionalAccess', _90 => _90.stats, 'optionalAccess', _91 => _91.timeBlockers]) >= 2) triggers.push({ id:"time_friction", msg:"Time blockers keep repeating — cap sessions and reduce density?", actionLabel:"Reduce density", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 15 }, priority:84 });
-  if (_optionalChain([learning, 'optionalAccess', _92 => _92.stats, 'optionalAccess', _93 => _93.harder]) >= 3) triggers.push({ id:"too_hard", msg:"Sessions are repeatedly harder than expected — lower aggressiveness?", actionLabel:"Lower aggressiveness", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 10 }, priority:80 });
-  if ((_optionalChain([learning, 'optionalAccess', _94 => _94.stats, 'optionalAccess', _95 => _95.equipBlockers]) || 0) + (_optionalChain([learning, 'optionalAccess', _96 => _96.stats, 'optionalAccess', _97 => _97.travelBlockers]) || 0) >= 2) triggers.push({ id:"env_fast", msg:"Gym access pattern changed — switch environment assumptions faster?", actionLabel:"Use no-equipment mode", actionType:"SWITCH_ENV_MODE", payload:{ mode:"no equipment" }, priority:74 });
+  if (_optionalChain([learning, 'optionalAccess', _145 => _145.stats, 'optionalAccess', _146 => _146.timeBlockers]) >= 2) triggers.push({ id:"time_friction", msg:"Time blockers keep repeating — cap sessions and reduce density?", actionLabel:"Reduce density", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 15 }, priority:84 });
+  if (_optionalChain([learning, 'optionalAccess', _147 => _147.stats, 'optionalAccess', _148 => _148.harder]) >= 3) triggers.push({ id:"too_hard", msg:"Sessions are repeatedly harder than expected — lower aggressiveness?", actionLabel:"Lower aggressiveness", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 10 }, priority:80 });
+  if ((_optionalChain([learning, 'optionalAccess', _149 => _149.stats, 'optionalAccess', _150 => _150.equipBlockers]) || 0) + (_optionalChain([learning, 'optionalAccess', _151 => _151.stats, 'optionalAccess', _152 => _152.travelBlockers]) || 0) >= 2) triggers.push({ id:"env_fast", msg:"Gym access pattern changed — switch environment assumptions faster?", actionLabel:"Use no-equipment mode", actionType:"SWITCH_ENV_MODE", payload:{ mode:"no equipment" }, priority:74 });
   const recentNutri = Object.values(nutritionFeedback || {}).slice(-7);
   if (recentNutri.filter(n => n.status === "off_track").length >= 2) triggers.push({ id:"nutri_simplify", msg:"Nutrition has been off-track — simplify meal structure for 3 days?", actionLabel:"Apply meal defaults", actionType:"SIMPLIFY_MEALS_THIS_WEEK", payload:{ days: 3 }, priority:82 });
   if (recentNutri.filter(n => n.issue === "travel" || n.issue === "convenience").length >= 2) triggers.push({ id:"nutri_travel", msg:"Travel/convenience is derailing nutrition — switch to travel nutrition mode?", actionLabel:"Enable travel nutrition", actionType:"SWITCH_TRAVEL_NUTRITION_MODE", payload:{ enabled:true }, priority:79 });
-  if ((momentum.momentumState === "drifting" || momentum.momentumState === "falling off") && _optionalChain([learning, 'optionalAccess', _98 => _98.stats, 'optionalAccess', _99 => _99.skipped]) >= 2) triggers.push({ id:"salvage_mode", msg:"You’ve missed 2+ sessions — switch to a 3-day salvage plan?", actionLabel:"Activate salvage", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:92 });
-  const confidenceBoost = _optionalChain([learning, 'optionalAccess', _100 => _100.adaptation, 'optionalAccess', _101 => _101.active]) ? 6 : -4;
+  if ((momentum.momentumState === "drifting" || momentum.momentumState === "falling off") && _optionalChain([learning, 'optionalAccess', _153 => _153.stats, 'optionalAccess', _154 => _154.skipped]) >= 2) triggers.push({ id:"salvage_mode", msg:"You’ve missed 2+ sessions — switch to a 3-day salvage plan?", actionLabel:"Activate salvage", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:92 });
+  const confidenceBoost = _optionalChain([learning, 'optionalAccess', _155 => _155.adaptation, 'optionalAccess', _156 => _156.active]) ? 6 : -4;
   return triggers
     .map(t => ({ ...t, priority: (t.priority || 50) + confidenceBoost }))
     .sort((a,b) => b.priority - a.priority)
@@ -1583,7 +1887,7 @@ const detectBehaviorPatterns = ({ logs, bodyweights, personalization }) => {
   const entries = Object.entries(logs || {}).sort((a,b)=>a[0].localeCompare(b[0]));
   const last21 = entries.slice(-21);
   const patterns = [];
-  const streakThenMiss = last21.some((_, i) => i >= 3 && /missed|skip|rest/i.test((_optionalChain([last21, 'access', _102 => _102[i], 'optionalAccess', _103 => _103[1], 'optionalAccess', _104 => _104.notes]) || "")) && last21.slice(Math.max(0, i-3), i).filter(([,l])=>/run|strength|otf/i.test(l.type || "")).length >= 2);
+  const streakThenMiss = last21.some((_, i) => i >= 3 && /missed|skip|rest/i.test((_optionalChain([last21, 'access', _157 => _157[i], 'optionalAccess', _158 => _158[1], 'optionalAccess', _159 => _159.notes]) || "")) && last21.slice(Math.max(0, i-3), i).filter(([,l])=>/run|strength|otf/i.test(l.type || "")).length >= 2);
   if (streakThenMiss) patterns.push("You often miss after 2–3 strong days.");
   const env = personalization.travelState.environmentMode || "home";
   const travelLow = ["travel","limited gym","no equipment"].includes(env) && last21.length < 6;
@@ -1594,26 +1898,26 @@ const detectBehaviorPatterns = ({ logs, bodyweights, personalization }) => {
   if (bwInconsistent) patterns.push("Bodyweight logging is inconsistent lately.");
   const fatigueRepeats = last21.filter(([,l]) => /(fatigue|chaos|busy|travel|bad sleep)/i.test(l.notes || "")).length >= 2;
   if (fatigueRepeats) patterns.push("Notes repeatedly mention fatigue/chaos/travel.");
-  const checkinTimeSkips = last21.filter(([,l]) => _optionalChain([l, 'access', _105 => _105.checkin, 'optionalAccess', _106 => _106.status]) === "skipped" && _optionalChain([l, 'access', _107 => _107.checkin, 'optionalAccess', _108 => _108.blocker]) === "time").length >= 2;
+  const checkinTimeSkips = last21.filter(([,l]) => _optionalChain([l, 'access', _160 => _160.checkin, 'optionalAccess', _161 => _161.status]) === "skipped" && _optionalChain([l, 'access', _162 => _162.checkin, 'optionalAccess', _163 => _163.blocker]) === "time").length >= 2;
   if (checkinTimeSkips) patterns.push("Check-ins suggest time is the most common skip trigger.");
   return patterns.slice(0, 4);
 };
 
 const generateDailyCoachBrief = ({ momentum, todayWorkout, arbitration, injuryState, patterns, learning, salvage }) => {
   const warning = injuryState.level !== "none" ? `Watch ${injuryState.area} (${injuryState.level.replaceAll("_"," ")}).` : momentum.momentumState === "falling off" ? "Consistency is the risk today." : "No major red flags.";
-  const optionalAdjustment = _optionalChain([learning, 'optionalAccess', _109 => _109.adjustmentBias]) === "simplify"
+  const optionalAdjustment = _optionalChain([learning, 'optionalAccess', _164 => _164.adjustmentBias]) === "simplify"
     ? "Start with a 20-minute minimum dose today; extend only if energy is good."
     : injuryState.level !== "none"
     ? "Downgrade intensity one notch and keep aerobic work easy."
     : "If energy is low, do the first 20 minutes only and bank consistency.";
   return {
-    focus: _optionalChain([salvage, 'optionalAccess', _110 => _110.active]) ? "Salvage week: execute the compressed essentials only." : momentum.momentumState.includes("drifting") ? "Preserve momentum, not perfection." : `Execute ${_optionalChain([todayWorkout, 'optionalAccess', _111 => _111.label]) || "today's session"} cleanly.`,
+    focus: _optionalChain([salvage, 'optionalAccess', _165 => _165.active]) ? "Salvage week: execute the compressed essentials only." : momentum.momentumState.includes("drifting") ? "Preserve momentum, not perfection." : `Execute ${_optionalChain([todayWorkout, 'optionalAccess', _166 => _166.label]) || "today's session"} cleanly.`,
     why: arbitration.explanation,
     arbitrationLine: arbitration.todayLine,
     warning,
-    success: _optionalChain([todayWorkout, 'optionalAccess', _112 => _112.minDay]) ? (_optionalChain([todayWorkout, 'optionalAccess', _113 => _113.success]) || "Today = minimum viable day and momentum preserved.") : _optionalChain([salvage, 'optionalAccess', _114 => _114.active]) ? salvage.compressedPlan.success : _optionalChain([todayWorkout, 'optionalAccess', _115 => _115.type]) === "rest" ? "Log recovery, mobility, and tomorrow plan." : "Complete the planned session and log how it felt.",
+    success: _optionalChain([todayWorkout, 'optionalAccess', _167 => _167.minDay]) ? (_optionalChain([todayWorkout, 'optionalAccess', _168 => _168.success]) || "Today = minimum viable day and momentum preserved.") : _optionalChain([salvage, 'optionalAccess', _169 => _169.active]) ? salvage.compressedPlan.success : _optionalChain([todayWorkout, 'optionalAccess', _170 => _170.type]) === "rest" ? "Log recovery, mobility, and tomorrow plan." : "Complete the planned session and log how it felt.",
     optionalAdjustment,
-    patternNote: _optionalChain([learning, 'optionalAccess', _116 => _116.topObservations, 'optionalAccess', _117 => _117[0], 'optionalAccess', _118 => _118.msg]) || patterns[0] || "No dominant negative pattern detected this week."
+    patternNote: _optionalChain([learning, 'optionalAccess', _171 => _171.topObservations, 'optionalAccess', _172 => _172[0], 'optionalAccess', _173 => _173.msg]) || patterns[0] || "No dominant negative pattern detected this week."
   };
 };
 
@@ -1625,43 +1929,43 @@ const generateWeeklyCoachReview = ({ momentum, arbitration, signals, personaliza
     return {
   wentWell: momentum.score >= 60 ? "You kept core training momentum." : "You still kept some training touchpoints alive.",
   drifted: momentum.momentumState === "drifting" || momentum.momentumState === "falling off" ? "Execution drifted on consistency and logging rhythm." : "Drift was limited.",
-  learned: nutritionLearned || _optionalChain([learning, 'optionalAccess', _119 => _119.topObservations, 'optionalAccess', _120 => _120[0], 'optionalAccess', _121 => _121.msg]) || patterns[0] || "Current routine works best when kept simple.",
-  changesNextWeek: _optionalChain([learning, 'optionalAccess', _122 => _122.adjustmentBias]) === "simplify"
+  learned: nutritionLearned || _optionalChain([learning, 'optionalAccess', _174 => _174.topObservations, 'optionalAccess', _175 => _175[0], 'optionalAccess', _176 => _176.msg]) || patterns[0] || "Current routine works best when kept simple.",
+  changesNextWeek: _optionalChain([learning, 'optionalAccess', _177 => _177.adjustmentBias]) === "simplify"
     ? "Simplify next week structure (shorter sessions and lower friction defaults)."
-    : _optionalChain([learning, 'optionalAccess', _123 => _123.adjustmentBias]) === "progress"
+    : _optionalChain([learning, 'optionalAccess', _178 => _178.adjustmentBias]) === "progress"
     ? "Progress modestly (+3-5%) while keeping recovery quality high."
     : momentum.momentumState === "building momentum" ? "Progress slightly (+5% load where tolerated)." : momentum.momentumState === "stable" ? "Hold structure and sharpen execution." : "Simplify week and reset friction points.",
   tradeoff: arbitration.conflicts[0] || "No major conflict this week; maintain balanced progress.",
   arbitrationShift: arbitration.shiftReason,
-  expectation: _optionalChain([expectations, 'optionalAccess', _124 => _124.nextWindow]) || "Near-term outlook still forming.",
-  expectationCondition: _optionalChain([expectations, 'optionalAccess', _125 => _125.conditionLine]) || "Condition: maintain current structure and logging for clearer trend signal.",
-  expectationMotivation: _optionalChain([expectations, 'optionalAccess', _126 => _126.motivationLine]) || "Progress compounds with consistency.",
-  recalibrationSummary: _optionalChain([recalibration, 'optionalAccess', _127 => _127.summary]) || "No recalibration this week.",
-  recalibrationWhy: _optionalChain([recalibration, 'optionalAccess', _128 => _128.why]) || "",
-  recalibrationChanges: _optionalChain([recalibration, 'optionalAccess', _129 => _129.changes]) || []
+  expectation: _optionalChain([expectations, 'optionalAccess', _179 => _179.nextWindow]) || "Near-term outlook still forming.",
+  expectationCondition: _optionalChain([expectations, 'optionalAccess', _180 => _180.conditionLine]) || "Condition: maintain current structure and logging for clearer trend signal.",
+  expectationMotivation: _optionalChain([expectations, 'optionalAccess', _181 => _181.motivationLine]) || "Progress compounds with consistency.",
+  recalibrationSummary: _optionalChain([recalibration, 'optionalAccess', _182 => _182.summary]) || "No recalibration this week.",
+  recalibrationWhy: _optionalChain([recalibration, 'optionalAccess', _183 => _183.why]) || "",
+  recalibrationChanges: _optionalChain([recalibration, 'optionalAccess', _184 => _184.changes]) || []
     };
   })()
 });
 
 const buildUnifiedDailyStory = ({ todayWorkout, dailyBrief, progress, arbitration, expectations, salvage, momentum }) => {
-  const hasOverride = !!(_optionalChain([todayWorkout, 'optionalAccess', _130 => _130.coachOverride]) || _optionalChain([todayWorkout, 'optionalAccess', _131 => _131.minDay]) || _optionalChain([todayWorkout, 'optionalAccess', _132 => _132.reason]));
-  const priority = _optionalChain([salvage, 'optionalAccess', _133 => _133.active])
+  const hasOverride = !!(_optionalChain([todayWorkout, 'optionalAccess', _185 => _185.coachOverride]) || _optionalChain([todayWorkout, 'optionalAccess', _186 => _186.minDay]) || _optionalChain([todayWorkout, 'optionalAccess', _187 => _187.reason]));
+  const priority = _optionalChain([salvage, 'optionalAccess', _188 => _188.active])
     ? "salvage"
     : hasOverride
     ? "override"
-    : ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _134 => _134.momentumState]))
+    : ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _189 => _189.momentumState]))
     ? "drift"
-    : _optionalChain([progress, 'optionalAccess', _135 => _135.warnings, 'optionalAccess', _136 => _136.length])
+    : _optionalChain([progress, 'optionalAccess', _190 => _190.warnings, 'optionalAccess', _191 => _191.length])
     ? "progress"
     : "expectation";
 
-  const sessionText = _optionalChain([todayWorkout, 'optionalAccess', _137 => _137.label]) || "today's session";
-  const expectationSentence = _optionalChain([expectations, 'optionalAccess', _138 => _138.nextWindow])
+  const sessionText = _optionalChain([todayWorkout, 'optionalAccess', _192 => _192.label]) || "today's session";
+  const expectationSentence = _optionalChain([expectations, 'optionalAccess', _193 => _193.nextWindow])
     ? `${expectations.nextWindow} ${expectations.conditionLine}`
     : "Near-term outlook stays positive if consistency holds.";
-  const progressSentence = _optionalChain([progress, 'optionalAccess', _139 => _139.highlights, 'optionalAccess', _140 => _140.slice, 'call', _141 => _141(0, 2), 'access', _142 => _142.join, 'call', _143 => _143("; ")]) || "Progress signal is still forming.";
-  const arbitrationSentence = _optionalChain([arbitration, 'optionalAccess', _144 => _144.todayLine]) || "Today prioritizes consistency and key goal quality.";
-  const successSentence = _optionalChain([dailyBrief, 'optionalAccess', _145 => _145.success]) || "Complete the planned session and log how it felt.";
+  const progressSentence = _optionalChain([progress, 'optionalAccess', _194 => _194.highlights, 'optionalAccess', _195 => _195.slice, 'call', _196 => _196(0, 2), 'access', _197 => _197.join, 'call', _198 => _198("; ")]) || "Progress signal is still forming.";
+  const arbitrationSentence = _optionalChain([arbitration, 'optionalAccess', _199 => _199.todayLine]) || "Today prioritizes consistency and key goal quality.";
+  const successSentence = _optionalChain([dailyBrief, 'optionalAccess', _200 => _200.success]) || "Complete the planned session and log how it felt.";
 
   if (priority === "salvage") {
     return {
@@ -1673,7 +1977,7 @@ const buildUnifiedDailyStory = ({ todayWorkout, dailyBrief, progress, arbitratio
   if (priority === "override") {
     return {
       priority,
-      brief: `Today is intentionally adjusted (${_optionalChain([todayWorkout, 'optionalAccess', _146 => _146.reason, 'optionalAccess', _147 => _147.replaceAll, 'call', _148 => _148("_"," ")]) || "coach override"}) so execution stays realistic. ${arbitrationSentence} ${expectationSentence}`,
+      brief: `Today is intentionally adjusted (${_optionalChain([todayWorkout, 'optionalAccess', _201 => _201.reason, 'optionalAccess', _202 => _202.replaceAll, 'call', _203 => _203("_"," ")]) || "coach override"}) so execution stays realistic. ${arbitrationSentence} ${expectationSentence}`,
       success: successSentence
     };
   }
@@ -1700,8 +2004,8 @@ const buildUnifiedDailyStory = ({ todayWorkout, dailyBrief, progress, arbitratio
 
 const deriveBehaviorLoop = ({ dailyCheckins, logs, momentum, salvageLayer }) => {
   const entries = Object.entries(dailyCheckins || {}).sort((a,b) => a[0].localeCompare(b[0]));
-  const isSuccess = (c) => _optionalChain([c, 'optionalAccess', _149 => _149.status]) === "completed_as_planned" || _optionalChain([c, 'optionalAccess', _150 => _150.status]) === "completed_modified" || _optionalChain([c, 'optionalAccess', _151 => _151.passiveAssumed]);
-  const isMinViable = (c) => _optionalChain([c, 'optionalAccess', _152 => _152.status]) === "completed_modified" || /min(imum)?\s?(day|dose)/i.test(_optionalChain([c, 'optionalAccess', _153 => _153.note]) || "");
+  const isSuccess = (c) => _optionalChain([c, 'optionalAccess', _204 => _204.status]) === "completed_as_planned" || _optionalChain([c, 'optionalAccess', _205 => _205.status]) === "completed_modified" || _optionalChain([c, 'optionalAccess', _206 => _206.passiveAssumed]);
+  const isMinViable = (c) => _optionalChain([c, 'optionalAccess', _207 => _207.status]) === "completed_modified" || /min(imum)?\s?(day|dose)/i.test(_optionalChain([c, 'optionalAccess', _208 => _208.note]) || "");
 
   let consistencyStreak = 0;
   for (let i = entries.length - 1; i >= 0; i--) {
@@ -1714,7 +2018,7 @@ const deriveBehaviorLoop = ({ dailyCheckins, logs, momentum, salvageLayer }) => 
     else break;
   }
 
-  const latest = _optionalChain([entries, 'access', _154 => _154[entries.length - 1], 'optionalAccess', _155 => _155[1]]) || null;
+  const latest = _optionalChain([entries, 'access', _209 => _209[entries.length - 1], 'optionalAccess', _210 => _210[1]]) || null;
   const resolution = !latest
     ? "New streak starts with one completed day."
     : latest.status === "completed_as_planned"
@@ -1725,11 +2029,11 @@ const deriveBehaviorLoop = ({ dailyCheckins, logs, momentum, salvageLayer }) => 
     ? "Recovery day logged — next action is to restart with a minimum day."
     : "Day logged — momentum stays alive.";
 
-  const identity = _optionalChain([salvageLayer, 'optionalAccess', _156 => _156.active])
+  const identity = _optionalChain([salvageLayer, 'optionalAccess', _211 => _211.active])
     ? "You’re handling setbacks like an athlete who stays in the game."
     : consistencyStreak >= 5
     ? "You’re building consistency identity."
-    : ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _157 => _157.momentumState]))
+    : ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _212 => _212.momentumState]))
     ? "You’re back on track by showing up today."
     : "You’re reinforcing a reliable training rhythm.";
 
@@ -1738,7 +2042,7 @@ const deriveBehaviorLoop = ({ dailyCheckins, logs, momentum, salvageLayer }) => 
     minViableStreak,
     resolution,
     identity,
-    recoveryTone: _optionalChain([latest, 'optionalAccess', _158 => _158.status]) === "skipped" || consistencyStreak === 0
+    recoveryTone: _optionalChain([latest, 'optionalAccess', _213 => _213.status]) === "skipped" || consistencyStreak === 0
   };
 };
 
@@ -1765,8 +2069,8 @@ const deriveLongTermMemoryLayer = ({ logs, dailyCheckins, weeklyCheckins, nutrit
     makeMemory("fatigue_sensitive","performance","fatigue rises quickly when load stacks too fast", weekly.filter(w => Number(w.energy || 3) <= 2 || Number(w.stress || 3) >= 4).length),
     makeMemory("home_better_than_travel","environment","home setup yields higher completion than travel weeks", entries.filter(([,l]) => l.location !== "hotel").length >= 6 ? entries.filter(([,l]) => l.location === "hotel").length : 0),
     makeMemory("nutrition_simple_meals","nutrition","adherence is better with simpler repeatable meals", nutrition.filter(n => n.status === "off_track" && ["convenience","travel"].includes(n.issue)).length >= 2 ? 3 : nutrition.filter(n => n.status === "decent" || n.status === "on_track").length),
-    makeMemory("validation_simplify_positive","validation","simplifying weeks tends to improve adherence/momentum", (_optionalChain([validationLayer, 'optionalAccess', _159 => _159.recentResolved]) || []).filter(r => r.strategy === "simplify_density" && r.impact === "positive").length),
-    makeMemory("validation_aggressive_negative","validation","aggressive progress blocks can reduce consistency", (_optionalChain([validationLayer, 'optionalAccess', _160 => _160.recentResolved]) || []).filter(r => r.strategy === "aggressive_progression" && r.impact === "negative").length),
+    makeMemory("validation_simplify_positive","validation","simplifying weeks tends to improve adherence/momentum", (_optionalChain([validationLayer, 'optionalAccess', _214 => _214.recentResolved]) || []).filter(r => r.strategy === "simplify_density" && r.impact === "positive").length),
+    makeMemory("validation_aggressive_negative","validation","aggressive progress blocks can reduce consistency", (_optionalChain([validationLayer, 'optionalAccess', _215 => _215.recentResolved]) || []).filter(r => r.strategy === "aggressive_progression" && r.impact === "negative").length),
   ].filter(Boolean);
 
   const decayedPrev = (previousMemory || []).map(m => {
@@ -1784,7 +2088,7 @@ const deriveLongTermMemoryLayer = ({ logs, dailyCheckins, weeklyCheckins, nutrit
 
 const deriveRecalibrationEngine = ({ currentWeek, progress, momentum, learningLayer, memoryInsights, arbitration }) => {
   const periodicTrigger = currentWeek > 1 && currentWeek % 4 === 0;
-  const prolongedInconsistency = ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _161 => _161.momentumState])) && (_optionalChain([progress, 'optionalAccess', _162 => _162.adherenceRate]) || 0) < 60;
+  const prolongedInconsistency = ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _216 => _216.momentumState])) && (_optionalChain([progress, 'optionalAccess', _217 => _217.adherenceRate]) || 0) < 60;
   const majorPatternShift = (memoryInsights || []).some(m => ["drops_after_3_4_days","fatigue_sensitive"].includes(m.key) && m.confidence === "high");
   const active = periodicTrigger || prolongedInconsistency || majorPatternShift;
   const reasons = [
@@ -1794,13 +2098,13 @@ const deriveRecalibrationEngine = ({ currentWeek, progress, momentum, learningLa
   ].filter(Boolean);
 
   const changes = [];
-  if (prolongedInconsistency || _optionalChain([learningLayer, 'optionalAccess', _163 => _163.adjustmentBias]) === "simplify") changes.push("reduce weekly density and simplify session flow");
-  if (_optionalChain([progress, 'optionalAccess', _164 => _164.weightSignal, 'optionalAccess', _165 => _165.includes, 'call', _166 => _166("holding roughly steady")])) changes.push("tighten nutrition structure with simpler repeatable meals");
-  if (_optionalChain([progress, 'optionalAccess', _167 => _167.runSignal, 'optionalAccess', _168 => _168.includes, 'call', _169 => _169("improving")]) && _optionalChain([arbitration, 'optionalAccess', _170 => _170.primary, 'optionalAccess', _171 => _171.category]) === "running") changes.push("slightly progress run quality while maintaining recovery");
-  if (_optionalChain([progress, 'optionalAccess', _172 => _172.strengthSignal, 'optionalAccess', _173 => _173.includes, 'call', _174 => _174("deprioritized")])) changes.push("rebuild strength with minimum effective progression");
+  if (prolongedInconsistency || _optionalChain([learningLayer, 'optionalAccess', _218 => _218.adjustmentBias]) === "simplify") changes.push("reduce weekly density and simplify session flow");
+  if (_optionalChain([progress, 'optionalAccess', _219 => _219.weightSignal, 'optionalAccess', _220 => _220.includes, 'call', _221 => _221("holding roughly steady")])) changes.push("tighten nutrition structure with simpler repeatable meals");
+  if (_optionalChain([progress, 'optionalAccess', _222 => _222.runSignal, 'optionalAccess', _223 => _223.includes, 'call', _224 => _224("improving")]) && _optionalChain([arbitration, 'optionalAccess', _225 => _225.primary, 'optionalAccess', _226 => _226.category]) === "running") changes.push("slightly progress run quality while maintaining recovery");
+  if (_optionalChain([progress, 'optionalAccess', _227 => _227.strengthSignal, 'optionalAccess', _228 => _228.includes, 'call', _229 => _229("deprioritized")])) changes.push("rebuild strength with minimum effective progression");
   if (!changes.length) changes.push("hold structure and sharpen execution quality");
 
-  const aggressiveness = prolongedInconsistency ? "lower" : _optionalChain([progress, 'optionalAccess', _175 => _175.adherenceRate]) >= 75 ? "slightly_higher" : "steady";
+  const aggressiveness = prolongedInconsistency ? "lower" : _optionalChain([progress, 'optionalAccess', _230 => _230.adherenceRate]) >= 75 ? "slightly_higher" : "steady";
   const summary = active
     ? "We’re recalibrating your plan to keep progress aligned with current reality."
     : "No recalibration needed this week.";
@@ -1819,12 +2123,12 @@ const deriveRecalibrationEngine = ({ currentWeek, progress, momentum, learningLa
 const deriveStrengthLayer = ({ goals, momentum, personalization, logs }) => {
   const strengthGoal = (goals || []).find(g => g.active && g.category === "strength");
   const env = personalization.travelState.environmentMode || "home";
-  const benchEstimate = parseInt(_optionalChain([(_optionalChain([strengthGoal, 'optionalAccess', _176 => _176.measurableTarget]) || ""), 'access', _177 => _177.match, 'call', _178 => _178(/\d+/), 'optionalAccess', _179 => _179[0]]) || "185");
+  const benchEstimate = parseInt(_optionalChain([(_optionalChain([strengthGoal, 'optionalAccess', _231 => _231.measurableTarget]) || ""), 'access', _232 => _232.match, 'call', _233 => _233(/\d+/), 'optionalAccess', _234 => _234[0]]) || "185");
   const trainingMax = Math.round(benchEstimate * 0.9); // conservative re-entry
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   let focus = "maintain";
-  if (_optionalChain([arbitration, 'access', _180 => _180.primary, 'optionalAccess', _181 => _181.category]) === "strength" && momentum.coachMode !== "protect mode") focus = "push";
-  if (["drifting","falling off"].includes(momentum.momentumState) || arbitration.deprioritized.includes(_optionalChain([strengthGoal, 'optionalAccess', _182 => _182.name]))) focus = "deprioritize";
+  if (_optionalChain([arbitration, 'access', _235 => _235.primary, 'optionalAccess', _236 => _236.category]) === "strength" && momentum.coachMode !== "protect mode") focus = "push";
+  if (["drifting","falling off"].includes(momentum.momentumState) || arbitration.deprioritized.includes(_optionalChain([strengthGoal, 'optionalAccess', _237 => _237.name]))) focus = "deprioritize";
 
   const recentBenchHits = Object.values(logs || {}).filter(l => /bench/i.test((l.type || "") + " " + (l.notes || ""))).length;
   const progression = focus === "push"
@@ -1889,30 +2193,30 @@ const deriveProgressEngine = ({ logs, bodyweights, momentum, strengthLayer }) =>
 };
 
 const deriveExpectationEngine = ({ progress, momentum, arbitration }) => {
-  const adherenceBand = _optionalChain([progress, 'optionalAccess', _183 => _183.adherenceRate]) >= 75 ? "high" : _optionalChain([progress, 'optionalAccess', _184 => _184.adherenceRate]) >= 55 ? "moderate" : "low";
+  const adherenceBand = _optionalChain([progress, 'optionalAccess', _238 => _238.adherenceRate]) >= 75 ? "high" : _optionalChain([progress, 'optionalAccess', _239 => _239.adherenceRate]) >= 55 ? "moderate" : "low";
   const weightWeekly = (() => {
-    const m = /~([0-9.]+) lb\/week/.exec(_optionalChain([progress, 'optionalAccess', _185 => _185.weightSignal]) || "");
+    const m = /~([0-9.]+) lb\/week/.exec(_optionalChain([progress, 'optionalAccess', _240 => _240.weightSignal]) || "");
     return m ? parseFloat(m[1]) : null;
   })();
   const monthWeight = weightWeekly ? Math.max(0.8, Math.min(4.5, weightWeekly * 4)) : null;
-  const weightExpectation = _optionalChain([progress, 'optionalAccess', _186 => _186.weightSignal, 'optionalAccess', _187 => _187.includes, 'call', _188 => _188("down")])
+  const weightExpectation = _optionalChain([progress, 'optionalAccess', _241 => _241.weightSignal, 'optionalAccess', _242 => _242.includes, 'call', _243 => _243("down")])
     ? `At this pace, you’ll likely drop ~${Math.round(monthWeight)}–${Math.round(monthWeight + 1)} lbs over the next month if consistency holds.`
-    : _optionalChain([progress, 'optionalAccess', _189 => _189.weightSignal, 'optionalAccess', _190 => _190.includes, 'call', _191 => _191("steady")])
+    : _optionalChain([progress, 'optionalAccess', _244 => _244.weightSignal, 'optionalAccess', _245 => _245.includes, 'call', _246 => _246("steady")])
     ? "Scale trend should stay relatively stable over the next month if intake and execution stay similar."
     : "Bodyweight trend may drift up if this pattern continues; tightening consistency should correct it.";
-  const runExpectation = _optionalChain([progress, 'optionalAccess', _192 => _192.runSignal, 'optionalAccess', _193 => _193.includes, 'call', _194 => _194("improving")])
+  const runExpectation = _optionalChain([progress, 'optionalAccess', _247 => _247.runSignal, 'optionalAccess', _248 => _248.includes, 'call', _249 => _249("improving")])
     ? "Running capacity should improve steadily over the next few weeks if we keep this structure."
-    : _optionalChain([progress, 'optionalAccess', _195 => _195.runSignal, 'optionalAccess', _196 => _196.includes, 'call', _197 => _197("holding steady")])
+    : _optionalChain([progress, 'optionalAccess', _250 => _250.runSignal, 'optionalAccess', _251 => _251.includes, 'call', _252 => _252("holding steady")])
     ? "Running performance should keep inching forward if consistency holds."
-    : _optionalChain([progress, 'optionalAccess', _198 => _198.runSignal, 'optionalAccess', _199 => _199.includes, 'call', _200 => _200("down")])
+    : _optionalChain([progress, 'optionalAccess', _253 => _253.runSignal, 'optionalAccess', _254 => _254.includes, 'call', _255 => _255("down")])
     ? "Running performance may stay flat or dip short-term unless we simplify load and recover better."
     : "Running forecast is still forming; 2–3 consistent weeks will make direction clearer.";
-  const strengthExpectation = _optionalChain([progress, 'optionalAccess', _201 => _201.strengthSignal, 'optionalAccess', _202 => _202.includes, 'call', _203 => _203("pushing")])
+  const strengthExpectation = _optionalChain([progress, 'optionalAccess', _256 => _256.strengthSignal, 'optionalAccess', _257 => _257.includes, 'call', _258 => _258("pushing")])
     ? "You’re on track to rebuild strength over the next few weeks if we maintain current structure."
     : "Strength should hold and gradually rebuild if consistency and recovery stay in place.";
-  const expectationStrength = adherenceBand === "high" && _optionalChain([momentum, 'optionalAccess', _204 => _204.momentumState]) !== "falling off"
+  const expectationStrength = adherenceBand === "high" && _optionalChain([momentum, 'optionalAccess', _259 => _259.momentumState]) !== "falling off"
     ? "slightly_positive"
-    : adherenceBand === "low" || ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _205 => _205.momentumState]))
+    : adherenceBand === "low" || ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _260 => _260.momentumState]))
     ? "conservative"
     : "neutral";
   const nextWindow = expectationStrength === "slightly_positive"
@@ -1931,13 +2235,13 @@ const deriveExpectationEngine = ({ progress, momentum, arbitration }) => {
 };
 
 const parseSessionMinutes = (log) => {
-  const rt = String(_optionalChain([log, 'optionalAccess', _206 => _206.runTime]) || "").trim();
+  const rt = String(_optionalChain([log, 'optionalAccess', _261 => _261.runTime]) || "").trim();
   if (/^\d+$/.test(rt)) return Number(rt);
   if (/^\d+:\d{2}$/.test(rt)) {
     const [m, s] = rt.split(":").map(Number);
     return m + Math.round((s || 0) / 60);
   }
-  const txt = `${_optionalChain([log, 'optionalAccess', _207 => _207.type]) || ""} ${_optionalChain([log, 'optionalAccess', _208 => _208.notes]) || ""}`;
+  const txt = `${_optionalChain([log, 'optionalAccess', _262 => _262.type]) || ""} ${_optionalChain([log, 'optionalAccess', _263 => _263.notes]) || ""}`;
   const m = txt.match(/(\d+)\s*min/i);
   return m ? Number(m[1]) : null;
 };
@@ -1970,11 +2274,11 @@ const derivePersonalOptimizationLayer = ({ logs, dailyCheckins, nutritionFeedbac
   const optimalComplexity = (modifications + skips) >= 8 ? "low complexity" : "moderate complexity";
 
   const experimentActions = (coachActions || []).filter(a => a.source === "optimization_experiment");
-  const lastExperimentTs = _optionalChain([experimentActions, 'access', _209 => _209[0], 'optionalAccess', _210 => _210.ts]) || 0;
+  const lastExperimentTs = _optionalChain([experimentActions, 'access', _264 => _264[0], 'optionalAccess', _265 => _265.ts]) || 0;
   const cooldownDays = Math.floor((Date.now() - Number(lastExperimentTs || 0)) / 86400000);
   const canExperiment = cooldownDays >= 10 && last42Checkins.length >= 12;
-  const winningSignals = (_optionalChain([validationLayer, 'optionalAccess', _211 => _211.recentResolved]) || []).filter(r => r.impact === "positive").length;
-  const losingSignals = (_optionalChain([validationLayer, 'optionalAccess', _212 => _212.recentResolved]) || []).filter(r => r.impact === "negative").length;
+  const winningSignals = (_optionalChain([validationLayer, 'optionalAccess', _266 => _266.recentResolved]) || []).filter(r => r.impact === "positive").length;
+  const losingSignals = (_optionalChain([validationLayer, 'optionalAccess', _267 => _267.recentResolved]) || []).filter(r => r.impact === "negative").length;
   const reinforcementBias = winningSignals > losingSignals ? "reinforce_winners" : losingSignals > winningSignals ? "reduce_losers" : "hold";
 
   const pendingExperiment = canExperiment ? {
@@ -2006,8 +2310,8 @@ const deriveLearningLayer = ({ dailyCheckins, logs, weeklyCheckins, momentum, pe
   const travelBlockers = last28.filter(c => c.blocker === "schedule_travel").length;
   const skippedByTravel = last28.filter(c => c.status === "skipped" && ["schedule_travel","no_equipment"].includes(c.blocker)).length;
   const logsArr = Object.values(logs || {});
-  const strengthMods = logsArr.filter(l => /strength/i.test(l.type || "") && _optionalChain([l, 'access', _213 => _213.checkin, 'optionalAccess', _214 => _214.status]) === "completed_modified").length;
-  const runMods = logsArr.filter(l => /run|tempo|interval|long/i.test(l.type || "") && _optionalChain([l, 'access', _215 => _215.checkin, 'optionalAccess', _216 => _216.status]) === "completed_modified").length;
+  const strengthMods = logsArr.filter(l => /strength/i.test(l.type || "") && _optionalChain([l, 'access', _268 => _268.checkin, 'optionalAccess', _269 => _269.status]) === "completed_modified").length;
+  const runMods = logsArr.filter(l => /run|tempo|interval|long/i.test(l.type || "") && _optionalChain([l, 'access', _270 => _270.checkin, 'optionalAccess', _271 => _271.status]) === "completed_modified").length;
   const weekly = Object.values(weeklyCheckins || {});
   const lowEnergyWeeks = weekly.filter(w => Number(w.energy || 3) <= 2).length;
   const highStressWeeks = weekly.filter(w => Number(w.stress || 3) >= 4).length;
@@ -2033,13 +2337,13 @@ const deriveLearningLayer = ({ dailyCheckins, logs, weeklyCheckins, momentum, pe
     simplifyStrength: mediumHigh.some(o => o.impact === "strength_simplify"),
     environmentFastSwitch: mediumHigh.some(o => o.impact === "simplify_environment"),
     pushSlightly: mediumHigh.some(o => o.impact === "modest_progress") && !mediumHigh.some(o => o.impact === "lower_aggressiveness"),
-    validationBias: _optionalChain([validationLayer, 'optionalAccess', _217 => _217.strategyAdjustments]) || {},
-    optimizationBias: _optionalChain([optimizationLayer, 'optionalAccess', _218 => _218.reinforcementBias]) || "hold",
+    validationBias: _optionalChain([validationLayer, 'optionalAccess', _272 => _272.strategyAdjustments]) || {},
+    optimizationBias: _optionalChain([optimizationLayer, 'optionalAccess', _273 => _273.reinforcementBias]) || "hold",
   };
-  const validationSimplifyPenalty = Object.values(_optionalChain([validationLayer, 'optionalAccess', _219 => _219.strategyAdjustments]) || {}).filter(v => v === "reduce").length;
-  const validationProgressBoost = Object.values(_optionalChain([validationLayer, 'optionalAccess', _220 => _220.strategyAdjustments]) || {}).filter(v => v === "strengthen").length;
-  const optimizationReduce = _optionalChain([optimizationLayer, 'optionalAccess', _221 => _221.reinforcementBias]) === "reduce_losers";
-  const optimizationReinforce = _optionalChain([optimizationLayer, 'optionalAccess', _222 => _222.reinforcementBias]) === "reinforce_winners";
+  const validationSimplifyPenalty = Object.values(_optionalChain([validationLayer, 'optionalAccess', _274 => _274.strategyAdjustments]) || {}).filter(v => v === "reduce").length;
+  const validationProgressBoost = Object.values(_optionalChain([validationLayer, 'optionalAccess', _275 => _275.strategyAdjustments]) || {}).filter(v => v === "strengthen").length;
+  const optimizationReduce = _optionalChain([optimizationLayer, 'optionalAccess', _276 => _276.reinforcementBias]) === "reduce_losers";
+  const optimizationReinforce = _optionalChain([optimizationLayer, 'optionalAccess', _277 => _277.reinforcementBias]) === "reinforce_winners";
   const adjustmentBias = harder >= 3 || skipped >= 3 || lowConfidenceWeeks >= 2 || optimizationReduce
     ? "simplify"
     : (easier >= 4 && modified <= 1 && skipped <= 1) || validationProgressBoost >= 2 || optimizationReinforce
@@ -2049,7 +2353,7 @@ const deriveLearningLayer = ({ dailyCheckins, logs, weeklyCheckins, momentum, pe
     : "hold";
   const explanation = topObservations.length
     ? `Based on ${last28.length} recent check-ins: ${topObservations.map(o => o.msg).join(" ")}`
-    : _optionalChain([validationLayer, 'optionalAccess', _223 => _223.summary]) || "Learning layer needs a few more quick check-ins before giving strong guidance.";
+    : _optionalChain([validationLayer, 'optionalAccess', _278 => _278.summary]) || "Learning layer needs a few more quick check-ins before giving strong guidance.";
 
   return {
     stats: { total, skipped, modified, harder, easier, timeBlockers, equipBlockers, travelBlockers },
@@ -2119,16 +2423,16 @@ const diffDaysFromKey = (dateKey) => {
 const deriveFailureModeHardening = ({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer }) => {
   const lastLogGap = diffDaysFromKey(getLastDateKey(logs));
   const lastCheckinGap = diffDaysFromKey(getLastDateKey(dailyCheckins));
-  const lastBWDate = _optionalChain([bodyweights, 'optionalAccess', _224 => _224.length]) ? _optionalChain([bodyweights, 'access', _225 => _225[bodyweights.length - 1], 'optionalAccess', _226 => _226.date]) : null;
+  const lastBWDate = _optionalChain([bodyweights, 'optionalAccess', _279 => _279.length]) ? _optionalChain([bodyweights, 'access', _280 => _280[bodyweights.length - 1], 'optionalAccess', _281 => _281.date]) : null;
   const lastBWGap = diffDaysFromKey(lastBWDate);
   const engagementGapDays = Math.min(lastLogGap, lastCheckinGap);
   const isLowEngagement = engagementGapDays >= 5;
   const isReEntry = engagementGapDays >= 10;
-  const recentOverrides = Object.keys(_optionalChain([coachPlanAdjustments, 'optionalAccess', _227 => _227.dayOverrides]) || {})
+  const recentOverrides = Object.keys(_optionalChain([coachPlanAdjustments, 'optionalAccess', _282 => _282.dayOverrides]) || {})
     .filter(k => diffDaysFromKey(k) <= 14).length;
   const recentSalvageActivations = (coachActions || [])
     .filter(a => a.type === "ACTIVATE_SALVAGE" && (Date.now() - Number(a.ts || 0)) <= 21 * 86400000).length;
-  const chaotic = _optionalChain([salvageLayer, 'optionalAccess', _228 => _228.active]) || recentOverrides >= 3 || recentSalvageActivations >= 2;
+  const chaotic = _optionalChain([salvageLayer, 'optionalAccess', _283 => _283.active]) || recentOverrides >= 3 || recentSalvageActivations >= 2;
   const staleData = Math.min(lastLogGap, lastBWGap) >= 10 || (lastLogGap >= 7 && lastBWGap >= 21);
   const mode = isReEntry ? "re_entry" : (chaotic ? "chaotic" : (isLowEngagement ? "low_engagement" : "normal"));
   const planningHorizonDays = chaotic ? 3 : isLowEngagement ? 4 : 7;
@@ -2148,250 +2452,6 @@ const deriveFailureModeHardening = ({ logs, dailyCheckins, bodyweights, coachPla
       : "Standard coaching mode.",
   };
   return { mode, engagementGapDays, planningHorizonDays, uncertainty, staleData, chaotic, isLowEngagement, isReEntry, minimumViableStructure, coachBehavior };
-};
-
-const detectCoachSignals = (input) => {
-  const msg = input.toLowerCase();
-  return {
-    achillesPain: /achilles|heel|tendon|tight|pain/.test(msg),
-    fatigue: /fatigue|tired|exhaust|sleep badly|not recovering|drained/.test(msg),
-    soreness: /sore|stiff|heavy legs/.test(msg),
-    travel: /travel|hotel|airport/.test(msg),
-    missed: /missed|skip|couldn.?t do yesterday/.test(msg),
-    push: /push harder|feel amazing|go harder/.test(msg),
-    plateau: /plateau|stalled|not losing weight|scale stuck/.test(msg),
-    anxiety: /anxious|nervous|race prep anxiety|worried/.test(msg),
-    foodNear: /food near|near me|restaurant/.test(msg),
-    busyDay: /busy|chaotic|no time|packed day/.test(msg),
-    socialDay: /social|event|party|dinner out/.test(msg),
-    lowEnergyDay: /low energy|drained|flat today/.test(msg),
-  };
-};
-
-const inferCoachVoiceMode = (momentum) => {
-  if (_optionalChain([momentum, 'optionalAccess', _229 => _229.coachMode]) === "protect mode") return "protect";
-  if (_optionalChain([momentum, 'optionalAccess', _230 => _230.coachMode]) === "push mode") return "push";
-  if (_optionalChain([momentum, 'optionalAccess', _231 => _231.coachMode]) === "reset mode") return "reset";
-  if (_optionalChain([momentum, 'optionalAccess', _232 => _232.coachMode]) === "simplify mode") return "simplify";
-  return "rebuild";
-};
-
-const withConfidenceTone = (message, confidence = "moderate", voiceMode = "rebuild") => {
-  const lead = confidence === "high"
-    ? "We should"
-    : confidence === "moderate"
-    ? "I’d recommend"
-    : "We could try";
-  const modePrefix = voiceMode === "protect"
-    ? "Protect mode:"
-    : voiceMode === "push"
-    ? "Push mode:"
-    : voiceMode === "simplify"
-    ? "Simplify mode:"
-    : voiceMode === "reset"
-    ? "Reset mode:"
-    : "Rebuild mode:";
-  return `${modePrefix} ${lead} ${message}`;
-};
-
-const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights = [], realWorldNutrition, recalibration }) => {
-  const s = detectCoachSignals(input);
-  const voiceMode = inferCoachVoiceMode(momentum);
-  const painLevel = inferPainLevel(input);
-  const area = /knee/.test(input.toLowerCase()) ? "knee" : /shin/.test(input.toLowerCase()) ? "shin" : /hip/.test(input.toLowerCase()) ? "hip" : /calf/.test(input.toLowerCase()) ? "calf" : "Achilles";
-  const notices = [];
-  const recommendations = [];
-  const effects = [];
-  const actions = [];
-  const last7 = Object.keys(logs).filter(d => ((Date.now() - new Date(d + "T12:00:00").getTime()) / (1000*60*60*24)) <= 7).length;
-  const latestBW = bodyweights.length ? bodyweights[bodyweights.length - 1].w : PROFILE.weight;
-  if (_optionalChain([failureMode, 'optionalAccess', _233 => _233.mode]) !== "normal") {
-    notices.push(failureMode.coachBehavior.primaryLine);
-    addRecommendation(`Use only essential actions for the next ${failureMode.planningHorizonDays} days.`, "high");
-    effects.push("Coaching automatically shifts to minimum viable planning with no guilt language.");
-  }
-  if (_optionalChain([planComposer, 'optionalAccess', _234 => _234.architecture]) && /status|plan|split|why|update/i.test(input.toLowerCase())) {
-    notices.unshift(`Goal-native architecture: ${planComposer.architecture.replaceAll("_"," ")}.`);
-    effects.unshift(`Current split is goal-weighted: run ${planComposer.split.run}, strength ${planComposer.split.strength}, conditioning ${planComposer.split.conditioning}, recovery ${planComposer.split.recovery}.`);
-    if (_optionalChain([planComposer, 'access', _235 => _235.constraints, 'optionalAccess', _236 => _236.length])) effects.unshift(`Constraint context: ${planComposer.constraints.join(" ")}`);
-  }
-  if (_optionalChain([failureMode, 'optionalAccess', _237 => _237.isReEntry])) {
-    notices.push("A re-entry week is active, so we are not resuming prior volume blindly.");
-    addRecommendation("Start with a minimum viable week and rebuild after 3-4 consistent days.", "high");
-    effects.push("Expectations reset to momentum-first execution.");
-  }
-  if (_optionalChain([failureMode, 'optionalAccess', _238 => _238.staleData])) {
-    notices.push("Recent inputs are stale, so confidence in old signals is reduced.");
-    addRecommendation("Use conservative defaults until new logs/check-ins refresh signal quality.", "moderate");
-    effects.push("Decision uncertainty is elevated; plan changes stay smaller.");
-  }
-  if (_optionalChain([optimizationLayer, 'optionalAccess', _239 => _239.confidence]) !== "low" && /status|update|plan|optimiz/i.test(input.toLowerCase())) {
-    notices.push(`Optimization insight: ${optimizationLayer.coachLine}`);
-    addRecommendation(`Keep structure near ${optimizationLayer.optimalZones.optimalComplexity} and deficit in ${optimizationLayer.optimalZones.optimalDeficitRange}.`, "moderate");
-    effects.push("Future adjustments are biased toward your historically effective zones.");
-  }
-  if (s.achillesPain) {
-    notices.push("You flagged Achilles discomfort, which is your highest injury-risk signal.");
-    addRecommendation("shift today to recovery and keep aerobic work low-impact.", "high");
-    effects.push("Today becomes recovery + protocol, and pain tracking intensity is reduced.");
-    actions.push(
-      { type: COACH_TOOL_ACTIONS.SET_PAIN_STATE, payload: { level: painLevel === "none" ? "mild_tightness" : painLevel, area } },
-      { type: COACH_TOOL_ACTIONS.SWAP_TODAY_RECOVERY, payload: { reason: "Achilles tightness detected" } },
-      { type: COACH_TOOL_ACTIONS.ADD_ACHILLES_BLOCK, payload: { block: "extra_achilles_8min" } }
-    );
-  }
-  if (s.travel) {
-    notices.push("You indicated travel context.");
-    addRecommendation("use travel meals and simplify training complexity.", "moderate");
-    effects.push("Nutrition switches to travel mode and training defaults to hotel-friendly options.");
-    actions.push(
-      { type: COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS, payload: { enabled: true } },
-      { type: COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY, payload: { dayType: "travelRun" } }
-    );
-  }
-  if (s.fatigue || s.soreness || s.missed) {
-    notices.push(`Recovery signal detected (${s.missed ? "missed session + " : ""}${s.fatigue ? "fatigue" : "soreness"}).`);
-    addRecommendation("reduce this week’s volume by ~15% and replace speed with easy aerobic work.", "high");
-    effects.push("Hard sessions are down-shifted; consistency is prioritized over intensity.");
-    actions.push(
-      { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15 } },
-      { type: COACH_TOOL_ACTIONS.REPLACE_SPEED_EASY, payload: { week: currentWeek } }
-    );
-  }
-  if (s.push) {
-    notices.push("You reported high readiness and motivation.");
-    addRecommendation("push with control: increase carb support before long run instead of random intensity.", "moderate");
-    effects.push("Fueling improves for quality output while preserving recovery structure.");
-    actions.push({ type: COACH_TOOL_ACTIONS.INCREASE_PRELONGRUN_CARBS, payload: { grams: 40 } });
-  }
-  if (s.plateau) {
-    notices.push(`Bodyweight trend appears sticky around ${latestBW} lbs.`);
-    addRecommendation("tighten nutrition day type and avoid under-recovery.", "moderate");
-    effects.push("Carb timing is sharpened and adherence gets easier with clear day targets.");
-    actions.push({ type: COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY, payload: { dayType: _optionalChain([todayWorkout, 'optionalAccess', _240 => _240.type]) === "rest" ? "rest" : "easyRun" } });
-  }
-  if (s.foodNear) {
-    notices.push("You asked for immediate food options.");
-    addRecommendation(`use your local quick options: ${personalization.localFoodContext.quickOptions.join(", ")}.`, "high");
-    effects.push("You can hit macros quickly without overthinking.");
-  }
-  if (s.anxiety) {
-    notices.push("Race prep anxiety detected.");
-    addRecommendation("insert a deload week to improve confidence and freshness.", "moderate");
-    effects.push("Next week volume is reduced and intensity capped.");
-    actions.push({ type: COACH_TOOL_ACTIONS.INSERT_DELOAD_WEEK, payload: { week: currentWeek + 1 } });
-  }
-  if (s.busyDay || s.socialDay || s.lowEnergyDay) {
-    notices.push("Life-constraint signal detected (busy/energy/social).");
-    addRecommendation("use a minimum viable day: 10–20 minutes + protein anchor. No guilt.", "high");
-    effects.push("Success criteria shifts from perfect execution to momentum preservation.");
-  }
-  if (_optionalChain([learning, 'optionalAccess', _241 => _241.adjustmentBias]) === "simplify") {
-    notices.push("Check-ins show repeated friction (time/stress/hard sessions).");
-    addRecommendation("simplify the next 7 days with minimum-dose sessions and lower aggressiveness.", "high");
-    effects.push("Plan friction is lowered to protect adherence.");
-    actions.push({ type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 10 } });
-  }
-  if (_optionalChain([learning, 'optionalAccess', _242 => _242.adjustmentBias]) === "progress" && /status|update|ready|push/i.test(input.toLowerCase())) {
-    notices.push("Recent check-ins suggest sessions are manageable.");
-    addRecommendation("progress modestly instead of changing everything.", "moderate");
-    effects.push("Small progression with guardrails is applied.");
-    actions.push({ type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 1 } });
-  }
-  const confidentPattern = (_optionalChain([learning, 'optionalAccess', _243 => _243.topObservations]) || []).find(o => ["medium","high"].includes(o.confidence));
-  if (confidentPattern) {
-    notices.push(`Pattern reference (${confidentPattern.confidence} confidence): ${confidentPattern.msg}`);
-    if (_optionalChain([learning, 'optionalAccess', _244 => _244.adaptation, 'optionalAccess', _245 => _245.reduceDensity])) addRecommendation("keep this week simpler because you usually drift when schedule density rises.", confidentPattern.confidence === "high" ? "high" : "moderate");
-    if (_optionalChain([learning, 'optionalAccess', _246 => _246.adaptation, 'optionalAccess', _247 => _247.pushSlightly])) addRecommendation("you’ve handled this level well before, so slight progression is reasonable.", confidentPattern.confidence === "high" ? "high" : "moderate");
-  }
-  if (/progress strength emphasis/i.test(input)) {
-    notices.push("You asked to emphasize strength progression.");
-    addRecommendation("shift one session toward pressing progression while keeping run quality protected.", "moderate");
-    effects.push("Strength stimulus increases with controlled fatigue cost.");
-    actions.push({ type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 2 } });
-  }
-  if (/reduce long-run aggressiveness/i.test(input)) {
-    notices.push("You asked to reduce long-run aggressiveness.");
-    addRecommendation("dial back long run load slightly to protect consistency and recovery.", "high");
-    effects.push("Long run distance/effort is trimmed next week.");
-    actions.push({ type: COACH_TOOL_ACTIONS.REDUCE_LONG_RUN_AGGRESSIVENESS, payload: { pct: 10 } });
-  }
-  if (/increase calories|too hungry|energy too low/i.test(input)) {
-    notices.push("You flagged under-fueling / low energy risk.");
-    addRecommendation("increase intake slightly and bias carbs near training.", "high");
-    effects.push("Recovery and session quality should improve with minimal body-comp downside.");
-    actions.push({ type: COACH_TOOL_ACTIONS.INCREASE_CALORIES_SLIGHTLY, payload: { kcal: 120 } });
-  }
-  if (/reduce deficit|diet too aggressive/i.test(input)) {
-    notices.push("Current deficit may be too aggressive for mixed-goal training.");
-    addRecommendation("reduce deficit aggressiveness while keeping protein high.", "moderate");
-    effects.push("Adherence and performance should stabilize.");
-    actions.push({ type: COACH_TOOL_ACTIONS.REDUCE_DEFICIT_AGGRESSIVENESS, payload: { kcal: 100 } });
-  }
-  if (/shift carbs|fuel around workout/i.test(input)) {
-    notices.push("Fuel timing can be improved around workout windows.");
-    addRecommendation("move more carbs pre/post training and keep non-training meals tighter.", "moderate");
-    effects.push("Performance support increases without full-day calorie inflation.");
-    actions.push({ type: COACH_TOOL_ACTIONS.SHIFT_CARBS_AROUND_WORKOUT, payload: { pre: 30, post: 40 } });
-  }
-  if (/simplify meals/i.test(input)) {
-    notices.push("You asked to reduce nutrition complexity.");
-    addRecommendation("use simple repeatable meals this week.", "high");
-    effects.push("Food friction drops and consistency should improve.");
-    actions.push({ type: COACH_TOOL_ACTIONS.SIMPLIFY_MEALS_THIS_WEEK, payload: { days: 7 } });
-  }
-  if (/travel nutrition|switch to travel mode/i.test(input)) {
-    notices.push("Travel nutrition mode requested.");
-    addRecommendation("switch to travel-friendly defaults and convenience-safe options.", "high");
-    effects.push("Nutrition plan becomes resilient with limited prep.");
-    actions.push({ type: COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE, payload: { enabled: true } });
-  }
-  if (/default meal structure|3 days/i.test(input)) {
-    notices.push("You requested default meal structure support.");
-    addRecommendation("run 3 days of default meal templates.", "moderate");
-    effects.push("Decision fatigue drops; adherence usually improves quickly.");
-    actions.push({ type: COACH_TOOL_ACTIONS.USE_DEFAULT_MEAL_STRUCTURE_3_DAYS, payload: { days: 3 } });
-  }
-  if (_optionalChain([salvage, 'optionalAccess', _248 => _248.active])) {
-    notices.push(`This week is off-track: ${salvage.triggerReasons.join(", ")}.`);
-    addRecommendation("compress this week to essentials: 1 key run/long run + 1 strength + 1 optional recovery.", "high");
-    effects.push("Plan complexity is reduced so consistency can recover.");
-    effects.push("If you hit 2 core sessions this week, we rebuild back to normal next week.");
-    actions.push(
-      { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 20 } },
-      { type: COACH_TOOL_ACTIONS.SIMPLIFY_MEALS_THIS_WEEK, payload: { days: 7 } }
-    );
-  }
-  if (!notices.length) {
-    notices.push(`You logged ${last7} sessions in the last 7 days with ${personalization.trainingState.loadStatus} load.`);
-    addRecommendation("stay on plan and execute today as prescribed.", "moderate");
-    effects.push("No plan mutation needed right now.");
-  }
-  if (_optionalChain([arbitration, 'optionalAccess', _249 => _249.shiftReason])) {
-    notices.unshift(`Goal arbitration: ${arbitration.shiftReason}`);
-  }
-  if (_optionalChain([strengthLayer, 'optionalAccess', _250 => _250.focus]) && _optionalChain([nutritionLayer, 'optionalAccess', _251 => _251.tradeoff])) {
-    effects.unshift(`Point of view: ${strengthLayer.focus === "push" ? "Running quality stays primary; strength progression is controlled." : "Consistency stays primary; progression is intentionally restrained."}`);
-    effects.unshift(`Tradeoff: ${nutritionLayer.tradeoff} Ignore perfection this week.`);
-  }
-  if (_optionalChain([arbitration, 'optionalAccess', _252 => _252.decisionLinks, 'optionalAccess', _253 => _253.length])) {
-    effects.unshift(`Why these decisions: ${arbitration.decisionLinks.join(" ")}`);
-  }
-  if (/status|update|forecast|expect|what happens|next/i.test(input.toLowerCase()) && _optionalChain([expectations, 'optionalAccess', _254 => _254.coachLine])) {
-    notices.unshift(expectations.coachLine);
-    effects.unshift(`Expectation snapshot: ${expectations.weightExpectation} ${expectations.runExpectation}`);
-  }
-  if (memoryInsights.length > 0 && /status|update|plan|why|coach/i.test(input.toLowerCase())) {
-    notices.unshift(`Memory insight: ${memoryInsights[0].label}.`);
-  }
-  if (_optionalChain([realWorldNutrition, 'optionalAccess', _255 => _255.coachPrompt]) && /nutrition|food|eat|meal|status|update/i.test(input.toLowerCase())) {
-    recommendations.unshift(realWorldNutrition.coachPrompt);
-  }
-  if (_optionalChain([recalibration, 'optionalAccess', _256 => _256.active]) && /status|update|plan|why|next/i.test(input.toLowerCase())) {
-    notices.unshift("We’re recalibrating your plan.");
-    effects.unshift(`Recalibration changes: ${recalibration.changes.join(" · ")}`);
-  }
-  return { notices, recommendations, effects, actions: actions.slice(0, 3) };
 };
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
@@ -2430,8 +2490,8 @@ function TrainerDashboard() {
   const baseTodayWorkout = getTodayWorkout(currentWeek, dayOfWeek);
   const baseWeek = WEEKS[(currentWeek - 1) % WEEKS.length] || WEEKS[0];
   const todayKey = new Date().toISOString().split("T")[0];
-  const dayOverride = _optionalChain([coachPlanAdjustments, 'access', _257 => _257.dayOverrides, 'optionalAccess', _258 => _258[todayKey]]);
-  const nutritionOverride = _optionalChain([coachPlanAdjustments, 'access', _259 => _259.nutritionOverrides, 'optionalAccess', _260 => _260[todayKey]]);
+  const dayOverride = _optionalChain([coachPlanAdjustments, 'access', _284 => _284.dayOverrides, 'optionalAccess', _285 => _285[todayKey]]);
+  const nutritionOverride = _optionalChain([coachPlanAdjustments, 'access', _286 => _286.nutritionOverrides, 'optionalAccess', _287 => _287[todayKey]]);
   const momentum = getMomentumEngineState({ logs, bodyweights, personalization });
   const patterns = detectBehaviorPatterns({ logs, bodyweights, personalization });
   const validationLayer = deriveClosedLoopValidationLayer({ coachActions, logs, dailyCheckins });
@@ -2442,8 +2502,8 @@ function TrainerDashboard() {
   const planComposer = composeGoalNativePlan({ goals, personalization, momentum, learningLayer, currentWeek, baseWeek });
   const rollingHorizon = buildRollingHorizonWeeks({ currentWeek, horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS, goals, weekTemplates: WEEKS });
   const horizonAnchor = getHorizonAnchor(goals, DEFAULT_PLANNING_HORIZON_WEEKS);
-  const goalNativeWorkout = _optionalChain([planComposer, 'optionalAccess', _261 => _261.dayTemplates, 'optionalAccess', _262 => _262[dayOfWeek]]) ? { ...baseTodayWorkout, ...planComposer.dayTemplates[dayOfWeek], week: baseWeek, zones: _optionalChain([baseTodayWorkout, 'optionalAccess', _263 => _263.zones]) } : baseTodayWorkout;
-  const todayWorkoutBase = dayOverride ? { ...goalNativeWorkout, ...dayOverride, coachOverride: true, nutri: nutritionOverride || dayOverride.nutri || _optionalChain([goalNativeWorkout, 'optionalAccess', _264 => _264.week, 'optionalAccess', _265 => _265.nutri]) } : { ...goalNativeWorkout, nutri: nutritionOverride || _optionalChain([goalNativeWorkout, 'optionalAccess', _266 => _266.week, 'optionalAccess', _267 => _267.nutri]) };
+  const goalNativeWorkout = _optionalChain([planComposer, 'optionalAccess', _288 => _288.dayTemplates, 'optionalAccess', _289 => _289[dayOfWeek]]) ? { ...baseTodayWorkout, ...planComposer.dayTemplates[dayOfWeek], week: baseWeek, zones: _optionalChain([baseTodayWorkout, 'optionalAccess', _290 => _290.zones]) } : baseTodayWorkout;
+  const todayWorkoutBase = dayOverride ? { ...goalNativeWorkout, ...dayOverride, coachOverride: true, nutri: nutritionOverride || dayOverride.nutri || _optionalChain([goalNativeWorkout, 'optionalAccess', _291 => _291.week, 'optionalAccess', _292 => _292.nutri]) } : { ...goalNativeWorkout, nutri: nutritionOverride || _optionalChain([goalNativeWorkout, 'optionalAccess', _293 => _293.week, 'optionalAccess', _294 => _294.nutri]) };
   const injuryRule = buildInjuryRuleResult(todayWorkoutBase, personalization.injuryPainState);
   const todayWorkout = injuryRule.workout;
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
@@ -2458,20 +2518,20 @@ function TrainerDashboard() {
       weeklyCheckins,
       nutritionFeedback,
       validationLayer,
-      previousMemory: _optionalChain([personalization, 'optionalAccess', _268 => _268.coachMemory, 'optionalAccess', _269 => _269.longTermMemory]) || []
+      previousMemory: _optionalChain([personalization, 'optionalAccess', _295 => _295.coachMemory, 'optionalAccess', _296 => _296.longTermMemory]) || []
     }),
     [logs, dailyCheckins, weeklyCheckins, nutritionFeedback, validationLayer]
   );
   const memoryInsights = longTermMemory.filter(m => m.confidence === "high").slice(0, 4);
   const recalibration = deriveRecalibrationEngine({ currentWeek, progress: progressEngine, momentum, learningLayer, memoryInsights, arbitration });
   const todayWorkoutHardened = failureMode.isReEntry
-    ? { ...todayWorkout, label: `Re-entry day: ${_optionalChain([todayWorkout, 'optionalAccess', _270 => _270.label]) || "minimum viable session"}`, minDay: true, success: "Re-entry week: complete one essential session and log it. Momentum first." }
+    ? { ...todayWorkout, label: `Re-entry day: ${_optionalChain([todayWorkout, 'optionalAccess', _297 => _297.label]) || "minimum viable session"}`, minDay: true, success: "Re-entry week: complete one essential session and log it. Momentum first." }
     : (failureMode.mode === "chaotic" || failureMode.isLowEngagement)
     ? { ...todayWorkout, minDay: true, success: "Chaotic-week mode: complete the minimum viable session only." }
     : todayWorkout;
   const nutritionLayer = deriveAdaptiveNutrition({ todayWorkout: todayWorkoutHardened, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer, failureMode });
   const realWorldNutrition = deriveRealWorldNutritionEngine({
-    location: _optionalChain([personalization, 'optionalAccess', _271 => _271.localFoodContext, 'optionalAccess', _272 => _272.city]),
+    location: _optionalChain([personalization, 'optionalAccess', _298 => _298.localFoodContext, 'optionalAccess', _299 => _299.city]),
     dayType: nutritionLayer.dayType,
     goalContext: getGoalContext(goals),
     nutritionLayer,
@@ -2501,7 +2561,7 @@ function TrainerDashboard() {
 
   useEffect(() => {
     if (loading) return;
-    const prev = JSON.stringify(_optionalChain([personalization, 'optionalAccess', _273 => _273.coachMemory, 'optionalAccess', _274 => _274.longTermMemory]) || []);
+    const prev = JSON.stringify(_optionalChain([personalization, 'optionalAccess', _300 => _300.coachMemory, 'optionalAccess', _301 => _301.longTermMemory]) || []);
     const next = JSON.stringify(longTermMemory || []);
     if (prev === next) return;
     const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, longTermMemory } });
@@ -2564,7 +2624,7 @@ function TrainerDashboard() {
       ...coachPlanAdjustments,
       dayOverrides: {
         ...(coachPlanAdjustments.dayOverrides || {}),
-        [toKey]: { ...todayWorkoutBase, label: `${_optionalChain([todayWorkoutBase, 'optionalAccess', _275 => _275.label]) || "Session"} (Shifted)`, shiftedFrom: todayKey, coachOverride: true },
+        [toKey]: { ...todayWorkoutBase, label: `${_optionalChain([todayWorkoutBase, 'optionalAccess', _302 => _302.label]) || "Session"} (Shifted)`, shiftedFrom: todayKey, coachOverride: true },
         [todayKey]: { label: "Minimum Viable Day", type: "rest", reason: "schedule_shift", minDay: true, fallback: DAY_CONTEXT_OVERRIDES.minimum_viable_day.fallback, success: DAY_CONTEXT_OVERRIDES.minimum_viable_day.success }
       },
       nutritionOverrides: { ...(coachPlanAdjustments.nutritionOverrides || {}), [todayKey]: "easyRun" },
@@ -2638,7 +2698,7 @@ function TrainerDashboard() {
   }, [SB_URL, SB_CONFIG_ERROR, authStorage]);
 
   useEffect(() => {
-    if (!_optionalChain([authSession, 'optionalAccess', _276 => _276.user, 'optionalAccess', _277 => _277.id])) return;
+    if (!_optionalChain([authSession, 'optionalAccess', _303 => _303.user, 'optionalAccess', _304 => _304.id])) return;
     (async () => {
       setLoading(true);
       try {
@@ -2652,7 +2712,7 @@ function TrainerDashboard() {
       }
       setLoading(false);
     })();
-  }, [_optionalChain([authSession, 'optionalAccess', _278 => _278.user, 'optionalAccess', _279 => _279.id])]);
+  }, [_optionalChain([authSession, 'optionalAccess', _305 => _305.user, 'optionalAccess', _306 => _306.id])]);
 
   useEffect(() => {
     if (!loading) persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
@@ -2693,7 +2753,7 @@ function TrainerDashboard() {
     const feelMap = { easier_than_expected: "4", about_right: "3", harder_than_expected: "2" };
     const baseLog = logs[dateKey] || {
       date: dateKey,
-      type: _optionalChain([todayWorkout, 'optionalAccess', _280 => _280.label]) || _optionalChain([todayWorkout, 'optionalAccess', _281 => _281.type]) || "Planned Session",
+      type: _optionalChain([todayWorkout, 'optionalAccess', _307 => _307.label]) || _optionalChain([todayWorkout, 'optionalAccess', _308 => _308.type]) || "Planned Session",
       location: personalization.travelState.environmentMode === "travel" ? "hotel" : "home",
       miles: "",
       pace: "",
@@ -2738,20 +2798,20 @@ function TrainerDashboard() {
     let nextPersonalization = personalization;
     let nextWeekNotes = { ...weekNotes };
     if (trigger.actionType === "REDUCE_WEEKLY_VOLUME") {
-      nextAdjustments.weekVolumePct[currentWeek] = 100 - (_optionalChain([trigger, 'access', _282 => _282.payload, 'optionalAccess', _283 => _283.pct]) || 10);
-      nextWeekNotes[currentWeek] = `Proactive nudge applied: week volume reduced by ${_optionalChain([trigger, 'access', _284 => _284.payload, 'optionalAccess', _285 => _285.pct]) || 10}%.`;
+      nextAdjustments.weekVolumePct[currentWeek] = 100 - (_optionalChain([trigger, 'access', _309 => _309.payload, 'optionalAccess', _310 => _310.pct]) || 10);
+      nextWeekNotes[currentWeek] = `Proactive nudge applied: week volume reduced by ${_optionalChain([trigger, 'access', _311 => _311.payload, 'optionalAccess', _312 => _312.pct]) || 10}%.`;
     }
-    if (trigger.actionType === "PROGRESS_STRENGTH_EMPHASIS") nextAdjustments.extra.strengthEmphasisWeeks = _optionalChain([trigger, 'access', _286 => _286.payload, 'optionalAccess', _287 => _287.weeks]) || 1;
+    if (trigger.actionType === "PROGRESS_STRENGTH_EMPHASIS") nextAdjustments.extra.strengthEmphasisWeeks = _optionalChain([trigger, 'access', _313 => _313.payload, 'optionalAccess', _314 => _314.weeks]) || 1;
     if (trigger.actionType === "SWITCH_TRAVEL_MODE") {
-      nextPersonalization = mergePersonalization(nextPersonalization, { travelState: { ...nextPersonalization.travelState, environmentMode: _optionalChain([trigger, 'access', _288 => _288.payload, 'optionalAccess', _289 => _289.mode]) || "travel", isTravelWeek: true } });
+      nextPersonalization = mergePersonalization(nextPersonalization, { travelState: { ...nextPersonalization.travelState, environmentMode: _optionalChain([trigger, 'access', _315 => _315.payload, 'optionalAccess', _316 => _316.mode]) || "travel", isTravelWeek: true } });
     }
-    if (trigger.actionType === "SIMPLIFY_MEALS_THIS_WEEK") nextAdjustments.extra.defaultMealStructureDays = _optionalChain([trigger, 'access', _290 => _290.payload, 'optionalAccess', _291 => _291.days]) || 3;
+    if (trigger.actionType === "SIMPLIFY_MEALS_THIS_WEEK") nextAdjustments.extra.defaultMealStructureDays = _optionalChain([trigger, 'access', _317 => _317.payload, 'optionalAccess', _318 => _318.days]) || 3;
     if (trigger.actionType === "SWITCH_TRAVEL_NUTRITION_MODE") {
       nextAdjustments.extra.travelNutritionMode = true;
       nextAdjustments.nutritionOverrides[dateKey] = "travelRun";
     }
     if (trigger.actionType === "SWITCH_ENV_MODE") {
-      nextPersonalization = mergePersonalization(nextPersonalization, { travelState: { ...nextPersonalization.travelState, environmentMode: _optionalChain([trigger, 'access', _292 => _292.payload, 'optionalAccess', _293 => _293.mode]) || "home" } });
+      nextPersonalization = mergePersonalization(nextPersonalization, { travelState: { ...nextPersonalization.travelState, environmentMode: _optionalChain([trigger, 'access', _319 => _319.payload, 'optionalAccess', _320 => _320.mode]) || "home" } });
     }
     if (trigger.actionType === "ACTIVATE_SALVAGE") {
       nextAdjustments.weekVolumePct[currentWeek] = 80;
@@ -2851,7 +2911,7 @@ function TrainerDashboard() {
       }, 9000);
       if (!res.ok) return null;
       const data = await res.json();
-      return _optionalChain([data, 'optionalAccess', _294 => _294.content, 'optionalAccess', _295 => _295[0], 'optionalAccess', _296 => _296.text]) || null;
+      return _optionalChain([data, 'optionalAccess', _321 => _321.content, 'optionalAccess', _322 => _322[0], 'optionalAccess', _323 => _323.text]) || null;
     } catch (e7) {
       return null;
     }
@@ -2866,12 +2926,12 @@ function TrainerDashboard() {
         .map(([date, l]) => `${date}: ${l.type} | ${l.miles||"?"}mi | pace:${l.pace||"?"} | feel:${l.feel||"?"}/5${l.notes ? " | "+l.notes : ""}`);
 
       const currentWeekData = WEEKS[(currentWeek - 1) % WEEKS.length];
-      const currentZones = getZones(_optionalChain([currentWeekData, 'optionalAccess', _297 => _297.phase]) || "BASE");
+      const currentZones = getZones(_optionalChain([currentWeekData, 'optionalAccess', _324 => _324.phase]) || "BASE");
 
       const systemPrompt = `You are an AI running coach analyzing an athlete's training log to dynamically adjust their plan. Respond ONLY with valid JSON, no other text.
 
 ATHLETE: 30yo, 6'1", 190lbs, half marathon goal 1:45 (8:01/mi) on July 19 2026.
-CURRENT WEEK: ${currentWeek}, Phase: ${_optionalChain([currentWeekData, 'optionalAccess', _298 => _298.phase])}
+CURRENT WEEK: ${currentWeek}, Phase: ${_optionalChain([currentWeekData, 'optionalAccess', _325 => _325.phase])}
 PRESCRIBED PACES: Easy ${currentZones.easy}/mi, Tempo ${currentZones.tempo}/mi, Intervals ${currentZones.int}/mi, Long ${currentZones.long}/mi
 
 RECENT LOGS (newest last):
@@ -2964,7 +3024,7 @@ RULES:
     )
   );
 
-  if (!_optionalChain([authSession, 'optionalAccess', _299 => _299.user, 'optionalAccess', _300 => _300.id])) return (
+  if (!_optionalChain([authSession, 'optionalAccess', _326 => _326.user, 'optionalAccess', _327 => _327.id])) return (
     React.createElement('div', { style: { background:"#0a0a0f", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Mono',monospace", color:"#e2e8f0", padding:"1rem" },}
       , React.createElement('div', { style: { width:"100%", maxWidth:380, border:"1px solid #1e293b", borderRadius:10, padding:"1rem", background:"#0d1117" },}
         , React.createElement('div', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.2rem", letterSpacing:"0.12em", color:"#f87171", marginBottom:"0.5rem" },}, "ACCOUNT ACCESS" )
@@ -3077,10 +3137,10 @@ RULES:
 
 // ── TODAY TAB ─────────────────────────────────────────────────────────────────
 function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, setEnvironmentMode, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights }) {
-  const week = _optionalChain([todayWorkout, 'optionalAccess', _301 => _301.week]);
-  const zones = _optionalChain([todayWorkout, 'optionalAccess', _302 => _302.zones]);
+  const week = _optionalChain([todayWorkout, 'optionalAccess', _328 => _328.week]);
+  const zones = _optionalChain([todayWorkout, 'optionalAccess', _329 => _329.zones]);
   const phaseName = week ? week.phase : "BASE";
-  const phaseColor = _optionalChain([PHASE_ZONES, 'access', _303 => _303[phaseName], 'optionalAccess', _304 => _304.color]) || C.green;
+  const phaseColor = _optionalChain([PHASE_ZONES, 'access', _330 => _330[phaseName], 'optionalAccess', _331 => _331.color]) || C.green;
   const todayKey = new Date().toISOString().split("T")[0];
   const todayLog = logs[todayKey];
   const latestBW = bodyweights.length > 0 ? bodyweights[bodyweights.length-1] : null;
@@ -3088,19 +3148,19 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
   const dayColor = todayWorkout ? (dayColors[todayWorkout.type] || C.green) : C.slate;
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const [injuryArea, setInjuryArea] = useState(personalization.injuryPainState.area || "Achilles");
-  const defaultCheckin = _optionalChain([dailyCheckins, 'optionalAccess', _305 => _305[todayKey]]) || (_optionalChain([todayLog, 'optionalAccess', _306 => _306.checkin]) || DEFAULT_DAILY_CHECKIN);
+  const defaultCheckin = _optionalChain([dailyCheckins, 'optionalAccess', _332 => _332[todayKey]]) || (_optionalChain([todayLog, 'optionalAccess', _333 => _333.checkin]) || DEFAULT_DAILY_CHECKIN);
   const [checkin, setCheckin] = useState(defaultCheckin);
   const [checkinAck, setCheckinAck] = useState("");
-  const contextReason = _optionalChain([todayWorkout, 'optionalAccess', _307 => _307.reason]) || "";
-  useEffect(() => { setCheckin(defaultCheckin); }, [todayKey, _optionalChain([dailyCheckins, 'optionalAccess', _308 => _308[todayKey]]), _optionalChain([todayLog, 'optionalAccess', _309 => _309.checkin, 'optionalAccess', _310 => _310.ts])]);
+  const contextReason = _optionalChain([todayWorkout, 'optionalAccess', _334 => _334.reason]) || "";
+  useEffect(() => { setCheckin(defaultCheckin); }, [todayKey, _optionalChain([dailyCheckins, 'optionalAccess', _335 => _335[todayKey]]), _optionalChain([todayLog, 'optionalAccess', _336 => _336.checkin, 'optionalAccess', _337 => _337.ts])]);
   useEffect(() => {
-    if (!_optionalChain([dailyCheckins, 'optionalAccess', _311 => _311[todayKey]])) {
+    if (!_optionalChain([dailyCheckins, 'optionalAccess', _338 => _338[todayKey]])) {
       const t = setTimeout(() => {
         saveDailyCheckin(todayKey, { ...DEFAULT_DAILY_CHECKIN, passiveAssumed: true, note: "Auto-assumed complete unless corrected." });
       }, 1800);
       return () => clearTimeout(t);
     }
-  }, [todayKey, _optionalChain([dailyCheckins, 'optionalAccess', _312 => _312[todayKey]])]);
+  }, [todayKey, _optionalChain([dailyCheckins, 'optionalAccess', _339 => _339[todayKey]])]);
 
   return (
     React.createElement('div', { className: "fi",}
@@ -3109,10 +3169,10 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         , React.createElement('div', { style: { padding:"1rem 1.1rem", borderBottom:`1px solid ${dayColor}20`, display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.5rem", flexWrap:"wrap" },}
           , React.createElement('div', null
             , React.createElement('div', { style: { fontSize:"0.58rem", color:dayColor, letterSpacing:"0.2em", textTransform:"uppercase", marginBottom:4 },}
-              , ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()], " · Week "   , currentWeek, " · "  , _optionalChain([week, 'optionalAccess', _313 => _313.label])
+              , ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()], " · Week "   , currentWeek, " · "  , _optionalChain([week, 'optionalAccess', _340 => _340.label])
             )
             , React.createElement('div', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.6rem", color:"#e2e8f0", letterSpacing:"0.05em", lineHeight:1 },}
-              , _optionalChain([todayWorkout, 'optionalAccess', _314 => _314.label]) || "Rest Day"
+              , _optionalChain([todayWorkout, 'optionalAccess', _341 => _341.label]) || "Rest Day"
             )
           )
           , todayLog && (
@@ -3120,7 +3180,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
 
             )
           )
-          , _optionalChain([todayWorkout, 'optionalAccess', _315 => _315.injuryAdjusted]) && (
+          , _optionalChain([todayWorkout, 'optionalAccess', _342 => _342.injuryAdjusted]) && (
             React.createElement('div', { style: { background:`${C.red}15`, border:`1px solid ${C.red}30`, borderRadius:6, padding:"4px 10px", fontSize:"0.6rem", color:C.red, letterSpacing:"0.08em" },}, "INJURY-ADJUSTED"
 
             )
@@ -3129,26 +3189,26 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
 
         , React.createElement('div', { style: { padding:"1rem 1.1rem", display:"grid", gap:"0.6rem" },}
           /* Run details */
-          , _optionalChain([todayWorkout, 'optionalAccess', _316 => _316.run]) && (
+          , _optionalChain([todayWorkout, 'optionalAccess', _343 => _343.run]) && (
             React.createElement(WorkoutBlock, {
               title: `${todayWorkout.run.t} Run — ${todayWorkout.run.d}`,
               color: todayWorkout.run.t === "Intervals" ? C.amber : todayWorkout.run.t === "Long" ? C.red : C.green,
               items: [
                 { label:"DISTANCE", val:todayWorkout.run.d },
-                { label:"PACE", val: todayWorkout.run.t === "Intervals" ? _optionalChain([zones, 'optionalAccess', _317 => _317.int])+"/mi" : todayWorkout.run.t === "Long" ? _optionalChain([zones, 'optionalAccess', _318 => _318.long])+"/mi" : todayWorkout.run.t === "Tempo" ? _optionalChain([zones, 'optionalAccess', _319 => _319.tempo])+"/mi" : _optionalChain([zones, 'optionalAccess', _320 => _320.easy])+"/mi" },
+                { label:"PACE", val: todayWorkout.run.t === "Intervals" ? _optionalChain([zones, 'optionalAccess', _344 => _344.int])+"/mi" : todayWorkout.run.t === "Long" ? _optionalChain([zones, 'optionalAccess', _345 => _345.long])+"/mi" : todayWorkout.run.t === "Tempo" ? _optionalChain([zones, 'optionalAccess', _346 => _346.tempo])+"/mi" : _optionalChain([zones, 'optionalAccess', _347 => _347.easy])+"/mi" },
                 { label:"TYPE", val:todayWorkout.run.t },
               ],}
             )
           )
 
           /* Strength */
-          , (_optionalChain([todayWorkout, 'optionalAccess', _321 => _321.type]) === "run+strength" || _optionalChain([todayWorkout, 'optionalAccess', _322 => _322.type]) === "strength+prehab") && (
+          , (_optionalChain([todayWorkout, 'optionalAccess', _348 => _348.type]) === "run+strength" || _optionalChain([todayWorkout, 'optionalAccess', _349 => _349.type]) === "strength+prehab") && (
             React.createElement('div', null
               , React.createElement('div', { style: { fontSize:"0.6rem", color:C.blue, letterSpacing:"0.12em", marginBottom:"0.5rem" },}, "STRENGTH SESSION "
                   , todayWorkout.strSess || "A", " — "  , todayWorkout.type === "run+strength" ? "after easy run" : "standalone"
               )
               , React.createElement('div', { style: { display:"grid", gap:3 },}
-                , (_optionalChain([STRENGTH, 'access', _323 => _323[todayWorkout.strSess || "A"], 'optionalAccess', _324 => _324.home]) || []).map((ex,i) => (
+                , (_optionalChain([STRENGTH, 'access', _350 => _350[todayWorkout.strSess || "A"], 'optionalAccess', _351 => _351.home]) || []).map((ex,i) => (
                   React.createElement('div', { key: i, style: { display:"flex", gap:"0.6rem", padding:"5px 8px", background:"#0f172a", borderRadius:6, fontSize:"0.65rem" },}
                     , React.createElement('span', { style: { color:C.blue, minWidth:20, fontFamily:"'Bebas Neue',sans-serif", fontSize:"0.9rem" },}, String(i+1).padStart(2,"0"))
                     , React.createElement('div', null
@@ -3162,7 +3222,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
           )
 
           /* OTF */
-          , _optionalChain([todayWorkout, 'optionalAccess', _325 => _325.type]) === "otf" && (
+          , _optionalChain([todayWorkout, 'optionalAccess', _352 => _352.type]) === "otf" && (
             React.createElement('div', { style: { fontSize:"0.68rem", color:"#64748b", lineHeight:1.8 },}
               , React.createElement('span', { style: { color:"#f59e0b" },}, "Orange Theory Hybrid — "    ), "This is a real training day. Treadmill blocks carry significant running load on your Achilles and cardiovascular system. Give it full effort. Don't add extra running on top."
 
@@ -3170,7 +3230,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
           )
 
           /* Rest */
-          , _optionalChain([todayWorkout, 'optionalAccess', _326 => _326.type]) === "rest" && (
+          , _optionalChain([todayWorkout, 'optionalAccess', _353 => _353.type]) === "rest" && (
             React.createElement('div', { style: { fontSize:"0.68rem", color:"#64748b", lineHeight:1.8 },}
               , React.createElement('span', { style: { color:C.slate },}, "Full Rest — "   ), "Walk if you want. Do your 5-minute Achilles protocol. Eat at your rest-day targets. Sleep 8 hours."
 
@@ -3218,9 +3278,9 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
           , React.createElement('button', { className: "btn", onClick: ()=>shiftTodayWorkout(1), style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" },}, "Shift to tomorrow"  )
           , React.createElement('button', { className: "btn", onClick: ()=>shiftTodayWorkout(2), style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" },}, "Shift +2 days"  )
         )
-        , _optionalChain([todayWorkout, 'optionalAccess', _327 => _327.minDay]) && (
+        , _optionalChain([todayWorkout, 'optionalAccess', _354 => _354.minDay]) && (
           React.createElement('div', { style: { marginTop:"0.4rem", fontSize:"0.56rem", color:C.amber },}, "Success redefined: "
-              , _optionalChain([todayWorkout, 'optionalAccess', _328 => _328.success]) || "Today = minimum effective day. Keep momentum alive."
+              , _optionalChain([todayWorkout, 'optionalAccess', _355 => _355.success]) || "Today = minimum effective day. Keep momentum alive."
           )
         )
         , contextReason && React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.54rem", color:"#64748b" },}, "Current override: "  , contextReason.replaceAll("_"," "))
@@ -3237,7 +3297,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
           , React.createElement('div', { style: { fontSize:"0.56rem", color:C.green },}, "Success this week: "   , salvageLayer.compressedPlan.success)
         )
       )
-      , _optionalChain([validationLayer, 'optionalAccess', _329 => _329.coachNudge]) && (
+      , _optionalChain([validationLayer, 'optionalAccess', _356 => _356.coachNudge]) && (
         React.createElement('div', { className: "card", style: { marginBottom:"0.75rem", borderColor:C.blue+"40", background:"#09121f" },}
           , React.createElement('div', { className: "sect-title", style: { color:C.blue, marginBottom:"0.3rem" },}, "CLOSED-LOOP VALIDATION" )
           , React.createElement('div', { style: { fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.65 },}, validationLayer.coachNudge)
@@ -3253,7 +3313,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
           )
         )
       )
-      , _optionalChain([optimizationLayer, 'optionalAccess', _330 => _330.confidence]) !== "low" && (
+      , _optionalChain([optimizationLayer, 'optionalAccess', _357 => _357.confidence]) !== "low" && (
         React.createElement('div', { style: { marginBottom:"0.55rem", fontSize:"0.55rem", color:"#64748b" },}, "Optimization note: "
             , optimizationLayer.coachLine
         )
@@ -3288,7 +3348,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         , [
           { label:"Current Weight", val: latestBW ? `${latestBW.w} lbs` : `${PROFILE.weight} lbs`, sub: latestBW ? `↓ ${(PROFILE.weight - latestBW.w).toFixed(1)} lbs from start` : "Starting weight", color:C.green },
           { label:"Workouts Logged", val: Object.keys(logs).length, sub:"Total sessions", color:C.blue },
-          { label:"Today's Nutrition", val: todayWorkout ? _optionalChain([NUTRITION, 'access', _331 => _331[todayWorkout.nutri || "easyRun"], 'optionalAccess', _332 => _332.cal]) : NUTRITION.rest.cal, sub:"Target calories", color:C.amber },
+          { label:"Today's Nutrition", val: todayWorkout ? _optionalChain([NUTRITION, 'access', _358 => _358[todayWorkout.nutri || "easyRun"], 'optionalAccess', _359 => _359.cal]) : NUTRITION.rest.cal, sub:"Target calories", color:C.amber },
           { label:"Phase", val: phaseName, sub:`Week ${currentWeek} of 18`, color:phaseColor },
         ].map(s => (
           React.createElement('div', { key: s.label, style: { border:`1px solid #1e293b`, borderRadius:8, padding:"0.65rem 0.85rem", background:"#0d1117" },}
@@ -3377,7 +3437,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         , React.createElement('div', { style: { fontSize:"0.56rem", color:behaviorLoop.recoveryTone ? C.amber : C.green },}, behaviorLoop.identity)
       )
 
-      , (_optionalChain([todayWorkout, 'optionalAccess', _333 => _333.type, 'optionalAccess', _334 => _334.includes, 'call', _335 => _335("strength")]) || _optionalChain([todayWorkout, 'optionalAccess', _336 => _336.label, 'optionalAccess', _337 => _337.toLowerCase, 'call', _338 => _338(), 'access', _339 => _339.includes, 'call', _340 => _340("strength")])) && (
+      , (_optionalChain([todayWorkout, 'optionalAccess', _360 => _360.type, 'optionalAccess', _361 => _361.includes, 'call', _362 => _362("strength")]) || _optionalChain([todayWorkout, 'optionalAccess', _363 => _363.label, 'optionalAccess', _364 => _364.toLowerCase, 'call', _365 => _365(), 'access', _366 => _366.includes, 'call', _367 => _367("strength")])) && (
         React.createElement('div', { className: "card", style: { marginBottom:"1rem" },}
           , React.createElement('div', { className: "sect-title", style: { color:C.purple, marginBottom:"0.5rem" },}, "STRENGTH FOCUS TODAY"  )
           , React.createElement('div', { style: { fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.7 },}, "Focus: "
@@ -3467,9 +3527,9 @@ function WorkoutBlock({ title, color, items }) {
 function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin }) {
   const [openWeek, setOpenWeek] = useState(null);
   const [newGoal, setNewGoal] = useState({ name:"", category:"running", priority:2, targetDate:"", measurableTarget:"", active:true });
-  const weeklyDraft = _optionalChain([weeklyCheckins, 'optionalAccess', _341 => _341[String(currentWeek)]]) || { energy: 3, stress: 3, confidence: 3 };
+  const weeklyDraft = _optionalChain([weeklyCheckins, 'optionalAccess', _368 => _368[String(currentWeek)]]) || { energy: 3, stress: 3, confidence: 3 };
   const [miniWeekly, setMiniWeekly] = useState(weeklyDraft);
-  useEffect(() => { setMiniWeekly(weeklyDraft); }, [currentWeek, _optionalChain([weeklyCheckins, 'optionalAccess', _342 => _342[String(currentWeek)], 'optionalAccess', _343 => _343.ts])]);
+  useEffect(() => { setMiniWeekly(weeklyDraft); }, [currentWeek, _optionalChain([weeklyCheckins, 'optionalAccess', _369 => _369[String(currentWeek)], 'optionalAccess', _370 => _370.ts])]);
   const goalContext = getGoalContext(goals);
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
@@ -3478,21 +3538,21 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
     const w = h.template;
     if (h.slot >= 1) {
       const baseAdaptive = buildAdaptiveWeek(w, signals, personalization, memoryInsights);
-      if (_optionalChain([recalibration, 'optionalAccess', _344 => _344.active]) && recalibration.aggressiveness === "lower") {
+      if (_optionalChain([recalibration, 'optionalAccess', _371 => _371.active]) && recalibration.aggressiveness === "lower") {
         baseAdaptive.changed.unshift("Recalibration: weekly density reduced for better consistency.");
       }
-      if (_optionalChain([learningLayer, 'access', _345 => _345.adaptation, 'optionalAccess', _346 => _346.reduceDensity])) {
+      if (_optionalChain([learningLayer, 'access', _372 => _372.adaptation, 'optionalAccess', _373 => _373.reduceDensity])) {
         baseAdaptive.adjusted.mon.d = scaleMilesString(baseAdaptive.adjusted.mon.d, 0.88);
         baseAdaptive.adjusted.fri.d = scaleMilesString(baseAdaptive.adjusted.fri.d, 0.88);
         baseAdaptive.changed.push("Adjusting based on your pattern: you tend to fall off when weeks are too dense.");
       }
-      if (_optionalChain([learningLayer, 'access', _347 => _347.adaptation, 'optionalAccess', _348 => _348.lowerAggressiveness])) {
+      if (_optionalChain([learningLayer, 'access', _374 => _374.adaptation, 'optionalAccess', _375 => _375.lowerAggressiveness])) {
         baseAdaptive.changed.push("Pattern-informed adjustment: progression aggressiveness reduced this block.");
       }
-      if (_optionalChain([learningLayer, 'access', _349 => _349.adaptation, 'optionalAccess', _350 => _350.environmentFastSwitch])) {
+      if (_optionalChain([learningLayer, 'access', _376 => _376.adaptation, 'optionalAccess', _377 => _377.environmentFastSwitch])) {
         baseAdaptive.changed.push("Pattern-informed adjustment: environment substitutions are applied earlier.");
       }
-      if (_optionalChain([arbitration, 'access', _351 => _351.primary, 'optionalAccess', _352 => _352.category]) === "strength" && arbitration.secondary.find(g=>g.category==="running")) {
+      if (_optionalChain([arbitration, 'access', _378 => _378.primary, 'optionalAccess', _379 => _379.category]) === "strength" && arbitration.secondary.find(g=>g.category==="running")) {
         baseAdaptive.adjusted.mon.d = scaleMilesString(baseAdaptive.adjusted.mon.d, 0.95);
         baseAdaptive.changed.push("Running volume trimmed slightly to protect strength progression.");
       }
@@ -3502,7 +3562,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
         Object.entries(mapDayToField).forEach(([dayNum, field]) => {
           const d = tpl[Number(dayNum)];
           if (!d) return;
-          if (_optionalChain([d, 'access', _353 => _353.run, 'optionalAccess', _354 => _354.t]) && _optionalChain([d, 'access', _355 => _355.run, 'optionalAccess', _356 => _356.d])) baseAdaptive.adjusted[field] = { t: d.run.t, d: d.run.d };
+          if (_optionalChain([d, 'access', _380 => _380.run, 'optionalAccess', _381 => _381.t]) && _optionalChain([d, 'access', _382 => _382.run, 'optionalAccess', _383 => _383.d])) baseAdaptive.adjusted[field] = { t: d.run.t, d: d.run.d };
           else if (field === "thu" && d.type !== "hard-run") baseAdaptive.adjusted[field] = { t: "Conditioning", d: "Goal-native conditioning focus" };
           else if (!d.run) baseAdaptive.adjusted[field] = { t: "Strength / Recovery", d: d.label || "Goal-native split session" };
         });
@@ -3590,7 +3650,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
         , React.createElement('div', { style: { fontSize:"0.56rem", color:"#64748b", marginBottom:"0.3rem" },}, "Bias this week: "
              , React.createElement('span', { style: { color:"#e2e8f0" },}, learningLayer.adjustmentBias), " · Check-ins used: "    , learningLayer.stats.total, "."
         )
-        , _optionalChain([learningLayer, 'access', _357 => _357.adaptation, 'optionalAccess', _358 => _358.active]) && (
+        , _optionalChain([learningLayer, 'access', _384 => _384.adaptation, 'optionalAccess', _385 => _385.active]) && (
           React.createElement('div', { style: { fontSize:"0.56rem", color:C.amber, marginBottom:"0.2rem" },}, "Auto-adjusting week structure from medium/high-confidence patterns."
 
           )
@@ -3606,7 +3666,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
       )
       , React.createElement('div', { className: "card", style: { marginBottom:"0.75rem" },}
         , React.createElement('div', { className: "sect-title", style: { color:C.green, marginBottom:"0.5rem" },}, "GOAL STACK" )
-        , React.createElement('div', { style: { fontSize:"0.6rem", color:"#94a3b8", marginBottom:"0.35rem" },}, "Primary: " , React.createElement('span', { style: { color:"#e2e8f0" },}, _optionalChain([arbitration, 'access', _359 => _359.primary, 'optionalAccess', _360 => _360.name]) || "None"))
+        , React.createElement('div', { style: { fontSize:"0.6rem", color:"#94a3b8", marginBottom:"0.35rem" },}, "Primary: " , React.createElement('span', { style: { color:"#e2e8f0" },}, _optionalChain([arbitration, 'access', _386 => _386.primary, 'optionalAccess', _387 => _387.name]) || "None"))
         , React.createElement('div', { style: { fontSize:"0.56rem", color:"#475569", marginBottom:"0.35rem" },}, "Current coach mode: "   , momentum.coachMode, " · consistency first."   )
         , React.createElement('div', { style: { fontSize:"0.58rem", color:"#64748b", marginBottom:"0.35rem" },}, "Secondary: " , (arbitration.secondary || []).map(g => g.name).join(" · ") || "None")
         , React.createElement('div', { style: { fontSize:"0.56rem", color:"#475569", marginBottom:"0.35rem" },}, "Maintained: " , (arbitration.maintenance || []).map(g => g.name).join(" · ") || "None")
@@ -3714,9 +3774,9 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
             , DEFAULT_PLANNING_HORIZON_WEEKS, " weeks · Specificity bands: weeks 1-2 high, 3-6 moderate, 7-12 directional."
         )
         , React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.54rem", color:"#94a3b8" },}, "Current block: "
-            , planComposer.architecture.replaceAll("_"," "), " · Next recalibration: "    , _optionalChain([recalibration, 'optionalAccess', _361 => _361.active]) ? "active now" : `week ${currentWeek + (4 - (currentWeek % 4 || 4))}`, "."
+            , planComposer.architecture.replaceAll("_"," "), " · Next recalibration: "    , _optionalChain([recalibration, 'optionalAccess', _388 => _388.active]) ? "active now" : `week ${currentWeek + (4 - (currentWeek % 4 || 4))}`, "."
         )
-        , _optionalChain([horizonAnchor, 'optionalAccess', _362 => _362.nearest]) && (
+        , _optionalChain([horizonAnchor, 'optionalAccess', _389 => _389.nearest]) && (
           React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.54rem", color:horizonAnchor.withinHorizon ? C.amber : "#64748b" },}, "Hard-date influence: "
               , horizonAnchor.nearest.name, " in ~"  , horizonAnchor.weekIndex, " weeks "  , horizonAnchor.withinHorizon ? "(within horizon emphasis)" : "(future anchor, not horizon cap)", "."
           )
@@ -3726,8 +3786,8 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
         const week = h.template;
         const zones = getZones(week.phase);
         const adaptive = adjustedWeekMap[h.absoluteWeek] || adjustedWeekMap[week.w];
-        const effectiveWeek = _optionalChain([adaptive, 'optionalAccess', _363 => _363.adjusted]) || week;
-        const isAdjusted = !!(_optionalChain([adaptive, 'optionalAccess', _364 => _364.changed, 'optionalAccess', _365 => _365.length]));
+        const effectiveWeek = _optionalChain([adaptive, 'optionalAccess', _390 => _390.adjusted]) || week;
+        const isAdjusted = !!(_optionalChain([adaptive, 'optionalAccess', _391 => _391.changed, 'optionalAccess', _392 => _392.length]));
         const isOverridden = paceOverrides[week.phase] && Object.keys(paceOverrides[week.phase]).length > 0;
         const isCurrentWeek = h.slot === 1;
         const isOpen = openWeek === h.absoluteWeek;
@@ -3809,7 +3869,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
 // ── LOG TAB ───────────────────────────────────────────────────────────────────
 function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout, exportData, importData }) {
   const today = new Date().toISOString().split("T")[0];
-  const [form, setForm] = useState({ date:today, type: _optionalChain([todayWorkout, 'optionalAccess', _366 => _366.label])||"", miles:"", pace:"", runTime:"", pushups:"", weight:"", notes:"", feel:"3", location:"home" });
+  const [form, setForm] = useState({ date:today, type: _optionalChain([todayWorkout, 'optionalAccess', _393 => _393.label])||"", miles:"", pace:"", runTime:"", pushups:"", weight:"", notes:"", feel:"3", location:"home" });
   const [saved, setSaved] = useState(false);
   const [bwInput, setBwInput] = useState("");
   const [backupStr, setBackupStr] = useState("");
@@ -4152,9 +4212,9 @@ function MiniChart({ data, color, baseline }) {
 
 function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer, realWorldNutrition, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
   const [mode, setMode] = useState("home");
-  const [dayType, setDayType] = useState(nutritionLayer.dayType || _optionalChain([todayWorkout, 'optionalAccess', _367 => _367.nutri]) || "easyRun");
+  const [dayType, setDayType] = useState(nutritionLayer.dayType || _optionalChain([todayWorkout, 'optionalAccess', _394 => _394.nutri]) || "easyRun");
   const [query, setQuery] = useState("");
-  const [store, setStore] = useState(_optionalChain([personalization, 'access', _368 => _368.localFoodContext, 'access', _369 => _369.groceryOptions, 'optionalAccess', _370 => _370[0]]) || "Trader Joe's");
+  const [store, setStore] = useState(_optionalChain([personalization, 'access', _395 => _395.localFoodContext, 'access', _396 => _396.groceryOptions, 'optionalAccess', _397 => _397[0]]) || "Trader Joe's");
   const [liveNearby, setLiveNearby] = useState([]);
   const [placesStatus, setPlacesStatus] = useState("template");
   const favorites = nutritionFavorites || { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] };
@@ -4162,7 +4222,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
   const [lastKey, setLastKey] = useState("");
   const goalContext = getGoalContext(goals);
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
-  const adaptiveForSelected = deriveAdaptiveNutrition({ todayWorkout: { ...todayWorkout, type: dayType === "rest" ? "rest" : _optionalChain([todayWorkout, 'optionalAccess', _371 => _371.type]) }, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments: { extra: {} }, salvageLayer: { active: false } });
+  const adaptiveForSelected = deriveAdaptiveNutrition({ todayWorkout: { ...todayWorkout, type: dayType === "rest" ? "rest" : _optionalChain([todayWorkout, 'optionalAccess', _398 => _398.type]) }, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments: { extra: {} }, salvageLayer: { active: false } });
   const targets = dayType === nutritionLayer.dayType ? nutritionLayer.targets : adaptiveForSelected.targets;
   const calRange = dayType === nutritionLayer.dayType ? nutritionLayer.calRange : adaptiveForSelected.calRange;
   const proteinTarget = dayType === nutritionLayer.dayType ? nutritionLayer.proteinTarget : `${targets.p}-${targets.p + 10}g`;
@@ -4182,20 +4242,20 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
   const travelBreakfast = ["Starbucks: egg bites + oatmeal + banana", "Hotel breakfast: eggs + Greek yogurt + fruit", "Airport: wrap + extra protein + water"];
 
   const todayKey = new Date().toISOString().split("T")[0];
-  const feedbackToday = _optionalChain([nutritionFeedback, 'optionalAccess', _372 => _372[todayKey]]);
-  useEffect(() => { if (feedbackToday) setNutritionCheck(feedbackToday); }, [_optionalChain([feedbackToday, 'optionalAccess', _373 => _373.ts])]);
+  const feedbackToday = _optionalChain([nutritionFeedback, 'optionalAccess', _399 => _399[todayKey]]);
+  useEffect(() => { if (feedbackToday) setNutritionCheck(feedbackToday); }, [_optionalChain([feedbackToday, 'optionalAccess', _400 => _400.ts])]);
 
   useEffect(() => {
     let active = true;
     (async () => {
-      const api = typeof window !== "undefined" ? _optionalChain([window, 'access', _374 => _374.__TRAINER_CONFIG, 'optionalAccess', _375 => _375.placesApi]) : null;
+      const api = typeof window !== "undefined" ? _optionalChain([window, 'access', _401 => _401.__TRAINER_CONFIG, 'optionalAccess', _402 => _402.placesApi]) : null;
       if (!api || mode !== "nearby") { setLiveNearby([]); setPlacesStatus("template"); return; }
       try {
         const res = await safeFetchWithTimeout(`${api}?q=${encodeURIComponent(query || "healthy high protein meals")}&city=${encodeURIComponent(city)}`, {}, 4500);
         if (!res.ok) throw new Error("places unavailable");
         const data = await res.json();
         if (!active) return;
-        setLiveNearby((_optionalChain([data, 'optionalAccess', _376 => _376.results]) || []).slice(0, 6).map((r, i) => ({ id:`live_${i}_${r.name}`, name:r.name, meal:r.reco || "Lean protein + carb-balanced bowl", tag:"live nearby" })));
+        setLiveNearby((_optionalChain([data, 'optionalAccess', _403 => _403.results]) || []).slice(0, 6).map((r, i) => ({ id:`live_${i}_${r.name}`, name:r.name, meal:r.reco || "Lean protein + carb-balanced bowl", tag:"live nearby" })));
         setPlacesStatus("live");
       } catch (e8) {
         if (!active) return;
@@ -4245,7 +4305,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
         , React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.56rem", color:"#64748b" },}, hydration)
         , React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.56rem", color:"#64748b" },}, fueling)
         , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.55rem", color:"#64748b" },}, "Goal balance: primary "
-             , _optionalChain([goalContext, 'access', _377 => _377.primary, 'optionalAccess', _378 => _378.name]) || "none", "; supporting "  , (goalContext.secondary||[]).map(g=>g.name).join(" · ") || "none", "."
+             , _optionalChain([goalContext, 'access', _404 => _404.primary, 'optionalAccess', _405 => _405.name]) || "none", "; supporting "  , (goalContext.secondary||[]).map(g=>g.name).join(" · ") || "none", "."
         )
         , React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.54rem", color:"#475569" },}, "Tradeoff this week: "
              , tradeoff || arbitration.conflicts[0] || "No major conflicts", "."
@@ -4302,7 +4362,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
         , React.createElement('div', { className: "card",}
           , React.createElement('div', { className: "sect-title", style: { color:C.purple, marginBottom:"0.5rem" },}, "GROCERY FALLBACK" )
           , React.createElement('select', { value: store, onChange: e=>setStore(e.target.value), style: { marginBottom:"0.45rem" },}
-            , [...new Set([...personalization.localFoodContext.groceryOptions, ...Object.keys(_optionalChain([LOCAL_PLACE_TEMPLATES, 'access', _379 => _379[city], 'optionalAccess', _380 => _380.groceries]) || {})])].map(s => React.createElement('option', { key: s,}, s))
+            , [...new Set([...personalization.localFoodContext.groceryOptions, ...Object.keys(_optionalChain([LOCAL_PLACE_TEMPLATES, 'access', _406 => _406[city], 'optionalAccess', _407 => _407.groceries]) || {})])].map(s => React.createElement('option', { key: s,}, s))
           )
           , React.createElement('button', { className: "btn", onClick: ()=>saveNutritionFavorites({ ...favorites, groceries: [store, ...favorites.groceries.filter(g=>g!==store)].slice(0,6) }), style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"35", marginBottom:"0.45rem" },}, "SAVE STORE"
 
@@ -4380,100 +4440,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     }]);
   }, []);
 
-  const applyCoachAction = (action, runtime) => {
-    const dateKey = new Date().toISOString().split("T")[0];
-    let nextAdjustments = { ...runtime.adjustments, dayOverrides: { ...(runtime.adjustments.dayOverrides || {}) }, nutritionOverrides: { ...(runtime.adjustments.nutritionOverrides || {}) }, weekVolumePct: { ...(runtime.adjustments.weekVolumePct || {}) }, extra: { ...(runtime.adjustments.extra || {}) } };
-    let nextWeekNotes = { ...runtime.weekNotes };
-    let nextAlerts = [...runtime.planAlerts];
-    let nextPersonalization = runtime.personalization;
-
-    if (action.type === COACH_TOOL_ACTIONS.SWAP_TODAY_RECOVERY) {
-      nextAdjustments.dayOverrides[dateKey] = { label: "Recovery Day Override", type: "rest", reason: action.payload.reason, nutri: "rest" };
-      nextAlerts = [{ id:`coach_${Date.now()}`, type:"warning", msg:"Coach swapped today to recovery based on risk signals." }, ...nextAlerts].slice(0, 10);
-    }
-    if (action.type === COACH_TOOL_ACTIONS.SET_PAIN_STATE) {
-      nextPersonalization = mergePersonalization(nextPersonalization, {
-        injuryPainState: {
-          ...nextPersonalization.injuryPainState,
-          level: action.payload.level,
-          area: action.payload.area || "Achilles",
-          activeModifications: buildInjuryRuleResult(todayWorkout, { level: action.payload.level, area: action.payload.area || "Achilles" }).mods,
-        }
-      });
-    }
-    if (action.type === COACH_TOOL_ACTIONS.CLEAR_PAIN_STATE) {
-      nextPersonalization = mergePersonalization(nextPersonalization, {
-        injuryPainState: {
-          ...nextPersonalization.injuryPainState,
-          level: "none",
-          activeModifications: [],
-        }
-      });
-    }
-    if (action.type === COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME) {
-      nextAdjustments.weekVolumePct[currentWeek] = 100 - (action.payload.pct || 10);
-      nextWeekNotes[currentWeek] = `Coach reduced this week volume by ${action.payload.pct || 10}% for recovery control.`;
-    }
-    if (action.type === COACH_TOOL_ACTIONS.CONVERT_RUN_TO_LOW_IMPACT || action.type === COACH_TOOL_ACTIONS.REPLACE_SPEED_EASY) {
-      nextWeekNotes[currentWeek] = "Coach converted high intensity session to easy aerobic / low-impact work.";
-    }
-    if (action.type === COACH_TOOL_ACTIONS.ADD_ACHILLES_BLOCK) {
-      nextAdjustments.extra.achillesBlock = "8-min protocol added daily";
-      nextPersonalization = mergePersonalization(nextPersonalization, { injuryPainState: { ...nextPersonalization.injuryPainState, achilles: { ...nextPersonalization.injuryPainState.achilles, status: "watch", painScore: Math.max(2, nextPersonalization.injuryPainState.achilles.painScore) } } });
-    }
-    if (action.type === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) {
-      nextAdjustments.nutritionOverrides[dateKey] = action.payload.dayType;
-    }
-    if (action.type === COACH_TOOL_ACTIONS.INCREASE_PRELONGRUN_CARBS) {
-      nextAdjustments.extra.preLongRunCarbBonus = action.payload.grams || 30;
-      nextWeekNotes[currentWeek] = `Coach added +${action.payload.grams || 30}g carbs before long run.`;
-    }
-    if (action.type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS) {
-      nextPersonalization = mergePersonalization(nextPersonalization, { travelState: { ...nextPersonalization.travelState, isTravelWeek: true, access: "hotel" } });
-      nextAdjustments.nutritionOverrides[dateKey] = "travelRun";
-    }
-    if (action.type === COACH_TOOL_ACTIONS.MOVE_LONG_RUN) {
-      nextWeekNotes[action.payload.week || currentWeek] = `Coach moved long run to ${action.payload.toDay || "Sunday"} this week.`;
-    }
-    if (action.type === COACH_TOOL_ACTIONS.INSERT_DELOAD_WEEK) {
-      nextWeekNotes[action.payload.week] = "Coach inserted deload intent: reduce volume + cap intensity this week.";
-      nextAdjustments.weekVolumePct[action.payload.week] = 85;
-    }
-    if (action.type === COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS) {
-      nextWeekNotes[currentWeek] = "Coach emphasized strength progression for next 2 weeks (pressing priority).";
-      nextAdjustments.extra.strengthEmphasisWeeks = action.payload.weeks || 2;
-    }
-    if (action.type === COACH_TOOL_ACTIONS.REDUCE_LONG_RUN_AGGRESSIVENESS) {
-      nextWeekNotes[currentWeek] = `Coach reduced long-run aggressiveness by ${action.payload.pct || 10}% next week.`;
-      nextAdjustments.extra.longRunReductionPct = action.payload.pct || 10;
-    }
-    if (action.type === COACH_TOOL_ACTIONS.INCREASE_CALORIES_SLIGHTLY) {
-      nextAdjustments.extra.nutritionCalorieDelta = (nextAdjustments.extra.nutritionCalorieDelta || 0) + (action.payload.kcal || 120);
-      nextWeekNotes[currentWeek] = `Coach increased nutrition target by ~${action.payload.kcal || 120} kcal/day.`;
-    }
-    if (action.type === COACH_TOOL_ACTIONS.REDUCE_DEFICIT_AGGRESSIVENESS) {
-      nextAdjustments.extra.nutritionDeficitReduction = action.payload.kcal || 100;
-      nextWeekNotes[currentWeek] = "Coach reduced deficit aggressiveness to protect adherence/performance.";
-    }
-    if (action.type === COACH_TOOL_ACTIONS.SHIFT_CARBS_AROUND_WORKOUT) {
-      nextAdjustments.extra.carbShift = { pre: action.payload.pre || 30, post: action.payload.post || 40 };
-      nextWeekNotes[currentWeek] = "Coach shifted carbs toward workout windows.";
-    }
-    if (action.type === COACH_TOOL_ACTIONS.SIMPLIFY_MEALS_THIS_WEEK) {
-      nextAdjustments.extra.mealSimplicityMode = true;
-      nextWeekNotes[currentWeek] = "Coach enabled simplified meal structure this week.";
-    }
-    if (action.type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE) {
-      nextAdjustments.extra.travelNutritionMode = true;
-      nextAdjustments.nutritionOverrides[dateKey] = "travelRun";
-      nextWeekNotes[currentWeek] = "Coach switched nutrition strategy to travel mode.";
-    }
-    if (action.type === COACH_TOOL_ACTIONS.USE_DEFAULT_MEAL_STRUCTURE_3_DAYS) {
-      nextAdjustments.extra.defaultMealStructureDays = action.payload.days || 3;
-      nextWeekNotes[currentWeek] = `Coach enabled default meal structure for ${action.payload.days || 3} days.`;
-    }
-    return { adjustments: nextAdjustments, weekNotes: nextWeekNotes, planAlerts: nextAlerts, personalization: nextPersonalization };
-  };
+  const applyCoachAction = (action, runtime) => applyCoachActionMutation({ action, runtime, currentWeek, todayWorkout, mergePersonalization, buildInjuryRuleResult });
 
   const commitAction = async (action) => {
     const runtime = { adjustments: coachPlanAdjustments, weekNotes, planAlerts, personalization };
@@ -4483,7 +4450,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       id:`coach_act_${Date.now()}`,
       ts: Date.now(),
       source: "coach_confirmed",
-      reason: action.reason || action.rationale || _optionalChain([action, 'access', _381 => _381.payload, 'optionalAccess', _382 => _382.reason]) || "coach-confirmed adaptation"
+      reason: action.reason || action.rationale || _optionalChain([action, 'access', _408 => _408.payload, 'optionalAccess', _409 => _409.reason]) || "coach-confirmed adaptation"
     }, ...coachActions].slice(0, 60);
     setCoachActions(nextActions);
     setCoachPlanAdjustments(mutation.adjustments);
@@ -4508,12 +4475,12 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
           model: "claude-3-5-haiku-latest",
           max_tokens: 700,
           system: `Return strict JSON with keys notices[], recommendations[], effects[], actions[]. Actions must use these types only: ${Object.values(COACH_TOOL_ACTIONS).join(", ")}.`,
-          messages: [{ role: "user", content: `Week ${currentWeek}, today ${_optionalChain([todayWorkout, 'optionalAccess', _383 => _383.label])}. User said: "${userMsg}".` }]
+          messages: [{ role: "user", content: `Week ${currentWeek}, today ${_optionalChain([todayWorkout, 'optionalAccess', _410 => _410.label])}. User said: "${userMsg}".` }]
         })
       });
       if (!res.ok) throw new Error("API unavailable");
       const data = await res.json();
-      const text = _optionalChain([data, 'optionalAccess', _384 => _384.content, 'optionalAccess', _385 => _385[0], 'optionalAccess', _386 => _386.text]) || "{}";
+      const text = _optionalChain([data, 'optionalAccess', _411 => _411.content, 'optionalAccess', _412 => _412[0], 'optionalAccess', _413 => _413.text]) || "{}";
       const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
       return { ...deterministic, ...parsed, source: "llm" };
     } catch (e9) {
@@ -4521,7 +4488,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     }
   };
 
-  useEffect(() => { _optionalChain([bottomRef, 'access', _387 => _387.current, 'optionalAccess', _388 => _388.scrollIntoView, 'call', _389 => _389({ behavior:"smooth" })]); }, [messages, pendingActions]);
+  useEffect(() => { _optionalChain([bottomRef, 'access', _414 => _414.current, 'optionalAccess', _415 => _415.scrollIntoView, 'call', _416 => _416({ behavior:"smooth" })]); }, [messages, pendingActions]);
 
   const send = async (preset) => {
     const userMsg = (preset || input).trim();
@@ -4606,7 +4573,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       , React.createElement('div', { style: { marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 },}, "Expectation outlook: "
           , expectations.nextWindow, " " , expectations.conditionLine
       )
-      , _optionalChain([recalibration, 'optionalAccess', _390 => _390.active]) && (
+      , _optionalChain([recalibration, 'optionalAccess', _417 => _417.active]) && (
         React.createElement('div', { style: { marginBottom:"0.45rem", fontSize:"0.56rem", color:C.amber, background:"#0d1117", border:`1px solid ${C.amber}35`, borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 },}, "Recalibration active: "
             , recalibration.why, " Next: "  , recalibration.expect
         )
@@ -4619,7 +4586,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       , React.createElement('div', { style: { marginBottom:"0.45rem", fontSize:"0.56rem", color:"#64748b", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem" },}, "Learning bias: "
           , learningLayer.adjustmentBias, " · "  , (learningLayer.topObservations || []).slice(0,2).map(o => o.msg).join(" · ") || "Collecting check-ins."
       )
-      , _optionalChain([optimizationLayer, 'optionalAccess', _391 => _391.confidence]) !== "low" && (
+      , _optionalChain([optimizationLayer, 'optionalAccess', _418 => _418.confidence]) !== "low" && (
         React.createElement('div', { style: { marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.65 },}, "Personal optimization: "
             , optimizationLayer.coachLine
           , React.createElement('div', { style: { marginTop:"0.2rem", color:"#64748b" },}, "Zones: "
@@ -4666,9 +4633,9 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
               , msg.role==="assistant" && React.createElement('div', { style: { fontSize:"0.55rem", color:C.green, letterSpacing:"0.12em", marginBottom:"0.35rem" },}, "COACH · "  , msg.source || "deterministic")
               , msg.role === "assistant" ? (
                 React.createElement('div', { style: { display:"grid", gap:"0.4rem" },}
-                  , React.createElement(CoachSection, { title: "WHAT I NOTICED"  , items: _optionalChain([msg, 'access', _392 => _392.packet, 'optionalAccess', _393 => _393.notices]) || [], color: C.blue,} )
-                  , React.createElement(CoachSection, { title: "WHAT I RECOMMEND"  , items: _optionalChain([msg, 'access', _394 => _394.packet, 'optionalAccess', _395 => _395.recommendations]) || [], color: C.green,} )
-                  , React.createElement(CoachSection, { title: "WHAT CHANGES IF APPLIED"   , items: _optionalChain([msg, 'access', _396 => _396.packet, 'optionalAccess', _397 => _397.effects]) || [], color: C.amber,} )
+                  , React.createElement(CoachSection, { title: "WHAT I NOTICED"  , items: _optionalChain([msg, 'access', _419 => _419.packet, 'optionalAccess', _420 => _420.notices]) || [], color: C.blue,} )
+                  , React.createElement(CoachSection, { title: "WHAT I RECOMMEND"  , items: _optionalChain([msg, 'access', _421 => _421.packet, 'optionalAccess', _422 => _422.recommendations]) || [], color: C.green,} )
+                  , React.createElement(CoachSection, { title: "WHAT CHANGES IF APPLIED"   , items: _optionalChain([msg, 'access', _423 => _423.packet, 'optionalAccess', _424 => _424.effects]) || [], color: C.amber,} )
                 )
               ) : msg.text
             )
@@ -4726,7 +4693,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
         )
       )
       , React.createElement('div', { style: { marginTop:"0.55rem", fontSize:"0.56rem", color:"#475569", lineHeight:1.7 },}, "Control tower context: Week "
-            , currentWeek, " · Today "   , _optionalChain([todayWorkout, 'optionalAccess', _398 => _398.label]) || "Rest", " · Logs "   , Object.keys(logs).length, " · Weight entries "    , bodyweights.length, " · Last coach action "     , _optionalChain([coachActions, 'access', _399 => _399[0], 'optionalAccess', _400 => _400.type]) || "none", "."
+            , currentWeek, " · Today "   , _optionalChain([todayWorkout, 'optionalAccess', _425 => _425.label]) || "Rest", " · Logs "   , Object.keys(logs).length, " · Weight entries "    , bodyweights.length, " · Last coach action "     , _optionalChain([coachActions, 'access', _426 => _426[0], 'optionalAccess', _427 => _427.type]) || "none", "."
       )
       , React.createElement('style', null, `@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}`)
     )
@@ -4737,7 +4704,7 @@ function CoachSection({ title, items, color }) {
   return (
     React.createElement('div', { style: { background:"#0f172a", borderRadius:6, padding:"6px 8px", border:`1px solid ${color}25` },}
       , React.createElement('div', { style: { fontSize:"0.55rem", color, letterSpacing:"0.1em", marginBottom:"0.2rem" },}, title)
-      , (_optionalChain([items, 'optionalAccess', _401 => _401.length]) ? items : ["No issues detected."]).map((item, idx) => (
+      , (_optionalChain([items, 'optionalAccess', _428 => _428.length]) ? items : ["No issues detected."]).map((item, idx) => (
         React.createElement('div', { key: idx, style: { fontSize:"0.61rem", color:"#cbd5e1", lineHeight:1.55 },}, "• " , item)
       ))
     )
