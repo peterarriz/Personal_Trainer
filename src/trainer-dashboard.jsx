@@ -1877,6 +1877,9 @@ RULES:
     </div>
   );
 
+
+  const daysToRace = Math.max(0, Math.ceil((new Date("2026-07-19") - today) / (1000*60*60*24)));
+
   return (
     <div style={{ fontFamily:"'DM Mono','Courier New',monospace", background:"linear-gradient(180deg,#0b111a 0%, #0f1622 55%, #131b28 100%)", minHeight:"100vh", color:"#e2e8f0", padding:"1.65rem 1.2rem" }}>
       <style>{`
@@ -1941,22 +1944,15 @@ RULES:
               {fmtDate(today).toUpperCase()} · WEEK {currentWeek} · PERSONAL COACHING
             </div>
           </div>
-          <div style={{ display:"flex", gap:"0.5rem", alignItems:"center" }}>
-            <div style={{ textAlign:"right" }}>
-              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.4rem", color:C.red, letterSpacing:"0.05em" }}>
-                {Math.max(0, Math.ceil((new Date("2026-07-19") - today) / (1000*60*60*24)))}
-              </div>
-              <div style={{ fontSize:"0.55rem", color:"#334155", letterSpacing:"0.1em" }}>DAYS TO RACE</div>
-              <div style={{ marginTop:3, fontSize:"0.5rem", letterSpacing:"0.08em",
-                color: storageStatus.mode === "cloud" ? "#4ade80" : storageStatus.mode === "local" ? "#f59e0b" : "#334155" }}>
-                {storageStatus.mode === "cloud" ? (lastSaved ? "● SAVED " + lastSaved : "● " + storageStatus.label) : storageStatus.mode === "local" ? "● OFFLINE SAFE MODE" : "● " + storageStatus.label}
-              </div>
-              <div style={{ marginTop:4, fontSize:"0.5rem", color:"#64748b" }}>{authSession.user.email}</div>
+          <div style={{ textAlign:"right" }}>
+            <div className="mono" style={{ fontSize:"1.7rem", color:daysToRace <= 30 ? C.red : "#475569", fontWeight:500, lineHeight:1 }}>{daysToRace}</div>
+            <div style={{ fontSize:"0.7rem", color:"#334155", marginTop:2 }}>days to race</div>
+            <div style={{ marginTop:6, display:"flex", gap:"0.75rem", alignItems:"center", justifyContent:"flex-end" }}>
+              <div style={{ fontSize:"0.65rem", color: storageStatus.mode === "cloud" ? "#4ade80" : "#f59e0b" }}>{storageStatus.mode === "cloud" ? "Synced" : "Offline"}</div>
+              <button className="btn" onClick={handleSignOut} style={{ fontSize:"0.65rem", padding:"4px 10px" }}>Sign out</button>
             </div>
-            <button className="btn" onClick={handleSignOut} style={{ fontSize:"0.5rem" }}>SIGN OUT</button>
           </div>
         </div>
-
         {/* ── TABS ── */}
         <div style={{ display:"flex", gap:"0.25rem", marginBottom:"1.25rem", background:"#151f2e", padding:"0.3rem", borderRadius:10, border:"1px solid #2b394d", overflowX:"auto" }}>
           {TABS.map((t,i) => (
@@ -1998,7 +1994,6 @@ RULES:
           setPlanAlerts(nextPlanAlerts);
           await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
         }} />}
-
       </div>
     </div>
   );
@@ -2039,6 +2034,8 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
       return () => clearTimeout(t);
     }
   }, [todayKey, dailyCheckins?.[todayKey]]);
+  const [showOverrides, setShowOverrides] = useState(false);
+  const [showInjury, setShowInjury] = useState(false);
 
   return (
     <div className="fi">
@@ -2174,13 +2171,13 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
 
 function WorkoutBlock({ title, color, items }) {
   return (
-    <div style={{ background:"#0f172a", borderRadius:8, padding:"0.75rem", border:`1px solid ${color}20` }}>
-      <div style={{ fontSize:"0.65rem", color, marginBottom:"0.5rem", letterSpacing:"0.08em" }}>{title}</div>
-      <div style={{ display:"flex", gap:"1rem", flexWrap:"wrap" }}>
+    <div style={{ background:"#0f172a", borderRadius:10, padding:"1rem", border:`1px solid ${color}15` }}>
+      <div style={{ fontSize:"0.78rem", color, marginBottom:"0.6rem", fontWeight:500 }}>{title}</div>
+      <div style={{ display:"flex", gap:"1.25rem", flexWrap:"wrap" }}>
         {items.map(item => (
           <div key={item.label}>
-            <div style={{ fontSize:"0.58rem", color:"#334155", letterSpacing:"0.1em", textTransform:"uppercase" }}>{item.label}</div>
-            <div style={{ fontSize:"0.78rem", color:color, fontFamily:"'Bebas Neue',sans-serif", letterSpacing:"0.05em" }}>{item.val}</div>
+            <div style={{ fontSize:"0.7rem", color:"#475569", marginBottom:"0.15rem" }}>{item.label}</div>
+            <div className="mono" style={{ fontSize:"0.95rem", color, fontWeight:500 }}>{item.val}</div>
           </div>
         ))}
       </div>
@@ -2316,7 +2313,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
   );
 }
 
-// ── LOG TAB ───────────────────────────────────────────────────────────────────
+// ── LOG TAB (POLISHED) ──────────────────────────────────────────────────────
 function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout, exportData, importData }) {
   const today = new Date().toISOString().split("T")[0];
   const [quick, setQuick] = useState({ status:"completed_as_planned", feel:"3", note:"", bodyweight:"" });
@@ -2447,123 +2444,51 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
 
 function BackupRestore({ exportData, importData, logs, bodyweights, backupStr, setBackupStr, backupMsg, setBackupMsg, showBackup, setShowBackup, copied, setCopied }) {
   const logCount = Object.keys(logs).length;
-  const bwCount = bodyweights.length;
-
   const handleCopy = () => {
-    const str = exportData();
-    navigator.clipboard.writeText(str).then(() => {
-      setCopied(true);
-      setBackupMsg("Copied! Paste into your Notes app to save.");
-      setTimeout(() => { setCopied(false); setBackupMsg(""); }, 3000);
-    }).catch(() => {
-      // Fallback: show the string for manual copy
-      setBackupStr(exportData());
-      setBackupMsg("Long-press the text below and copy it:");
-    });
+    navigator.clipboard.writeText(exportData()).then(() => { setCopied(true); setBackupMsg("Copied!"); setTimeout(() => { setCopied(false); setBackupMsg(""); }, 3000); }).catch(() => { setBackupStr(exportData()); setBackupMsg("Copy the text below:"); });
   };
-
   const handleRestore = async () => {
-    if (!backupStr.trim()) { setBackupMsg("Paste your backup code above first."); return; }
-    setBackupMsg("Restoring and syncing to cloud...");
+    if (!backupStr.trim()) { setBackupMsg("Paste backup first."); return; }
+    setBackupMsg("Restoring...");
     const ok = await importData(backupStr);
-    if (ok) {
-      setBackupMsg("✓ Restored and saved to cloud!");
-      setBackupStr("");
-      setTimeout(() => setBackupMsg(""), 3000);
-    } else {
-      setBackupMsg("Invalid backup code or sync failed. Check your connection.");
-    }
+    setBackupMsg(ok ? "Restored!" : "Invalid backup.");
+    if (ok) { setBackupStr(""); setTimeout(() => setBackupMsg(""), 3000); }
   };
-
   return (
-    <div style={{ marginTop:"0.75rem", border:"1px solid #1e293b", borderRadius:8, overflow:"hidden" }}>
-      <div className="hov" onClick={() => setShowBackup(!showBackup)}
-        style={{ padding:"0.65rem 0.85rem", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer" }}>
-        <div>
-          <div style={{ fontSize:"0.62rem", color:C.amber, letterSpacing:"0.1em" }}>BACKUP & RESTORE</div>
-          <div style={{ fontSize:"0.56rem", color:"#334155", marginTop:2 }}>
-            {logCount > 0 ? logCount + " workouts in memory" : "No workouts logged yet"}
-            {bwCount > 0 ? " · " + bwCount + " weight entries" : ""}
-          </div>
-        </div>
-        <div style={{ fontSize:"0.65rem", color:"#334155" }}>{showBackup ? "▲" : "▼"}</div>
+    <details style={{ marginTop:"0.75rem" }}>
+      <summary style={{ cursor:"pointer", fontSize:"0.75rem", color:"#475569", padding:"0.5rem 0" }}>
+        Backup & Restore ({logCount} workouts)
+      </summary>
+      <div style={{ padding:"0.75rem 0", display:"grid", gap:"0.5rem" }}>
+        <button className="btn" onClick={handleCopy} disabled={logCount===0} style={{ color:C.amber, borderColor:C.amber+"40" }}>
+          {copied ? "Copied" : "Copy Backup"}
+        </button>
+        <textarea value={backupStr} onChange={e=>setBackupStr(e.target.value)} placeholder="Paste backup code to restore..." style={{ fontSize:"0.75rem", height:50, resize:"none" }} />
+        <button className="btn" onClick={handleRestore} style={{ color:C.green, borderColor:C.green+"40" }}>Restore</button>
+        {backupMsg && <div style={{ fontSize:"0.72rem", color:backupMsg.includes("Restored") || backupMsg.includes("Copied") ? C.green : C.amber }}>{backupMsg}</div>}
       </div>
-
-      {showBackup && (
-        <div className="fi" style={{ padding:"0.75rem", borderTop:"1px solid #1e293b", background:"#09090f" }}>
-          {/* How it works */}
-          <div style={{ fontSize:"0.62rem", color:"#475569", lineHeight:1.7, marginBottom:"0.75rem", background:"#0f172a", borderRadius:6, padding:"0.6rem" }}>
-            <span style={{ color:C.amber }}>How to keep your data: </span>
-            After logging, tap <span style={{ color:"#e2e8f0" }}>COPY BACKUP</span> and paste it into your Notes app. Next time you open this dashboard, paste it into the restore box and tap <span style={{ color:"#e2e8f0" }}>RESTORE</span>. Takes 5 seconds.
-          </div>
-
-          {/* Copy backup */}
-          <button
-            onClick={handleCopy}
-            disabled={logCount === 0}
-            style={{ width:"100%", background: logCount > 0 ? C.amber : "#1e293b", border:"none", borderRadius:7, padding:"0.7rem", fontFamily:"'DM Mono',monospace", fontSize:"0.68rem", color: logCount > 0 ? "#0a0a0f" : "#334155", cursor: logCount > 0 ? "pointer" : "default", marginBottom:"0.5rem", fontWeight:500, letterSpacing:"0.08em" }}>
-            {copied ? "✓ COPIED TO CLIPBOARD" : "COPY BACKUP (" + logCount + " workouts)"}
-          </button>
-
-          {/* Fallback display for manual copy */}
-          {backupStr && backupMsg.includes("Long-press") && (
-            <textarea
-              readOnly
-              value={backupStr}
-              style={{ marginBottom:"0.5rem", fontSize:"0.5rem", height:60, resize:"none", color:"#475569" }}
-            />
-          )}
-
-          {/* Restore input */}
-          <div style={{ fontSize:"0.58rem", color:"#475569", marginBottom:"0.3rem", letterSpacing:"0.08em" }}>PASTE BACKUP CODE TO RESTORE</div>
-          <textarea
-            value={backupStr}
-            onChange={e => setBackupStr(e.target.value)}
-            placeholder="Paste your backup code here..."
-            style={{ marginBottom:"0.5rem", fontSize:"0.58rem", height:55, resize:"none" }}
-          />
-          <button
-            onClick={handleRestore}
-            style={{ width:"100%", background:"transparent", border:"1px solid " + C.green + "50", borderRadius:7, padding:"0.6rem", fontFamily:"'DM Mono',monospace", fontSize:"0.65rem", color:C.green, cursor:"pointer", letterSpacing:"0.08em" }}>
-            RESTORE FROM BACKUP
-          </button>
-
-          {backupMsg && (
-            <div style={{ marginTop:"0.5rem", fontSize:"0.62rem", color: backupMsg.includes("success") || backupMsg.includes("Copied") ? C.green : backupMsg.includes("Invalid") ? C.red : C.amber, lineHeight:1.6 }}>
-              {backupMsg}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    </details>
   );
 }
 
-// ── MINI CHART ────────────────────────────────────────────────────────────────
+// ── MINI CHART (kept) ───────────────────────────────────────────────────────
 function MiniChart({ data, color, baseline }) {
   if (data.length < 2) return null;
   const min = Math.min(...data, baseline) - 2;
   const max = Math.max(...data, baseline) + 2;
   const w = 300, h = 50;
-  const pts = data.map((v,i) => {
-    const x = (i / (data.length-1)) * w;
-    const y = h - ((v - min) / (max - min)) * h;
-    return `${x},${y}`;
-  });
+  const pts = data.map((v,i) => `${(i / (data.length-1)) * w},${h - ((v - min) / (max - min)) * h}`);
   const baselineY = h - ((baseline - min) / (max - min)) * h;
   return (
     <svg viewBox={`0 0 ${w} ${h}`} style={{ width:"100%", height:50 }}>
       <line x1={0} y1={baselineY} x2={w} y2={baselineY} stroke="#1e293b" strokeWidth={1} strokeDasharray="4,4" />
       <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth={2} />
-      {data.map((v,i) => {
-        const x = (i/(data.length-1))*w;
-        const y = h - ((v-min)/(max-min))*h;
-        return <circle key={i} cx={x} cy={y} r={3} fill={color} />;
-      })}
+      {data.map((v,i) => <circle key={i} cx={(i/(data.length-1))*w} cy={h - ((v-min)/(max-min))*h} r={3} fill={color} />)}
     </svg>
   );
 }
 
+// ── NUTRITION TAB (REDESIGNED) ──────────────────────────────────────────────
 function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer, realWorldNutrition, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
   const localFoodContext = personalization?.localFoodContext || { city: "Chicago", groceryOptions: ["Trader Joe's"] };
   const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || "Trader Joe's");
@@ -2696,7 +2621,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem", marginBottom:"0.35rem" }}>
           {[["on_track","on track"],["decent","decent"],["off_track","off track"]].map(([k,lab]) => (
             <button key={k} className="btn" onClick={()=>setNutritionCheck(prev=>({ ...prev, status:k }))}
-              style={{ fontSize:"0.55rem", borderColor:nutritionCheck.status===k?C.blue:"#1e293b", color:nutritionCheck.status===k?C.blue:"#64748b" }}>{lab}</button>
+              style={{ fontSize:"0.72rem", borderColor:nutritionCheck.status===k?C.blue:"#1e293b", color:nutritionCheck.status===k?C.blue:"#64748b", background:nutritionCheck.status===k?`${C.blue}12`:"transparent" }}>{lab}</button>
           ))}
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
@@ -2708,7 +2633,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
   );
 }
 
-// ── COACH TAB ─────────────────────────────────────────────────────────────────
+// ── COACH TAB (REDESIGNED) ──────────────────────────────────────────────────
 function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalization, momentum, arbitration, expectations, memoryInsights, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer, realWorldNutrition, nutritionFeedback, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -2722,6 +2647,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   });
   const [apiKey, setApiKey] = useState(typeof window !== "undefined" ? (localStorage.getItem("coach_api_key") || "") : "");
   const [coachMode, setCoachMode] = useState("auto");
+  const [showSettings, setShowSettings] = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -2737,13 +2663,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   const commitAction = async (action) => {
     const runtime = { adjustments: coachPlanAdjustments, weekNotes, planAlerts, personalization };
     const mutation = applyCoachAction(action, runtime);
-    const nextActions = [{
-      ...action,
-      id:`coach_act_${Date.now()}`,
-      ts: Date.now(),
-      source: "coach_confirmed",
-      reason: action.reason || action.rationale || action.payload?.reason || "coach-confirmed adaptation"
-    }, ...coachActions].slice(0, 60);
+    const nextActions = [{ ...action, id:`coach_act_${Date.now()}`, ts: Date.now(), source: "coach_confirmed", reason: action.reason || action.rationale || action.payload?.reason || "coach-confirmed" }, ...coachActions].slice(0, 60);
     setCoachActions(nextActions);
     setCoachPlanAdjustments(mutation.adjustments);
     setWeekNotes(mutation.weekNotes);
@@ -2758,14 +2678,9 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     try {
       const res = await safeFetchWithTimeout("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01"
-        },
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
-          model: "claude-3-5-haiku-latest",
-          max_tokens: 700,
+          model: "claude-3-5-haiku-latest", max_tokens: 700,
           system: `Return strict JSON with keys notices[], recommendations[], effects[], actions[]. Actions must use these types only: ${Object.values(COACH_TOOL_ACTIONS).join(", ")}.`,
           messages: [{ role: "user", content: `Week ${currentWeek}, today ${todayWorkout?.label}. User said: "${userMsg}".` }]
         })
@@ -2794,22 +2709,9 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   };
 
   const quickPrompts = [
-    "My Achilles feels tight",
-    "I missed yesterday",
-    "I’m traveling today",
-    "I feel amazing this week",
-    "I slept badly",
-    "I want to push harder",
-    "I’m not recovering well",
-    "I need food near me",
-    "Progress strength emphasis",
-    "Reduce long-run aggressiveness",
-    "Increase calories slightly",
-    "Reduce deficit aggressiveness",
-    "Shift carbs around workout",
-    "Simplify meals this week",
-    "Switch to travel nutrition mode",
-    "Use default meal structure for 3 days",
+    "My Achilles feels tight", "I missed yesterday", "I'm traveling today",
+    "I feel amazing this week", "I slept badly", "I want to push harder",
+    "I'm not recovering well", "Simplify meals this week",
   ];
 
   const todayKey = new Date().toISOString().split("T")[0];
@@ -2932,6 +2834,28 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
         <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Ask coach for a decision" style={{ flex:1 }} disabled={loading} />
         <button className="btn btn-primary" onClick={()=>send()} disabled={loading} style={{ opacity:loading?0.5:1 }}>Send</button>
       </div>
+
+      {/* ── SETTINGS (collapsed) ── */}
+      <details style={{ marginTop:"0.75rem" }}>
+        <summary style={{ cursor:"pointer", fontSize:"0.72rem", color:"#475569", padding:"0.5rem 0" }}>Coach settings & memory</summary>
+        <div style={{ padding:"0.75rem 0", display:"grid", gap:"0.4rem" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+            <select value={coachMode} onChange={e=>setCoachMode(e.target.value)} style={{ fontSize:"0.78rem" }}>
+              <option value="auto">Auto mode</option><option value="deterministic">Deterministic</option>
+            </select>
+            <input value={apiKey} onChange={e=>{ setApiKey(e.target.value); if (typeof window !== "undefined") localStorage.setItem("coach_api_key", e.target.value); }} placeholder="Anthropic key (optional)" style={{ fontSize:"0.75rem" }} />
+          </div>
+          <input value={memoryDraft.failurePatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, failurePatterns:e.target.value })} placeholder="Failure patterns" style={{ fontSize:"0.78rem" }} />
+          <input value={memoryDraft.commonBarriers} onChange={e=>setMemoryDraft({ ...memoryDraft, commonBarriers:e.target.value })} placeholder="Common barriers" style={{ fontSize:"0.78rem" }} />
+          <input value={memoryDraft.preferredFoodPatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, preferredFoodPatterns:e.target.value })} placeholder="Food patterns" style={{ fontSize:"0.78rem" }} />
+          <button className="btn" onClick={async ()=>{
+            const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, failurePatterns: memoryDraft.failurePatterns.split(",").map(x=>x.trim()).filter(Boolean), commonBarriers: memoryDraft.commonBarriers.split(",").map(x=>x.trim()).filter(Boolean), preferredFoodPatterns: memoryDraft.preferredFoodPatterns.split(",").map(x=>x.trim()).filter(Boolean), simplicityVsVariety: memoryDraft.simplicityVsVariety } });
+            setPersonalization(updated);
+            await onPersist(updated, coachActions, coachPlanAdjustments, weekNotes, planAlerts);
+          }} style={{ color:C.green, borderColor:C.green+"35" }}>Save memory</button>
+        </div>
+      </details>
+
       <style>{`@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}`}</style>
     </div>
   );
@@ -2939,10 +2863,10 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
 
 function CoachSection({ title, items, color }) {
   return (
-    <div style={{ background:"#0f172a", borderRadius:6, padding:"6px 8px", border:`1px solid ${color}25` }}>
-      <div style={{ fontSize:"0.55rem", color, letterSpacing:"0.1em", marginBottom:"0.2rem" }}>{title}</div>
+    <div style={{ background:"#0f172a", borderRadius:8, padding:"8px 12px", border:`1px solid ${color}20` }}>
+      <div style={{ fontSize:"0.7rem", color, fontWeight:600, marginBottom:"0.25rem" }}>{title}</div>
       {(items?.length ? items : ["No issues detected."]).map((item, idx) => (
-        <div key={idx} style={{ fontSize:"0.61rem", color:"#cbd5e1", lineHeight:1.55 }}>• {item}</div>
+        <div key={idx} style={{ fontSize:"0.78rem", color:"#cbd5e1", lineHeight:1.6 }}>• {item}</div>
       ))}
     </div>
   );
