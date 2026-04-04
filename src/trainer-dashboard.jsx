@@ -1362,39 +1362,6 @@ export default function TrainerDashboard() {
     });
   };
 
-  const sbLoad = async () => {
-    await authStorage.sbLoad({
-      authSession,
-      setters: {
-        setLogs,
-        setBodyweights,
-        setPaceOverrides,
-        setWeekNotes,
-        setPlanAlerts,
-        setPersonalization,
-        setGoals,
-        setCoachActions,
-        setCoachPlanAdjustments,
-        setDailyCheckins,
-        setWeeklyCheckins,
-        setNutritionFavorites,
-        setNutritionFeedback,
-      },
-      persistAll,
-    });
-  };
-
-  useEffect(() => {
-    console.log("[supabase] resolved URL:", SB_URL || "(missing)");
-    if (SB_CONFIG_ERROR) {
-      setAuthError(`Supabase setup error: ${SB_CONFIG_ERROR}`);
-      setStorageStatus({ mode: "local", label: "CONFIG ERROR" });
-    }
-    const restored = authStorage.loadAuthSession();
-    if (restored) setAuthSession(restored);
-    setLoading(false);
-  }, [SB_URL, SB_CONFIG_ERROR, authStorage]);
-
   useEffect(() => {
     console.log("[supabase] resolved URL:", SB_URL || "(missing)");
     if (SB_CONFIG_ERROR) {
@@ -2373,7 +2340,10 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
   const goalContext = getGoalContext(goals) || { primary: null, secondary: [] };
   const dayType = nutritionLayer?.dayType || todayWorkout?.nutri || "easyRun";
   const city = localFoodContext.city || "Chicago";
-  const nearby = (getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" }) || []).filter(x => x?.id !== lastKey).slice(0, 2);
+  const nearby = (getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" }) || [])
+    .map((x, i) => ({ id: x?.id || `nearby_${i}_${x?.name || "option"}`, name: x?.name || "Nearby option", meal: x?.meal || "Protein + carbs + produce" }))
+    .filter(x => x.id !== lastKey)
+    .slice(0, 2);
   const basket = buildGroceryBasket({ store, city, days: 3, dayType });
   const fastest = nearby[0] || { name: "Saved default", meal: "Protein shake + fruit + sandwich", tag: "fallback" };
   const travelBreakfast = ["Starbucks: egg bites + oatmeal + banana", "Hotel breakfast: eggs + Greek yogurt + fruit", "Airport: wrap + extra protein + water"];
@@ -2669,9 +2639,6 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       <div style={{ display:"flex", gap:"0.5rem" }}>
         <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Ask coach for a decision" style={{ flex:1 }} disabled={loading} />
         <button className="btn btn-primary" onClick={()=>send()} disabled={loading} style={{ opacity:loading?0.5:1 }}>Send</button>
-      </div>
-      <div style={{ marginTop:"0.55rem", fontSize:"0.56rem", color:"#475569", lineHeight:1.7 }}>
-        Current coaching context: Week {currentWeek} · Today {todayWorkout?.label || "Rest"} · Logs {Object.keys(logs).length} · Weight entries {bodyweights.length} · Last coach action {coachActions[0]?.type || "none"}.
       </div>
       <style>{`@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}`}</style>
     </div>
