@@ -1663,7 +1663,7 @@ RULES:
     setAnalyzing(false);
   };
 
-  const TABS = ["TODAY", "PLAN", "LOG", "NUTRITION", "COACH"];
+  const TABS = ["Today", "Program", "Log", "Nutrition", "Coach"];
 
   if (loading) return (
     <div style={{ background:"#0a0a0f", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Mono',monospace", color:"#334155", fontSize:"0.7rem", letterSpacing:"0.2em" }}>
@@ -1688,23 +1688,37 @@ RULES:
   );
 
   return (
-    <div style={{ fontFamily:"'DM Mono','Courier New',monospace", background:"#0a0a0f", minHeight:"100vh", color:"#e2e8f0", padding:"1.25rem 1rem" }}>
+    <div style={{ fontFamily:"'DM Mono','Courier New',monospace", background:"#0a0a0f", minHeight:"100vh", color:"#e2e8f0", padding:"1.5rem 1.1rem" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Bebas+Neue&display=swap');
+        :root{
+          --bg:#0a0a0f;
+          --panel:#0d1117;
+          --panel-2:#101826;
+          --border:#1e293b;
+          --muted:#64748b;
+          --text:#e2e8f0;
+          --accent:#4ade80;
+        }
         * { box-sizing:border-box; margin:0; padding:0; }
         ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:#0a0a0f} ::-webkit-scrollbar-thumb{background:#1e293b;border-radius:2px}
-        .hov{transition:all 0.15s;cursor:pointer} .hov:hover{background:rgba(255,255,255,0.04)!important}
-        .btn{background:none;border:1px solid #1e293b;border-radius:6px;font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:0.1em;cursor:pointer;padding:5px 10px;transition:all 0.15s;color:#475569}
-        .btn:hover{border-color:#334155;color:#94a3b8}
-        .btn-primary{background:#4ade80!important;border-color:#4ade80!important;color:#0a0a0f!important;font-weight:500}
-        .btn-primary:hover{filter:brightness(1.1)}
-        input,textarea,select{background:#0f172a;border:1px solid #1e293b;border-radius:6px;color:#e2e8f0;font-family:'DM Mono',monospace;font-size:0.68rem;padding:6px 10px;outline:none;width:100%}
-        input:focus,textarea:focus,select:focus{border-color:#334155}
+        .fi{animation:fi 0.22s ease forwards}
+        .hov{transition:all 0.2s ease;cursor:pointer} .hov:hover{background:rgba(255,255,255,0.04)!important}
+        .btn{background:linear-gradient(180deg,#0f172a,#0c1220);border:1px solid var(--border);border-radius:8px;font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:0.06em;cursor:pointer;padding:6px 11px;transition:all 0.2s ease;color:#94a3b8}
+        .btn:hover{border-color:#334155;color:#e2e8f0;transform:translateY(-1px)}
+        .btn:active{transform:translateY(0)}
+        .btn-primary{background:linear-gradient(180deg,#5df08f,#35cc73)!important;border-color:#5df08f!important;color:#06110a!important;font-weight:600;box-shadow:0 6px 18px rgba(74,222,128,0.25)}
+        .btn-primary:hover{filter:brightness(1.04);box-shadow:0 8px 22px rgba(74,222,128,0.28)}
+        input,textarea,select{background:#0f172a;border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'DM Mono',monospace;font-size:0.68rem;padding:7px 10px;outline:none;width:100%;transition:border-color 0.2s ease, box-shadow 0.2s ease}
+        input:focus,textarea:focus,select:focus{border-color:#3b4c63;box-shadow:0 0 0 3px rgba(96,165,250,0.08)}
         @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
-        .fi{animation:fi 0.2s ease forwards}
-        .tag{font-size:0.56rem;padding:2px 6px;border-radius:3px;letter-spacing:0.06em;white-space:nowrap}
-        .card{background:#0d1117;border:1px solid #1e293b;border-radius:10px;padding:1rem}
-        .sect-title{font-family:'Bebas Neue',sans-serif;font-size:0.95rem;letter-spacing:0.15em}
+        .tag{font-size:0.56rem;padding:3px 7px;border-radius:999px;letter-spacing:0.03em;white-space:nowrap;background:#0f172a}
+        .card{background:linear-gradient(180deg,var(--panel),#0b1018);border:1px solid var(--border);border-radius:12px;padding:1rem;box-shadow:0 12px 24px rgba(0,0,0,0.16);transition:transform 0.2s ease, border-color 0.2s ease}
+        .card:hover{border-color:#2b3a4f}
+        .sect-title{font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:0.06em;text-transform:none}
+        details > summary{list-style:none}
+        details > summary::-webkit-details-marker{display:none}
+        details[open]{animation:fi 0.18s ease}
       `}</style>
 
       <div style={{ maxWidth:820, margin:"0 auto" }}>
@@ -1716,7 +1730,7 @@ RULES:
               PERSONAL TRAINER
             </h1>
             <div style={{ fontSize:"0.58rem", color:"#334155", letterSpacing:"0.12em", marginTop:2 }}>
-              {fmtDate(today).toUpperCase()} · 12-WEEK ROLLING PLAN · CURRENT WEEK {currentWeek} · ARCH {planComposer.architecture.replaceAll("_"," ").toUpperCase()}
+              {fmtDate(today).toUpperCase()} · WEEK {currentWeek} · PERSONAL COACHING
             </div>
           </div>
           <div style={{ display:"flex", gap:"0.5rem", alignItems:"center" }}>
@@ -1746,27 +1760,27 @@ RULES:
         </div>
 
         {/* ══════════════════════════════════════════════════════════
-            TAB 0 — TODAY
+            TODAY
         ══════════════════════════════════════════════════════════ */}
         {tab === 0 && <TodayTab todayWorkout={todayWorkoutHardened} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} goals={goals} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={(id)=>setDismissedTriggers(prev=>[...prev,id])} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} />}
 
         {/* ══════════════════════════════════════════════════════════
-            TAB 1 — PLAN
+            PROGRAM
         ══════════════════════════════════════════════════════════ */}
         {tab === 1 && <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goals} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} />}
 
         {/* ══════════════════════════════════════════════════════════
-            TAB 2 — LOG
+            LOG
         ══════════════════════════════════════════════════════════ */}
         {tab === 2 && <LogTab logs={logs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} currentWeek={currentWeek} todayWorkout={todayWorkout} exportData={exportData} importData={importData} />}
 
         {/* ══════════════════════════════════════════════════════════
-            TAB 3 — NUTRITION
+            NUTRITION
         ══════════════════════════════════════════════════════════ */}
         {tab === 3 && <NutritionTab todayWorkout={todayWorkoutHardened} personalization={personalization} goals={goals} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} nutritionFeedback={nutritionFeedback} saveNutritionFeedback={saveNutritionFeedback} />}
 
         {/* ══════════════════════════════════════════════════════════
-            TAB 4 — COACH
+            COACH
         ══════════════════════════════════════════════════════════ */}
         {tab === 4 && <CoachTab logs={logs} currentWeek={currentWeek} todayWorkout={todayWorkoutHardened} bodyweights={bodyweights} personalization={personalization} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFeedback={nutritionFeedback} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
@@ -1786,19 +1800,15 @@ RULES:
 function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, setEnvironmentMode, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights }) {
   const week = todayWorkout?.week;
   const zones = todayWorkout?.zones;
-  const phaseName = week ? week.phase : "BASE";
-  const phaseColor = PHASE_ZONES[phaseName]?.color || C.green;
   const todayKey = new Date().toISOString().split("T")[0];
   const todayLog = logs[todayKey];
-  const latestBW = bodyweights.length > 0 ? bodyweights[bodyweights.length-1] : null;
-
   const dayColor = todayWorkout ? (dayColors[todayWorkout.type] || C.green) : C.slate;
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const [injuryArea, setInjuryArea] = useState(personalization.injuryPainState.area || "Achilles");
   const defaultCheckin = dailyCheckins?.[todayKey] || (todayLog?.checkin || DEFAULT_DAILY_CHECKIN);
   const [checkin, setCheckin] = useState(defaultCheckin);
   const [checkinAck, setCheckinAck] = useState("");
-  const contextReason = todayWorkout?.reason || "";
+
   useEffect(() => { setCheckin(defaultCheckin); }, [todayKey, dailyCheckins?.[todayKey], todayLog?.checkin?.ts]);
   useEffect(() => {
     if (!dailyCheckins?.[todayKey]) {
@@ -1811,291 +1821,83 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
 
   return (
     <div className="fi">
-      {/* Today's main card */}
-      <div style={{ border:`1px solid ${dayColor}40`, borderRadius:12, overflow:"hidden", background:`${dayColor}06`, marginBottom:"1rem" }}>
-        <div style={{ padding:"1rem 1.1rem", borderBottom:`1px solid ${dayColor}20`, display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.5rem", flexWrap:"wrap" }}>
-          <div>
-            <div style={{ fontSize:"0.58rem", color:dayColor, letterSpacing:"0.2em", textTransform:"uppercase", marginBottom:4 }}>
-              {["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()]} · Week {currentWeek} · {week?.label}
-            </div>
-            <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.6rem", color:"#e2e8f0", letterSpacing:"0.05em", lineHeight:1 }}>
-              {todayWorkout?.label || "Rest Day"}
-            </div>
-          </div>
-          {todayLog && (
-            <div style={{ background:`${C.green}15`, border:`1px solid ${C.green}30`, borderRadius:6, padding:"4px 10px", fontSize:"0.6rem", color:C.green, letterSpacing:"0.08em" }}>
-              ✓ LOGGED
-            </div>
-          )}
-          {todayWorkout?.injuryAdjusted && (
-            <div style={{ background:`${C.red}15`, border:`1px solid ${C.red}30`, borderRadius:6, padding:"4px 10px", fontSize:"0.6rem", color:C.red, letterSpacing:"0.08em" }}>
-              INJURY-ADJUSTED
-            </div>
-          )}
-        </div>
-
-        <div style={{ padding:"1rem 1.1rem", display:"grid", gap:"0.6rem" }}>
-          {/* Run details */}
-          {todayWorkout?.run && (
-            <WorkoutBlock
-              title={`${todayWorkout.run.t} Run — ${todayWorkout.run.d}`}
-              color={todayWorkout.run.t === "Intervals" ? C.amber : todayWorkout.run.t === "Long" ? C.red : C.green}
-              items={[
-                { label:"DISTANCE", val:todayWorkout.run.d },
-                { label:"PACE", val: todayWorkout.run.t === "Intervals" ? zones?.int+"/mi" : todayWorkout.run.t === "Long" ? zones?.long+"/mi" : todayWorkout.run.t === "Tempo" ? zones?.tempo+"/mi" : zones?.easy+"/mi" },
-                { label:"TYPE", val:todayWorkout.run.t },
-              ]}
-            />
-          )}
-
-          {/* Strength */}
-          {(todayWorkout?.type === "run+strength" || todayWorkout?.type === "strength+prehab") && (
-            <div>
-              <div style={{ fontSize:"0.6rem", color:C.blue, letterSpacing:"0.12em", marginBottom:"0.5rem" }}>
-                STRENGTH SESSION {todayWorkout.strSess || "A"} — {todayWorkout.type === "run+strength" ? "after easy run" : "standalone"}
-              </div>
-              <div style={{ display:"grid", gap:3 }}>
-                {(STRENGTH[todayWorkout.strSess || "A"]?.home || []).map((ex,i) => (
-                  <div key={i} style={{ display:"flex", gap:"0.6rem", padding:"5px 8px", background:"#0f172a", borderRadius:6, fontSize:"0.65rem" }}>
-                    <span style={{ color:C.blue, minWidth:20, fontFamily:"'Bebas Neue',sans-serif", fontSize:"0.9rem" }}>{String(i+1).padStart(2,"0")}</span>
-                    <div>
-                      <span style={{ color:"#e2e8f0" }}>{ex.ex}</span>
-                      <span style={{ color:C.blue, marginLeft:"0.5rem" }}>{ex.sets}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* OTF */}
-          {todayWorkout?.type === "otf" && (
-            <div style={{ fontSize:"0.68rem", color:"#64748b", lineHeight:1.8 }}>
-              <span style={{ color:"#f59e0b" }}>Orange Theory Hybrid — </span>
-              This is a real training day. Treadmill blocks carry significant running load on your Achilles and cardiovascular system. Give it full effort. Don't add extra running on top.
-            </div>
-          )}
-
-          {/* Rest */}
-          {todayWorkout?.type === "rest" && (
-            <div style={{ fontSize:"0.68rem", color:"#64748b", lineHeight:1.8 }}>
-              <span style={{ color:C.slate }}>Full Rest — </span>
-              Walk if you want. Do your 5-minute Achilles protocol. Eat at your rest-day targets. Sleep 8 hours.
-            </div>
-          )}
-
-          {/* Achilles always */}
-          <div style={{ background:"#120a1a", border:`1px solid ${C.purple}25`, borderRadius:8, padding:"0.7rem" }}>
-            <div style={{ fontSize:"0.6rem", color:C.purple, letterSpacing:"0.12em", marginBottom:"0.5rem" }}>ACHILLES PROTOCOL — DAILY (5 min)</div>
-            <div style={{ display:"grid", gap:3 }}>
-              {ACHILLES.map((ex,i) => (
-                <div key={i} style={{ fontSize:"0.6rem", color:"#475569" }}>
-                  <span style={{ color:C.purple }}>→ </span>{ex.ex} <span style={{ color:"#334155" }}>· {ex.sets}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+      <div style={{ border:`1px solid ${dayColor}35`, borderRadius:14, overflow:"hidden", background:`${dayColor}06`, marginBottom:"0.85rem" }}>
+        <div style={{ padding:"1rem 1.1rem", borderBottom:`1px solid ${dayColor}18`, display:"grid", gap:"0.35rem" }}>
+          <div style={{ fontSize:"0.56rem", color:dayColor, letterSpacing:"0.18em", textTransform:"uppercase" }}>Today’s priority</div>
+          <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.75rem", color:"#e2e8f0", letterSpacing:"0.04em", lineHeight:1 }}>{todayWorkout?.label || "Rest Day"}</div>
+          <div style={{ fontSize:"0.62rem", color:"#cbd5e1", lineHeight:1.7 }}>{dailyStory?.brief}</div>
+          <div style={{ fontSize:"0.58rem", color:C.green }}><span style={{ color:"#94a3b8" }}>Success today:</span> {dailyStory?.success}</div>
         </div>
       </div>
 
-      {/* Analyzing indicator */}
-      {analyzing && (
-        <div style={{ display:"flex", alignItems:"center", gap:"0.5rem", padding:"0.6rem 0.85rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, marginBottom:"0.75rem", fontSize:"0.62rem", color:C.amber }}>
-          <div style={{ width:6, height:6, borderRadius:"50%", background:C.amber, animation:"pulse 1s infinite" }} />
-          Analyzing your training logs and adjusting plan...
-        </div>
-      )}
-
       <div className="card" style={{ marginBottom:"0.75rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>GOAL-NATIVE PLAN ARCHITECTURE</div>
-        <div style={{ fontSize:"0.57rem", color:"#cbd5e1", marginBottom:"0.2rem" }}>Selected: {planComposer.architecture.replaceAll("_"," ")}</div>
-        <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginBottom:"0.15rem" }}>Drivers: {planComposer.drivers.join(" · ") || "none"}</div>
-        <div style={{ fontSize:"0.54rem", color:"#64748b" }}>Split: Run {planComposer.split.run} · Strength {planComposer.split.strength} · Conditioning {planComposer.split.conditioning} · Recovery {planComposer.split.recovery}</div>
-        {!!planComposer.constraints.length && <div style={{ marginTop:"0.2rem", fontSize:"0.53rem", color:C.amber }}>Constraint: {planComposer.constraints[0]}</div>}
-      </div>
-
-      <div className="card" style={{ marginBottom:"0.75rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.45rem" }}>REAL-LIFE DAY OVERRIDES</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:"0.25rem", marginBottom:"0.35rem" }}>
-          {[["busy_day","Busy"],["low_energy_day","Low energy"],["travel_day","Travel"],["social_event_day","Social"],["minimum_viable_day","Min day"]].map(([k,label]) => (
-            <button key={k} className="btn" onClick={()=>applyDayContextOverride(k)} style={{ fontSize:"0.5rem" }}>{label}</button>
-          ))}
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.25rem" }}>
-          <button className="btn" onClick={()=>shiftTodayWorkout(1)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}>Shift to tomorrow</button>
-          <button className="btn" onClick={()=>shiftTodayWorkout(2)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}>Shift +2 days</button>
-        </div>
-        {todayWorkout?.minDay && (
-          <div style={{ marginTop:"0.4rem", fontSize:"0.56rem", color:C.amber }}>
-            Success redefined: {todayWorkout?.success || "Today = minimum effective day. Keep momentum alive."}
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.45rem" }}>MAIN WORKOUT</div>
+        {todayWorkout?.run && (
+          <WorkoutBlock
+            title={`${todayWorkout.run.t} — ${todayWorkout.run.d}`}
+            color={todayWorkout.run.t === "Intervals" ? C.amber : todayWorkout.run.t === "Long" ? C.red : C.green}
+            items={[
+              { label:"Distance", val:todayWorkout.run.d },
+              { label:"Pace", val: todayWorkout.run.t === "Intervals" ? zones?.int+"/mi" : todayWorkout.run.t === "Long" ? zones?.long+"/mi" : todayWorkout.run.t === "Tempo" ? zones?.tempo+"/mi" : zones?.easy+"/mi" },
+              { label:"Focus", val:todayWorkout.run.t },
+            ]}
+          />
+        )}
+        {(todayWorkout?.type === "run+strength" || todayWorkout?.type === "strength+prehab") && (
+          <div style={{ marginTop:"0.6rem", fontSize:"0.6rem", color:"#94a3b8" }}>
+            Strength add-on: {(STRENGTH[todayWorkout.strSess || "A"]?.home || []).slice(0,3).map(x => `${x.ex} (${x.sets})`).join(" · ")}
           </div>
         )}
-        {contextReason && <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:"#64748b" }}>Current override: {contextReason.replaceAll("_"," ")}</div>}
       </div>
 
-      {salvageLayer.active && (
-        <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.amber+"55", background:"#1a1304" }}>
-          <div className="sect-title" style={{ color:C.amber, marginBottom:"0.45rem" }}>SALVAGE MODE ACTIVE — WEEK COMPRESSED</div>
-          <div style={{ fontSize:"0.58rem", color:"#f1f5f9", lineHeight:1.6, marginBottom:"0.35rem" }}>
-            This week has been compressed so execution stays realistic.
-          </div>
-          <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginBottom:"0.25rem" }}>What remains important: {salvageLayer.compressedPlan.keep.join(" · ")}</div>
-          <div style={{ fontSize:"0.56rem", color:"#64748b", marginBottom:"0.25rem" }}>What was removed: {salvageLayer.compressedPlan.remove.join(" · ")}</div>
-          <div style={{ fontSize:"0.56rem", color:C.green }}>Success this week: {salvageLayer.compressedPlan.success}</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.65rem", marginBottom:"0.75rem" }}>
+        <div className="card">
+          <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>COACH NOTE</div>
+          <div style={{ fontSize:"0.61rem", color:"#e2e8f0", lineHeight:1.7 }}>{dailyStory?.focus || arbitration.shiftReason}</div>
         </div>
-      )}
-      {validationLayer?.coachNudge && (
-        <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.blue+"40", background:"#09121f" }}>
-          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.3rem" }}>CLOSED-LOOP VALIDATION</div>
-          <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.65 }}>{validationLayer.coachNudge}</div>
-          <div style={{ fontSize:"0.54rem", color:"#64748b", marginTop:"0.2rem" }}>{validationLayer.summary}</div>
-        </div>
-      )}
-      {failureMode.mode !== "normal" && (
-        <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.green+"35", background:"#07140d" }}>
-          <div className="sect-title" style={{ color:C.green, marginBottom:"0.3rem" }}>FAILURE-MODE HARDENING ACTIVE</div>
-          <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.65 }}>{failureMode.coachBehavior.primaryLine}</div>
-          <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" }}>
-            Horizon: {failureMode.planningHorizonDays} days · Uncertainty: {failureMode.uncertainty} · Expectation: {failureMode.minimumViableStructure.expectation}
+        <div className="card">
+          <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>EASIEST FALLBACK</div>
+          <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.7, marginBottom:"0.35rem" }}>{todayWorkout?.fallback || "Minimum viable day: short session + momentum preserved."}</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
+            <button className="btn" onClick={()=>applyDayContextOverride("minimum_viable_day")} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}>Min day</button>
+            <button className="btn" onClick={()=>shiftTodayWorkout(1)} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"30" }}>Shift tomorrow</button>
           </div>
         </div>
-      )}
-      {optimizationLayer?.confidence !== "low" && (
-        <div style={{ marginBottom:"0.55rem", fontSize:"0.55rem", color:"#64748b" }}>
-          Optimization note: {optimizationLayer.coachLine}
-        </div>
-      )}
-
-      {/* Plan alerts */}
-      {planAlerts.length > 0 && (
-        <div style={{ marginBottom:"0.75rem", display:"grid", gap:"0.4rem" }}>
-          {planAlerts.slice(0, 1).map(alert => (
-            <div key={alert.id} style={{
-              display:"flex", alignItems:"flex-start", gap:"0.6rem",
-              padding:"0.65rem 0.85rem",
-              background: alert.type === "upgrade" ? "#0a1a0a" : alert.type === "warning" ? "#1a0e00" : "#0a0a14",
-              border: `1px solid ${alert.type === "upgrade" ? C.green+"50" : alert.type === "warning" ? C.amber+"50" : C.blue+"40"}`,
-              borderRadius:8, fontSize:"0.65rem", lineHeight:1.6
-            }}>
-              <div style={{ fontSize:"0.85rem", flexShrink:0 }}>
-                {alert.type === "upgrade" ? "⬆" : alert.type === "warning" ? "⚠" : alert.type === "makeup" ? "↩" : "ℹ"}
-              </div>
-              <div style={{ flex:1, color: alert.type === "upgrade" ? C.green : alert.type === "warning" ? C.amber : "#94a3b8" }}>
-                {alert.msg}
-              </div>
-              <button onClick={() => setPlanAlerts(prev => prev.filter(a => a.id !== alert.id))}
-                style={{ background:"none", border:"none", color:"#334155", cursor:"pointer", fontSize:"0.7rem", flexShrink:0, padding:0 }}>✕</button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Quick stats row */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(130px,1fr))", gap:"0.5rem", marginBottom:"1rem" }}>
-        {[
-          { label:"Current Weight", val: latestBW ? `${latestBW.w} lbs` : `${PROFILE.weight} lbs`, sub: latestBW ? `↓ ${(PROFILE.weight - latestBW.w).toFixed(1)} lbs from start` : "Starting weight", color:C.green },
-          { label:"Workouts Logged", val: Object.keys(logs).length, sub:"Total sessions", color:C.blue },
-          { label:"Today's Nutrition", val: todayWorkout ? NUTRITION[todayWorkout.nutri || "easyRun"]?.cal : NUTRITION.rest.cal, sub:"Target calories", color:C.amber },
-          { label:"Phase", val: phaseName, sub:`Week ${currentWeek} of 18`, color:phaseColor },
-        ].map(s => (
-          <div key={s.label} style={{ border:`1px solid #1e293b`, borderRadius:8, padding:"0.65rem 0.85rem", background:"#0d1117" }}>
-            <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.3rem", color:s.color, letterSpacing:"0.04em", lineHeight:1 }}>{s.val}</div>
-            <div style={{ fontSize:"0.58rem", color:"#334155", letterSpacing:"0.08em", marginTop:3, textTransform:"uppercase" }}>{s.label}</div>
-            <div style={{ fontSize:"0.56rem", color:"#1e293b", marginTop:1 }}>{s.sub}</div>
-          </div>
-        ))}
       </div>
 
-      <div className="card" style={{ marginBottom:"1rem" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.6rem" }}>15-SECOND CHECK-IN</div>
-        <div style={{ display:"grid", gap:"0.4rem" }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
-            <select value={checkin.status || "completed_as_planned"} onChange={e=>setCheckin(c=>({ ...c, status: e.target.value }))} style={{ fontSize:"0.56rem" }}>
-              {CHECKIN_STATUS_OPTIONS.map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)}
-            </select>
-            <select value={checkin.sessionFeel || "about_right"} onChange={e=>setCheckin(c=>({ ...c, sessionFeel: e.target.value }))} style={{ fontSize:"0.56rem" }}>
-              {CHECKIN_FEEL_OPTIONS.map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)}
-            </select>
+      <div className="card" style={{ marginBottom:"0.75rem" }}>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>QUICK CHECK-IN</div>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            {CHECKIN_STATUS_OPTIONS.map(opt => (
+              <button key={opt.key} className="btn" onClick={()=>setCheckin(c=>({ ...c, status: opt.key }))} style={{ fontSize:"0.52rem", color:checkin.status===opt.key?C.green:"#64748b", borderColor:checkin.status===opt.key?C.green+"40":"#1e293b" }}>{opt.label}</button>
+            ))}
           </div>
-          {(checkin.status === "completed_modified" || checkin.status === "skipped") && (
-            <select value={checkin.blocker || ""} onChange={e=>setCheckin(c=>({ ...c, blocker: e.target.value }))} style={{ fontSize:"0.56rem" }}>
-              <option value="">Main blocker (if any)</option>
-              {CHECKIN_BLOCKER_OPTIONS.map(b => <option key={b.key} value={b.key}>{b.label}</option>)}
-            </select>
-          )}
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            {CHECKIN_FEEL_OPTIONS.map(opt => (
+              <button key={opt.key} className="btn" onClick={()=>setCheckin(c=>({ ...c, sessionFeel: opt.key }))} style={{ fontSize:"0.52rem", color:checkin.sessionFeel===opt.key?C.blue:"#64748b", borderColor:checkin.sessionFeel===opt.key?C.blue+"40":"#1e293b" }}>{opt.label}</button>
+            ))}
+          </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 120px auto", gap:"0.35rem" }}>
-            <input value={checkin.note || ""} onChange={e=>setCheckin(c=>({ ...c, note: e.target.value }))} placeholder='Micro input: "missed — busy", "felt hard", "good session"' />
-            <input type="number" step="0.1" value={checkin.bodyweight || ""} onChange={e=>setCheckin(c=>({ ...c, bodyweight: e.target.value }))} placeholder="BW (opt)" />
+            <input value={checkin.note || ""} onChange={e=>setCheckin(c=>({ ...c, note: e.target.value }))} placeholder='Optional note' />
+            <input type="number" step="0.1" value={checkin.bodyweight || ""} onChange={e=>setCheckin(c=>({ ...c, bodyweight: e.target.value }))} placeholder="BW" />
             <button className="btn btn-primary" onClick={async ()=>{
               const parsed = parseMicroCheckin(checkin.note || "");
               const payload = parsed ? { ...checkin, ...parsed, passiveAssumed: false } : { ...checkin, passiveAssumed: false };
               await saveDailyCheckin(todayKey, payload);
-              const ack = payload.status === "completed_as_planned"
-                ? "Saved — good day, you hit what mattered."
-                : payload.status === "completed_modified"
-                ? "Saved — not perfect, but momentum stayed alive."
-                : payload.status === "skipped"
-                ? "Saved — recovery noted. Tomorrow is a fresh restart."
-                : "Saved — check-in captured.";
-              setCheckinAck(ack);
+              setCheckinAck("Saved.");
               if (checkin.bodyweight && !Number.isNaN(parseFloat(checkin.bodyweight))) {
                 const entry = { date: todayKey, w: parseFloat(checkin.bodyweight) };
                 const nextBW = [...bodyweights.filter(b => b.date !== todayKey), entry].sort((a,b) => a.date.localeCompare(b.date));
                 await saveBodyweights(nextBW);
               }
-            }} style={{ fontSize:"0.55rem" }}>SAVE CHECK-IN</button>
+            }} style={{ fontSize:"0.55rem" }}>SAVE</button>
           </div>
           {checkinAck && <div style={{ fontSize:"0.54rem", color:C.green }}>{checkinAck}</div>}
-          <div style={{ fontSize:"0.53rem", color:"#475569" }}>If you do nothing, today is auto-assumed completed as planned. Tap only to correct.</div>
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom:"1rem", borderColor:C.amber+"40", background:"#15120a" }}>
-        <div className="sect-title" style={{ color:C.amber, marginBottom:"0.55rem" }}>DAILY BRIEF</div>
-        <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.75, marginBottom:"0.4rem" }}>
-          {dailyStory.brief}
-        </div>
-        <div style={{ fontSize:"0.56rem", color:C.green, lineHeight:1.7 }}>
-          <span style={{ color:"#94a3b8" }}>Success today:</span> {dailyStory.success}
-        </div>
-        <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#64748b" }}>
-          Priority mode: {dailyStory.priority} · {arbitration.shiftReason}
-        </div>
-        {proactiveTriggers[0] && (
-          <div style={{ marginTop:"0.3rem", fontSize:"0.54rem", color:"#94a3b8" }}>
-            Nudge: {proactiveTriggers[0].msg}
-          </div>
-        )}
-      </div>
-
-      <div className="card" style={{ marginBottom:"1rem" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.55rem" }}>MOMENTUM LOOP</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:"0.4rem", marginBottom:"0.4rem" }}>
-          <div style={{ background:"#0f172a", border:`1px solid ${C.green}30`, borderRadius:7, padding:"0.45rem" }}>
-            <div style={{ fontSize:"0.5rem", color:"#334155" }}>CONSISTENCY STREAK</div>
-            <div style={{ fontSize:"0.68rem", color:C.green }}>{behaviorLoop.consistencyStreak} days</div>
-          </div>
-          <div style={{ background:"#0f172a", border:`1px solid ${C.blue}30`, borderRadius:7, padding:"0.45rem" }}>
-            <div style={{ fontSize:"0.5rem", color:"#334155" }}>MIN DAY STREAK</div>
-            <div style={{ fontSize:"0.68rem", color:C.blue }}>{behaviorLoop.minViableStreak} days</div>
-          </div>
-        </div>
-        <div style={{ fontSize:"0.57rem", color:"#94a3b8", lineHeight:1.7, marginBottom:"0.2rem" }}>{behaviorLoop.resolution}</div>
-        <div style={{ fontSize:"0.56rem", color:behaviorLoop.recoveryTone ? C.amber : C.green }}>{behaviorLoop.identity}</div>
-      </div>
-
-      {(todayWorkout?.type?.includes("strength") || todayWorkout?.label?.toLowerCase().includes("strength")) && (
-        <div className="card" style={{ marginBottom:"1rem" }}>
-          <div className="sect-title" style={{ color:C.purple, marginBottom:"0.5rem" }}>STRENGTH FOCUS TODAY</div>
-          <div style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.7 }}>
-            Focus: <span style={{ color:"#e2e8f0" }}>{strengthLayer.focus}</span> · Bench est {strengthLayer.benchEstimate} · conservative TM {strengthLayer.trainingMax}.
-          </div>
-          <div style={{ marginTop:"0.35rem", fontSize:"0.56rem", color:"#64748b" }}>Session: {strengthLayer.progression[0]}</div>
-          <div style={{ marginTop:"0.25rem", fontSize:"0.55rem", color:"#475569" }}>{strengthLayer.tradeoff}</div>
-        </div>
-      )}
-
-      <div style={{ marginBottom:"0.7rem", display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.35rem", alignItems:"center" }}>
+      <div style={{ marginBottom:"0.6rem", display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.35rem", alignItems:"center" }}>
         <select value={personalization.travelState.environmentMode || "home"} onChange={e=>setEnvironmentMode(e.target.value)} style={{ fontSize:"0.58rem" }}>
           {["full gym","limited gym","home","travel","outdoors only","no equipment"].map(m => <option key={m} value={m}>{m}</option>)}
         </select>
@@ -2103,53 +1905,24 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         {proactiveTriggers[0] && <button className="btn" onClick={()=>onDismissTrigger(proactiveTriggers[0].id)} style={{ fontSize:"0.52rem" }}>Dismiss</button>}
       </div>
 
-      <div className="card" style={{ marginBottom:"1rem", borderColor: personalization.injuryPainState.level === "none" ? "#1e293b" : C.red + "50" }}>
-        <div className="sect-title" style={{ color: personalization.injuryPainState.level === "none" ? C.slate : C.red, marginBottom:"0.6rem" }}>
-          INJURY / PAIN STATUS
-        </div>
-        <div style={{ fontSize:"0.62rem", color:"#94a3b8", marginBottom:"0.45rem" }}>
-          Status: <span style={{ color:"#e2e8f0" }}>{personalization.injuryPainState.level.replaceAll("_", " ")}</span> · Area: <span style={{ color:"#e2e8f0" }}>{personalization.injuryPainState.area}</span>
-        </div>
-        <div style={{ fontSize:"0.6rem", color:C.amber, lineHeight:1.7, marginBottom:"0.45rem" }}>
-          Active modifications: {injuryRule.mods.length ? injuryRule.mods.join(" · ") : "None"}
-        </div>
-        <div style={{ fontSize:"0.58rem", color:"#64748b", marginBottom:"0.55rem" }}>
-          Why this changed: {injuryRule.why}
-        </div>
-        <div style={{ marginBottom:"0.45rem" }}>
-          <select value={injuryArea} onChange={e=>setInjuryArea(e.target.value)} style={{ fontSize:"0.58rem" }}>
+      <details style={{ marginBottom:"0.8rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem 0.7rem" }}>
+        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#94a3b8", letterSpacing:"0.06em" }}>More context</summary>
+        {salvageLayer.active && <div style={{ marginTop:"0.35rem", fontSize:"0.56rem", color:C.amber }}>Weekly strategy: {salvageLayer.compressedPlan.success}</div>}
+        {failureMode.mode !== "normal" && <div style={{ marginTop:"0.35rem", fontSize:"0.56rem", color:C.green }}>{failureMode.coachBehavior.primaryLine}</div>}
+        {validationLayer?.coachNudge && <div style={{ marginTop:"0.35rem", fontSize:"0.56rem", color:C.blue }}>{validationLayer.coachNudge}</div>}
+        <div style={{ marginTop:"0.4rem" }}>
+          <select value={injuryArea} onChange={e=>setInjuryArea(e.target.value)} style={{ fontSize:"0.56rem", marginBottom:"0.35rem" }}>
             {AFFECTED_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
-        </div>
-        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-          <button className="btn" onClick={()=>setInjuryState("none", injuryArea)} style={{ color:C.green, borderColor:C.green+"35" }}>CLEAR</button>
-          <button className="btn" onClick={()=>setInjuryState("mild_tightness", injuryArea)} style={{ color:C.blue, borderColor:C.blue+"35" }}>MILD</button>
-          <button className="btn" onClick={()=>setInjuryState("moderate_pain", injuryArea)} style={{ color:C.amber, borderColor:C.amber+"35" }}>MODERATE</button>
-          <button className="btn" onClick={()=>setInjuryState("sharp_pain_stop", injuryArea)} style={{ color:C.red, borderColor:C.red+"35" }}>SHARP / STOP</button>
-        </div>
-        <div style={{ marginTop:"0.5rem", fontSize:"0.55rem", color:"#475569" }}>
-          Training adjustment logic only. Not medical diagnosis.
-        </div>
-      </div>
-
-      {/* Recent logs preview */}
-      {Object.keys(logs).length > 0 && (
-        <div className="card">
-          <div className="sect-title" style={{ color:C.green, marginBottom:"0.75rem" }}>RECENT ACTIVITY</div>
-          <div style={{ display:"grid", gap:"0.4rem" }}>
-            {Object.entries(logs).slice(-4).reverse().map(([date, log]) => (
-              <div key={date} style={{ display:"flex", gap:"0.75rem", fontSize:"0.65rem", padding:"6px 8px", background:"#0f172a", borderRadius:6, alignItems:"center" }}>
-                <span style={{ color:"#334155", minWidth:80 }}>{new Date(date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>
-                <span style={{ color:"#e2e8f0", flex:1 }}>{log.type}</span>
-                {log.miles && <span style={{ color:C.green }}>{log.miles} mi</span>}
-                {log.pace && <span style={{ color:C.blue }}>{log.pace}/mi</span>}
-                {log.pushups && <span style={{ color:C.amber }}>{log.pushups} push-ups</span>}
-                {log.feel && <span style={{ color:["#334155","#f87171","#f59e0b","#60a5fa","#4ade80"][log.feel-1]||"#475569" }}>{"●".repeat(log.feel)}</span>}
-              </div>
-            ))}
+          <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
+            <button className="btn" onClick={()=>setInjuryState("none", injuryArea)} style={{ color:C.green, borderColor:C.green+"35" }}>Clear pain</button>
+            <button className="btn" onClick={()=>setInjuryState("mild_tightness", injuryArea)} style={{ color:C.blue, borderColor:C.blue+"35" }}>Mild</button>
+            <button className="btn" onClick={()=>setInjuryState("moderate_pain", injuryArea)} style={{ color:C.amber, borderColor:C.amber+"35" }}>Moderate</button>
+            <button className="btn" onClick={()=>setInjuryState("sharp_pain_stop", injuryArea)} style={{ color:C.red, borderColor:C.red+"35" }}>Sharp/Stop</button>
           </div>
+          <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>Status: {personalization.injuryPainState.level.replaceAll("_"," ")} · {injuryRule.why}</div>
         </div>
-      )}
+      </details>
     </div>
   );
 }
@@ -2173,11 +1946,9 @@ function WorkoutBlock({ title, color, items }) {
 // ── PLAN TAB ──────────────────────────────────────────────────────────────────
 function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin }) {
   const [openWeek, setOpenWeek] = useState(null);
-  const [newGoal, setNewGoal] = useState({ name:"", category:"running", priority:2, targetDate:"", measurableTarget:"", active:true });
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
   const [miniWeekly, setMiniWeekly] = useState(weeklyDraft);
   useEffect(() => { setMiniWeekly(weeklyDraft); }, [currentWeek, weeklyCheckins?.[String(currentWeek)]?.ts]);
-  const goalContext = getGoalContext(goals);
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
   const adjustedWeekMap = {};
@@ -2185,330 +1956,95 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
     const w = h.template;
     if (h.slot >= 1) {
       const baseAdaptive = buildAdaptiveWeek(w, signals, personalization, memoryInsights);
-      if (recalibration?.active && recalibration.aggressiveness === "lower") {
-        baseAdaptive.changed.unshift("Recalibration: weekly density reduced for better consistency.");
-      }
-      if (learningLayer.adaptation?.reduceDensity) {
-        baseAdaptive.adjusted.mon.d = scaleMilesString(baseAdaptive.adjusted.mon.d, 0.88);
-        baseAdaptive.adjusted.fri.d = scaleMilesString(baseAdaptive.adjusted.fri.d, 0.88);
-        baseAdaptive.changed.push("Adjusting based on your pattern: you tend to fall off when weeks are too dense.");
-      }
-      if (learningLayer.adaptation?.lowerAggressiveness) {
-        baseAdaptive.changed.push("Pattern-informed adjustment: progression aggressiveness reduced this block.");
-      }
-      if (learningLayer.adaptation?.environmentFastSwitch) {
-        baseAdaptive.changed.push("Pattern-informed adjustment: environment substitutions are applied earlier.");
-      }
-      if (arbitration.primary?.category === "strength" && arbitration.secondary.find(g=>g.category==="running")) {
-        baseAdaptive.adjusted.mon.d = scaleMilesString(baseAdaptive.adjusted.mon.d, 0.95);
-        baseAdaptive.changed.push("Running volume trimmed slightly to protect strength progression.");
-      }
-      if (planComposer.architecture !== "race_prep_dominant") {
-        const tpl = planComposer.dayTemplates || {};
-        const mapDayToField = { 1: "mon", 4: "thu", 5: "fri", 6: "sat" };
-        Object.entries(mapDayToField).forEach(([dayNum, field]) => {
-          const d = tpl[Number(dayNum)];
-          if (!d) return;
-          if (d.run?.t && d.run?.d) baseAdaptive.adjusted[field] = { t: d.run.t, d: d.run.d };
-          else if (field === "thu" && d.type !== "hard-run") baseAdaptive.adjusted[field] = { t: "Conditioning", d: "Goal-native conditioning focus" };
-          else if (!d.run) baseAdaptive.adjusted[field] = { t: "Strength / Recovery", d: d.label || "Goal-native split session" };
-        });
-        baseAdaptive.changed.push(`Goal-native composer applied (${planComposer.architecture.replaceAll("_"," ")}).`);
-      }
-      if (h.specificity === "medium") baseAdaptive.changed.push("Moderate-specificity planning zone (weeks 3-6).");
-      if (h.specificity === "directional") baseAdaptive.changed.push("Directional planning zone (weeks 7-12): focus is intentionally less precise.");
       adjustedWeekMap[h.absoluteWeek] = baseAdaptive;
     }
   });
 
   return (
     <div className="fi">
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1rem", flexWrap:"wrap", gap:"0.5rem" }}>
-        <div style={{ fontSize:"0.65rem", color:"#334155", lineHeight:1.7 }}>
-          Multi-goal weekly planner. Race structure stays intact while week details adjust by execution + recovery.
-        </div>
-        {Object.keys(paceOverrides).length > 0 && (
-          <button className="btn" onClick={() => setPaceOverrides({})}
-            style={{ fontSize:"0.58rem", color:C.amber, borderColor:C.amber+"30", whiteSpace:"nowrap" }}>
-            RESET PACE ADJUSTMENTS
-          </button>
-        )}
-      </div>
-      <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.blue+"45", background:"#0a1320" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>TRUE PLAN COMPOSER (GOAL-NATIVE)</div>
-        <div style={{ fontSize:"0.58rem", color:"#e2e8f0", marginBottom:"0.2rem" }}>Architecture: {planComposer.architecture.replaceAll("_"," ")}</div>
-        <div style={{ fontSize:"0.55rem", color:"#94a3b8", lineHeight:1.65 }}>{planComposer.why.join(" ")}</div>
-        <div style={{ marginTop:"0.22rem", fontSize:"0.54rem", color:"#64748b" }}>Goal-driven split → Run {planComposer.split.run}, Strength {planComposer.split.strength}, Conditioning {planComposer.split.conditioning}, Recovery {planComposer.split.recovery}.</div>
-        {!!planComposer.constraints.length && <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:C.amber }}>Environment constraints: {planComposer.constraints.join(" ")}</div>}
-        {!!planComposer.unlockMessage && <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:C.green }}>{planComposer.unlockMessage}</div>}
+      <div className="card" style={{ marginBottom:"0.85rem", borderColor:C.blue+"40", background:"#0a1320" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>YOUR PROGRAM</div>
+        <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.7 }}>Current block: <span style={{ color:C.blue }}>{planComposer.architecture.replaceAll("_"," ")}</span></div>
+        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.2rem" }}>Prioritized: {arbitration.pushes?.[0] || arbitration.priorityStack.primary}</div>
+        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.15rem" }}>Maintained: {arbitration.maintains?.[0] || arbitration.priorityStack.maintained}</div>
+        <div style={{ fontSize:"0.58rem", color:C.amber, marginTop:"0.25rem" }}>Tradeoff: {arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
       </div>
 
-      {salvageLayer.active && (
-        <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.amber+"55", background:"#1a1304" }}>
-          <div className="sect-title" style={{ color:C.amber, marginBottom:"0.45rem" }}>PLAN COMPRESSION THIS WEEK</div>
-          <div style={{ fontSize:"0.57rem", color:"#94a3b8", marginBottom:"0.25rem" }}>Why: {salvageLayer.triggerReasons.join(" · ")}</div>
-          {salvageLayer.compressedPlan.keep.map((k,i)=><div key={i} style={{ fontSize:"0.57rem", color:"#e2e8f0", marginBottom:"0.15rem" }}>• Keep: {k}</div>)}
-          {salvageLayer.compressedPlan.remove.map((r,i)=><div key={i} style={{ fontSize:"0.55rem", color:"#64748b", marginBottom:"0.1rem" }}>• Removed: {r}</div>)}
-          <div style={{ fontSize:"0.56rem", color:C.green, marginTop:"0.2rem" }}>Success = {salvageLayer.compressedPlan.success}</div>
-        </div>
-      )}
-      {failureMode.mode !== "normal" && (
-        <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.green+"40", background:"#07140d" }}>
-          <div className="sect-title" style={{ color:C.green, marginBottom:"0.4rem" }}>
-            {failureMode.isReEntry ? "RE-ENTRY WEEK ACTIVE" : "LOW-COMPLEXITY PLANNING MODE"}
-          </div>
-          <div style={{ fontSize:"0.57rem", color:"#cbd5e1", lineHeight:1.65, marginBottom:"0.25rem" }}>{failureMode.coachBehavior.primaryLine}</div>
-          <div style={{ fontSize:"0.55rem", color:"#94a3b8", marginBottom:"0.2rem" }}>Planning horizon shortened to {failureMode.planningHorizonDays} days.</div>
-          {failureMode.minimumViableStructure.sessions.map((s, i) => (
-            <div key={i} style={{ fontSize:"0.56rem", color:"#e2e8f0", marginBottom:"0.12rem" }}>• {s}</div>
-          ))}
-          <div style={{ fontSize:"0.54rem", color:"#64748b", marginTop:"0.15rem" }}>{failureMode.minimumViableStructure.expectation}</div>
-        </div>
-      )}
-
-      <div className="card" style={{ marginBottom:"0.75rem" }}>
-        <div className="sect-title" style={{ color:C.amber, marginBottom:"0.5rem" }}>WEEKLY MINI CHECK-IN (UNDER 10 SECONDS)</div>
-        <div style={{ display:"grid", gap:"0.4rem", fontSize:"0.57rem" }}>
-          {[
-            ["energy", "Energy this week?"],
-            ["stress", "Stress / chaos this week?"],
-            ["confidence", "Confidence for next week?"],
-          ].map(([k, label]) => (
-            <div key={k} style={{ display:"grid", gridTemplateColumns:"170px 1fr", alignItems:"center", gap:"0.5rem" }}>
+      <div className="card" style={{ marginBottom:"0.85rem" }}>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>THIS WEEK CHECK-IN</div>
+        <div style={{ display:"grid", gap:"0.35rem", fontSize:"0.57rem" }}>
+          {[ ["energy", "Energy"], ["stress", "Stress"], ["confidence", "Confidence"] ].map(([k, label]) => (
+            <div key={k} style={{ display:"grid", gridTemplateColumns:"120px 1fr", alignItems:"center", gap:"0.5rem" }}>
               <div style={{ color:"#94a3b8" }}>{label}</div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:"0.25rem" }}>
                 {[1,2,3,4,5].map(n => (
-                  <button key={n} className="btn" onClick={()=>setMiniWeekly(prev=>({ ...prev, [k]: n }))}
-                    style={{ fontSize:"0.53rem", padding:"3px 0", borderColor: Number(miniWeekly[k])===n ? C.amber : "#1e293b", color: Number(miniWeekly[k])===n ? C.amber : "#64748b" }}>
-                    {n}
-                  </button>
+                  <button key={n} className="btn" onClick={()=>setMiniWeekly(prev=>({ ...prev, [k]: n }))} style={{ fontSize:"0.53rem", padding:"3px 0", borderColor:Number(miniWeekly[k])===n ? C.green : "#1e293b", color:Number(miniWeekly[k])===n ? C.green : "#64748b" }}>{n}</button>
                 ))}
               </div>
             </div>
           ))}
-          <div>
-            <button className="btn btn-primary" onClick={()=>saveWeeklyCheckin(currentWeek, miniWeekly)} style={{ fontSize:"0.55rem" }}>SAVE WEEKLY CHECK-IN</button>
-          </div>
+          <button className="btn btn-primary" onClick={()=>saveWeeklyCheckin(currentWeek, miniWeekly)} style={{ width:"fit-content", fontSize:"0.55rem" }}>SAVE</button>
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom:"0.75rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.45rem" }}>LEARNING SUMMARY</div>
-        <div style={{ fontSize:"0.56rem", color:"#64748b", marginBottom:"0.3rem" }}>
-          Bias this week: <span style={{ color:"#e2e8f0" }}>{learningLayer.adjustmentBias}</span> · Check-ins used: {learningLayer.stats.total}.
-        </div>
-        {learningLayer.adaptation?.active && (
-          <div style={{ fontSize:"0.56rem", color:C.amber, marginBottom:"0.2rem" }}>
-            Auto-adjusting week structure from medium/high-confidence patterns.
-          </div>
-        )}
-        {(learningLayer.topObservations || []).slice(0,3).map(o => (
-          <div key={o.key} style={{ fontSize:"0.57rem", color:"#94a3b8", marginBottom:"0.2rem" }}>• {o.msg}</div>
-        ))}
-      </div>
-      {Object.keys(paceOverrides).length > 0 && (
-        <div style={{ marginBottom:"0.85rem", padding:"0.65rem 0.85rem", background:"#0d1117", border:`1px solid ${C.amber}30`, borderRadius:8, fontSize:"0.62rem", color:C.amber, lineHeight:1.7 }}>
-          ⬆ Plan paces have been adjusted based on your training logs. Weeks marked ADJUSTED show your updated targets.
-        </div>
-      )}
-      <div className="card" style={{ marginBottom:"0.75rem" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.5rem" }}>GOAL STACK</div>
-        <div style={{ fontSize:"0.6rem", color:"#94a3b8", marginBottom:"0.35rem" }}>Primary: <span style={{ color:"#e2e8f0" }}>{arbitration.primary?.name || "None"}</span></div>
-        <div style={{ fontSize:"0.56rem", color:"#475569", marginBottom:"0.35rem" }}>Current coach mode: {momentum.coachMode} · consistency first.</div>
-        <div style={{ fontSize:"0.58rem", color:"#64748b", marginBottom:"0.35rem" }}>Secondary: {(arbitration.secondary || []).map(g => g.name).join(" · ") || "None"}</div>
-        <div style={{ fontSize:"0.56rem", color:"#475569", marginBottom:"0.35rem" }}>Maintained: {(arbitration.maintenance || []).map(g => g.name).join(" · ") || "None"}</div>
-        <div style={{ fontSize:"0.55rem", color:"#475569", marginBottom:"0.45rem" }}>Deprioritized now: {(arbitration.deprioritized || []).join(" · ") || "None"}</div>
-        <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginBottom:"0.35rem" }}>
-          Current priority stack: primary <span style={{ color:"#e2e8f0" }}>{arbitration.priorityStack.primary}</span> · secondary <span style={{ color:"#e2e8f0" }}>{arbitration.priorityStack.secondary}</span> · maintained <span style={{ color:"#e2e8f0" }}>{arbitration.priorityStack.maintained}</span>.
-        </div>
-        <div style={{ fontSize:"0.56rem", color:"#64748b", marginBottom:"0.35rem" }}>{arbitration.shiftReason}</div>
-        <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.45rem" }}>
-          {(arbitration.conflicts || []).map((t,i)=><div key={i} style={{ fontSize:"0.55rem", color:C.amber }}>Tradeoff: {t}</div>)}
-          <div style={{ fontSize:"0.55rem", color:"#94a3b8" }}>Pushed: {(arbitration.pushes || []).join(" · ") || "None"}.</div>
-          <div style={{ fontSize:"0.55rem", color:"#94a3b8" }}>Maintained: {(arbitration.maintains || []).join(" · ") || "None"}.</div>
-          <div style={{ fontSize:"0.55rem", color:"#64748b" }}>Reduced: {(arbitration.reduces || []).join(" · ") || "None"}.</div>
-          {(arbitration.decisionLinks || []).map((line, i) => (
-            <div key={`decision_${i}`} style={{ fontSize:"0.55rem", color:"#64748b" }}>Decision link: {line}</div>
-          ))}
-        </div>
-        <div style={{ display:"grid", gap:"0.3rem" }}>
-          {goals.map((g,idx)=>(
-            <div key={g.id} style={{ display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.35rem", alignItems:"center", background:"#0f172a", borderRadius:6, padding:"5px 7px" }}>
-              <div>
-                <div style={{ fontSize:"0.57rem", color:"#cbd5e1" }}>{g.name}</div>
-                <div style={{ fontSize:"0.5rem", color:"#475569" }}>{g.category} {g.targetDate ? `· ${g.targetDate}` : ""} {g.measurableTarget ? `· ${g.measurableTarget}` : ""}</div>
+      <div style={{ display:"grid", gap:"0.65rem" }}>
+        {(rollingHorizon || []).map((h) => {
+          const w = h.template;
+          const adaptive = adjustedWeekMap[h.absoluteWeek] || { adjusted: w, changed: [] };
+          const isCurrent = h.absoluteWeek === currentWeek;
+          const isNear = h.slot >= 2 && h.slot <= 4;
+          const isFar = h.slot >= 5;
+          const detailLevel = isCurrent ? "full" : isNear ? "medium" : "directional";
+          const boxTone = isCurrent ? C.green : isNear ? C.blue : C.slate;
+          return (
+            <div key={h.absoluteWeek} className="card" style={{ borderColor:isCurrent ? C.green+"55" : "#1e293b", background:isCurrent ? "#0a160f" : "#0d1117" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.5rem", marginBottom:"0.35rem", flexWrap:"wrap" }}>
+                <div>
+                  <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.15rem", color:boxTone, letterSpacing:"0.06em" }}>Week {h.absoluteWeek} · {w.phase}</div>
+                  <div style={{ fontSize:"0.56rem", color:"#64748b" }}>{isCurrent ? "Most detailed" : isNear ? "Next up" : "Directional"}</div>
+                </div>
+                <button className="btn" onClick={()=>setOpenWeek(openWeek===h.absoluteWeek?null:h.absoluteWeek)} style={{ fontSize:"0.52rem" }}>{openWeek===h.absoluteWeek?"Hide":"View"}</button>
               </div>
-              <select value={g.priority} onChange={e=>setGoals(goals.map(x=>x.id===g.id?{...x,priority:parseInt(e.target.value)}:x))} style={{ fontSize:"0.54rem", padding:"2px 4px" }}>
-                {[1,2,3,4].map(n=><option key={n} value={n}>P{n}</option>)}
-              </select>
-              <button className="btn" onClick={()=>setGoals(goals.map(x=>x.id===g.id?{...x,active:!x.active}:x))} style={{ fontSize:"0.5rem", color:g.active?C.green:"#64748b" }}>{g.active?"ON":"OFF"}</button>
-            </div>
-          ))}
-        </div>
-        <div style={{ marginTop:"0.5rem", borderTop:"1px solid #1e293b", paddingTop:"0.5rem", display:"grid", gap:"0.35rem" }}>
-          <input value={newGoal.name} onChange={e=>setNewGoal({ ...newGoal, name:e.target.value })} placeholder="Add goal (e.g., bench 225 lbs)" />
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.3rem" }}>
-            <select value={newGoal.category} onChange={e=>setNewGoal({ ...newGoal, category:e.target.value })}>
-              {["running","body_comp","strength","injury_prevention","recovery"].map(c=><option key={c}>{c}</option>)}
-            </select>
-            <input type="date" value={newGoal.targetDate} onChange={e=>setNewGoal({ ...newGoal, targetDate:e.target.value })} />
-            <input placeholder="Measurable target" value={newGoal.measurableTarget} onChange={e=>setNewGoal({ ...newGoal, measurableTarget:e.target.value })} />
-          </div>
-          <button className="btn" onClick={() => {
-            if (!newGoal.name.trim()) return;
-            setGoals([{ ...newGoal, id:`g_${Date.now()}` }, ...goals]);
-            setNewGoal({ name:"", category:"running", priority:2, targetDate:"", measurableTarget:"", active:true });
-          }} style={{ color:C.green, borderColor:C.green+"35" }}>
-            ADD GOAL
-          </button>
-        </div>
-      </div>
-      <div className="card" style={{ marginBottom:"0.75rem" }}>
-        <div className="sect-title" style={{ color:C.purple, marginBottom:"0.5rem" }}>STRENGTH PROGRESSION LAYER</div>
-        <div style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.7 }}>
-          Current mode: <span style={{ color:"#e2e8f0" }}>{strengthLayer.focus}</span> · Bench estimate {strengthLayer.benchEstimate} (TM {strengthLayer.trainingMax}) · Recent bench logs {strengthLayer.recentBenchHits}.
-        </div>
-        <div style={{ marginTop:"0.35rem", fontSize:"0.56rem", color:"#64748b" }}>Pressing progression: {strengthLayer.progression.join(" · ")}</div>
-        <div style={{ marginTop:"0.25rem", fontSize:"0.56rem", color:"#64748b" }}>Lower-body balance: {strengthLayer.lowerBody.join(" · ")}</div>
-        <div style={{ marginTop:"0.25rem", fontSize:"0.56rem", color:"#64748b" }}>Environment substitutions: {strengthLayer.substitutions.join(" · ")}</div>
-        <div style={{ marginTop:"0.25rem", fontSize:"0.55rem", color:C.amber }}>Tradeoff: {strengthLayer.tradeoff}</div>
-      </div>
-      <div className="card" style={{ marginBottom:"0.75rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>WEEKLY COACH REVIEW</div>
-        <div style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.7 }}>
-          <div><span style={{ color:C.blue }}>Went well:</span> {weeklyReview.wentWell}</div>
-          <div><span style={{ color:C.blue }}>Drifted:</span> {weeklyReview.drifted}</div>
-          <div><span style={{ color:C.blue }}>Learned:</span> {weeklyReview.learned}</div>
-          <div><span style={{ color:C.blue }}>Changes next week:</span> {weeklyReview.changesNextWeek}</div>
-          <div><span style={{ color:C.blue }}>Priority shift:</span> {weeklyReview.arbitrationShift}</div>
-          <div><span style={{ color:C.blue }}>Current tradeoff:</span> {weeklyReview.tradeoff}</div>
-          <div><span style={{ color:C.blue }}>Expectation:</span> {weeklyReview.expectation}</div>
-          <div><span style={{ color:C.blue }}>Condition:</span> {weeklyReview.expectationCondition}</div>
-          <div><span style={{ color:C.blue }}>Motivation:</span> {weeklyReview.expectationMotivation}</div>
-          <div><span style={{ color:C.blue }}>Recalibration:</span> {weeklyReview.recalibrationSummary}</div>
-          <div><span style={{ color:C.blue }}>Why:</span> {weeklyReview.recalibrationWhy}</div>
-          {weeklyReview.recalibrationChanges.map((c, i) => <div key={`rc_${i}`}><span style={{ color:C.blue }}>Change:</span> {c}</div>)}
-        </div>
-        {patterns.length > 0 && <div style={{ marginTop:"0.35rem", fontSize:"0.55rem", color:"#64748b" }}>Pattern signals: {patterns.join(" · ")}</div>}
-      </div>
-      <div className="card" style={{ marginBottom:"0.75rem" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.5rem" }}>EXPECTATION ENGINE (SHORT-TERM)</div>
-        <div style={{ fontSize:"0.57rem", color:"#94a3b8", lineHeight:1.7 }}>
-          <div>• {expectations.weightExpectation}</div>
-          <div>• {expectations.runExpectation}</div>
-          <div>• {expectations.strengthExpectation}</div>
-        </div>
-      </div>
-      {memoryInsights.length > 0 && (
-        <div className="card" style={{ marginBottom:"0.75rem" }}>
-          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>LONG-TERM MEMORY (HIGH CONFIDENCE)</div>
-          <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.7 }}>
-            {memoryInsights.slice(0,4).map((m, i) => <div key={m.key || i}>• {m.label}</div>)}
-          </div>
-        </div>
-      )}
-      <div style={{ marginBottom:"0.75rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.6rem 0.75rem", display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.35rem" }}>
-        {[["Adherence",(signals.adherenceScore*100).toFixed(0)+"%",C.green],["Fatigue",signals.fatigueFlag?"High":"Managed",signals.fatigueFlag?C.red:C.blue],["Momentum",signals.momentumFlag?"Up":"Neutral",signals.momentumFlag?C.green:"#64748b"],["Readiness",signals.readiness.toUpperCase(),C.amber]].map(([l,v,col])=>(
-          <div key={l}>
-            <div style={{ fontSize:"0.52rem", color:"#334155" }}>{l}</div>
-            <div style={{ fontSize:"0.68rem", color:col }}>{v}</div>
-          </div>
-        ))}
-      </div>
-      <div className="card" style={{ marginBottom:"0.75rem", borderColor:C.blue+"35" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>ROLLING HORIZON STATUS</div>
-        <div style={{ fontSize:"0.56rem", color:"#cbd5e1", lineHeight:1.65 }}>
-          Planning horizon: {DEFAULT_PLANNING_HORIZON_WEEKS} weeks · Specificity bands: weeks 1-2 high, 3-6 moderate, 7-12 directional.
-        </div>
-        <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:"#94a3b8" }}>
-          Current block: {planComposer.architecture.replaceAll("_"," ")} · Next recalibration: {recalibration?.active ? "active now" : `week ${currentWeek + (4 - (currentWeek % 4 || 4))}`}.
-        </div>
-        {horizonAnchor?.nearest && (
-          <div style={{ marginTop:"0.2rem", fontSize:"0.54rem", color:horizonAnchor.withinHorizon ? C.amber : "#64748b" }}>
-            Hard-date influence: {horizonAnchor.nearest.name} in ~{horizonAnchor.weekIndex} weeks {horizonAnchor.withinHorizon ? "(within horizon emphasis)" : "(future anchor, not horizon cap)"}.
-          </div>
-        )}
-      </div>
-      {rollingHorizon.map(h => {
-        const week = h.template;
-        const zones = getZones(week.phase);
-        const adaptive = adjustedWeekMap[h.absoluteWeek] || adjustedWeekMap[week.w];
-        const effectiveWeek = adaptive?.adjusted || week;
-        const isAdjusted = !!(adaptive?.changed?.length);
-        const isOverridden = paceOverrides[week.phase] && Object.keys(paceOverrides[week.phase]).length > 0;
-        const isCurrentWeek = h.slot === 1;
-        const isOpen = openWeek === h.absoluteWeek;
-        const phaseColor = zones.color;
-        const weekDateStr = `${fmtDate(h.startDate)} – ${fmtDate(h.endDate)}`;
 
-        return (
-          <div key={h.absoluteWeek} style={{ border:`1px solid ${isCurrentWeek ? phaseColor+"60" : h.anchorHit ? C.amber+"45" : "#1e293b"}`, borderRadius:10, marginBottom:"0.4rem", overflow:"hidden", background: isCurrentWeek ? `${phaseColor}08` : "#0d1117" }}>
-            <div className="hov" onClick={() => setOpenWeek(isOpen ? null : h.absoluteWeek)}
-              style={{ display:"flex", alignItems:"center", padding:"0.75rem 1rem", gap:"0.75rem", background: isOpen?"rgba(255,255,255,0.025)":"transparent" }}>
-              <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.2rem", color: isCurrentWeek ? phaseColor : "#2d3748", minWidth:44 }}>
-                H{h.slot}
-              </div>
-              <div style={{ flex:1 }}>
-                <div style={{ fontSize:"0.68rem", color:"#e2e8f0" }}>{week.label} · {h.specificity} specificity</div>
-                <div style={{ fontSize:"0.56rem", color:"#334155", marginTop:1 }}>{weekDateStr}</div>
-                {weekNotes[h.absoluteWeek] && (
-                  <div style={{ fontSize:"0.55rem", color:C.amber, marginTop:2 }}>↩ {weekNotes[h.absoluteWeek]}</div>
-                )}
-                {isAdjusted && <div style={{ fontSize:"0.55rem", color:C.blue, marginTop:2 }}>Coach adjusted: {adaptive.changed[0]}</div>}
-              </div>
-              {isCurrentWeek && <div className="tag" style={{ background:`${phaseColor}20`, border:`1px solid ${phaseColor}40`, color:phaseColor }}>NOW</div>}
-              {h.anchorHit && <div className="tag" style={{ background:`${C.amber}18`, border:`1px solid ${C.amber}35`, color:C.amber }}>ANCHOR</div>}
-              {isOverridden && <div className="tag" style={{ background:`${C.amber}15`, border:`1px solid ${C.amber}30`, color:C.amber }}>ADJUSTED</div>}
-              {isAdjusted && <div className="tag" style={{ background:`${C.blue}15`, border:`1px solid ${C.blue}30`, color:C.blue }}>COACH ADJUSTED</div>}
-              <div className="tag" style={{ background:`${phaseColor}12`, border:`1px solid ${phaseColor}25`, color:phaseColor }}>{week.phase}</div>
-              <div style={{ display:"flex", gap:3 }}>
-                {["M","T","W","T","F","S","S"].map((d,i) => (
-                  <div key={i} title={d} style={{ width:6, height:6, borderRadius:"50%", background:[C.green,C.amber,C.blue,C.red,C.lime,C.red,"#1e293b"][i], opacity:0.8 }} />
-                ))}
-              </div>
-              <div style={{ color:"#2d3748", fontSize:"0.65rem" }}>{isOpen?"▲":"▼"}</div>
-            </div>
-
-            {isOpen && (
-              <div className="fi" style={{ padding:"0 0.85rem 0.85rem" }}>
-                <div style={{ display:"grid", gap:"0.35rem" }}>
-                  {[
-                    { day:"MON", color:C.green,  content:`Easy Run ${effectiveWeek.mon.d} @ ${zones.easy}/mi`, baseline: week.mon.d, tags:["EASY RUN","STR "+( week.str||"A")] },
-                    { day:"TUE", color:C.amber,  content:"Orange Theory — Hybrid", tags:["OTF"] },
-                    { day:"WED", color:C.blue,   content:"Strength B + Achilles Prehab", tags:["STRENGTH","PREHAB"] },
-                    { day:"THU", color:C.red,    content:`${effectiveWeek.thu.t}: ${effectiveWeek.thu.d} @ ${effectiveWeek.thu.t==="Intervals"?zones.int:zones.tempo}/mi`, baseline: `${week.thu.t}: ${week.thu.d}`, tags:[effectiveWeek.thu.t.toUpperCase()] },
-                    { day:"FRI", color:C.lime,   content:`Easy Run ${effectiveWeek.fri.d} @ ${zones.easy}/mi`, baseline: week.fri.d, tags:["EASY RUN"] },
-                    { day:"SAT", color:C.red,    content:`Long Run ${effectiveWeek.sat.d} @ ${zones.long}/mi`, baseline: week.sat.d, tags:["LONG RUN"] },
-                    { day:"SUN", color:C.slate,  content:"Full Rest + Achilles Prehab", tags:["REST"] },
-                  ].map(d => (
-                    <div key={d.day} style={{ display:"flex", gap:"0.6rem", alignItems:"center", padding:"6px 8px", background:"#0f172a", borderRadius:7 }}>
-                      <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.1rem", color:d.color, minWidth:32 }}>{d.day}</div>
-                      <div style={{ flex:1, fontSize:"0.65rem", color:"#cbd5e1" }}>
-                        {h.specificity === "directional" ? `${d.day === "SUN" ? "Recovery emphasis" : "Directional focus block"} (${d.tags[0] || "focus"})` : d.content}
-                        {h.specificity !== "directional" && isAdjusted && d.baseline && d.baseline !== d.content && <div style={{ fontSize:"0.53rem", color:"#475569" }}>baseline: {d.baseline}</div>}
-                      </div>
-                      <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
-                        {d.tags.map(t => <div key={t} className="tag" style={{ background:`${d.color}12`, border:`1px solid ${d.color}25`, color:d.color }}>{t}</div>)}
-                      </div>
+              {detailLevel === "full" && (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.45rem" }}>
+                  {[["Mon", adaptive.adjusted.mon], ["Thu", adaptive.adjusted.thu], ["Fri", adaptive.adjusted.fri], ["Sat", adaptive.adjusted.sat]].map(([d,val]) => (
+                    <div key={d} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
+                      <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.08em" }}>{d}</div>
+                      <div style={{ fontSize:"0.58rem", color:"#e2e8f0", marginTop:"0.1rem" }}>{val.t}</div>
+                      <div style={{ fontSize:"0.55rem", color:boxTone }}>{val.d}</div>
                     </div>
                   ))}
                 </div>
-                <div style={{ display:"flex", gap:"0.5rem", marginTop:"0.5rem", flexWrap:"wrap" }}>
-                  {[["EASY",zones.easy,C.green],["TEMPO",zones.tempo,C.blue],["INT",zones.int,C.amber],["LONG",zones.long,C.red]].map(([l,v,c]) => (
-                    <div key={l} className="tag" style={{ background:`${c}12`, border:`1px solid ${c}25`, color:c }}>{l}: {v}/mi</div>
-                  ))}
+              )}
+
+              {detailLevel === "medium" && (
+                <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.7 }}>
+                  {adaptive.adjusted.mon.t} ({adaptive.adjusted.mon.d}) · {adaptive.adjusted.thu.t} ({adaptive.adjusted.thu.d}) · Long run {adaptive.adjusted.sat.d}
                 </div>
-                {isAdjusted && (
-                  <div style={{ marginTop:"0.45rem", fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.6 }}>
-                    Why this changed: {adaptive.changed.join(" · ")}.
-                    {signals.bwDropFast && <span style={{ color:C.amber }}> Bodyweight trend is dropping quickly — recovery fuel warning active.</span>}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
+              )}
+
+              {detailLevel === "directional" && (
+                <div style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.7 }}>
+                  Directional focus: maintain consistency, keep one quality run, one long run, and one strength touchpoint.
+                </div>
+              )}
+
+              {openWeek === h.absoluteWeek && adaptive.changed?.length > 0 && (
+                <div style={{ marginTop:"0.4rem", fontSize:"0.55rem", color:"#64748b", lineHeight:1.6 }}>
+                  {adaptive.changed.slice(0,3).map((line, i)=><div key={i}>• {line}</div>)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {Object.keys(paceOverrides).length > 0 && (
+        <div style={{ marginTop:"0.75rem", padding:"0.6rem 0.8rem", background:"#0d1117", border:`1px solid ${C.amber}30`, borderRadius:8, fontSize:"0.58rem", color:C.amber }}>
+          Paces were adjusted from recent execution. <button className="btn" onClick={() => setPaceOverrides({})} style={{ marginLeft:"0.4rem", fontSize:"0.5rem", color:C.amber, borderColor:C.amber+"30" }}>Reset</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -2516,228 +2052,132 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
 // ── LOG TAB ───────────────────────────────────────────────────────────────────
 function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout, exportData, importData }) {
   const today = new Date().toISOString().split("T")[0];
-  const [form, setForm] = useState({ date:today, type: todayWorkout?.label||"", miles:"", pace:"", runTime:"", pushups:"", weight:"", notes:"", feel:"3", location:"home" });
+  const [quick, setQuick] = useState({ status:"completed_as_planned", feel:"3", note:"", bodyweight:"" });
+  const [detailed, setDetailed] = useState({ date:today, type: todayWorkout?.label||"", miles:"", pace:"", runTime:"", pushups:"", weight:"", notes:"", feel:"3", location:"home" });
   const [saved, setSaved] = useState(false);
-  const [bwInput, setBwInput] = useState("");
+  const [savedMsg, setSavedMsg] = useState("");
   const [backupStr, setBackupStr] = useState("");
   const [backupMsg, setBackupMsg] = useState("");
   const [showBackup, setShowBackup] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Auto-calculate pace from miles + time (mm:ss or h:mm:ss)
-  const calcPace = (miles, timeStr) => {
-    if (!miles || !timeStr) return "";
-    const parts = timeStr.trim().split(":").map(Number);
-    let totalMins = 0;
-    if (parts.length === 2) totalMins = parts[0] + parts[1] / 60;
-    else if (parts.length === 3) totalMins = parts[0] * 60 + parts[1] + parts[2] / 60;
-    else return "";
-    if (isNaN(totalMins) || totalMins <= 0 || parseFloat(miles) <= 0) return "";
-    const paceDecimal = totalMins / parseFloat(miles);
-    const mins = Math.floor(paceDecimal);
-    const secs = Math.round((paceDecimal - mins) * 60);
-    return mins + ":" + String(secs).padStart(2, "0");
-  };
+  const history = Object.entries(logs || {}).sort((a,b)=>b[0].localeCompare(a[0]));
+  const recent14 = history.slice(0,14);
+  const completed14 = recent14.filter(([,l]) => ["completed_as_planned","completed_modified"].includes(l?.checkin?.status)).length;
+  const consistency = recent14.length ? Math.round((completed14 / recent14.length) * 100) : 0;
+  const avgFeel = recent14.length ? (recent14.reduce((s,[,l]) => s + Number(l.feel || 3), 0) / recent14.length).toFixed(1) : "-";
+  const notable = history.find(([,l]) => /progress|better|strong|solid/i.test((l.notes || "").toLowerCase()));
 
-  const handleTimeChange = (val) => {
-    const newPace = calcPace(form.miles, val);
-    setForm({ ...form, runTime: val, pace: newPace || form.pace });
-  };
-
-  const handleMilesChange = (val) => {
-    const newPace = calcPace(val, form.runTime);
-    setForm({ ...form, miles: val, pace: newPace || form.pace });
-  };
-
-  const handleSave = async () => {
-    if (!form.date) return;
-    const newLogs = { ...logs, [form.date]: { ...form, ts: Date.now() } };
-    await saveLogs(newLogs);
+  const saveQuick = async () => {
+    const entry = {
+      date: today,
+      type: todayWorkout?.label || "Quick log",
+      notes: quick.note || "",
+      feel: quick.feel || "3",
+      ts: Date.now(),
+      checkin: { status: quick.status, sessionFeel: quick.feel === "5" ? "easier_than_expected" : quick.feel === "1" ? "harder_than_expected" : "about_right", note: quick.note || "", ts: Date.now() }
+    };
+    await saveLogs({ ...logs, [today]: entry });
+    if (quick.bodyweight && !Number.isNaN(parseFloat(quick.bodyweight))) {
+      const nextBW = [...bodyweights.filter(b => b.date !== today), { date: today, w: parseFloat(quick.bodyweight) }].sort((a,b)=>a.date.localeCompare(b.date));
+      await saveBodyweights(nextBW);
+    }
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setSavedMsg("Saved — momentum captured.");
+    setTimeout(()=>setSaved(false), 1800);
   };
 
-  const handleBW = async () => {
-    if (!bwInput) return;
-    const entry = { date: today, w: parseFloat(bwInput) };
-    const newArr = [...bodyweights.filter(b => b.date !== today), entry].sort((a,b) => a.date.localeCompare(b.date));
-    await saveBodyweights(newArr);
-    setBwInput("");
+  const saveDetailed = async () => {
+    if (!detailed.date) return;
+    await saveLogs({ ...logs, [detailed.date]: { ...detailed, ts: Date.now() } });
+    setSaved(true);
+    setSavedMsg("Detailed entry saved.");
+    setTimeout(()=>setSaved(false), 1800);
   };
 
   const delLog = async (date) => {
-    const newLogs = { ...logs };
-    delete newLogs[date];
-    await saveLogs(newLogs);
+    const next = { ...logs };
+    delete next[date];
+    await saveLogs(next);
   };
 
   return (
     <div className="fi">
-      {/* Log form */}
-      <div className="card" style={{ marginBottom:"1rem" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.85rem" }}>LOG WORKOUT</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.5rem", marginBottom:"0.5rem" }}>
-          <div>
-            <div style={{ fontSize:"0.58rem", color:"#475569", marginBottom:4, letterSpacing:"0.1em" }}>DATE</div>
-            <input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} />
+      <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.green+"40", background:"#0d1711" }}>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>QUICK LOG</div>
+        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Fast capture for today. Keep it simple.</div>
+        <div style={{ display:"grid", gap:"0.4rem" }}>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            {[["completed_as_planned","Completed"],["completed_modified","Modified"],["skipped","Skipped"]].map(([k,lab]) => (
+              <button key={k} className="btn" onClick={()=>setQuick(q=>({ ...q, status:k }))} style={{ fontSize:"0.52rem", color:quick.status===k?C.green:"#64748b", borderColor:quick.status===k?C.green+"35":"#1e293b" }}>{lab}</button>
+            ))}
           </div>
-          <div>
-            <div style={{ fontSize:"0.58rem", color:"#475569", marginBottom:4, letterSpacing:"0.1em" }}>WORKOUT TYPE</div>
-            <select value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>
-              <option value="">— select —</option>
-              <optgroup label="Running">
-                <option>Easy Run</option>
-                <option>Tempo Run</option>
-                <option>Interval Run</option>
-                <option>Long Run</option>
-                <option>Race Pace Tune-up</option>
-                <option>Shakeout Run</option>
-              </optgroup>
-              <optgroup label="Training">
-                <option>Orange Theory (OTF)</option>
-                <option>Travel Hybrid (Cardio + Strength)</option>
-                <option>Strength A — Home</option>
-                <option>Strength B — Home</option>
-                <option>Strength A — Hotel</option>
-                <option>Strength B — Hotel</option>
-              </optgroup>
-              <optgroup label="Recovery">
-                <option>Achilles Prehab</option>
-                <option>Rest + Mobility</option>
-                <option>Walk</option>
-              </optgroup>
-              <optgroup label="Other">
-                <option>Race</option>
-                <option>Other</option>
-              </optgroup>
-            </select>
-          </div>
-          <div>
-            <div style={{ fontSize:"0.58rem", color:"#475569", marginBottom:4, letterSpacing:"0.1em" }}>MILES RUN</div>
-            <input type="number" step="0.1" value={form.miles} onChange={e=>handleMilesChange(e.target.value)} placeholder="e.g. 5.2" />
-          </div>
-          <div>
-            <div style={{ fontSize:"0.58rem", color:"#475569", marginBottom:4, letterSpacing:"0.1em" }}>TOTAL TIME</div>
-            <input value={form.runTime} onChange={e=>handleTimeChange(e.target.value)} placeholder="e.g. 48:30 or 1:05:00" />
-          </div>
-          <div style={{ gridColumn:"1 / -1" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
-              <div style={{ fontSize:"0.58rem", color:"#475569", letterSpacing:"0.1em" }}>PACE (min/mi)</div>
-              {form.miles && form.runTime && calcPace(form.miles, form.runTime) && (
-                <div style={{ fontSize:"0.56rem", color:C.green }}>
-                  ✓ auto-calculated from time + miles
-                </div>
-              )}
-            </div>
-            <input
-              value={form.pace}
-              onChange={e=>setForm({...form,pace:e.target.value})}
-              placeholder="Auto-fills from time + miles, or type manually"
-              style={{ borderColor: form.miles && form.runTime && calcPace(form.miles, form.runTime) ? C.green + "60" : "#1e293b" }}
-            />
-          </div>
-          <div>
-            <div style={{ fontSize:"0.58rem", color:"#475569", marginBottom:4, letterSpacing:"0.1em" }}>MAX PUSH-UPS (set)</div>
-            <input type="number" value={form.pushups} onChange={e=>setForm({...form,pushups:e.target.value})} placeholder="e.g. 35" />
-          </div>
-          <div>
-            <div style={{ fontSize:"0.58rem", color:"#475569", marginBottom:4, letterSpacing:"0.1em" }}>LOCATION</div>
-            <select value={form.location} onChange={e=>setForm({...form,location:e.target.value})}>
-              <option value="home">Home</option>
-              <option value="hotel">Hotel / Travel</option>
-              <option value="otf">Orange Theory</option>
-            </select>
-          </div>
-        </div>
-        <div style={{ marginBottom:"0.5rem" }}>
-          <div style={{ fontSize:"0.58rem", color:"#475569", marginBottom:4, letterSpacing:"0.1em" }}>HOW DID IT FEEL? (1–5)</div>
-          <div style={{ display:"flex", gap:"0.4rem" }}>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
             {[1,2,3,4,5].map(n => (
-              <button key={n} className="btn" onClick={()=>setForm({...form,feel:String(n)})}
-                style={{ flex:1, color:[C.red,C.amber,C.blue,C.green,C.green][n-1], borderColor: form.feel===String(n) ? [C.red,C.amber,C.blue,C.green,C.green][n-1] : "#1e293b", background: form.feel===String(n) ? `${[C.red,C.amber,C.blue,C.green,C.green][n-1]}15` : "transparent" }}>
-                {n}
-              </button>
+              <button key={n} className="btn" onClick={()=>setQuick(q=>({ ...q, feel:String(n) }))} style={{ fontSize:"0.52rem", color:quick.feel===String(n)?C.blue:"#64748b", borderColor:quick.feel===String(n)?C.blue+"35":"#1e293b" }}>Feel {n}</button>
             ))}
           </div>
-          <div style={{ display:"flex", gap:"1rem", marginTop:4, fontSize:"0.55rem", color:"#334155" }}>
-            <span>1 = rough</span><span>3 = solid</span><span>5 = crushed it</span>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 120px auto", gap:"0.35rem" }}>
+            <input value={quick.note} onChange={e=>setQuick(q=>({ ...q, note:e.target.value }))} placeholder="Optional note" />
+            <input type="number" step="0.1" value={quick.bodyweight} onChange={e=>setQuick(q=>({ ...q, bodyweight:e.target.value }))} placeholder="BW" />
+            <button className="btn btn-primary" onClick={saveQuick} style={{ fontSize:"0.55rem" }}>SAVE</button>
           </div>
+          {saved && <div style={{ fontSize:"0.57rem", color:C.green }}>✓ {savedMsg}</div>}
         </div>
-        <div style={{ marginBottom:"0.75rem" }}>
-          <div style={{ fontSize:"0.58rem", color:"#475569", marginBottom:4, letterSpacing:"0.1em" }}>NOTES (optional)</div>
-          <textarea rows={2} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} placeholder="How were the intervals? Any aches? PR'd on push-ups?" style={{ resize:"vertical" }} />
-        </div>
-        <button className="btn btn-primary" onClick={handleSave} style={{ width:"100%" }}>
-          {saved ? "✓ SAVED" : "SAVE WORKOUT"}
-        </button>
-        <BackupRestore
-          exportData={exportData} importData={importData}
-          logs={logs} bodyweights={bodyweights}
-          backupStr={backupStr} setBackupStr={setBackupStr}
-          backupMsg={backupMsg} setBackupMsg={setBackupMsg}
-          showBackup={showBackup} setShowBackup={setShowBackup}
-          copied={copied} setCopied={setCopied}
-        />
       </div>
 
-      {/* Bodyweight log */}
-      <div className="card" style={{ marginBottom:"1rem" }}>
-        <div className="sect-title" style={{ color:C.amber, marginBottom:"0.75rem" }}>LOG BODYWEIGHT</div>
-        <div style={{ display:"flex", gap:"0.5rem" }}>
-          <input type="number" step="0.1" value={bwInput} onChange={e=>setBwInput(e.target.value)} placeholder={`Today's weight (lbs) — start: ${PROFILE.weight}`} />
-          <button className="btn btn-primary" onClick={handleBW} style={{ whiteSpace:"nowrap", flexShrink:0 }}>SAVE</button>
+      <details className="card" style={{ marginBottom:"0.8rem" }}>
+        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:C.blue, letterSpacing:"0.08em" }}>DETAILED ENTRY (OPTIONAL)</summary>
+        <div style={{ marginTop:"0.55rem", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem" }}>
+          <input type="date" value={detailed.date} onChange={e=>setDetailed({ ...detailed, date:e.target.value })} />
+          <input value={detailed.type} onChange={e=>setDetailed({ ...detailed, type:e.target.value })} placeholder="Workout type" />
+          <input type="number" step="0.1" value={detailed.miles} onChange={e=>setDetailed({ ...detailed, miles:e.target.value })} placeholder="Miles" />
+          <input value={detailed.pace} onChange={e=>setDetailed({ ...detailed, pace:e.target.value })} placeholder="Pace" />
+          <input value={detailed.runTime} onChange={e=>setDetailed({ ...detailed, runTime:e.target.value })} placeholder="Run time" />
+          <input value={detailed.pushups} onChange={e=>setDetailed({ ...detailed, pushups:e.target.value })} placeholder="Push-ups" />
+          <input value={detailed.weight} onChange={e=>setDetailed({ ...detailed, weight:e.target.value })} placeholder="Weight" />
+          <select value={detailed.feel} onChange={e=>setDetailed({ ...detailed, feel:e.target.value })}>{[1,2,3,4,5].map(n=><option key={n} value={String(n)}>Feel {n}</option>)}</select>
+          <input style={{ gridColumn:"1 / -1" }} value={detailed.notes} onChange={e=>setDetailed({ ...detailed, notes:e.target.value })} placeholder="Notes" />
+          <button className="btn btn-primary" onClick={saveDetailed} style={{ width:"fit-content", fontSize:"0.55rem" }}>SAVE DETAILED</button>
         </div>
-        {bodyweights.length > 1 && (
-          <div style={{ marginTop:"0.75rem" }}>
-            <div style={{ fontSize:"0.58rem", color:"#475569", marginBottom:"0.4rem", letterSpacing:"0.1em" }}>WEIGHT TREND</div>
-            <MiniChart data={bodyweights.map(b=>b.w)} color={C.green} baseline={PROFILE.weight} />
-            <div style={{ display:"flex", justifyContent:"space-between", fontSize:"0.58rem", color:"#334155", marginTop:4 }}>
-              <span>Start: {PROFILE.weight} lbs</span>
-              <span>Latest: {bodyweights[bodyweights.length-1].w} lbs</span>
-              <span style={{ color: bodyweights[bodyweights.length-1].w < PROFILE.weight ? C.green : C.red }}>
-                {bodyweights[bodyweights.length-1].w < PROFILE.weight ? "↓" : "↑"} {Math.abs(PROFILE.weight - bodyweights[bodyweights.length-1].w).toFixed(1)} lbs
-              </span>
-            </div>
-          </div>
-        )}
+      </details>
+
+      <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.blue+"35" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>TREND SNAPSHOT</div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.4rem" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}><div style={{ fontSize:"0.5rem", color:"#64748b" }}>Consistency (14)</div><div style={{ fontSize:"0.72rem", color:C.green }}>{consistency}%</div></div>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}><div style={{ fontSize:"0.5rem", color:"#64748b" }}>Avg feel</div><div style={{ fontSize:"0.72rem", color:C.blue }}>{avgFeel}</div></div>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}><div style={{ fontSize:"0.5rem", color:"#64748b" }}>Week</div><div style={{ fontSize:"0.72rem", color:C.amber }}>{currentWeek}</div></div>
+        </div>
+        <div style={{ marginTop:"0.35rem", fontSize:"0.56rem", color:"#94a3b8" }}>{notable ? `Notable session: ${notable[0]} · ${notable[1]?.type || "session"}` : "Keep logging to surface notable sessions."}</div>
+        <div style={{ marginTop:"0.2rem", fontSize:"0.55rem", color:"#64748b" }}>What changed: plan intensity and nutrition guidance adapt directly from this logging pattern.</div>
       </div>
 
-      {/* Past logs */}
-      {Object.keys(logs).length > 0 && (
-        <div className="card">
-          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.75rem" }}>WORKOUT HISTORY ({Object.keys(logs).length} sessions)</div>
-          <div style={{ display:"grid", gap:"0.35rem" }}>
-            {Object.entries(logs).sort((a,b)=>b[0].localeCompare(a[0])).map(([date,log]) => (
-              <div key={date} style={{ display:"flex", gap:"0.5rem", alignItems:"flex-start", padding:"8px 10px", background:"#0f172a", borderRadius:7 }}>
-                <div style={{ fontSize:"0.6rem", color:"#334155", minWidth:72, marginTop:2 }}>
-                  {new Date(date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
-                </div>
-                <div style={{ flex:1 }}>
-                  <div style={{ fontSize:"0.68rem", color:"#e2e8f0" }}>{log.type}</div>
-                  <div style={{ display:"flex", gap:"0.5rem", marginTop:3, flexWrap:"wrap" }}>
-                    {log.miles && <span style={{ fontSize:"0.58rem", color:C.green }}>{log.miles} mi</span>}
-                    {log.pace && <span style={{ fontSize:"0.58rem", color:C.blue }}>{log.pace}/mi</span>}
-                    {log.pushups && <span style={{ fontSize:"0.58rem", color:C.amber }}>{log.pushups} push-ups</span>}
-                    {log.location && log.location !== "home" && <span style={{ fontSize:"0.58rem", color:C.purple }}>{log.location}</span>}
-                    {log.notes && <span style={{ fontSize:"0.58rem", color:"#334155" }}>{log.notes.substring(0,50)}{log.notes.length>50?"...":""}</span>}
-                  </div>
-                </div>
-                {log.feel && (
-                  <div style={{ fontSize:"0.7rem", color:[C.red,C.amber,C.blue,C.green,C.green][log.feel-1]||"#475569", minWidth:14 }}>
-                    {"●".repeat(parseInt(log.feel))}
-                  </div>
-                )}
-                <button className="btn" onClick={()=>delLog(date)} style={{ fontSize:"0.55rem", color:"#334155", padding:"2px 6px", flexShrink:0 }}>✕</button>
+      <div className="card" style={{ marginBottom:"0.8rem" }}>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>HISTORY</div>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          {history.slice(0, 20).map(([date, log]) => (
+            <div key={date} style={{ display:"grid", gridTemplateColumns:"95px 1fr auto auto", gap:"0.5rem", alignItems:"center", background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"6px 8px" }}>
+              <div style={{ fontSize:"0.55rem", color:"#64748b" }}>{new Date(date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
+              <div>
+                <div style={{ fontSize:"0.58rem", color:"#e2e8f0" }}>{log.type || "Session"}</div>
+                {log.notes && <div style={{ fontSize:"0.54rem", color:"#64748b" }}>{log.notes}</div>}
               </div>
-            ))}
-          </div>
+              <div style={{ fontSize:"0.55rem", color:C.blue }}>Feel {log.feel || 3}</div>
+              <button className="btn" onClick={()=>delLog(date)} style={{ fontSize:"0.5rem", color:C.red, borderColor:C.red+"30" }}>DEL</button>
+            </div>
+          ))}
         </div>
-      )}
+      </div>
+
+      <BackupRestore exportData={exportData} importData={importData} logs={logs} bodyweights={bodyweights}
+        backupStr={backupStr} setBackupStr={setBackupStr} backupMsg={backupMsg} setBackupMsg={setBackupMsg}
+        showBackup={showBackup} setShowBackup={setShowBackup} copied={copied} setCopied={setCopied}
+      />
     </div>
   );
 }
 
-// ── STORAGE DEBUG ────────────────────────────────────────────────────────────
 function BackupRestore({ exportData, importData, logs, bodyweights, backupStr, setBackupStr, backupMsg, setBackupMsg, showBackup, setShowBackup, copied, setCopied }) {
   const logCount = Object.keys(logs).length;
   const bwCount = bodyweights.length;
@@ -2968,7 +2408,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
       </div>
 
       <div className="card" style={{ marginBottom:"0.8rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>REAL-WORLD NUTRITION ENGINE</div>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>PRACTICAL EATING PLAN</div>
         <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.7, marginBottom:"0.35rem" }}>
           <div><span style={{ color:C.blue }}>Breakfast:</span> {realWorldNutrition.mealStructure.breakfast}</div>
           <div><span style={{ color:C.blue }}>Lunch:</span> {realWorldNutrition.mealStructure.lunch}</div>
@@ -3043,7 +2483,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
         </div>
       </div>
       <div className="card" style={{ marginTop:"0.8rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>NUTRITION FEEDBACK (OPTIONAL)</div>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>NUTRITION REFLECTION</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem", marginBottom:"0.35rem" }}>
           {[["on_track","on track"],["decent","decent"],["off_track","off track"]].map(([k,lab]) => (
             <button key={k} className="btn" onClick={()=>setNutritionCheck(prev=>({ ...prev, status:k }))}
@@ -3179,7 +2619,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       </div>
 
       <div style={{ marginBottom:"0.5rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.55rem 0.7rem" }}>
-        <div style={{ fontSize:"0.56rem", color:C.blue, marginBottom:"0.3rem" }}>COACH MEMORY (EDITABLE)</div>
+        <div style={{ fontSize:"0.56rem", color:C.blue, marginBottom:"0.3rem" }}>COACH NOTES</div>
         <div style={{ display:"grid", gap:"0.3rem" }}>
           <input value={memoryDraft.failurePatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, failurePatterns:e.target.value })} placeholder="Failure patterns" />
           <input value={memoryDraft.commonBarriers} onChange={e=>setMemoryDraft({ ...memoryDraft, commonBarriers:e.target.value })} placeholder="Common barriers/excuses" />
@@ -3199,7 +2639,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       {/* Chat messages */}
       {proactiveTriggers.length > 0 && (
         <div style={{ marginBottom:"0.5rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.55rem 0.7rem" }}>
-          <div style={{ fontSize:"0.56rem", color:C.amber, marginBottom:"0.3rem" }}>PROACTIVE COACH OUTREACH</div>
+          <div style={{ fontSize:"0.56rem", color:C.amber, marginBottom:"0.3rem" }}>SUGGESTED INTERVENTIONS</div>
           {proactiveTriggers.map(t => (
             <div key={t.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.4rem", marginBottom:"0.2rem" }}>
               <div style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.6 }}>• {t.msg}</div>
@@ -3215,10 +2655,10 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
         Goal arbitration: primary {arbitration.priorityStack.primary} · secondary {arbitration.priorityStack.secondary} · maintained {arbitration.priorityStack.maintained}. {arbitration.shiftReason}
       </div>
       <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
-        Plan composer: {planComposer.architecture.replaceAll("_"," ")} · Drivers: {planComposer.drivers.join(" · ") || "none"}.
+        Weekly strategy: {arbitration.shiftReason}
       </div>
       <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:"#94a3b8", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
-        Expectation outlook: {expectations.nextWindow} {expectations.conditionLine}
+        Tradeoff: {strengthLayer.tradeoff}
       </div>
       {recalibration?.active && (
         <div style={{ marginBottom:"0.45rem", fontSize:"0.56rem", color:C.amber, background:"#0d1117", border:`1px solid ${C.amber}35`, borderRadius:8, padding:"0.45rem 0.65rem", lineHeight:1.7 }}>
@@ -3300,7 +2740,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
 
       {pendingActions.length > 0 && (
         <div style={{ marginBottom:"0.55rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:8, padding:"0.65rem" }}>
-          <div style={{ fontSize:"0.58rem", color:C.amber, letterSpacing:"0.08em", marginBottom:"0.4rem" }}>CONFIRM PLAN CHANGES</div>
+          <div style={{ fontSize:"0.58rem", color:C.amber, letterSpacing:"0.08em", marginBottom:"0.4rem" }}>CONFIRM COACH DECISIONS</div>
           <div style={{ display:"grid", gap:"0.35rem" }}>
             {pendingActions.map((a, idx) => (
               <div key={idx} style={{ display:"flex", gap:"0.4rem", alignItems:"center", justifyContent:"space-between", background:"#0f172a", borderRadius:6, padding:"6px 8px" }}>
@@ -3340,7 +2780,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
         </button>
       </div>
       <div style={{ marginTop:"0.55rem", fontSize:"0.56rem", color:"#475569", lineHeight:1.7 }}>
-        Control tower context: Week {currentWeek} · Today {todayWorkout?.label || "Rest"} · Logs {Object.keys(logs).length} · Weight entries {bodyweights.length} · Last coach action {coachActions[0]?.type || "none"}.
+        Current coaching context: Week {currentWeek} · Today {todayWorkout?.label || "Rest"} · Logs {Object.keys(logs).length} · Weight entries {bodyweights.length} · Last coach action {coachActions[0]?.type || "none"}.
       </div>
       <style>{`@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}`}</style>
     </div>
