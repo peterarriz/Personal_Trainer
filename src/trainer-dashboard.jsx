@@ -217,6 +217,11 @@ const DEFAULT_PERSONALIZATION = {
     nextTripNote: "",
     environmentMode: "home",
   },
+  environmentConfig: {
+    base: { equipment: "dumbbells", time: "30" },
+    todayOverride: null,
+    weekOverride: null,
+  },
   adherenceMomentumState: {
     sevenDayCompletion: 0,
     consistency: "unknown",
@@ -261,6 +266,11 @@ const mergePersonalization = (base, patch) => ({
   ...patch,
   injuryPainState: { ...base.injuryPainState, ...(patch?.injuryPainState || {}), achilles: { ...base.injuryPainState.achilles, ...(patch?.injuryPainState?.achilles || {}) } },
   travelState: { ...base.travelState, ...(patch?.travelState || {}) },
+  environmentConfig: {
+    ...(base.environmentConfig || DEFAULT_PERSONALIZATION.environmentConfig),
+    ...(patch?.environmentConfig || {}),
+    base: { ...(base.environmentConfig?.base || DEFAULT_PERSONALIZATION.environmentConfig.base), ...(patch?.environmentConfig?.base || {}) },
+  },
   nutritionPreferenceState: { ...base.nutritionPreferenceState, ...(patch?.nutritionPreferenceState || {}) },
   localFoodContext: { ...base.localFoodContext, ...(patch?.localFoodContext || {}) },
   coachMemory: { ...base.coachMemory, ...(patch?.coachMemory || {}), wins: patch?.coachMemory?.wins || base.coachMemory.wins, constraints: patch?.coachMemory?.constraints || base.coachMemory.constraints },
@@ -340,6 +350,138 @@ const buildInjuryRuleResult = (todayWorkout, injuryState) => {
     why: `${area} sharp pain signal requires immediate training de-load.`,
     caution: "Stop training and get medical guidance if symptoms are sharp or escalating."
   };
+};
+
+const resolveEnvironmentSelection = ({ personalization, todayKey, currentWeek }) => {
+  const base = personalization?.environmentConfig?.base || { equipment: "dumbbells", time: "30" };
+  const todayOverride = personalization?.environmentConfig?.todayOverride;
+  const weekOverride = personalization?.environmentConfig?.weekOverride;
+  if (todayOverride?.date === todayKey) return { ...base, ...todayOverride, scope: "today" };
+  if (weekOverride?.week === currentWeek) return { ...base, ...weekOverride, scope: "week" };
+  return { ...base, scope: "base" };
+};
+
+const applyEnvironmentToWorkout = (workout, env, context = {}) => {
+  const next = { ...(workout || {}) };
+  const equipment = env?.equipment || "dumbbells";
+  const time = env?.time || "30";
+  const weekState = context.weekState || "normal";
+  const injuryFlag = context.injuryFlag || "none";
+  const shortSession = time === "20";
+  const mediumSession = time === "30";
+  const longSession = time === "45+";
+  const limitedEquipment = equipment === "none";
+  const gymReady = equipment === "full_gym" || equipment === "basic_gym";
+  const chaotic = weekState === "chaotic";
+  const fatigued = weekState === "fatigued";
+  const achillesLimited = injuryFlag !== "none";
+  const dayIdentity = next.type === "long-run"
+    ? "long"
+    : next.type === "easy-run"
+    ? "easy"
+    : next.type === "hard-run"
+    ? "tempo"
+    : next.type === "strength+prehab"
+    ? "strength"
+    : next.type === "rest"
+    ? "recovery"
+    : next.type === "run+strength" || next.type === "otf"
+    ? "hybrid"
+    : "easy";
+
+  const allowSecondary = !chaotic && !shortSession;
+  if (!allowSecondary) next.optionalSecondary = null;
+
+  if (dayIdentity === "long") {
+    if (longSession) {
+      next.run = next.run || { t: "Easy", d: "Long easy run" };
+      next.environmentNote = "Long-run identity preserved.";
+    } else if (mediumSession) {
+      next.run = { ...(next.run || {}), t: "Easy", d: "25 min easy + 5 min cooldown" };
+      next.environmentNote = "Compressed long-run day: easy aerobic time only.";
+    } else {
+      next.run = { ...(next.run || {}), t: "Easy", d: "20 min easy" };
+      next.environmentNote = "Minimum viable long-run touchpoint.";
+    }
+    if (chaotic) next.fallback = "Short easy run or brisk walk. Keep the long-run rhythm.";
+    if (achillesLimited) {
+      next.run = { ...(next.run || {}), t: "Easy / run-walk", d: shortSession ? "15-20 min gentle run-walk" : "20-25 min gentle run-walk" };
+      next.environmentNote = "Achilles-protect long day: reduced duration and intensity.";
+    }
+  }
+
+  if (dayIdentity === "tempo") {
+    if (longSession) {
+      next.run = next.run || { t: "Tempo", d: "Warmup + tempo + cooldown" };
+      next.environmentNote = "Tempo identity preserved.";
+    } else if (mediumSession) {
+      next.run = { ...(next.run || {}), t: fatigued ? "Steady" : "Tempo", d: "5 warmup + 15-18 min tempo + 5 cooldown" };
+      next.environmentNote = fatigued ? "Fatigued week: steady effort instead of hard tempo." : "Compressed tempo set.";
+    } else {
+      next.run = { ...(next.run || {}), t: fatigued ? "Steady" : "Steady-hard", d: "5 easy + 10 steady-hard + 5 easy" };
+      next.environmentNote = "Short tempo day: simple, controlled effort.";
+    }
+    if (achillesLimited) {
+      next.run = { ...(next.run || {}), t: "Moderate steady", d: shortSession ? "15-20 min moderate steady" : "20-25 min moderate steady" };
+      next.environmentNote = "Achilles-protect tempo day: no surges, steady effort.";
+    }
+  }
+
+  if (dayIdentity === "easy") {
+    if (longSession) {
+      next.run = next.run || { t: "Easy", d: "Normal easy run" };
+    } else if (mediumSession) {
+      next.run = { ...(next.run || {}), t: "Easy", d: "25-30 min easy" };
+    } else {
+      next.run = { ...(next.run || {}), t: chaotic ? "Run/walk" : "Easy", d: "20 min easy or run/walk" };
+    }
+    if (chaotic) next.fallback = "Easy jog/walk fallback is enough today.";
+    next.environmentNote = chaotic ? "Chaotic week: keep this simple and finish it." : "Easy-day identity preserved.";
+  }
+
+  if (dayIdentity === "strength") {
+    next.strengthTrack = gymReady ? "hotel" : "home";
+    if (limitedEquipment) {
+      next.label = `${next.label || "Strength"} (Bodyweight only)`;
+      next.environmentNote = shortSession ? "Minimum viable full-body bodyweight strength." : "Bodyweight full-body strength session.";
+    } else if (equipment === "dumbbells") {
+      next.label = `${next.label || "Strength"} (Dumbbell compounds)`;
+      next.environmentNote = "Dumbbell compounds only. Keep it clean.";
+    } else {
+      next.label = `${next.label || "Strength"} (${equipment === "full_gym" ? "Full gym" : "Basic gym"})`;
+      next.environmentNote = "Condensed full-body gym strength.";
+    }
+    next.strengthDuration = shortSession ? "15-20 min" : mediumSession ? "20-30 min" : "30-45 min";
+    next.fallback = shortSession ? "Minimum viable strength: 2 compound moves + core." : next.fallback;
+  }
+
+  if (dayIdentity === "recovery") {
+    next.type = "rest";
+    next.label = "Recovery / Mobility";
+    next.environmentNote = "Recovery stays recovery. Walk, mobility, rehab only.";
+    next.optionalSecondary = null;
+    next.fallback = "Easy walk + mobility only.";
+  }
+
+  if (dayIdentity === "hybrid") {
+    if (shortSession) {
+      next.label = "Hybrid (short): 12 min easy run + 8 min strength";
+      next.environmentNote = "Hybrid compressed to keep both run and strength touchpoints.";
+      next.strengthTrack = limitedEquipment ? "home" : gymReady ? "hotel" : "home";
+    } else if (mediumSession) {
+      next.label = "Hybrid: easy run + short strength";
+      next.environmentNote = "Balanced hybrid session with simple structure.";
+      next.strengthTrack = limitedEquipment ? "home" : gymReady ? "hotel" : "home";
+    } else {
+      next.environmentNote = "Hybrid day: run first, strength second.";
+      next.strengthTrack = limitedEquipment ? "home" : gymReady ? "hotel" : "home";
+    }
+  }
+
+  if (shortSession && !next.fallback) next.fallback = "20-min version: main work only.";
+  if (mediumSession && !next.environmentNote) next.environmentNote = "30-min cap: prioritize main stimulus.";
+  if (longSession && !next.environmentNote) next.environmentNote = gymReady ? "45+ min with full setup." : "45+ min available.";
+  return next;
 };
 
 const scaleMilesString = (text, factor) => {
@@ -1168,6 +1310,7 @@ export default function TrainerDashboard() {
   const todayKey = new Date().toISOString().split("T")[0];
   const dayOverride = coachPlanAdjustments.dayOverrides?.[todayKey];
   const nutritionOverride = coachPlanAdjustments.nutritionOverrides?.[todayKey];
+  const environmentSelection = resolveEnvironmentSelection({ personalization, todayKey, currentWeek });
   const momentum = getMomentumEngineState({ logs, bodyweights, personalization });
   const patterns = detectBehaviorPatterns({ logs, bodyweights, personalization });
   const validationLayer = deriveClosedLoopValidationLayer({ coachActions, logs, dailyCheckins });
@@ -1180,7 +1323,9 @@ export default function TrainerDashboard() {
   const horizonAnchor = getHorizonAnchor(goals, DEFAULT_PLANNING_HORIZON_WEEKS);
   const goalNativeWorkout = planComposer?.dayTemplates?.[dayOfWeek] ? { ...baseTodayWorkout, ...planComposer.dayTemplates[dayOfWeek], week: baseWeek, zones: baseTodayWorkout?.zones } : baseTodayWorkout;
   const todayWorkoutBase = dayOverride ? { ...goalNativeWorkout, ...dayOverride, coachOverride: true, nutri: nutritionOverride || dayOverride.nutri || goalNativeWorkout?.week?.nutri } : { ...goalNativeWorkout, nutri: nutritionOverride || goalNativeWorkout?.week?.nutri };
-  const injuryRule = buildInjuryRuleResult(todayWorkoutBase, personalization.injuryPainState);
+  const weekState = failureMode?.mode === "chaotic" ? "chaotic" : momentum?.fatigueNotes >= 2 ? "fatigued" : "normal";
+  const todayWorkoutEnvironment = applyEnvironmentToWorkout(todayWorkoutBase, environmentSelection, { weekState, injuryFlag: personalization?.injuryPainState?.level || "none" });
+  const injuryRule = buildInjuryRuleResult(todayWorkoutEnvironment, personalization.injuryPainState);
   const todayWorkout = injuryRule.workout;
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const strengthLayer = deriveStrengthLayer({ goals, momentum, personalization, logs });
@@ -1265,13 +1410,29 @@ export default function TrainerDashboard() {
     setPersonalization(updated);
     await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments);
   };
-  const setEnvironmentMode = async (environmentMode) => {
+  const setEnvironmentMode = async ({ equipment, time, scope = "base" }) => {
+    const baseConfig = personalization.environmentConfig?.base || { equipment: "dumbbells", time: "30" };
+    const selected = { equipment: equipment || baseConfig.equipment, time: time || baseConfig.time };
+    const nextEnvironmentConfig = {
+      ...(personalization.environmentConfig || {}),
+      base: scope === "base" ? selected : baseConfig,
+      todayOverride: scope === "today" ? { ...selected, date: todayKey } : (scope === "base" ? null : personalization.environmentConfig?.todayOverride || null),
+      weekOverride: scope === "week" ? { ...selected, week: currentWeek } : (scope === "base" ? null : personalization.environmentConfig?.weekOverride || null),
+    };
+    const environmentMode = selected.equipment === "full_gym"
+      ? "full gym"
+      : selected.equipment === "basic_gym"
+      ? "limited gym"
+      : selected.equipment === "none"
+      ? "home"
+      : "limited gym";
     const updated = mergePersonalization(personalization, {
+      environmentConfig: nextEnvironmentConfig,
       travelState: {
         ...personalization.travelState,
         environmentMode,
         access: environmentMode.includes("gym") ? "hotel" : environmentMode,
-      }
+      },
     });
     setPersonalization(updated);
     await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals);
@@ -1695,14 +1856,14 @@ RULES:
   const TABS = ["Today", "Program", "Log", "Nutrition", "Coach"];
 
   if (loading) return (
-    <div style={{ background:"#0a0a0f", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Mono',monospace", color:"#334155", fontSize:"0.7rem", letterSpacing:"0.2em" }}>
+    <div style={{ background:"linear-gradient(180deg,#0b111a 0%, #0f1622 55%, #131b28 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Mono',monospace", color:"#5f7086", fontSize:"0.7rem", letterSpacing:"0.2em" }}>
       LOADING...
     </div>
   );
 
   if (!authSession?.user?.id) return (
-    <div style={{ background:"#0a0a0f", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Mono',monospace", color:"#e2e8f0", padding:"1rem" }}>
-      <div style={{ width:"100%", maxWidth:380, border:"1px solid #1e293b", borderRadius:10, padding:"1rem", background:"#0d1117" }}>
+    <div style={{ background:"linear-gradient(180deg,#0b111a 0%, #0f1622 55%, #131b28 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Mono',monospace", color:"#e2e8f0", padding:"1rem" }}>
+      <div style={{ width:"100%", maxWidth:380, border:"1px solid #2a3445", borderRadius:10, padding:"1rem", background:"#151e2b" }}>
         <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.2rem", letterSpacing:"0.12em", color:"#f87171", marginBottom:"0.5rem" }}>ACCOUNT ACCESS</div>
         <div style={{ fontSize:"0.58rem", color:"#64748b", marginBottom:"0.5rem" }}>Sign in to load your private training state.</div>
         <input value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="email" style={{ marginBottom:"0.4rem" }} />
@@ -1717,40 +1878,58 @@ RULES:
   );
 
   return (
-    <div style={{ fontFamily:"'DM Mono','Courier New',monospace", background:"#0a0a0f", minHeight:"100vh", color:"#e2e8f0", padding:"1.65rem 1.2rem" }}>
+    <div style={{ fontFamily:"'DM Mono','Courier New',monospace", background:"linear-gradient(180deg,#0b111a 0%, #0f1622 55%, #131b28 100%)", minHeight:"100vh", color:"#e2e8f0", padding:"1.65rem 1.2rem" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Bebas+Neue&display=swap');
         :root{
-          --bg:#0a0a0f;
-          --panel:#0f141d;
-          --panel-2:#121926;
-          --border:#1e293b;
-          --muted:#64748b;
+          --bg:#0f1622;
+          --panel:#182334;
+          --panel-2:#202c40;
+          --panel-3:#25334a;
+          --border:#304157;
+          --muted:#72839a;
           --text:#e2e8f0;
           --accent:#4ade80;
         }
         * { box-sizing:border-box; margin:0; padding:0; }
-        ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:#0a0a0f} ::-webkit-scrollbar-thumb{background:#1e293b;border-radius:2px}
+        ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:#0f1622} ::-webkit-scrollbar-thumb{background:#2a374a;border-radius:2px}
         .fi{animation:fi 0.22s ease forwards}
         .hov{transition:all 0.2s ease;cursor:pointer} .hov:hover{background:rgba(255,255,255,0.04)!important}
-        .btn{background:#111827;border:1px solid #253246;border-radius:8px;font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:0.05em;cursor:pointer;padding:6px 11px;transition:all 0.2s ease;color:#a9b6c9}
-        .btn:hover{border-color:#334155;color:#e2e8f0;transform:translateY(-1px)}
+        .btn{background:#1a2433;border:1px solid #314055;border-radius:8px;font-family:'DM Mono',monospace;font-size:0.6rem;letter-spacing:0.05em;cursor:pointer;padding:6px 11px;transition:all 0.2s ease;color:#b6c5d9}
+        .btn:hover{border-color:#41546e;color:#f1f5f9;transform:translateY(-1px)}
         .btn:active{transform:translateY(0)}
         .btn-primary{background:#47d87f!important;border-color:#47d87f!important;color:#06110a!important;font-weight:600;box-shadow:0 4px 14px rgba(71,216,127,0.22)}
         .btn-primary:hover{filter:brightness(1.04);box-shadow:0 6px 16px rgba(71,216,127,0.24)}
-        input,textarea,select{background:#0f172a;border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'DM Mono',monospace;font-size:0.68rem;padding:7px 10px;outline:none;width:100%;transition:border-color 0.2s ease, box-shadow 0.2s ease}
-        input:focus,textarea:focus,select:focus{border-color:#3b4c63;box-shadow:0 0 0 3px rgba(96,165,250,0.08)}
+        input,textarea,select{background:#1b2638;border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'DM Mono',monospace;font-size:0.68rem;padding:7px 10px;outline:none;width:100%;transition:border-color 0.2s ease, box-shadow 0.2s ease}
+        input:focus,textarea:focus,select:focus{border-color:#4a5f7b;box-shadow:0 0 0 3px rgba(96,165,250,0.10)}
         @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
-        .tag{font-size:0.56rem;padding:3px 7px;border-radius:999px;letter-spacing:0.03em;white-space:nowrap;background:#0f172a}
-        .card{background:var(--panel);border:0;border-radius:12px;padding:1.05rem;box-shadow:0 8px 20px rgba(0,0,0,0.12);transition:transform 0.2s ease, box-shadow 0.2s ease}
-        .card:hover{box-shadow:0 10px 24px rgba(0,0,0,0.14)}
+        .tag{font-size:0.56rem;padding:3px 7px;border-radius:999px;letter-spacing:0.03em;white-space:nowrap;background:#1b2638}
+        .card{
+          background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)) , var(--panel);
+          border:1px solid rgba(129,149,178,0.11);
+          border-radius:12px;
+          padding:1.05rem;
+          box-shadow:0 8px 20px rgba(4,8,14,0.28), inset 0 1px 0 rgba(255,255,255,0.02);
+          transition:transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease
+        }
+        .card:hover{box-shadow:0 12px 28px rgba(4,8,14,0.35)}
+        .card-strong{
+          background:linear-gradient(180deg, rgba(96,165,250,0.08), rgba(96,165,250,0.01)), var(--panel-2);
+          border-color:rgba(96,165,250,0.22);
+          box-shadow:0 14px 32px rgba(6,12,22,0.42), 0 0 0 1px rgba(96,165,250,0.05);
+        }
+        .card-soft{
+          background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0)), var(--panel);
+          border-color:rgba(129,149,178,0.08);
+          box-shadow:0 6px 14px rgba(4,8,14,0.22);
+        }
         .sect-title{font-family:'Bebas Neue',sans-serif;font-size:1.02rem;letter-spacing:0.04em;text-transform:none;color:#dbe7f6}
         details > summary{list-style:none}
         details > summary::-webkit-details-marker{display:none}
         details[open]{animation:fi 0.18s ease}
       `}</style>
 
-      <div style={{ maxWidth:820, margin:"0 auto", background:"radial-gradient(120% 90% at 50% 0%, rgba(30,41,59,0.28), transparent 55%)" }}>
+      <div style={{ maxWidth:820, margin:"0 auto", background:"radial-gradient(140% 100% at 50% -5%, rgba(73,92,122,0.24), transparent 58%)" }}>
 
         {/* ── HEADER BAR ── */}
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"1.25rem", flexWrap:"wrap", gap:"0.5rem" }}>
@@ -1779,10 +1958,10 @@ RULES:
         </div>
 
         {/* ── TABS ── */}
-        <div style={{ display:"flex", gap:"0.25rem", marginBottom:"1.25rem", background:"#0d1117", padding:"0.3rem", borderRadius:10, border:"1px solid #1e293b", overflowX:"auto" }}>
+        <div style={{ display:"flex", gap:"0.25rem", marginBottom:"1.25rem", background:"#151f2e", padding:"0.3rem", borderRadius:10, border:"1px solid #2b394d", overflowX:"auto" }}>
           {TABS.map((t,i) => (
             <button key={t} className="btn" onClick={()=>setTab(i)}
-              style={{ color:tab===i?"#0a0a0f":"#475569", background:tab===i?"#e2e8f0":"transparent", borderColor:tab===i?"#e2e8f0":"transparent", fontWeight:tab===i?500:300, flexShrink:0 }}>
+              style={{ color:tab===i?"#0c1320":"#70839b", background:tab===i?"#e6edf7":"transparent", borderColor:tab===i?"#e6edf7":"transparent", fontWeight:tab===i?500:300, flexShrink:0 }}>
               {t}
             </button>
           ))}
@@ -1791,12 +1970,12 @@ RULES:
         {/* ══════════════════════════════════════════════════════════
             TODAY
         ══════════════════════════════════════════════════════════ */}
-        {tab === 0 && <TodayTab todayWorkout={todayWorkoutHardened} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} goals={goals} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={(id)=>setDismissedTriggers(prev=>[...prev,id])} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} />}
+        {tab === 0 && <TodayTab todayWorkout={todayWorkoutHardened} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} goals={goals} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={(id)=>setDismissedTriggers(prev=>[...prev,id])} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} />}
 
         {/* ══════════════════════════════════════════════════════════
             PROGRAM
         ══════════════════════════════════════════════════════════ */}
-        {tab === 1 && <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goals} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} />}
+        {tab === 1 && <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goals} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} />}
 
         {/* ══════════════════════════════════════════════════════════
             LOG
@@ -1826,7 +2005,7 @@ RULES:
 }
 
 // ── TODAY TAB ─────────────────────────────────────────────────────────────────
-function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, setEnvironmentMode, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights }) {
+function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights }) {
   const week = todayWorkout?.week;
   const zones = todayWorkout?.zones;
   const todayKey = new Date().toISOString().split("T")[0];
@@ -1836,6 +2015,20 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
   const defaultCheckin = dailyCheckins?.[todayKey] || (todayLog?.checkin || DEFAULT_DAILY_CHECKIN);
   const [checkin, setCheckin] = useState(defaultCheckin);
   const [checkinAck, setCheckinAck] = useState("");
+  const [showEnvEditor, setShowEnvEditor] = useState(false);
+  const [envDraft, setEnvDraft] = useState({ equipment: environmentSelection?.equipment || "dumbbells", time: environmentSelection?.time || "30", scope: "today" });
+  const conciseFocus = (dailyStory?.focus || dailyStory?.brief || "Execute today’s session cleanly.")
+    .replace(/^execute\s*/i, "")
+    .split(".")[0];
+  const conciseSuccess = (dailyStory?.success || "Complete the session and log it.").split(".")[0];
+  const equipmentLabel = environmentSelection?.equipment === "none"
+    ? "No equipment"
+    : environmentSelection?.equipment === "basic_gym"
+    ? "Basic gym"
+    : environmentSelection?.equipment === "full_gym"
+    ? "Full gym"
+    : "Dumbbells";
+  const timeLabel = environmentSelection?.time === "45+" ? "45+ min" : `${environmentSelection?.time || "30"} min`;
 
   useEffect(() => { setCheckin(defaultCheckin); }, [todayKey, dailyCheckins?.[todayKey], todayLog?.checkin?.ts]);
   useEffect(() => {
@@ -1851,12 +2044,15 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
     <div className="fi">
       <div style={{ marginBottom:"1rem", display:"grid", gap:"0.28rem" }}>
         <div style={{ fontSize:"0.56rem", color:"#64748b", letterSpacing:"0.14em" }}>TODAY</div>
-        <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"2rem", color:"#f8fafc", letterSpacing:"0.03em", lineHeight:1 }}>{todayWorkout?.label || "Rest Day"}</div>
-        <div style={{ fontSize:"0.61rem", color:"#cbd5e1", lineHeight:1.6 }}>{dailyStory?.focus || dailyStory?.brief}</div>
-        <div style={{ fontSize:"0.58rem", color:C.green }}>{dailyStory?.success}</div>
+        <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"2.15rem", color:"#f8fafc", letterSpacing:"0.03em", lineHeight:1 }}>{todayWorkout?.label || "Rest Day"}</div>
+        <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.55 }}>{conciseFocus}</div>
+        <div style={{ fontSize:"0.55rem", color:C.green }}>Win: {conciseSuccess}</div>
+        <button className="btn" onClick={()=>{ setEnvDraft({ equipment: environmentSelection?.equipment || "dumbbells", time: environmentSelection?.time || "30", scope: "today" }); setShowEnvEditor(true); }} style={{ width:"fit-content", fontSize:"0.52rem", color:"#9fb0c6", borderColor:"#334155", marginTop:"0.2rem" }}>
+          {equipmentLabel} · {timeLabel}
+        </button>
       </div>
 
-      <div className="card" style={{ marginBottom:"1.05rem", padding:"1.35rem", background:"#121a27", border:"1px solid rgba(96,165,250,0.2)" }}>
+      <div className="card card-strong" style={{ marginBottom:"1.05rem", padding:"1.45rem" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.45rem" }}>MAIN WORKOUT</div>
         {todayWorkout?.run && (
           <WorkoutBlock
@@ -1871,7 +2067,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         )}
         {(todayWorkout?.type === "run+strength" || todayWorkout?.type === "strength+prehab") && (
           <div style={{ marginTop:"0.6rem", fontSize:"0.6rem", color:"#94a3b8" }}>
-            Strength add-on: {(STRENGTH[todayWorkout.strSess || "A"]?.home || []).slice(0,3).map(x => `${x.ex} (${x.sets})`).join(" · ")}
+            Strength add-on ({todayWorkout?.strengthDuration || "20-30 min"}): {(STRENGTH[todayWorkout.strSess || "A"]?.[todayWorkout?.strengthTrack || "home"] || []).slice(0,3).map(x => `${x.ex} (${x.sets})`).join(" · ")}
           </div>
         )}
         {(todayWorkout?.optionalSecondary || planComposer?.aestheticAllocation?.active) && (
@@ -1879,15 +2075,16 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             + {todayWorkout?.optionalSecondary || "Optional: 10 min core"}
           </div>
         )}
+        {todayWorkout?.environmentNote && <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#94a3b8" }}>{todayWorkout.environmentNote}</div>}
       </div>
 
       <div style={{ marginBottom:"0.85rem", display:"grid", gridTemplateColumns:"1fr auto auto", alignItems:"center", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" }}>
-        <div style={{ fontSize:"0.58rem", color:"#94a3b8" }}>Not feeling it?</div>
-        <button className="btn" onClick={()=>applyDayContextOverride("minimum_viable_day")} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}>Minimum version</button>
-        <button className="btn" onClick={()=>shiftTodayWorkout(1)} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"30" }}>Move to tomorrow</button>
+        <div style={{ fontSize:"0.55rem", color:"#7f92aa" }}>Fallback</div>
+        <button className="btn" onClick={()=>applyDayContextOverride("minimum_viable_day")} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"30" }}>20-min version</button>
+        <button className="btn" onClick={()=>shiftTodayWorkout(1)} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"30" }}>Move to tomorrow</button>
       </div>
 
-      <div className="card" style={{ marginBottom:"0.75rem" }}>
+      <div className="card card-soft" style={{ marginBottom:"0.75rem" }}>
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>QUICK CHECK-IN</div>
         <div style={{ display:"grid", gap:"0.35rem" }}>
           <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
@@ -1920,9 +2117,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
       </div>
 
       <div style={{ marginBottom:"0.6rem", display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.35rem", alignItems:"center" }}>
-        <select value={personalization.travelState.environmentMode || "home"} onChange={e=>setEnvironmentMode(e.target.value)} style={{ fontSize:"0.58rem" }}>
-          {["full gym","limited gym","home","travel","outdoors only","no equipment"].map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
+        <div style={{ fontSize:"0.55rem", color:"#7f92aa" }}>Environment: {equipmentLabel} · {timeLabel}</div>
         {proactiveTriggers[0] && <button className="btn" onClick={()=>onApplyTrigger(proactiveTriggers[0])} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}>{proactiveTriggers[0].actionLabel || "Apply nudge"}</button>}
         {proactiveTriggers[0] && <button className="btn" onClick={()=>onDismissTrigger(proactiveTriggers[0].id)} style={{ fontSize:"0.52rem" }}>Dismiss</button>}
       </div>
@@ -1941,6 +2136,34 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             <button className="btn" onClick={()=>setInjuryState("mild_tightness", injuryArea)} style={{ color:C.blue, borderColor:C.blue+"35" }}>Mild</button>
             <button className="btn" onClick={()=>setInjuryState("moderate_pain", injuryArea)} style={{ color:C.amber, borderColor:C.amber+"35" }}>Moderate</button>
             <button className="btn" onClick={()=>setInjuryState("sharp_pain_stop", injuryArea)} style={{ color:C.red, borderColor:C.red+"35" }}>Sharp/Stop</button>
+          </div>
+          <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>Status: {personalization.injuryPainState.level.replaceAll("_"," ")} · {injuryRule.why}</div>
+        </div>
+      </details>
+      {showEnvEditor && (
+        <div onClick={()=>setShowEnvEditor(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"flex-end", zIndex:50 }}>
+          <div onClick={e=>e.stopPropagation()} className="card card-strong" style={{ width:"100%", borderRadius:"14px 14px 0 0", padding:"0.9rem 0.9rem 1rem", maxHeight:"82vh", overflowY:"auto" }}>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>Environment</div>
+            <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Adjust for real-world constraints.</div>
+            <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Equipment</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem", marginBottom:"0.55rem" }}>
+              {[["none","None"],["dumbbells","Dumbbells"],["basic_gym","Basic gym"],["full_gym","Full gym"]].map(([v,l]) => (
+                <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, equipment:v }))} style={{ fontSize:"0.54rem", color:envDraft.equipment===v?C.green:"#94a3b8", borderColor:envDraft.equipment===v?C.green+"40":"#334155" }}>{l}</button>
+              ))}
+            </div>
+            <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Time available</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.3rem", marginBottom:"0.55rem" }}>
+              {[["20","20 min"],["30","30 min"],["45+","45+ min"]].map(([v,l]) => (
+                <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, time:v }))} style={{ fontSize:"0.54rem", color:envDraft.time===v?C.blue:"#94a3b8", borderColor:envDraft.time===v?C.blue+"40":"#334155" }}>{l}</button>
+              ))}
+            </div>
+            <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Apply scope</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem", marginBottom:"0.65rem" }}>
+              {[["today","Just today"],["week","This week"]].map(([v,l]) => (
+                <button key={v} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, scope:v }))} style={{ fontSize:"0.54rem", color:envDraft.scope===v?C.amber:"#94a3b8", borderColor:envDraft.scope===v?C.amber+"40":"#334155" }}>{l}</button>
+              ))}
+            </div>
+            <button className="btn btn-primary" onClick={async ()=>{ await setEnvironmentMode(envDraft); setShowEnvEditor(false); }} style={{ width:"100%" }}>Apply changes</button>
           </div>
           <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>Status: {personalization.injuryPainState.level.replaceAll("_"," ")} · {injuryRule.why}</div>
         </div>
@@ -1966,7 +2189,7 @@ function WorkoutBlock({ title, color, items }) {
 }
 
 // ── PLAN TAB ──────────────────────────────────────────────────────────────────
-function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin }) {
+function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode }) {
   const [openWeek, setOpenWeek] = useState(null);
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
   const [miniWeekly, setMiniWeekly] = useState(weeklyDraft);
@@ -1984,7 +2207,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
 
   return (
     <div className="fi">
-      <div className="card" style={{ marginBottom:"0.85rem", borderColor:C.blue+"40", background:"#0a1320" }}>
+      <div className="card card-strong" style={{ marginBottom:"0.85rem", borderColor:C.blue+"30" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>YOUR PROGRAM</div>
         <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.7 }}>Current block: <span style={{ color:C.blue }}>{planComposer.architecture.replaceAll("_"," ")}</span></div>
         <div style={{ fontSize:"0.58rem", color:"#cbd5e1", marginTop:"0.25rem", lineHeight:1.7 }}>
@@ -2002,9 +2225,19 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
           </div>
         )}
         <div style={{ fontSize:"0.58rem", color:C.amber, marginTop:"0.25rem" }}>Tradeoff: {arbitration.coachTradeoffLine || arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
+        <div style={{ marginTop:"0.45rem", display:"grid", gridTemplateColumns:"1fr 1fr auto auto", gap:"0.3rem", alignItems:"center" }}>
+          <select value={environmentSelection?.equipment || "dumbbells"} onChange={e=>setEnvironmentMode({ equipment:e.target.value, time: environmentSelection?.time || "30", scope: "week" })} style={{ fontSize:"0.55rem" }}>
+            {[["none","No equipment"],["dumbbells","Dumbbells"],["basic_gym","Basic gym"],["full_gym","Full gym"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <select value={environmentSelection?.time || "30"} onChange={e=>setEnvironmentMode({ equipment: environmentSelection?.equipment || "dumbbells", time:e.target.value, scope: "week" })} style={{ fontSize:"0.55rem" }}>
+            {[["20","20 min"],["30","30 min"],["45+","45+ min"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <button className="btn" onClick={()=>setEnvironmentMode({ equipment: environmentSelection?.equipment || "dumbbells", time: environmentSelection?.time || "30", scope: "week" })} style={{ fontSize:"0.5rem" }}>This week</button>
+          <button className="btn" onClick={()=>setEnvironmentMode({ equipment: environmentSelection?.equipment || "dumbbells", time: environmentSelection?.time || "30", scope: "base" })} style={{ fontSize:"0.5rem" }}>Set default</button>
+        </div>
       </div>
 
-      <div className="card" style={{ marginBottom:"0.85rem" }}>
+      <div className="card card-soft" style={{ marginBottom:"0.85rem" }}>
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>THIS WEEK CHECK-IN</div>
         <div style={{ display:"grid", gap:"0.35rem", fontSize:"0.57rem" }}>
           {[ ["energy", "Energy"], ["stress", "Stress"], ["confidence", "Confidence"] ].map(([k, label]) => (
@@ -2392,14 +2625,14 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
 
   return (
     <div className="fi">
-      <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.green+"35", background:"#0f1622" }}>
+      <div className="card card-strong" style={{ marginBottom:"0.8rem", borderColor:C.green+"28" }}>
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>TODAY'S DIRECTION</div>
         <div style={{ fontSize:"0.66rem", color:"#e2e8f0", lineHeight:1.65 }}>{topGuidance}</div>
         <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.65, marginTop:"0.2rem" }}>{secondGuidance}</div>
         <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.65, marginTop:"0.2rem" }}>{thirdGuidance}</div>
       </div>
 
-      <div className="card" style={{ marginBottom:"0.8rem" }}>
+      <div className="card card-soft" style={{ marginBottom:"0.8rem" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.45rem" }}>SIMPLE TARGETS</div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.4rem" }}>
           {[["Protein", proteinLevel, C.red], ["Carbs", carbLevel, C.green], ["Calories", calorieLevel, C.amber]].map(([label, value, col]) => (
@@ -2417,7 +2650,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom:"0.8rem" }}>
+      <div className="card card-soft" style={{ marginBottom:"0.8rem" }}>
         <div className="sect-title" style={{ color:C.amber, marginBottom:"0.5rem" }}>WHAT THIS LOOKS LIKE</div>
         <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.7 }}>
           <div><span style={{ color:C.amber }}>Breakfast:</span> {breakfast}</div>
@@ -2579,57 +2812,115 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     "Use default meal structure for 3 days",
   ];
 
-  const latestAssistant = [...messages].reverse().find(m => m.role === "assistant");
-  const activePacket = latestAssistant?.packet || deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, realWorldNutrition, recalibration });
-  const suggestedActions = (pendingActions.length ? pendingActions : (activePacket.actions || [])).slice(0, 2);
-  const readableDecision = (action) => {
-    if (!action) return "Keep the current plan.";
-    if (action.type === COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME) return "Reducing weekly volume slightly.";
-    if (action.type === COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS) return "Keeping strength minimal but progressing where tolerated.";
-    if (action.type === COACH_TOOL_ACTIONS.SIMPLIFY_MEALS_THIS_WEEK) return "Simplifying meals this week.";
-    if (action.type === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) return "Adjusting today’s fueling target.";
-    if (action.type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE) return "Switching to travel nutrition mode.";
-    return action.type.replaceAll("_", " ").toLowerCase();
-  };
-  const acceptChanges = async () => {
-    for (const action of suggestedActions) {
-      await commitAction(action);
+  const todayKey = new Date().toISOString().split("T")[0];
+  const env = resolveEnvironmentSelection({ personalization, todayKey, currentWeek });
+  const dayType = todayWorkout?.type === "long-run" ? "long" : todayWorkout?.type === "hard-run" ? "tempo" : todayWorkout?.type === "easy-run" ? "easy" : todayWorkout?.type === "strength+prehab" ? "strength" : todayWorkout?.type === "rest" ? "recovery" : "hybrid";
+  const weekState = failureMode?.mode === "chaotic" ? "chaotic" : momentum?.fatigueNotes >= 2 ? "fatigued" : "normal";
+  const adherenceTrend = momentum?.completionRate >= 0.72 ? "stable" : momentum?.completionRate >= 0.5 ? "mixed" : "slipping";
+  const fatigueSignal = (personalization?.trainingState?.fatigueScore || 1) >= 4 || momentum?.fatigueNotes >= 2;
+  const injuryFlag = personalization?.injuryPainState?.level || "none";
+  const goalPriority = arbitration?.priorityStack?.primary || "Consistency";
+  const recentLogCount = Object.keys(logs || {}).slice(-7).length;
+
+  const coachMode = (() => {
+    if (injuryFlag !== "none" || fatigueSignal) return "Protect";
+    if (weekState === "chaotic" || env.time === "20" || adherenceTrend === "slipping") return "Simplify";
+    if (momentum?.logGapDays >= 4 || recentLogCount <= 2) return "Rebuild";
+    if ((momentum?.score || 0) >= 74 && weekState === "normal" && env.time !== "20") return "Push";
+    return "Hold";
+  })();
+
+  const coachDecision = (() => {
+    const dayLabel = dayType === "tempo" ? "quality run" : dayType === "long" ? "long-run" : dayType === "easy" ? "easy run" : dayType === "strength" ? "strength" : dayType === "recovery" ? "recovery" : "hybrid";
+    if (coachMode === "Protect") return {
+      stance: `Do the condensed ${dayLabel} version today and keep intensity controlled.`,
+      why: `Recovery signals are elevated, so we protect consistency while keeping ${goalPriority} on track.`,
+      watch: "I’m watching pain and session feel after this workout.",
+      options: [
+        { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 10, reason: "protect_mode" } }, primary: true },
+        { label: "Move to tomorrow", action: { type: COACH_TOOL_ACTIONS.MOVE_LONG_RUN, payload: { days: 1, reason: "protect_shift" } } }
+      ]
+    };
+    if (coachMode === "Simplify") return {
+      stance: `Keep this simple: complete the short ${dayLabel} version.`,
+      why: `Time and adherence say simplify now, then rebuild consistency.`,
+      watch: "I’m watching completion rate over the next 3 days.",
+      options: [
+        { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 12, reason: "simplify_mode" } }, primary: true },
+        { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "simplify_week" } } }
+      ]
+    };
+    if (coachMode === "Rebuild") return {
+      stance: `Take the minimum viable ${dayLabel} session and rebuild rhythm first.`,
+      why: `Recent execution dipped, so we rebuild frequency before adding load.`,
+      watch: "I’m watching whether you can stack 2-3 clean sessions.",
+      options: [
+        { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "rebuild_mode" } }, primary: true },
+        { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 18, reason: "rebuild_week" } } }
+      ]
+    };
+    if (coachMode === "Push") return {
+      stance: `Keep the full ${dayLabel} session and add one small progression.`,
+      why: `Stability is strong enough to push while still protecting recovery.`,
+      watch: "I’m watching session quality and next-day fatigue.",
+      options: [
+        { label: "Keep full session", action: null, primary: true },
+        { label: "Push slightly", action: { type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 1, reason: "push_mode" } } }
+      ]
+    };
+    return {
+      stance: `Keep the full ${dayLabel} session as written.`,
+      why: `Current signals support staying steady and executing cleanly.`,
+      watch: "I’m watching consistency and workout quality this week.",
+      options: [
+        { label: "Keep full session", action: null, primary: true },
+        { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 8, reason: "hold_condense" } } }
+      ]
+    };
+  })();
+
+  const applyDecisionOption = async (opt) => {
+    if (!opt?.action) {
+      setMessages(m => [...m, { role:"assistant", packet:{ notices:["Staying with the full plan."], recommendations:["Execute cleanly and log it."], effects:[`Mode: ${coachMode}.`], actions:[] }, source:"deterministic" }]);
+      setPendingActions([]);
+      return;
     }
+    await commitAction({ ...opt.action, reason: opt.action.payload?.reason || "coach_decision" });
     setPendingActions([]);
-    setMessages(m => [...m, { role:"assistant", packet:{ notices:["Changes applied."], recommendations:["We’ll monitor execution over the next few days."], effects:["Plan and nutrition now reflect this decision."], actions:[] }, source:"deterministic" }]);
+    setMessages(m => [...m, { role:"assistant", packet:{ notices:["Decision applied."], recommendations:["Execute this version today."], effects:[`Mode: ${coachMode}.`], actions:[] }, source:"deterministic" }]);
   };
 
   return (
     <div className="fi" style={{ display:"grid", gap:"0.75rem" }}>
-      <div className="card" style={{ borderColor:C.blue+"45", background:"#0a1320" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>WHAT I’M CHANGING</div>
-        <div style={{ display:"grid", gap:"0.2rem", fontSize:"0.62rem", color:"#e2e8f0", lineHeight:1.7 }}>
-          {(suggestedActions.length ? suggestedActions : [null]).slice(0,2).map((a, i)=><div key={i}>• {readableDecision(a)}</div>)}
+      <div className="card card-strong" style={{ borderColor:C.blue+"38" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>WHAT I WANT YOU TO DO</div>
+        <div style={{ fontSize:"0.72rem", color:"#f1f5f9", lineHeight:1.55 }}>{coachDecision.stance}</div>
+      </div>
+
+      <div className="card card-soft">
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.3rem" }}>WHY</div>
+        <div style={{ fontSize:"0.6rem", color:"#d1d9e6", lineHeight:1.65 }}>
+          {coachDecision.why}
         </div>
       </div>
 
       <div className="card">
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>WHY</div>
-        <div style={{ fontSize:"0.6rem", color:"#cbd5e1", lineHeight:1.7 }}>
-          {activePacket?.recommendations?.[0] || activePacket?.notices?.[0] || "Recent patterns show better follow-through with a simpler, clearer plan."}
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>ACTION OPTIONS</div>
+        <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>CHOOSE</div>
         <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
-          <button className="btn btn-primary" onClick={acceptChanges} disabled={!suggestedActions.length}>Accept change</button>
-          <button className="btn" onClick={()=>setPendingActions([])}>Keep current plan</button>
+          {coachDecision.options.slice(0, 2).map((opt, i) => (
+            <button key={`${opt.label}_${i}`} className={`btn ${opt.primary ? "btn-primary" : ""}`} onClick={()=>applyDecisionOption(opt)} style={{ fontSize:"0.56rem" }}>
+              {opt.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      <details className="card">
-        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#94a3b8", letterSpacing:"0.06em" }}>What I’m watching</summary>
-        <div style={{ marginTop:"0.4rem", fontSize:"0.57rem", color:"#94a3b8", lineHeight:1.7 }}>
-          {(activePacket?.notices || []).slice(0,2).map((n, i)=><div key={i}>• {n}</div>)}
-        </div>
-      </details>
+      <div className="card card-soft">
+        <div className="sect-title" style={{ color:"#94a3b8", marginBottom:"0.2rem" }}>WHAT I’M WATCHING</div>
+        <div style={{ fontSize:"0.58rem", color:"#a7b4c6" }}>{coachDecision.watch}</div>
+      </div>
 
+      <div style={{ fontSize:"0.54rem", color:"#94a3b8", letterSpacing:"0.06em" }}>ASK FOR A QUICK CALL</div>
       <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" }}>
         {quickPrompts.slice(0, 6).map(q => (
           <button key={q} className="btn" onClick={()=>send(q)} style={{ whiteSpace:"nowrap", fontSize:"0.55rem" }}>{q}</button>
