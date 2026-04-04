@@ -2165,8 +2165,9 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             </div>
             <button className="btn btn-primary" onClick={async ()=>{ await setEnvironmentMode(envDraft); setShowEnvEditor(false); }} style={{ width:"100%" }}>Apply changes</button>
           </div>
+          <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>Status: {personalization.injuryPainState.level.replaceAll("_"," ")} · {injuryRule.why}</div>
         </div>
-      )}
+      </details>
     </div>
   );
 }

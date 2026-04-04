@@ -3569,6 +3569,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             )
             , React.createElement('button', { className: "btn btn-primary" , onClick: async ()=>{ await setEnvironmentMode(envDraft); setShowEnvEditor(false); }, style: { width:"100%" },}, "Apply changes" )
           )
+          , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" },}, "Status: " , personalization.injuryPainState.level.replaceAll("_"," "), " · "  , injuryRule.why)
         )
       )
     )
@@ -3638,6 +3639,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
           , React.createElement('button', { className: "btn", onClick: ()=>setEnvironmentMode({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _439 => _439.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _440 => _440.time]) || "30", scope: "week" }), style: { fontSize:"0.5rem" },}, "This week" )
           , React.createElement('button', { className: "btn", onClick: ()=>setEnvironmentMode({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _441 => _441.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _442 => _442.time]) || "30", scope: "base" }), style: { fontSize:"0.5rem" },}, "Set default" )
         )
+        , React.createElement('div', { style: { fontSize:"0.58rem", color:C.amber, marginTop:"0.25rem" },}, "Tradeoff: " , arbitration.coachTradeoffLine || _optionalChain([arbitration, 'access', _396 => _396.conflicts, 'optionalAccess', _397 => _397[0]]) || strengthLayer.tradeoff)
       )
 
       , React.createElement('div', { className: "card card-soft" , style: { marginBottom:"0.85rem" },}
@@ -4324,6 +4326,17 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       )
 
       , React.createElement('div', { style: { fontSize:"0.54rem", color:"#94a3b8", letterSpacing:"0.06em" },}, "ASK FOR A QUICK CALL"    )
+      , React.createElement('div', { style: { display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" },}
+        , quickPrompts.slice(0, 6).map(q => (
+          React.createElement('button', { key: q, className: "btn", onClick: ()=>send(q), style: { whiteSpace:"nowrap", fontSize:"0.55rem" },}, q)
+        ))
+      )
+
+      , React.createElement('div', { style: { display:"flex", gap:"0.5rem" },}
+        , React.createElement('input', { value: input, onChange: e=>setInput(e.target.value), onKeyDown: e=>e.key==="Enter"&&!e.shiftKey&&send(), placeholder: "Ask coach for a decision"    , style: { flex:1 }, disabled: loading,} )
+        , React.createElement('button', { className: "btn btn-primary" , onClick: ()=>send(), disabled: loading, style: { opacity:loading?0.5:1 },}, "Send")
+      )
+
       , React.createElement('div', { style: { display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" },}
         , quickPrompts.slice(0, 6).map(q => (
           React.createElement('button', { key: q, className: "btn", onClick: ()=>send(q), style: { whiteSpace:"nowrap", fontSize:"0.55rem" },}, q)
