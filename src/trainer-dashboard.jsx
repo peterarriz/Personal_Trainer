@@ -1362,6 +1362,39 @@ export default function TrainerDashboard() {
     });
   };
 
+  const sbLoad = async () => {
+    await authStorage.sbLoad({
+      authSession,
+      setters: {
+        setLogs,
+        setBodyweights,
+        setPaceOverrides,
+        setWeekNotes,
+        setPlanAlerts,
+        setPersonalization,
+        setGoals,
+        setCoachActions,
+        setCoachPlanAdjustments,
+        setDailyCheckins,
+        setWeeklyCheckins,
+        setNutritionFavorites,
+        setNutritionFeedback,
+      },
+      persistAll,
+    });
+  };
+
+  useEffect(() => {
+    console.log("[supabase] resolved URL:", SB_URL || "(missing)");
+    if (SB_CONFIG_ERROR) {
+      setAuthError(`Supabase setup error: ${SB_CONFIG_ERROR}`);
+      setStorageStatus({ mode: "local", label: "CONFIG ERROR" });
+    }
+    const restored = authStorage.loadAuthSession();
+    if (restored) setAuthSession(restored);
+    setLoading(false);
+  }, [SB_URL, SB_CONFIG_ERROR, authStorage]);
+
   useEffect(() => {
     console.log("[supabase] resolved URL:", SB_URL || "(missing)");
     if (SB_CONFIG_ERROR) {
@@ -2636,6 +2669,9 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       <div style={{ display:"flex", gap:"0.5rem" }}>
         <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Ask coach for a decision" style={{ flex:1 }} disabled={loading} />
         <button className="btn btn-primary" onClick={()=>send()} disabled={loading} style={{ opacity:loading?0.5:1 }}>Send</button>
+      </div>
+      <div style={{ marginTop:"0.55rem", fontSize:"0.56rem", color:"#475569", lineHeight:1.7 }}>
+        Current coaching context: Week {currentWeek} · Today {todayWorkout?.label || "Rest"} · Logs {Object.keys(logs).length} · Weight entries {bodyweights.length} · Last coach action {coachActions[0]?.type || "none"}.
       </div>
       <style>{`@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}`}</style>
     </div>

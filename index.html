@@ -3816,6 +3816,12 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
         , React.createElement('div', { style: { marginTop:"0.15rem", fontSize:"0.55rem", color:"#64748b" },}, "Goals covered: "
             , _optionalChain([goalContext, 'access', _431 => _431.primary, 'optionalAccess', _432 => _432.name]) || "general fitness", _optionalChain([goalContext, 'access', _433 => _433.secondary, 'optionalAccess', _434 => _434.length]) ? ` + ${(goalContext.secondary || []).map(g=>_optionalChain([g, 'optionalAccess', _435 => _435.name])).filter(Boolean).join(" · ")}` : "", "."
         )
+        , React.createElement('div', { style: { fontSize:"0.55rem", color:"#64748b", marginBottom:"0.2rem" },}, "Restaurant-style options:" )
+        , realWorldNutrition.restaurantOptions.slice(0,4).map((x, i) => React.createElement('div', { key: `rw_rest_${i}`, style: { fontSize:"0.56rem", color:"#94a3b8" },}, "• " , x))
+        , React.createElement('div', { style: { fontSize:"0.55rem", color:"#64748b", margin:"0.35rem 0 0.2rem" },}, "Grocery-based options:" )
+        , realWorldNutrition.groceryOptions.slice(0,4).map((x, i) => React.createElement('div', { key: `rw_groc_${i}`, style: { fontSize:"0.56rem", color:"#94a3b8" },}, "• " , x))
+        , React.createElement('div', { style: { fontSize:"0.55rem", color:C.amber, margin:"0.35rem 0 0.2rem" },}, "Fallback no-thinking meals:"  )
+        , realWorldNutrition.fallback.map((x, i) => React.createElement('div', { key: `rw_fb_${i}`, style: { fontSize:"0.56rem", color:"#94a3b8" },}, "• " , x))
       )
 
       , React.createElement('div', { className: "card", style: { marginBottom:"0.8rem" },}
@@ -3866,6 +3872,35 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
             React.createElement('button', { key: k, className: "btn", onClick: ()=>setNutritionCheck(prev=>({ ...prev, status:k })),
               style: { fontSize:"0.55rem", borderColor:nutritionCheck.status===k?C.blue:"#1e293b", color:nutritionCheck.status===k?C.blue:"#64748b" },}, lab)
           ))
+        )
+        , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" },}
+          , React.createElement('input', { value: nutritionCheck.note || "", onChange: e=>setNutritionCheck(prev=>({ ...prev, note:e.target.value })), placeholder: "Quick note (optional)"  ,} )
+          , React.createElement('button', { className: "btn btn-primary" , onClick: ()=>saveNutritionFeedback(todayKey, nutritionCheck), style: { fontSize:"0.55rem" },}, "SAVE")
+        )
+      )
+
+      , React.createElement('div', { className: "card", style: { marginTop:"0.8rem" },}
+        , React.createElement('div', { className: "sect-title", style: { color:C.green, marginBottom:"0.5rem" },}, "FASTEST GOOD OPTION"  )
+        , React.createElement('div', { style: { fontSize:"0.64rem", color:"#e2e8f0" },}, fastest.name)
+        , React.createElement('div', { style: { fontSize:"0.6rem", color:"#94a3b8", marginTop:2 },}, fastest.meal)
+        , React.createElement('button', { className: "btn", onClick: ()=>saveNutritionFavorites({ ...favorites, safeMeals: [{ name: fastest.name, meal: fastest.meal }, ...favorites.safeMeals].slice(0,8) }), style: { marginTop:"0.4rem", fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" },}, "SAVE SAFE DEFAULT MEAL"
+
+        )
+        , React.createElement('div', { style: { marginTop:"0.45rem", fontSize:"0.55rem", color:"#475569" },}, "Practical rule: staple breakfast + varied lunch/dinner + one emergency default meal."
+
+        )
+      )
+      , React.createElement('div', { className: "card", style: { marginTop:"0.8rem" },}
+        , React.createElement('div', { className: "sect-title", style: { color:C.blue, marginBottom:"0.5rem" },}, "NUTRITION REFLECTION" )
+        , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem", marginBottom:"0.35rem" },}
+          , [["on_track","on track"],["decent","decent"],["off_track","off track"]].map(([k,lab]) => (
+            React.createElement('button', { key: k, className: "btn", onClick: ()=>setNutritionCheck(prev=>({ ...prev, status:k })),
+              style: { fontSize:"0.55rem", borderColor:nutritionCheck.status===k?C.blue:"#1e293b", color:nutritionCheck.status===k?C.blue:"#64748b" },}, lab)
+          ))
+        )
+        , React.createElement('select', { value: nutritionCheck.issue || "", onChange: e=>setNutritionCheck(prev=>({ ...prev, issue:e.target.value })), style: { marginBottom:"0.35rem", fontSize:"0.56rem" },}
+          , React.createElement('option', { value: "",}, "Biggest issue (optional)"  )
+          , ["hunger","convenience","cravings","travel","social_eating","underprepared","low_appetite"].map(i => React.createElement('option', { key: i, value: i,}, i.replaceAll("_"," ")))
         )
         , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" },}
           , React.createElement('input', { value: nutritionCheck.note || "", onChange: e=>setNutritionCheck(prev=>({ ...prev, note:e.target.value })), placeholder: "Quick note (optional)"  ,} )
