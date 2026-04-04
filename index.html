@@ -4241,7 +4241,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Protect") return {
       stance: `Do the condensed ${dayLabel} version today and keep intensity controlled.`,
       why: `Recovery signals are elevated, so we protect consistency while keeping ${goalPriority} on track.`,
-      watch: "I'm watching pain and session feel after this workout.",
+      watch: "I am watching pain and session feel after this workout.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 10, reason: "protect_mode" } }, primary: true },
         { label: "Move to tomorrow", action: { type: COACH_TOOL_ACTIONS.MOVE_LONG_RUN, payload: { days: 1, reason: "protect_shift" } } }
@@ -4250,7 +4250,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Simplify") return {
       stance: `Keep this simple: complete the short ${dayLabel} version.`,
       why: `Time and adherence say simplify now, then rebuild consistency.`,
-      watch: "I'm watching completion rate over the next 3 days.",
+      watch: "I am watching completion rate over the next 3 days.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 12, reason: "simplify_mode" } }, primary: true },
         { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "simplify_week" } } }
@@ -4259,7 +4259,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Rebuild") return {
       stance: `Take the minimum viable ${dayLabel} session and rebuild rhythm first.`,
       why: `Recent execution dipped, so we rebuild frequency before adding load.`,
-      watch: "I'm watching whether you can stack 2-3 clean sessions.",
+      watch: "I am watching whether you can stack 2-3 clean sessions.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "rebuild_mode" } }, primary: true },
         { label: "Simplify week", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 18, reason: "rebuild_week" } } }
@@ -4268,7 +4268,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     if (coachMode === "Push") return {
       stance: `Keep the full ${dayLabel} session and add one small progression.`,
       why: `Stability is strong enough to push while still protecting recovery.`,
-      watch: "I'm watching session quality and next-day fatigue.",
+      watch: "I am watching session quality and next-day fatigue.",
       options: [
         { label: "Keep full session", action: null, primary: true },
         { label: "Push slightly", action: { type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 1, reason: "push_mode" } } }
@@ -4277,7 +4277,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     return {
       stance: `Keep the full ${dayLabel} session as written.`,
       why: `Current signals support staying steady and executing cleanly.`,
-      watch: "I'm watching consistency and workout quality this week.",
+      watch: "I am watching consistency and workout quality this week.",
       options: [
         { label: "Keep full session", action: null, primary: true },
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 8, reason: "hold_condense" } } }
@@ -4322,7 +4322,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
       )
 
       , React.createElement('div', { className: "card card-soft" ,}
-        , React.createElement('div', { className: "sect-title", style: { color:"#94a3b8", marginBottom:"0.2rem" },}, "WHAT I'M WATCHING"  )
+        , React.createElement('div', { className: "sect-title", style: { color:"#94a3b8", marginBottom:"0.2rem" },}, "WHAT I AM WATCHING"   )
         , React.createElement('div', { style: { fontSize:"0.58rem", color:"#a7b4c6" },}, coachDecision.watch)
       )
 
