@@ -2938,189 +2938,90 @@ function TodayTab({ todayWorkout, plannedWorkout, currentWeek, logs, bodyweights
     const gymRecommended = ["run+strength", "strength+prehab", "hard-run", "long-run"].includes(tomorrowWorkout.type);
     return `Tomorrow: ${runType} · ${runDetail} · ${gymRecommended ? "Gym recommended." : "Home recommended."}`;
   })();
+  const toSentence = (text = "") => String(text || "").split(".")[0].replace(/\s+/g, " ").trim();
+  const normalizedBaseTitle = (() => {
+    if (todayWorkout?.type === "rest") return "Recovery";
+    if (todayWorkout?.type === "strength+prehab") return "Strength";
+    if (todayWorkout?.type === "run+strength") return "Easy Run";
+    if (todayWorkout?.run?.t === "Easy") return "Easy Run";
+    if (todayWorkout?.run?.t === "Tempo") return "Tempo Run";
+    if (todayWorkout?.run?.t === "Intervals") return "Intervals";
+    if (todayWorkout?.run?.t === "Long") return "Long Run";
+    if (todayWorkout?.type === "easy-run") return "Easy Run";
+    if (todayWorkout?.type === "hard-run") return todayWorkout?.run?.t === "Tempo" ? "Tempo Run" : "Quality Run";
+    if (todayWorkout?.type === "long-run") return "Long Run";
+    return "Workout";
+  })();
+  const finalPrescription = {
+    title: normalizedBaseTitle,
+    subtitle: (() => {
+      if (todayWorkout?.type === "rest") return "20–30 min walk + mobility";
+      if (todayWorkout?.run?.d && todayWorkout?.strSess) return `${todayWorkout.run.d} + ${todayWorkout.strSess} strength`;
+      if (todayWorkout?.run?.d) return todayWorkout.run.d;
+      if (todayWorkout?.strSess) return `${todayWorkout.strSess} strength (${todayWorkout?.strengthDuration || "20–30 min"})`;
+      return toSentence(todayWorkout?.label || "Keep today simple and consistent.");
+    })(),
+    environment: `${equipmentLabel} • ${timeLabel}`,
+    why: (() => {
+      const bullets = [];
+      const painLevel = personalization?.injuryPainState?.level || "none";
+      if (painLevel !== "none") bullets.push(`${personalization?.injuryPainState?.area || "Your recovery area"} still needs lower impact work today.`);
+      if (currentWeekLoad > avgLoadLast3weeks * 1.1) bullets.push("Your training load this week is above your recent average.");
+      if (workoutAdjusted) bullets.push("Today was reduced to keep your next key session on track.");
+      if (!bullets.length && hadHardSessionYesterday) bullets.push("You had a harder session yesterday, so today is controlled.");
+      if (!bullets.length && todayWhyNow) bullets.push(toSentence(todayWhyNow));
+      if (!bullets.length) bullets.push("This session matches your current plan and recovery needs.");
+      return bullets.slice(0, 3);
+    })(),
+    shorterVersion: (() => {
+      const timeNum = Number(String(environmentSelection?.time || "30").replace("+", ""));
+      if (!travelConstrained && timeNum > 30) return "";
+      if (todayWorkout?.type === "rest") return "10-minute walk + calf and hip mobility";
+      if (todayWorkout?.run) return "20-minute easy run or brisk walk";
+      if (todayWorkout?.strSess || /strength/i.test(String(todayWorkout?.label || ""))) return "15-minute bodyweight strength circuit";
+      return "10–20 minutes of easy movement";
+    })(),
+  };
 
   return (
     <div className="fi">
-      <div
-        style={{
-          marginBottom:"1rem",
-          display:"grid",
-          gap:"0.32rem",
-          borderRadius:16,
-          border:"1px solid rgba(105,142,195,0.35)",
-          padding:"0.95rem 1rem",
-          backgroundImage:`radial-gradient(120% 120% at 15% 10%, ${intensityPalette.glow}, transparent 52%), radial-gradient(140% 120% at 85% 20%, ${timePalette.tint}, transparent 56%), linear-gradient(120deg, ${timePalette.base}, rgba(14,23,41,0.88), ${intensityPalette.streak})`,
-          backgroundSize:"180% 180%",
-          animation:"heroShift 13s ease-in-out infinite",
-          boxShadow:"inset 0 1px 0 rgba(255,255,255,0.06), 0 14px 30px rgba(2,6,14,0.35)"
-        }}
-      >
-        <div style={{ fontSize:"0.56rem", color:"#9eb4d8", letterSpacing:"0.14em", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <span>TODAY</span>
-          <span style={{ fontSize:"0.5rem", opacity:0.9 }}>{timePalette.label} · {intensityLevel.toUpperCase()} INTENSITY</span>
+      <div className="card card-strong card-hero" style={{ marginBottom:"0.85rem", padding:"1rem", background:"linear-gradient(130deg, rgba(17,32,58,0.92), rgba(13,20,33,0.98))" }}>
+        <div style={{ fontSize:"0.52rem", color:"#97acd1", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>TODAY'S WORKOUT</div>
+        <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.22rem" }}>
+          <Glyph name={WORKOUT_TYPE_ICON[todayWorkout?.type] || "rest"} color={dayColor} size={15} />
+          <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:"1.25rem", color:"#f8fafc", lineHeight:1.1 }}>{finalPrescription.title}</div>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:"0.45rem", fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:"2.15rem", color:"#f8fafc", letterSpacing:"0.02em", lineHeight:1 }}>
-          <Glyph name={WORKOUT_TYPE_ICON[todayWorkout?.type] || "rest"} color={dayColor} size={17} />
-          <span>{todayWorkout?.label || "Rest Day"}</span>
-        </div>
-        <div style={{ fontSize:"0.58rem", color:"#d7e4fb", lineHeight:1.55, maxWidth:630 }}>{todayWhyNow || conciseFocus}</div>
-        <div style={{ fontSize:"0.55rem", color:"#9afbd2" }}>Win: {conciseSuccess}</div>
-        <div style={{ width:"fit-content", fontSize:"0.52rem", color:"#c1d5f5", border:"1px solid rgba(134,170,221,0.46)", borderRadius:999, marginTop:"0.2rem", background:"rgba(16,28,49,0.55)", padding:"0.24rem 0.48rem" }}>
-          {equipmentLabel} · {timeLabel}
+        <div style={{ fontSize:"0.58rem", color:"#d7e4fb", lineHeight:1.55 }}>{finalPrescription.subtitle}</div>
+        <div style={{ width:"fit-content", marginTop:"0.4rem", fontSize:"0.5rem", color:"#c1d5f5", border:"1px solid rgba(134,170,221,0.42)", borderRadius:999, background:"rgba(16,28,49,0.55)", padding:"0.2rem 0.45rem" }}>
+          {finalPrescription.environment}
         </div>
       </div>
-      {easierSessionsObservation && (
-        <div className="card card-soft" style={{ marginBottom:"0.82rem", borderColor:C.blue+"38" }}>
-          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.34rem" }}>COACH OBSERVATION</div>
-          <div className="coach-copy" style={{ fontSize:"0.56rem", lineHeight:1.62 }}>{easierSessionsObservation}</div>
-        </div>
-      )}
-      {loadSpikeWarning && (
-        <div className="card card-soft" style={{ marginBottom:"0.82rem", borderColor:C.amber+"40" }}>
-          <div className="sect-title" style={{ color:C.amber, marginBottom:"0.34rem" }}>LOAD WATCH</div>
-          <div className="coach-copy" style={{ fontSize:"0.56rem", lineHeight:1.62 }}>{loadSpikeWarning}</div>
-        </div>
-      )}
-      {!!discomfortProtocol && (
-        <div className="card card-soft" style={{ marginBottom:"0.82rem", borderColor:C.red+"40" }}>
-          <div className="sect-title" style={{ color:C.red, marginBottom:"0.34rem" }}>DISCOMFORT PROTOCOL</div>
-          <div className="coach-copy" style={{ fontSize:"0.56rem", lineHeight:1.62 }}>{discomfortProtocol}</div>
-        </div>
-      )}
 
-      <div className="card card-action" style={{ marginBottom:"0.82rem", padding:"0.9rem 1rem", background:"linear-gradient(120deg, rgba(255,138,0,0.14), rgba(16,27,45,0.92), var(--phase-accent-soft))", borderColor:"rgba(255,138,0,0.45)" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.35rem", gap:"0.4rem" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:"0.35rem", fontFamily:"'Space Grotesk',sans-serif", fontSize:"0.84rem", color:"#f8fafc" }}>
-            <Glyph name={streakDays >= 7 ? "hard_run" : "easy_run"} color="#ff8a00" size={14} />
-            <span>Consistency Streak</span>
-          </div>
-          <div style={{ fontSize:"0.53rem", color:momentumTone.color, letterSpacing:"0.08em" }}>{momentumTone.label}</div>
-        </div>
-        <div style={{ display:"flex", alignItems:"baseline", gap:"0.35rem", marginBottom:"0.35rem" }}>
-          <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:"1.55rem", color:"#fff2d9", lineHeight:1 }}>{streakDays}</div>
-          <div style={{ fontSize:"0.56rem", color:"#ffc27a", letterSpacing:"0.06em" }}>DAY RUN — DON’T BREAK IT</div>
-        </div>
-        <div style={{ height:8, background:"#1a2538", borderRadius:999, overflow:"hidden", border:"1px solid #2c3f5d", marginBottom:"0.35rem" }}>
-          <div style={{ width:`${momentumPct}%`, height:"100%", background:"linear-gradient(90deg,#ff8a00,var(--phase-accent))", boxShadow:"0 0 14px rgba(255,138,0,0.45)" }} />
-        </div>
-        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.2rem" }}>
-          {last7.slice().reverse().map((d, i) => (
-            <div key={d} style={{ display:"grid", justifyItems:"center", gap:"0.15rem", minWidth:20 }}>
-              <div style={{ width:9, height:9, borderRadius:999, background:isCompleteDay(d) ? "#ffb347" : "#27364f", boxShadow:isCompleteDay(d) ? "0 0 8px rgba(255,179,71,0.7)" : "none" }} />
-              <div style={{ fontSize:"0.44rem", color:i===6?"#cbd5e1":"#5f708a" }}>{["S","M","T","W","T","F","S"][i]}</div>
-            </div>
+      <div className="card card-soft" style={{ marginBottom:"0.75rem" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.28rem" }}>WHY TODAY</div>
+        <ul style={{ margin:0, paddingLeft:"1rem", display:"grid", gap:"0.24rem" }}>
+          {finalPrescription.why.map((line, idx) => (
+            <li key={`${line}-${idx}`} style={{ fontSize:"0.56rem", color:"#cbd5e1", lineHeight:1.55 }}>{line}</li>
           ))}
-        </div>
-        <div style={{ marginTop:"0.42rem", fontSize:"0.54rem", color:"#cbd5e1", lineHeight:1.6 }}>{streakSignal}</div>
+        </ul>
       </div>
 
-      <div className="card card-strong card-hero" style={{ marginBottom:"1.05rem", padding:"1.45rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.45rem" }}>MAIN WORKOUT</div>
-        {todayWorkout?.run && (
-          <WorkoutBlock
-            icon={RUN_TYPE_ICON[todayWorkout.run.t] || WORKOUT_TYPE_ICON[todayWorkout?.type]}
-            title={`${todayWorkout.run.t} — ${todayWorkout.run.d}`}
-            color={todayWorkout.run.t === "Intervals" ? C.amber : todayWorkout.run.t === "Long" ? C.red : C.green}
-            items={[
-              { label:"Distance", val:todayWorkout.run.d },
-              { label:"Pace", val: todayWorkout.run.t === "Intervals" ? zones?.int+"/mi" : todayWorkout.run.t === "Long" ? zones?.long+"/mi" : todayWorkout.run.t === "Tempo" ? zones?.tempo+"/mi" : zones?.easy+"/mi" },
-              { label:"Focus", val:todayWorkout.run.t },
-            ]}
-            routine={runRoutine}
-            defaultOpen={todayWorkout.run.t === "Intervals" || todayWorkout.run.t === "Tempo"}
-          />
-        )}
-        {(todayWorkout?.type === "run+strength" || todayWorkout?.type === "strength+prehab") && (
-          <div style={{ marginTop:"0.6rem" }}>
-            <WorkoutBlock
-              icon="strength_prehab"
-              title={`Strength ${todayWorkout?.strSess || "A"} (${todayWorkout?.strengthDuration || "20-30 min"})`}
-              color={C.blue}
-              items={[
-                { label: "Track", val: (strengthTrack || "home").replace("_"," ") },
-                { label: "Exercises", val: String(strengthRoutine.length || 0) },
-                { label: "Goal", val: "Quality reps + posture" },
-              ]}
-              routine={strengthRoutine}
-              defaultOpen
-            />
-          </div>
-        )}
-        {(todayWorkout?.optionalSecondary || planComposer?.aestheticAllocation?.active) && (
-          <div style={{ marginTop:"0.45rem" }}>
-            <WorkoutBlock
-              icon="easy_run"
-              title={todayWorkout?.optionalSecondary || "Optional: 10 min core"}
-              color={C.green}
-              items={[
-                { label:"Duration", val:"~10 min" },
-                { label:"Rounds", val:"3" },
-                { label:"Focus", val:"Core stability" },
-              ]}
-              routine={optionalCoreRoutine}
-            />
-          </div>
-        )}
-        {todayWorkout?.environmentNote && <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#94a3b8" }}>{todayWorkout.environmentNote}</div>}
-      </div>
-      {workoutAdjusted && (
-        <div className="card card-soft" style={{ marginBottom:"0.85rem" }}>
-          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>WHY TODAY WAS ADJUSTED</div>
-          <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap", lineHeight:1.65 }}>{adjustmentCoachNote}</div>
-        </div>
-      )}
-      {Number(String(environmentSelection?.time || "30").replace("+", "")) <= 30 && (
-        <div className="card card-soft" style={{ marginBottom:"0.85rem", borderColor:C.blue+"35" }}>
-          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>COMPRESSED SESSION</div>
-          <div className="coach-copy" style={{ fontSize:"0.56rem", lineHeight:1.62 }}>{compressedSession}</div>
-        </div>
-      )}
-      {travelConstrained && Number(String(environmentSelection?.time || "30").replace("+", "")) <= 30 && (
-        <div className="card card-soft" style={{ marginBottom:"0.85rem", borderColor:C.green+"35" }}>
-          <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>MINIMUM EFFECTIVE SESSION</div>
-          <div className="coach-copy" style={{ fontSize:"0.56rem", lineHeight:1.62, whiteSpace:"pre-wrap" }}>{minimumEffectiveTravelSession}</div>
+      {!!finalPrescription.shorterVersion && (
+        <div className="card card-soft" style={{ marginBottom:"0.75rem", borderColor:C.green+"35" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:"0.3rem" }}>SHORTER VERSION</div>
+          <div className="coach-copy" style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{finalPrescription.shorterVersion}</div>
         </div>
       )}
 
-      <div style={{ marginBottom:"0.85rem", display:"grid", gridTemplateColumns:"1fr auto auto", alignItems:"center", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" }}>
-        <div style={{ fontSize:"0.55rem", color:"#7f92aa" }}>Fallback</div>
-        <button className="btn" onClick={()=>applyDayContextOverride("minimum_viable_day")} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"30" }}>20-min version</button>
+      <div style={{ marginBottom:"0.78rem", display:"grid", gridTemplateColumns:"1fr auto auto", alignItems:"center", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.62rem 0.75rem" }}>
+        <div style={{ fontSize:"0.53rem", color:"#7f92aa" }}>Need a faster option?</div>
+        <button className="btn" onClick={()=>applyDayContextOverride("minimum_viable_day")} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"30" }}>Use 20-min plan</button>
         <button className="btn" onClick={()=>shiftTodayWorkout(1)} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"30" }}>Move to tomorrow</button>
-      </div>
-
-      <div style={{ marginBottom:"0.65rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-        {[["run+strength","Run+Strength"],["otf","OTF"],["strength+prehab","Strength+Prehab"],["hard-run","Hard Run"],["easy-run","Easy Run"],["long-run","Long Run"],["rest","Recovery"]].map(([k,label]) => (
-          <div key={k} style={{ display:"inline-flex", alignItems:"center", gap:"0.26rem", padding:"0.2rem 0.38rem", borderRadius:999, border:"1px solid #23344e", background:"#0f1728", fontSize:"0.5rem", color:"#9fb2d2" }}>
-            <Glyph name={WORKOUT_TYPE_ICON[k]} color={dayColors[k]} size={11} />
-            <span>{label}</span>
-          </div>
-        ))}
       </div>
 
       <div className="card card-soft card-action" style={{ marginBottom:"0.75rem" }}>
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>QUICK CHECK-IN</div>
         <div style={{ display:"grid", gap:"0.35rem" }}>
-          <div style={{ display:"grid", gap:"0.32rem", background:"#0d1626", border:"1px solid #1f2f4a", borderRadius:10, padding:"0.55rem" }}>
-            <div style={{ fontSize:"0.5rem", color:"#8ea2c4", letterSpacing:"0.08em" }}>OPTIONAL READINESS (SKIP = NO CHANGE)</div>
-            {[["sleep","Sleep"],["soreness","Soreness"],["stress","Stress"]].map(([k, label]) => {
-              const v = Number(checkin?.readiness?.[k] || 0);
-              return (
-                <div key={k} style={{ display:"grid", gridTemplateColumns:"74px 1fr 42px", alignItems:"center", gap:"0.45rem" }}>
-                  <div style={{ fontSize:"0.54rem", color:"#9fb2d2" }}>{label}</div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="5"
-                    step="1"
-                    value={Number.isNaN(v) ? 0 : v}
-                    onChange={e=>setCheckin(c=>({ ...c, readiness: { ...(c.readiness || {}), [k]: e.target.value === "0" ? "" : Number(e.target.value) } }))}
-                    style={{ width:"100%" }}
-                  />
-                  <div className="mono" style={{ fontSize:"0.53rem", color:v === 0 ? "#64748b" : "#dbe7f6", textAlign:"right" }}>{v === 0 ? "skip" : v}</div>
-                </div>
-              );
-            })}
-          </div>
           <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
             {CHECKIN_STATUS_OPTIONS.map(opt => (
               <button key={opt.key} className="btn" onClick={()=>setCheckin(c=>({ ...c, status: opt.key }))} style={{ fontSize:"0.52rem", color:checkin.status===opt.key?C.green:"#64748b", borderColor:checkin.status===opt.key?C.green+"40":"#1e293b" }}>{opt.label}</button>
@@ -3131,9 +3032,8 @@ function TodayTab({ todayWorkout, plannedWorkout, currentWeek, logs, bodyweights
               <button key={opt.key} className="btn" onClick={()=>setCheckin(c=>({ ...c, sessionFeel: opt.key }))} style={{ fontSize:"0.52rem", color:checkin.sessionFeel===opt.key?C.blue:"#64748b", borderColor:checkin.sessionFeel===opt.key?C.blue+"40":"#1e293b" }}>{opt.label}</button>
             ))}
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 120px auto", gap:"0.35rem" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
             <input value={checkin.note || ""} onChange={e=>setCheckin(c=>({ ...c, note: e.target.value }))} placeholder='Optional note' />
-            <input type="number" step="0.1" value={checkin.bodyweight || ""} onChange={e=>setCheckin(c=>({ ...c, bodyweight: e.target.value }))} placeholder="BW" />
             <button className="btn btn-primary" onClick={async ()=>{
               const parsed = parseMicroCheckin(checkin.note || "");
               const basePayload = parsed ? { ...checkin, ...parsed, passiveAssumed: false } : { ...checkin, passiveAssumed: false };
@@ -3183,6 +3083,73 @@ function TodayTab({ todayWorkout, plannedWorkout, currentWeek, logs, bodyweights
 
       <details style={{ marginBottom:"0.8rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem 0.7rem" }}>
         <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#94a3b8", letterSpacing:"0.06em" }}>More context</summary>
+        {todayWorkout?.run && (
+          <div style={{ marginTop:"0.5rem" }}>
+            <WorkoutBlock
+              icon={RUN_TYPE_ICON[todayWorkout.run.t] || WORKOUT_TYPE_ICON[todayWorkout?.type]}
+              title={`Workout details: ${todayWorkout.run.t}`}
+              color={todayWorkout.run.t === "Intervals" ? C.amber : todayWorkout.run.t === "Long" ? C.red : C.green}
+              items={[
+                { label:"Distance", val:todayWorkout.run.d },
+                { label:"Pace", val: todayWorkout.run.t === "Intervals" ? zones?.int+"/mi" : todayWorkout.run.t === "Long" ? zones?.long+"/mi" : todayWorkout.run.t === "Tempo" ? zones?.tempo+"/mi" : zones?.easy+"/mi" },
+                { label:"Focus", val:todayWorkout.run.t },
+              ]}
+              routine={runRoutine}
+            />
+          </div>
+        )}
+        {(todayWorkout?.type === "run+strength" || todayWorkout?.type === "strength+prehab") && (
+          <div style={{ marginTop:"0.5rem" }}>
+            <WorkoutBlock
+              icon="strength_prehab"
+              title={`Strength ${todayWorkout?.strSess || "A"} details`}
+              color={C.blue}
+              items={[
+                { label: "Track", val: (strengthTrack || "home").replace("_"," ") },
+                { label: "Exercises", val: String(strengthRoutine.length || 0) },
+                { label: "Goal", val: "Quality reps + posture" },
+              ]}
+              routine={strengthRoutine}
+            />
+          </div>
+        )}
+        {(todayWorkout?.optionalSecondary || planComposer?.aestheticAllocation?.active) && (
+          <div style={{ marginTop:"0.5rem" }}>
+            <WorkoutBlock
+              icon="easy_run"
+              title={todayWorkout?.optionalSecondary || "Optional 10 min core"}
+              color={C.green}
+              items={[
+                { label:"Duration", val:"~10 min" },
+                { label:"Rounds", val:"3" },
+                { label:"Focus", val:"Core stability" },
+              ]}
+              routine={optionalCoreRoutine}
+            />
+          </div>
+        )}
+        <div style={{ marginTop:"0.45rem", display:"grid", gap:"0.32rem", background:"#0d1626", border:"1px solid #1f2f4a", borderRadius:10, padding:"0.55rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8ea2c4", letterSpacing:"0.08em" }}>READINESS (OPTIONAL)</div>
+          {[["sleep","Sleep"],["soreness","Soreness"],["stress","Stress"]].map(([k, label]) => {
+            const v = Number(checkin?.readiness?.[k] || 0);
+            return (
+              <div key={k} style={{ display:"grid", gridTemplateColumns:"74px 1fr 42px", alignItems:"center", gap:"0.45rem" }}>
+                <div style={{ fontSize:"0.54rem", color:"#9fb2d2" }}>{label}</div>
+                <input
+                  type="range"
+                  min="0"
+                  max="5"
+                  step="1"
+                  value={Number.isNaN(v) ? 0 : v}
+                  onChange={e=>setCheckin(c=>({ ...c, readiness: { ...(c.readiness || {}), [k]: e.target.value === "0" ? "" : Number(e.target.value) } }))}
+                  style={{ width:"100%" }}
+                />
+                <div className="mono" style={{ fontSize:"0.53rem", color:v === 0 ? "#64748b" : "#dbe7f6", textAlign:"right" }}>{v === 0 ? "skip" : v}</div>
+              </div>
+            );
+          })}
+          <input type="number" step="0.1" value={checkin.bodyweight || ""} onChange={e=>setCheckin(c=>({ ...c, bodyweight: e.target.value }))} placeholder="Bodyweight (optional)" />
+        </div>
         {salvageLayer.active && <div style={{ marginTop:"0.35rem", fontSize:"0.56rem", color:C.amber }}>Weekly strategy: {salvageLayer.compressedPlan.success}</div>}
         {failureMode.mode !== "normal" && <div style={{ marginTop:"0.35rem", fontSize:"0.56rem", color:C.green }}>{failureMode.coachBehavior.primaryLine}</div>}
         {validationLayer?.coachNudge && <div style={{ marginTop:"0.35rem", fontSize:"0.56rem", color:C.blue }}>{validationLayer.coachNudge}</div>}
