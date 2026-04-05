@@ -62,6 +62,40 @@ export const withConfidenceTone = (message, confidence = "moderate", voiceMode =
   return `${tonePrefix} ${message} ${confidenceTag}`;
 };
 
+const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, notices, recommendations, effects, coachMemoryContext }) => {
+  const chaotic = ["drifting", "falling off"].includes(momentum?.momentumState) || momentum?.inconsistencyRisk === "high";
+  const lockedIn = momentum?.momentumState === "building momentum" && momentum?.inconsistencyRisk !== "high";
+  const recoveryRisk = notices.some(n => /pain|recovery|fatigue|hardening/i.test(n));
+  const focusLine = recoveryRisk
+    ? "Execute the reduced-load version cleanly and protect recovery quality today."
+    : chaotic
+    ? "Keep today simple and finishable so momentum stays alive."
+    : lockedIn
+    ? "Hit today with intent and quality—this is a progression day."
+    : "Execute the planned session as written with clean control.";
+  const workoutLine = todayWorkout?.minDay
+    ? `${todayWorkout?.label || "Session"} — minimum viable version (${todayWorkout?.fallback || "20-30 minutes"}), then stop.`
+    : `${todayWorkout?.label || "Session"} — ${todayWorkout?.run?.d || todayWorkout?.d || "30-45 minutes"} with ${todayWorkout?.success || "steady execution and controlled effort"}.`;
+  const whyLines = [
+    recommendations?.[0]?.replace(/\s*\[[^\]]+\]\s*$/, "") || "This recommendation reflects your current readiness and consistency pattern.",
+    effects?.[0] || "The goal is to maximize useful training while minimizing relapse risk.",
+    recoveryRisk ? "Reduced load is intentional today because recovery risk is elevated." : null,
+    chaotic ? "Consistency beats optimization this week—stack completions first." : null,
+  ].filter(Boolean).slice(0, 4);
+  const nutritionLine = nutritionLayer?.targets
+    ? `${Math.round(nutritionLayer.targets.p || 0)}g protein · ${Math.round(nutritionLayer.targets.cal || 0)} kcal · ${Math.round(nutritionLayer.targets.c || 0)}g carbs`
+    : "Protein-first meals and normal intake today.";
+  const coachNote = coachMemoryContext?.recurringBreakdowns?.[0]
+    ? `Last breakdown came from ${coachMemoryContext.recurringBreakdowns[0].why}; today we remove that friction before it starts.`
+    : coachMemoryContext?.injuryHistory?.[0]
+    ? `We remember your injury pattern, so warm-up quality and controlled load stay non-negotiable.`
+    : lockedIn
+    ? "You’re trending in the right direction—use today to build on that streak."
+    : "Stay direct: complete today, log it, and move on.";
+
+  return `TODAY'S FOCUS:\n${focusLine}\n\nWORKOUT:\n${workoutLine}\n\nWHY THIS TODAY:\n- ${whyLines.join("\n- ")}\n\nNUTRITION:\n${nutritionLine}\n\nCOACH NOTE:\n${coachNote}`;
+};
+
 export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights = [], coachMemoryContext = null, realWorldNutrition, recalibration }) => {
   const s = detectCoachSignals(input);
   const voiceMode = inferCoachVoiceMode(momentum);
@@ -239,6 +273,15 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
     recommendations: recommendations.slice(0, 5),
     effects: effects.slice(0, 5),
     actions: dedupedActions,
+    coachBrief: buildCoachBrief({
+      todayWorkout,
+      momentum,
+      nutritionLayer,
+      notices: notices.slice(0, 5),
+      recommendations: recommendations.slice(0, 5),
+      effects: effects.slice(0, 5),
+      coachMemoryContext,
+    }),
     meta: {
       mode: voiceMode,
       momentum: momentum?.momentumState || "unknown",
