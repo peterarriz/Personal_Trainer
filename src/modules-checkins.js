@@ -4,6 +4,11 @@ export const DEFAULT_DAILY_CHECKIN = {
   blocker: "",
   note: "",
   bodyweight: "",
+  readiness: {
+    sleep: "",
+    soreness: "",
+    stress: "",
+  },
 };
 
 export const CHECKIN_STATUS_OPTIONS = [

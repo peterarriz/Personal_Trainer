@@ -90,12 +90,53 @@ export const mapWorkoutToNutritionDayType = (todayWorkout, environmentMode) => {
 };
 
 export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer, failureMode }) => {
-  const environmentMode = personalization.travelState.environmentMode || "home";
+  const todayKey = new Date().toISOString().split("T")[0];
+  const schedule = personalization?.environmentConfig?.schedule || [];
+  const isScheduledTravelDate = schedule.some(s => s?.mode === "Travel" && s?.startDate && s?.endDate && todayKey >= s.startDate && todayKey <= s.endDate);
+  const environmentMode = isScheduledTravelDate ? "travel" : (personalization.travelState.environmentMode || "home");
   const dayTypeOverride = coachPlanAdjustments?.nutritionOverrides?.[new Date().toISOString().split("T")[0]];
-  const dayType = dayTypeOverride || mapWorkoutToNutritionDayType(todayWorkout, environmentMode);
+  const mappedDay = dayTypeOverride || mapWorkoutToNutritionDayType(todayWorkout, environmentMode);
+  const travelMode = environmentMode.includes("travel") || isScheduledTravelDate || personalization?.travelState?.isTravelWeek;
+  const dayType = travelMode
+    ? (["hardRun", "longRun", "easyRun", "otf"].includes(mappedDay) ? "travelRun" : "travelRest")
+    : mappedDay;
   const goalContext = getGoalContext(goals);
   const baseTargets = NUTRITION[dayType] || NUTRITION.easyRun;
   let targets = applyGoalNutritionTargets(baseTargets, dayType, goalContext);
+  let phaseAwareAdjustment = null;
+  const currentPhase = todayWorkout?.week?.phase || "BASE";
+
+  const activeGoals = goalContext.active || [];
+  const hasBodyCompGoal = activeGoals.some(g => g.category === "body_comp");
+  const hasStrengthGoal = activeGoals.some(g => g.category === "strength");
+  if (hasBodyCompGoal && hasStrengthGoal) {
+    const heavyLiftDay = ["strength", "otf"].includes(dayType) || ["run+strength", "strength+prehab"].includes(todayWorkout?.type);
+    const easyRunWeek = !!todayWorkout?.week?.cutback || ["easyRun", "rest", "travelRest"].includes(dayType);
+    if (heavyLiftDay) {
+      const prev = { ...targets };
+      targets.cal = Math.max(targets.cal, NUTRITION.strength.cal);
+      targets.c = Math.max(targets.c, NUTRITION.strength.c);
+      targets.p = Math.max(targets.p, 200);
+      phaseAwareAdjustment = {
+        active: true,
+        mode: "maintenance_on_lift_days",
+        summary: "Maintenance calories on heavy lift days to protect strength output.",
+        why: `Strength day detected (${todayWorkout?.label || dayType}), so calories/carbs were protected from deficit.`,
+        delta: { cal: targets.cal - prev.cal, c: targets.c - prev.c, p: targets.p - prev.p },
+      };
+    } else if (easyRunWeek) {
+      const prev = { ...targets };
+      targets.cal = Math.max(2200, targets.cal - 140);
+      targets.c = Math.max(170, targets.c - 20);
+      phaseAwareAdjustment = {
+        active: true,
+        mode: "deficit_on_easy_weeks",
+        summary: "Deficit bias on easier run weeks to keep fat-loss moving.",
+        why: "Easy-load context detected, so a modest deficit was applied while protein stays high.",
+        delta: { cal: targets.cal - prev.cal, c: targets.c - prev.c, p: targets.p - prev.p },
+      };
+    }
+  }
 
   const recentBW = (bodyweights || []).slice(-10).map(x => Number(x.w)).filter(Boolean);
   const bwTrend = recentBW.length >= 2 ? recentBW[recentBW.length - 1] - recentBW[0] : 0;
@@ -125,7 +166,14 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
     targets = { ...targets, cal: Math.max(targets.cal, NUTRITION.easyRun.cal), p: Math.max(targets.p, 190) };
   }
 
-  const templateKey = environmentMode.includes("travel") ? "travel" : "home";
+  let phaseMode = "maintain";
+  if (phaseAwareAdjustment?.mode === "maintenance_on_lift_days") phaseMode = "maintain";
+  else if (phaseAwareAdjustment?.mode === "deficit_on_easy_weeks") phaseMode = "cut";
+  else if (goalContext.primary?.category === "strength" || ["PEAKBUILD", "PEAK"].includes(currentPhase)) phaseMode = "build";
+  else if (goalContext.primary?.category === "body_comp") phaseMode = ["BASE", "BUILDING"].includes(currentPhase) ? "cut" : "maintain";
+  else if (["hardRun", "longRun", "otf"].includes(dayType)) phaseMode = "build";
+
+  const templateKey = travelMode ? "travel" : "home";
   const mealPlan = templateKey === "travel"
     ? { tips: MEAL_PLANS.travel.tips, gym: MEAL_PLANS.travel.gym }
     : (["longRun","hardRun","travelRun"].includes(dayType) ? MEAL_PLANS.home.longRun : dayType === "rest" ? MEAL_PLANS.home.rest : MEAL_PLANS.home.training);
@@ -146,8 +194,10 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
     strategy,
     simplified,
     explanation,
+    phaseAwareAdjustment,
+    phaseMode,
     goalContext,
-    travelMode: environmentMode.includes("travel"),
+    travelMode,
   };
 };
 
@@ -232,4 +282,26 @@ export const buildGroceryBasket = ({ store, city, days, dayType }) => {
   const extras = ["electrolytes", "sparkling water", "salsa/hot sauce"];
   const runBonus = ["bagels", "honey", "rice cakes"];
   return { store, city, days, items: [...protein, ...carbs, ...fats, ...produce, ...extras, ...(["longRun", "hardRun", "travelRun"].includes(dayType) ? runBonus : [])] };
+};
+
+export const deriveFridgeCoachMealSuggestion = ({ fridgeInput, dayType = "easyRun" }) => {
+  const raw = String(fridgeInput || "").trim().toLowerCase();
+  if (!raw) {
+    return { meal: "", coachLine: "Add a few fridge items first (example: eggs, rice, spinach)." };
+  }
+  const items = raw.split(/[,|/;\n]+/).map(x => x.trim()).filter(Boolean).slice(0, 12);
+  const hasAny = (keywords) => items.find(item => keywords.some(k => item.includes(k)));
+
+  const protein = hasAny(["chicken", "turkey", "beef", "steak", "salmon", "tuna", "fish", "egg", "yogurt", "cottage", "tofu", "tempeh", "protein"]);
+  const carb = hasAny(["rice", "potato", "oat", "bread", "wrap", "tortilla", "pasta", "fruit", "banana", "berries", "quinoa", "bean"]);
+  const produce = hasAny(["spinach", "broccoli", "salad", "pepper", "onion", "tomato", "vegetable", "veg", "kale", "zucchini", "carrot", "fruit", "berries", "banana", "apple"]);
+  const fat = hasAny(["avocado", "olive oil", "nuts", "nut butter", "cheese", "seed"]);
+
+  const proteinPick = protein || "eggs or Greek yogurt";
+  const carbPick = carb || (["longRun", "hardRun", "travelRun"].includes(dayType) ? "rice or oats" : "fruit or potato");
+  const producePick = produce || "any frozen or fresh vegetable";
+  const fatPick = fat || "olive oil or a few nuts";
+  const meal = `${proteinPick} + ${carbPick} + ${producePick} (${fatPick} optional)`;
+  const coachLine = `Coach suggestion: ${meal}. Keep portions centered on your target and protein-first.`;
+  return { meal, coachLine, items };
 };
