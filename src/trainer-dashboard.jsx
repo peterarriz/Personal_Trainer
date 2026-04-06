@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildRollingHorizonWeeks } from "./modules-planning.js";
 import { createAuthStorageModule } from "./modules-auth-storage.js";
-import { getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket, deriveFridgeCoachMealSuggestion } from "./modules-nutrition.js";
-import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer } from "./modules-checkins.js";
+import { getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket } from "./modules-nutrition.js";
+import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, isWithinGracePeriod, resolveEffectiveStatus } from "./modules-checkins.js";
 import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, withConfidenceTone, deterministicCoachPacket, applyCoachActionMutation } from "./modules-coach-engine.js";
 import { buildWorkoutAdjustmentCoachNote, buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildNutritionCoachBrief, buildSupplementCoachBrief, buildCoachChatSystemPrompt, buildPlanAnalysisSystemPrompt, buildTodayWhyNowSentence, buildMacroShiftLine, buildTodaySupplementTimingLines, buildEasierSessionsObservation, buildSkippedQualityDecision, buildLoadSpikeInlineWarning, buildWeeklyConsistencyAnchor, buildStreakSignalResponse, buildBadWeekTriageResponse, buildDiscomfortProtocolResponse, buildCompressedSessionPrescription, buildMinimumEffectiveTravelSession } from "./prompts/coach-text.js";
 
@@ -982,12 +982,18 @@ const buildUnifiedDailyStory = ({ todayWorkout, dailyBrief, progress, arbitratio
 
 const deriveBehaviorLoop = ({ dailyCheckins, logs, momentum, salvageLayer }) => {
   const entries = Object.entries(dailyCheckins || {}).sort((a,b) => a[0].localeCompare(b[0]));
-  const isSuccess = (c) => c?.status === "completed_as_planned" || c?.status === "completed_modified" || c?.passiveAssumed;
+  const isSuccess = (c) => c?.status === "completed_as_planned" || c?.status === "completed_modified";
   const isMinViable = (c) => c?.status === "completed_modified" || /min(imum)?\s?(day|dose)/i.test(c?.note || "");
+  const isCountable = (c, dateKey) => {
+    const eff = resolveEffectiveStatus(c, dateKey);
+    return eff !== "not_logged_grace" && eff !== "not_logged";
+  };
 
   let consistencyStreak = 0;
   for (let i = entries.length - 1; i >= 0; i--) {
-    if (isSuccess(entries[i][1])) consistencyStreak += 1;
+    const [dateKey, checkin] = entries[i];
+    if (!isCountable(checkin, dateKey)) continue; // skip grace-period entries
+    if (isSuccess(checkin)) consistencyStreak += 1;
     else break;
   }
   let minViableStreak = 0;
@@ -997,13 +1003,14 @@ const deriveBehaviorLoop = ({ dailyCheckins, logs, momentum, salvageLayer }) => 
   }
 
   const latest = entries[entries.length - 1]?.[1] || null;
-  const resolution = !latest
+  const latestStatus = latest?.status || "not_logged";
+  const resolution = !latest || latestStatus === "not_logged"
     ? "New streak starts with one completed day."
-    : latest.status === "completed_as_planned"
+    : latestStatus === "completed_as_planned"
     ? "Good day — you hit what mattered."
-    : latest.status === "completed_modified"
+    : latestStatus === "completed_modified"
     ? "Not perfect, but you kept momentum."
-    : latest.status === "skipped"
+    : latestStatus === "skipped"
     ? "Recovery day logged — next action is to restart with a minimum day."
     : "Day logged — momentum stays alive.";
 
@@ -1042,7 +1049,7 @@ const deriveLongTermMemoryLayer = ({ logs, dailyCheckins, weeklyCheckins, nutrit
   };
 
   const memories = [
-    makeMemory("prefers_simpler_weeks","behavior","stays more consistent when weeks are simpler", last28Checkins.filter(c => c.status === "completed_modified").length),
+    makeMemory("prefers_simpler_weeks","behavior","stays more consistent when weeks are simpler", last28Checkins.filter(c => c.status === "completed_modified" && !c.passiveAssumed).length),
     makeMemory("drops_after_3_4_days","behavior","often loses momentum after 3-4 hard days", Math.max(0, last28Logs.length - 4 >= 0 ? last28Checkins.filter(c => c.status === "skipped").length : 0)),
     makeMemory("fatigue_sensitive","performance","fatigue rises quickly when load stacks too fast", weekly.filter(w => Number(w.energy || 3) <= 2 || Number(w.stress || 3) >= 4).length),
     makeMemory("home_better_than_travel","environment","home setup yields higher completion than travel weeks", entries.filter(([,l]) => l.location !== "hotel").length >= 6 ? entries.filter(([,l]) => l.location === "hotel").length : 0),
@@ -1317,7 +1324,7 @@ const derivePersonalOptimizationLayer = ({ logs, dailyCheckins, nutritionFeedbac
   for (let i = 0; i < last42Checkins.length; i += 7) {
     const week = last42Checkins.slice(i, i + 7);
     if (!week.length) continue;
-    weeklyCompleted.push(week.filter(c => ["completed_as_planned", "completed_modified"].includes(c.status)).length);
+    weeklyCompleted.push(week.filter(c => ["completed_as_planned", "completed_modified"].includes(c.status) && !c.passiveAssumed).length);
   }
   const avgWeeklySessions = weeklyCompleted.length ? weeklyCompleted.reduce((s, n) => s + n, 0) / weeklyCompleted.length : 3;
   const optimalFrequency = avgWeeklySessions >= 4.2 ? "4-5 sessions/week" : avgWeeklySessions >= 3 ? "3-4 sessions/week" : "2-3 sessions/week";
@@ -2801,15 +2808,7 @@ function TodayTab({ todayWorkout, plannedWorkout, currentWeek, logs, bodyweights
     || !!todayWorkout?.minDay;
 
   useEffect(() => { setCheckin(defaultCheckin); }, [todayKey, dailyCheckins?.[todayKey], todayLog?.checkin?.ts]);
-  useEffect(() => { setPostSaveInsight(""); }, [todayKey]);
-  useEffect(() => {
-    if (!dailyCheckins?.[todayKey]) {
-      const t = setTimeout(() => {
-        saveDailyCheckin(todayKey, { ...DEFAULT_DAILY_CHECKIN, passiveAssumed: true, note: "Auto-assumed complete unless corrected." });
-      }, 1800);
-      return () => clearTimeout(t);
-    }
-  }, [todayKey, dailyCheckins?.[todayKey]]);
+  // No auto-assumption: sessions stay "not_logged" until the user explicitly logs them.
   const [showOverrides, setShowOverrides] = useState(false);
   const [showInjury, setShowInjury] = useState(false);
   const countHarderThanExpectedThisWeek = (candidatePayload = null) => {
@@ -3034,15 +3033,11 @@ function TodayTab({ todayWorkout, plannedWorkout, currentWeek, logs, bodyweights
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
             <input value={checkin.note || ""} onChange={e=>setCheckin(c=>({ ...c, note: e.target.value }))} placeholder='Optional note' />
-            <button className="btn btn-primary" onClick={async ()=>{
+            <input type="number" step="0.1" value={checkin.bodyweight || ""} onChange={e=>setCheckin(c=>({ ...c, bodyweight: e.target.value }))} placeholder="BW" />
+            <button className="btn btn-primary" disabled={checkin.status === "not_logged"} onClick={async ()=>{
+              if (checkin.status === "not_logged") return;
               const parsed = parseMicroCheckin(checkin.note || "");
-              const basePayload = parsed ? { ...checkin, ...parsed, passiveAssumed: false } : { ...checkin, passiveAssumed: false };
-              const readinessUpdate = deriveReadinessAdjustedCheckin(basePayload);
-              const payload = {
-                ...basePayload,
-                ...(readinessUpdate.readinessFilled ? { readiness: readinessUpdate.readiness } : {}),
-                ...(readinessUpdate.adjusted || {}),
-              };
+              const payload = parsed ? { ...checkin, ...parsed } : { ...checkin };
               await saveDailyCheckin(todayKey, payload);
               setCheckinAck(readinessUpdate.readinessFilled ? "Saved. Readiness captured for quiet coach adjustment." : "Saved.");
               const daysToRaceNow = Math.max(0, Math.ceil((new Date("2026-07-19T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24)));
@@ -3068,7 +3063,7 @@ function TodayTab({ todayWorkout, plannedWorkout, currentWeek, logs, bodyweights
                 const nextBW = [...bodyweights.filter(b => b.date !== todayKey), entry].sort((a,b) => a.date.localeCompare(b.date));
                 await saveBodyweights(nextBW);
               }
-            }} style={{ fontSize:"0.55rem" }}>SAVE</button>
+            }} style={{ fontSize:"0.55rem", opacity: checkin.status === "not_logged" ? 0.4 : 1 }}>SAVE</button>
           </div>
           {checkinAck && <div style={{ fontSize:"0.54rem", color:C.green }}>{checkinAck}</div>}
           {postSaveInsight && <div style={{ fontSize:"0.54rem", color:C.amber, whiteSpace:"pre-wrap", lineHeight:1.6 }}>{postSaveInsight}</div>}
@@ -3582,7 +3577,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
 // ── LOG TAB (POLISHED) ──────────────────────────────────────────────────────
 function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout, exportData, importData }) {
   const today = new Date().toISOString().split("T")[0];
-  const [quick, setQuick] = useState({ status:"completed_as_planned", feel:"3", note:"", bodyweight:"" });
+  const [quick, setQuick] = useState({ status:"", feel:"3", note:"", bodyweight:"" });
   const [detailed, setDetailed] = useState({ date:today, type: todayWorkout?.label||"", miles:"", pace:"", runTime:"", pushups:"", weight:"", notes:"", feel:"3", location:"home" });
   const [saved, setSaved] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
@@ -3594,11 +3589,17 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
   const history = Object.entries(logs || {}).sort((a,b)=>b[0].localeCompare(a[0]));
   const recent14 = history.slice(0,14);
   const completed14 = recent14.filter(([,l]) => ["completed_as_planned","completed_modified"].includes(l?.checkin?.status)).length;
-  const consistency = recent14.length ? Math.round((completed14 / recent14.length) * 100) : 0;
+  // New formula: exclude not_logged entries still within 48h grace period
+  const countable14 = recent14.filter(([dateKey, l]) => {
+    const eff = resolveEffectiveStatus(l?.checkin, dateKey);
+    return eff !== "not_logged_grace" && eff !== "not_logged";
+  }).length;
+  const consistency = countable14 ? Math.round((completed14 / countable14) * 100) : 0;
   const avgFeel = recent14.length ? (recent14.reduce((s,[,l]) => s + Number(l.feel || 3), 0) / recent14.length).toFixed(1) : "-";
   const notable = history.find(([,l]) => /progress|better|strong|solid/i.test((l.notes || "").toLowerCase()));
 
   const saveQuick = async () => {
+    if (!quick.status) return; // require explicit status selection
     const entry = {
       date: today,
       type: todayWorkout?.label || "Quick log",
@@ -3639,8 +3640,9 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
         <div style={{ display:"grid", gap:"0.4rem" }}>
           <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
             {[["completed_as_planned","Completed"],["completed_modified","Modified"],["skipped","Skipped"]].map(([k,lab]) => (
-              <button key={k} className="btn" onClick={()=>setQuick(q=>({ ...q, status:k }))} style={{ fontSize:"0.52rem", color:quick.status===k?C.green:"#64748b", borderColor:quick.status===k?C.green+"35":"#1e293b" }}>{lab}</button>
+              <button key={k} className="btn" onClick={()=>setQuick(q=>({ ...q, status:k }))} style={{ fontSize:"0.52rem", color:quick.status===k?C.green:"#64748b", borderColor:quick.status===k?C.green+"35":"#1e293b", fontWeight:quick.status===k?600:400 }}>{lab}</button>
             ))}
+            {!quick.status && <div style={{ fontSize:"0.54rem", color:"#475569" }}>Select one</div>}
           </div>
           <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
             {[1,2,3,4,5].map(n => (
@@ -3686,17 +3688,29 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
       <div className="card" style={{ marginBottom:"0.8rem" }}>
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>HISTORY</div>
         <div style={{ display:"grid", gap:"0.35rem" }}>
-          {history.slice(0, 20).map(([date, log]) => (
-            <div key={date} style={{ display:"grid", gridTemplateColumns:"95px 1fr auto auto", gap:"0.5rem", alignItems:"center", background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"6px 8px" }}>
+          {history.slice(0, 20).map(([date, log]) => {
+            const effStatus = resolveEffectiveStatus(log?.checkin, date);
+            const isNotLogged = effStatus === "not_logged_expired" || effStatus === "not_logged_grace";
+            const isExpired = effStatus === "not_logged_expired";
+            const displayNotes = (log.notes || "").replace(/Auto-assumed complete unless corrected\.?\s*/gi, "").trim();
+            return (
+            <div key={date} style={{ display:"grid", gridTemplateColumns:"95px 1fr auto auto", gap:"0.5rem", alignItems:"center", background: isNotLogged ? "#0a0e14" : "#0f172a", border:`1px solid ${isNotLogged ? "#151c28" : "#1e293b"}`, borderRadius:8, padding:"6px 8px", opacity: isNotLogged ? 0.7 : 1 }}>
               <div style={{ fontSize:"0.55rem", color:"#64748b" }}>{new Date(date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
               <div>
-                <div style={{ fontSize:"0.58rem", color:"#e2e8f0" }}>{log.type || "Session"}</div>
-                {log.notes && <div style={{ fontSize:"0.54rem", color:"#64748b" }}>{log.notes}</div>}
+                <div style={{ fontSize:"0.58rem", color: isNotLogged ? "#64748b" : "#e2e8f0" }}>{log.type || "Session"}</div>
+                {displayNotes && <div style={{ fontSize:"0.54rem", color:"#64748b" }}>{displayNotes}</div>}
               </div>
-              <div style={{ fontSize:"0.55rem", color:C.blue }}>Feel {log.feel || 3}</div>
-              <button className="btn" onClick={()=>delLog(date)} style={{ fontSize:"0.5rem", color:C.red, borderColor:C.red+"30" }}>DEL</button>
+              {isExpired ? (
+                <button className="btn" onClick={()=>setDetailed({ ...detailed, date, type: log.type || todayWorkout?.label || "" })} style={{ fontSize:"0.5rem", color:"#64748b", borderColor:"#1e293b", gridColumn:"span 2" }}>Add entry</button>
+              ) : isNotLogged ? (
+                <div style={{ fontSize:"0.55rem", color:"#475569", gridColumn:"span 2" }}></div>
+              ) : (<>
+                <div style={{ fontSize:"0.55rem", color:C.blue }}>Feel {log.feel || 3}</div>
+                <button className="btn" onClick={()=>delLog(date)} style={{ fontSize:"0.5rem", color:C.red, borderColor:C.red+"30" }}>DEL</button>
+              </>)}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 

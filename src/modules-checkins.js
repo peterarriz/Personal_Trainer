@@ -1,6 +1,6 @@
 export const DEFAULT_DAILY_CHECKIN = {
-  status: "completed_as_planned",
-  sessionFeel: "about_right",
+  status: "not_logged",
+  sessionFeel: "",
   blocker: "",
   note: "",
   bodyweight: "",
@@ -16,6 +16,23 @@ export const CHECKIN_STATUS_OPTIONS = [
   { key: "completed_modified", label: "completed modified" },
   { key: "skipped", label: "skipped" },
 ];
+
+// 48-hour grace period: not_logged entries under 48h are excluded from
+// consistency calculations entirely. After 48h they count as skipped
+// in the denominator only, never as completed.
+const GRACE_PERIOD_MS = 48 * 60 * 60 * 1000;
+
+export const isWithinGracePeriod = (dateKey) => {
+  const entryTime = new Date(`${dateKey}T23:59:59`).getTime();
+  return (Date.now() - entryTime) < GRACE_PERIOD_MS;
+};
+
+export const resolveEffectiveStatus = (checkin, dateKey) => {
+  const status = checkin?.status || "not_logged";
+  if (status !== "not_logged") return status;
+  if (isWithinGracePeriod(dateKey)) return "not_logged_grace";
+  return "not_logged_expired";
+};
 
 export const CHECKIN_FEEL_OPTIONS = [
   { key: "easier_than_expected", label: "easier than expected" },
@@ -75,7 +92,8 @@ const getWindowMetrics = ({ logs, dailyCheckins, startTs, endTs }) => {
     return t >= startTs && t <= endTs;
   }).map(([, l]) => l || {});
   const completed = checkins.filter(c => ["completed_as_planned", "completed_modified"].includes(c.status)).length;
-  const adherence = checkins.length ? completed / checkins.length : 0;
+  const countable = checkins.filter(c => c.status !== "not_logged" && c.status !== "not_logged_grace").length;
+  const adherence = countable ? completed / countable : 0;
   const avgFeel = logRows.length ? (logRows.reduce((s, l) => s + Number(l.feel || 3), 0) / logRows.length) : 3;
   const progressHits = logRows.filter(l => /progress|solid|better|good|strong/i.test((l.notes || "").toLowerCase())).length;
   return { adherence, avgFeel, progressHits, sample: checkins.length + logRows.length };
