@@ -3430,79 +3430,237 @@ RULES:
 
 // ── TODAY TAB ─────────────────────────────────────────────────────────────────
 function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights }) {
-  const week = _optionalChain([todayWorkout, 'optionalAccess', _376 => _376.week]);
-  const zones = _optionalChain([todayWorkout, 'optionalAccess', _377 => _377.zones]);
+  const zones = _optionalChain([todayWorkout, 'optionalAccess', _376 => _376.zones]);
   const todayKey = new Date().toISOString().split("T")[0];
   const todayLog = logs[todayKey];
   const dayColor = todayWorkout ? (dayColors[todayWorkout.type] || C.green) : C.slate;
   const [injuryArea, setInjuryArea] = useState(personalization.injuryPainState.area || "Achilles");
-  const defaultCheckin = _optionalChain([dailyCheckins, 'optionalAccess', _378 => _378[todayKey]]) || (_optionalChain([todayLog, 'optionalAccess', _379 => _379.checkin]) || DEFAULT_DAILY_CHECKIN);
+  const defaultCheckin = _optionalChain([dailyCheckins, 'optionalAccess', _377 => _377[todayKey]]) || (_optionalChain([todayLog, 'optionalAccess', _378 => _378.checkin]) || DEFAULT_DAILY_CHECKIN);
   const [checkin, setCheckin] = useState(defaultCheckin);
   const [checkinAck, setCheckinAck] = useState("");
   const [showEnvEditor, setShowEnvEditor] = useState(false);
-  const [envDraft, setEnvDraft] = useState({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _380 => _380.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _381 => _381.time]) || "30", scope: "today" });
-  const conciseFocus = (_optionalChain([dailyStory, 'optionalAccess', _382 => _382.focus]) || _optionalChain([dailyStory, 'optionalAccess', _383 => _383.brief]) || "Execute today’s session cleanly.")
+  const [envDraft, setEnvDraft] = useState({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _379 => _379.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _380 => _380.time]) || "30", scope: "today" });
+  const [cardExpanded, setCardExpanded] = useState(() => {
+    try { return sessionStorage.getItem("card_" + todayKey) === "1"; } catch (e8) { return false; }
+  });
+  const [showInjuryPanel, setShowInjuryPanel] = useState(false);
+  const conciseFocus = (_optionalChain([dailyStory, 'optionalAccess', _381 => _381.focus]) || _optionalChain([dailyStory, 'optionalAccess', _382 => _382.brief]) || "Execute today’s session cleanly.")
     .replace(/^execute\s*/i, "")
     .split(".")[0];
-  const conciseSuccess = (_optionalChain([dailyStory, 'optionalAccess', _384 => _384.success]) || "Complete the session and log it.").split(".")[0];
-  const equipmentLabel = _optionalChain([environmentSelection, 'optionalAccess', _385 => _385.equipment]) === "none"
+  const conciseSuccess = (_optionalChain([dailyStory, 'optionalAccess', _383 => _383.success]) || "Complete the session and log it.").split(".")[0];
+  const equipmentLabel = _optionalChain([environmentSelection, 'optionalAccess', _384 => _384.equipment]) === "none"
     ? "No equipment"
-    : _optionalChain([environmentSelection, 'optionalAccess', _386 => _386.equipment]) === "basic_gym"
+    : _optionalChain([environmentSelection, 'optionalAccess', _385 => _385.equipment]) === "basic_gym"
     ? "Basic gym"
-    : _optionalChain([environmentSelection, 'optionalAccess', _387 => _387.equipment]) === "full_gym"
+    : _optionalChain([environmentSelection, 'optionalAccess', _386 => _386.equipment]) === "full_gym"
     ? "Full gym"
     : "Dumbbells";
-  const timeLabel = _optionalChain([environmentSelection, 'optionalAccess', _388 => _388.time]) === "45+" ? "45+ min" : `${_optionalChain([environmentSelection, 'optionalAccess', _389 => _389.time]) || "30"} min`;
+  const timeLabel = _optionalChain([environmentSelection, 'optionalAccess', _387 => _387.time]) === "45+" ? "45+ min" : `${_optionalChain([environmentSelection, 'optionalAccess', _388 => _388.time]) || "30"} min`;
+  const injuryLevel = personalization.injuryPainState.level;
+  const injuryBadge = injuryLevel === "none" ? null : injuryLevel === "mild_tightness" ? { label: "Mild", color: C.blue } : injuryLevel === "moderate_pain" ? { label: "Moderate", color: C.amber } : { label: "Pain/Stop", color: C.red };
+  const strTrack = _optionalChain([todayWorkout, 'optionalAccess', _389 => _389.strengthTrack]) || "home";
+  const strSess = _optionalChain([todayWorkout, 'optionalAccess', _390 => _390.strSess]) || "A";
+  const strExercises = _optionalChain([STRENGTH, 'access', _391 => _391[strSess], 'optionalAccess', _392 => _392[strTrack]]) || [];
+  const hasStrength = _optionalChain([todayWorkout, 'optionalAccess', _393 => _393.type]) === "run+strength" || _optionalChain([todayWorkout, 'optionalAccess', _394 => _394.type]) === "strength+prehab";
+  const hasPrehab = _optionalChain([todayWorkout, 'optionalAccess', _395 => _395.type]) === "strength+prehab";
+  const runColor = _optionalChain([todayWorkout, 'optionalAccess', _396 => _396.run, 'optionalAccess', _397 => _397.t]) === "Intervals" ? C.amber : _optionalChain([todayWorkout, 'optionalAccess', _398 => _398.run, 'optionalAccess', _399 => _399.t]) === "Long" ? C.red : _optionalChain([todayWorkout, 'optionalAccess', _400 => _400.run, 'optionalAccess', _401 => _401.t]) === "Tempo" ? C.amber : C.green;
+  const runPace = _optionalChain([todayWorkout, 'optionalAccess', _402 => _402.run]) ? (todayWorkout.run.t === "Intervals" ? _optionalChain([zones, 'optionalAccess', _403 => _403.int]) : todayWorkout.run.t === "Long" ? _optionalChain([zones, 'optionalAccess', _404 => _404.long]) : todayWorkout.run.t === "Tempo" ? _optionalChain([zones, 'optionalAccess', _405 => _405.tempo]) : _optionalChain([zones, 'optionalAccess', _406 => _406.easy])) : null;
+  const tomorrowWorkout = getTodayWorkout(currentWeek, (getDayOfWeek() + 1) % 7);
 
-  useEffect(() => { setCheckin(defaultCheckin); }, [todayKey, _optionalChain([dailyCheckins, 'optionalAccess', _390 => _390[todayKey]]), _optionalChain([todayLog, 'optionalAccess', _391 => _391.checkin, 'optionalAccess', _392 => _392.ts])]);
-  // No auto-assumption: sessions stay "not_logged" until the user explicitly logs them.
-  const [showOverrides, setShowOverrides] = useState(false);
-  const [showInjury, setShowInjury] = useState(false);
+  useEffect(() => { setCheckin(defaultCheckin); }, [todayKey, _optionalChain([dailyCheckins, 'optionalAccess', _407 => _407[todayKey]]), _optionalChain([todayLog, 'optionalAccess', _408 => _408.checkin, 'optionalAccess', _409 => _409.ts])]);
+
+  const toggleCard = () => {
+    const next = !cardExpanded;
+    setCardExpanded(next);
+    try { sessionStorage.setItem("card_" + todayKey, next ? "1" : "0"); } catch (e9) {}
+  };
+
+  // Coach context lines (formerly in "More context" dropdown)
+  const contextLines = [
+    salvageLayer.active ? salvageLayer.compressedPlan.success : null,
+    failureMode.mode !== "normal" ? failureMode.coachBehavior.primaryLine : null,
+    _optionalChain([validationLayer, 'optionalAccess', _410 => _410.coachNudge]) || null,
+  ].filter(Boolean);
 
   return (
     React.createElement('div', { className: "fi",}
-      , React.createElement('div', { style: { marginBottom:"1rem", display:"grid", gap:"0.28rem" },}
+      /* Header */
+      , React.createElement('div', { style: { marginBottom:"0.85rem", display:"grid", gap:"0.2rem" },}
         , React.createElement('div', { style: { fontSize:"0.56rem", color:"#64748b", letterSpacing:"0.14em" },}, "TODAY")
-        , React.createElement('div', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:"2.15rem", color:"#f8fafc", letterSpacing:"0.03em", lineHeight:1 },}, _optionalChain([todayWorkout, 'optionalAccess', _393 => _393.label]) || "Rest Day")
+        , React.createElement('div', { style: { fontFamily:"’Inter’,sans-serif", fontSize:"1.45rem", color:"#f8fafc", fontWeight:600, lineHeight:1.15 },}, _optionalChain([todayWorkout, 'optionalAccess', _411 => _411.label]) || "Rest Day")
         , React.createElement('div', { style: { fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.55 },}, conciseFocus)
-        , React.createElement('div', { style: { fontSize:"0.55rem", color:C.green },}, "Win: " , conciseSuccess)
-        , React.createElement('button', { className: "btn", onClick: ()=>{ setEnvDraft({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _394 => _394.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _395 => _395.time]) || "30", scope: "today" }); setShowEnvEditor(true); }, style: { width:"fit-content", fontSize:"0.52rem", color:"#9fb0c6", borderColor:"#334155", marginTop:"0.2rem" },}
-          , equipmentLabel, " · "  , timeLabel
+      )
+
+      /* ── Expandable Workout Card ── */
+      , React.createElement('div', {
+        onClick: toggleCard,
+        style: { marginBottom:"0.5rem", background:"#0f172a", border:`1px solid ${dayColor}18`, borderRadius:12, padding:"1rem 1.1rem", cursor:"pointer", transition:"border-color 0.15s", userSelect:"none" },}
+
+        /* Card header row: badges + chevron */
+        , React.createElement('div', { style: { display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.55rem", flexWrap:"wrap" },}
+          , React.createElement('span', { style: { fontSize:"0.48rem", color:dayColor, background:dayColor+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500, letterSpacing:"0.04em" },}
+            , _optionalChain([todayWorkout, 'optionalAccess', _412 => _412.type, 'optionalAccess', _413 => _413.replace, 'call', _414 => _414(/[+-]/g," + "), 'access', _415 => _415.toUpperCase, 'call', _416 => _416()]) || "REST"
+          )
+          , React.createElement('span', { onClick: e=>{ e.stopPropagation(); setEnvDraft({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _417 => _417.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _418 => _418.time]) || "30", scope: "today" }); setShowEnvEditor(true); }, style: { fontSize:"0.48rem", color:"#94a3b8", background:"#1e293b", padding:"0.15rem 0.45rem", borderRadius:6, cursor:"pointer" },}
+            , equipmentLabel, " · "  , timeLabel
+          )
+          , injuryBadge && (
+            React.createElement('span', { onClick: e=>{ e.stopPropagation(); setShowInjuryPanel(p=>!p); }, style: { fontSize:"0.48rem", color:injuryBadge.color, background:injuryBadge.color+"15", padding:"0.15rem 0.45rem", borderRadius:6, cursor:"pointer" },}
+              , injuryBadge.label
+            )
+          )
+          , React.createElement('span', { style: { marginLeft:"auto", fontSize:"0.65rem", color:"#475569", transform: cardExpanded ? "rotate(180deg)" : "rotate(0deg)", transition:"transform 0.2s" },}, "▾")
+        )
+
+        /* Key stats row (always visible) */
+        , _optionalChain([todayWorkout, 'optionalAccess', _419 => _419.run]) && (
+          React.createElement('div', { style: { display:"flex", gap:"1.2rem", marginBottom: hasStrength ? "0.35rem" : 0 },}
+            , React.createElement('div', null
+              , React.createElement('div', { style: { fontSize:"0.52rem", color:"#475569" },}, "Distance")
+              , React.createElement('div', { className: "mono", style: { fontSize:"0.85rem", color:runColor, fontWeight:500 },}, todayWorkout.run.d)
+            )
+            , React.createElement('div', null
+              , React.createElement('div', { style: { fontSize:"0.52rem", color:"#475569" },}, "Pace")
+              , React.createElement('div', { className: "mono", style: { fontSize:"0.85rem", color:runColor, fontWeight:500 },}, runPace, "/mi")
+            )
+            , React.createElement('div', null
+              , React.createElement('div', { style: { fontSize:"0.52rem", color:"#475569" },}, "Type")
+              , React.createElement('div', { style: { fontSize:"0.85rem", color:runColor, fontWeight:500 },}, todayWorkout.run.t)
+            )
+          )
+        )
+        , hasStrength && !_optionalChain([todayWorkout, 'optionalAccess', _420 => _420.run]) && (
+          React.createElement('div', { style: { display:"flex", gap:"1.2rem" },}
+            , React.createElement('div', null
+              , React.createElement('div', { style: { fontSize:"0.52rem", color:"#475569" },}, "Session")
+              , React.createElement('div', { style: { fontSize:"0.85rem", color:C.blue, fontWeight:500 },}, "Strength " , strSess)
+            )
+            , React.createElement('div', null
+              , React.createElement('div', { style: { fontSize:"0.52rem", color:"#475569" },}, "Track")
+              , React.createElement('div', { style: { fontSize:"0.85rem", color:C.blue, fontWeight:500 },}, strTrack === "hotel" ? "Gym" : "Home")
+            )
+            , React.createElement('div', null
+              , React.createElement('div', { style: { fontSize:"0.52rem", color:"#475569" },}, "Duration")
+              , React.createElement('div', { className: "mono", style: { fontSize:"0.85rem", color:C.blue, fontWeight:500 },}, _optionalChain([todayWorkout, 'optionalAccess', _421 => _421.strengthDuration]) || "20-30 min")
+            )
+          )
+        )
+        , hasStrength && _optionalChain([todayWorkout, 'optionalAccess', _422 => _422.run]) && (
+          React.createElement('div', { style: { fontSize:"0.56rem", color:"#94a3b8" },}, "+ Strength "
+              , strSess, " (" , strTrack === "hotel" ? "Gym" : "Home", ") · "  , _optionalChain([todayWorkout, 'optionalAccess', _423 => _423.strengthDuration]) || "20-30 min"
+          )
+        )
+
+        /* ── Expanded detail ── */
+        , cardExpanded && (
+          React.createElement('div', { style: { marginTop:"0.75rem", borderTop:"1px solid #1e293b", paddingTop:"0.75rem" }, onClick: e => e.stopPropagation(),}
+            /* Run section */
+            , _optionalChain([todayWorkout, 'optionalAccess', _424 => _424.run]) && (
+              React.createElement('div', { style: { marginBottom: hasStrength ? "0.85rem" : 0 },}
+                , React.createElement('div', { style: { fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" },}, "RUN")
+                , React.createElement('div', { style: { fontSize:"0.62rem", color:"#cbd5e1", lineHeight:1.65 },}
+                  , todayWorkout.run.t, " — "  , todayWorkout.run.d, " at "  , runPace, "/mi"
+                )
+                , _optionalChain([todayWorkout, 'optionalAccess', _425 => _425.environmentNote]) && React.createElement('div', { style: { fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" },}, todayWorkout.environmentNote)
+              )
+            )
+
+            /* Strength section */
+            , hasStrength && (
+              React.createElement('div', { style: { marginBottom: hasPrehab ? "0.85rem" : 0 },}
+                , React.createElement('div', { style: { fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" },}, "STRENGTH " , strSess, " — "  , strTrack === "hotel" ? "GYM" : "HOME")
+                , React.createElement('div', { style: { display:"grid", gap:"0.3rem" },}
+                  , strExercises.map((ex, i) => (
+                    React.createElement('div', { key: i, style: { display:"grid", gridTemplateColumns:"1fr auto", gap:"0.5rem", padding:"0.35rem 0", borderBottom: i < strExercises.length - 1 ? "1px solid #1e293b20" : "none" },}
+                      , React.createElement('div', null
+                        , React.createElement('div', { style: { fontSize:"0.6rem", color:"#e2e8f0", fontWeight:500 },}, ex.ex)
+                        , React.createElement('div', { style: { fontSize:"0.5rem", color:"#64748b", marginTop:"0.1rem" },}, ex.note)
+                      )
+                      , React.createElement('div', { className: "mono", style: { fontSize:"0.58rem", color:C.blue, fontWeight:500, whiteSpace:"nowrap", alignSelf:"center" },}, ex.sets)
+                    )
+                  ))
+                )
+              )
+            )
+
+            /* Prehab section */
+            , hasPrehab && (
+              React.createElement('div', null
+                , React.createElement('div', { style: { fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" },}, "ACHILLES PREHAB" )
+                , React.createElement('div', { style: { display:"grid", gap:"0.3rem" },}
+                  , ACHILLES.map((ex, i) => (
+                    React.createElement('div', { key: i, style: { display:"grid", gridTemplateColumns:"1fr auto", gap:"0.5rem", padding:"0.35rem 0", borderBottom: i < ACHILLES.length - 1 ? "1px solid #1e293b20" : "none" },}
+                      , React.createElement('div', null
+                        , React.createElement('div', { style: { fontSize:"0.6rem", color:"#e2e8f0", fontWeight:500 },}, ex.ex)
+                        , React.createElement('div', { style: { fontSize:"0.5rem", color:"#64748b", marginTop:"0.1rem" },}, ex.note)
+                      )
+                      , React.createElement('div', { className: "mono", style: { fontSize:"0.58rem", color:C.green, fontWeight:500, whiteSpace:"nowrap", alignSelf:"center" },}, ex.sets)
+                    )
+                  ))
+                )
+              )
+            )
+
+            /* Optional secondary */
+            , (_optionalChain([todayWorkout, 'optionalAccess', _426 => _426.optionalSecondary]) || _optionalChain([planComposer, 'optionalAccess', _427 => _427.aestheticAllocation, 'optionalAccess', _428 => _428.active])) && (
+              React.createElement('div', { style: { marginTop:"0.6rem", fontSize:"0.56rem", color:"#cbd5e1" },}, "+ "
+                 , _optionalChain([todayWorkout, 'optionalAccess', _429 => _429.optionalSecondary]) || "Optional: 10 min core"
+              )
+            )
+          )
         )
       )
 
-      , React.createElement('div', { className: "card card-strong" , style: { marginBottom:"1.05rem", padding:"1.45rem" },}
-        , React.createElement('div', { className: "sect-title", style: { color:C.blue, marginBottom:"0.45rem" },}, "MAIN WORKOUT" )
-        , _optionalChain([todayWorkout, 'optionalAccess', _396 => _396.run]) && (
-          React.createElement(WorkoutBlock, {
-            title: `${todayWorkout.run.t} — ${todayWorkout.run.d}`,
-            color: todayWorkout.run.t === "Intervals" ? C.amber : todayWorkout.run.t === "Long" ? C.red : C.green,
-            items: [
-              { label:"Distance", val:todayWorkout.run.d },
-              { label:"Pace", val: todayWorkout.run.t === "Intervals" ? _optionalChain([zones, 'optionalAccess', _397 => _397.int])+"/mi" : todayWorkout.run.t === "Long" ? _optionalChain([zones, 'optionalAccess', _398 => _398.long])+"/mi" : todayWorkout.run.t === "Tempo" ? _optionalChain([zones, 'optionalAccess', _399 => _399.tempo])+"/mi" : _optionalChain([zones, 'optionalAccess', _400 => _400.easy])+"/mi" },
-              { label:"Focus", val:todayWorkout.run.t },
-            ],}
-          )
-        )
-        , (_optionalChain([todayWorkout, 'optionalAccess', _401 => _401.type]) === "run+strength" || _optionalChain([todayWorkout, 'optionalAccess', _402 => _402.type]) === "strength+prehab") && (
-          React.createElement('div', { style: { marginTop:"0.6rem", fontSize:"0.6rem", color:"#94a3b8" },}, "Strength add-on ("
-              , _optionalChain([todayWorkout, 'optionalAccess', _403 => _403.strengthDuration]) || "20-30 min", "): " , (_optionalChain([STRENGTH, 'access', _404 => _404[todayWorkout.strSess || "A"], 'optionalAccess', _405 => _405[_optionalChain([todayWorkout, 'optionalAccess', _406 => _406.strengthTrack]) || "home"]]) || []).slice(0,3).map(x => `${x.ex} (${x.sets})`).join(" · ")
-          )
-        )
-        , (_optionalChain([todayWorkout, 'optionalAccess', _407 => _407.optionalSecondary]) || _optionalChain([planComposer, 'optionalAccess', _408 => _408.aestheticAllocation, 'optionalAccess', _409 => _409.active])) && (
-          React.createElement('div', { style: { marginTop:"0.45rem", fontSize:"0.56rem", color:"#cbd5e1" },}, "+ "
-             , _optionalChain([todayWorkout, 'optionalAccess', _410 => _410.optionalSecondary]) || "Optional: 10 min core"
-          )
-        )
-        , _optionalChain([todayWorkout, 'optionalAccess', _411 => _411.environmentNote]) && React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.54rem", color:"#94a3b8" },}, todayWorkout.environmentNote)
+      /* Tomorrow preview */
+      , React.createElement('div', { style: { fontSize:"0.54rem", color:"#475569", marginBottom:"0.85rem", paddingLeft:"0.15rem" },}, "Tomorrow: "
+         , _optionalChain([tomorrowWorkout, 'optionalAccess', _430 => _430.label]) || "Rest", _optionalChain([tomorrowWorkout, 'optionalAccess', _431 => _431.run]) ? ` — ${tomorrowWorkout.run.d}` : ""
       )
 
+      /* Coach context (replaces "More context" dropdown) */
+      , contextLines.length > 0 && (
+        React.createElement('div', { style: { marginBottom:"0.75rem", padding:"0.55rem 0.7rem", background:"#0d1117", borderRadius:8, display:"grid", gap:"0.25rem" },}
+          , contextLines.map((line, i) => (
+            React.createElement('div', { key: i, style: { fontSize:"0.54rem", color: i === 0 ? C.amber : i === 1 ? C.green : C.blue },}, line)
+          ))
+        )
+      )
+
+      /* Proactive nudge */
+      , proactiveTriggers[0] && (
+        React.createElement('div', { style: { marginBottom:"0.75rem", display:"flex", gap:"0.35rem", alignItems:"center" },}
+          , React.createElement('button', { className: "btn", onClick: ()=>onApplyTrigger(proactiveTriggers[0]), style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" },}, proactiveTriggers[0].actionLabel || "Apply nudge")
+          , React.createElement('button', { className: "btn", onClick: ()=>onDismissTrigger(proactiveTriggers[0].id), style: { fontSize:"0.52rem" },}, "Dismiss")
+        )
+      )
+
+      /* Fallback row */
       , React.createElement('div', { style: { marginBottom:"0.85rem", display:"grid", gridTemplateColumns:"1fr auto auto", alignItems:"center", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" },}
         , React.createElement('div', { style: { fontSize:"0.55rem", color:"#7f92aa" },}, "Fallback")
         , React.createElement('button', { className: "btn", onClick: ()=>applyDayContextOverride("minimum_viable_day"), style: { fontSize:"0.5rem", color:C.green, borderColor:C.green+"30" },}, "20-min version" )
         , React.createElement('button', { className: "btn", onClick: ()=>shiftTodayWorkout(1), style: { fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"30" },}, "Move to tomorrow"  )
       )
 
+      /* Injury panel (shown when injury badge tapped) */
+      , showInjuryPanel && (
+        React.createElement('div', { className: "card card-soft" , style: { marginBottom:"0.75rem" },}
+          , React.createElement('div', { style: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.35rem" },}
+            , React.createElement('div', { className: "sect-title", style: { color:C.amber },}, "INJURY STATUS" )
+            , React.createElement('button', { onClick: ()=>setShowInjuryPanel(false), style: { background:"none", border:"none", color:"#64748b", cursor:"pointer", fontSize:"0.7rem" },}, "×")
+          )
+          , React.createElement('select', { value: injuryArea, onChange: e=>setInjuryArea(e.target.value), style: { fontSize:"0.56rem", marginBottom:"0.35rem" },}
+            , AFFECTED_AREAS.map(a => React.createElement('option', { key: a, value: a,}, a))
+          )
+          , React.createElement('div', { style: { display:"flex", gap:"0.3rem", flexWrap:"wrap" },}
+            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("none", injuryArea), style: { color:C.green, borderColor:C.green+"35" },}, "Clear")
+            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("mild_tightness", injuryArea), style: { color:C.blue, borderColor:C.blue+"35" },}, "Mild")
+            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("moderate_pain", injuryArea), style: { color:C.amber, borderColor:C.amber+"35" },}, "Moderate")
+            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("sharp_pain_stop", injuryArea), style: { color:C.red, borderColor:C.red+"35" },}, "Sharp/Stop")
+          )
+          , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" },}, injuryLevel.replaceAll("_"," "), " · "  , injuryRule.why)
+        )
+      )
+
+      /* Quick check-in */
       , React.createElement('div', { className: "card card-soft" , style: { marginBottom:"0.75rem" },}
         , React.createElement('div', { className: "sect-title", style: { color:C.green, marginBottom:"0.45rem" },}, "QUICK CHECK-IN" )
         , React.createElement('div', { style: { display:"grid", gap:"0.35rem" },}
@@ -3536,30 +3694,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         )
       )
 
-      , React.createElement('div', { style: { marginBottom:"0.6rem", display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.35rem", alignItems:"center" },}
-        , React.createElement('div', { style: { fontSize:"0.55rem", color:"#7f92aa" },}, "Environment: " , equipmentLabel, " · "  , timeLabel)
-        , proactiveTriggers[0] && React.createElement('button', { className: "btn", onClick: ()=>onApplyTrigger(proactiveTriggers[0]), style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" },}, proactiveTriggers[0].actionLabel || "Apply nudge")
-        , proactiveTriggers[0] && React.createElement('button', { className: "btn", onClick: ()=>onDismissTrigger(proactiveTriggers[0].id), style: { fontSize:"0.52rem" },}, "Dismiss")
-      )
-
-      , React.createElement('details', { style: { marginBottom:"0.8rem", background:"#0d1117", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem 0.7rem" },}
-        , React.createElement('summary', { style: { cursor:"pointer", fontSize:"0.58rem", color:"#94a3b8", letterSpacing:"0.06em" },}, "More context" )
-        , salvageLayer.active && React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.56rem", color:C.amber },}, "Weekly strategy: "  , salvageLayer.compressedPlan.success)
-        , failureMode.mode !== "normal" && React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.56rem", color:C.green },}, failureMode.coachBehavior.primaryLine)
-        , _optionalChain([validationLayer, 'optionalAccess', _412 => _412.coachNudge]) && React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.56rem", color:C.blue },}, validationLayer.coachNudge)
-        , React.createElement('div', { style: { marginTop:"0.4rem" },}
-          , React.createElement('select', { value: injuryArea, onChange: e=>setInjuryArea(e.target.value), style: { fontSize:"0.56rem", marginBottom:"0.35rem" },}
-            , AFFECTED_AREAS.map(a => React.createElement('option', { key: a, value: a,}, a))
-          )
-          , React.createElement('div', { style: { display:"flex", gap:"0.3rem", flexWrap:"wrap" },}
-            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("none", injuryArea), style: { color:C.green, borderColor:C.green+"35" },}, "Clear pain" )
-            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("mild_tightness", injuryArea), style: { color:C.blue, borderColor:C.blue+"35" },}, "Mild")
-            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("moderate_pain", injuryArea), style: { color:C.amber, borderColor:C.amber+"35" },}, "Moderate")
-            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("sharp_pain_stop", injuryArea), style: { color:C.red, borderColor:C.red+"35" },}, "Sharp/Stop")
-          )
-          , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" },}, "Status: " , personalization.injuryPainState.level.replaceAll("_"," "), " · "  , injuryRule.why)
-        )
-      )
+      /* Environment editor modal */
       , showEnvEditor && (
         React.createElement('div', { onClick: ()=>setShowEnvEditor(false), style: { position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"flex-end", zIndex:50 },}
           , React.createElement('div', { onClick: e=>e.stopPropagation(), className: "card card-strong" , style: { width:"100%", borderRadius:"14px 14px 0 0", padding:"0.9rem 0.9rem 1rem", maxHeight:"82vh", overflowY:"auto" },}
@@ -3585,7 +3720,6 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             )
             , React.createElement('button', { className: "btn btn-primary" , onClick: async ()=>{ await setEnvironmentMode(envDraft); setShowEnvEditor(false); }, style: { width:"100%" },}, "Apply changes" )
           )
-          , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" },}, "Status: " , personalization.injuryPainState.level.replaceAll("_"," "), " · "  , injuryRule.why)
         )
       )
     )
@@ -3611,9 +3745,9 @@ function WorkoutBlock({ title, color, items }) {
 // ── PLAN TAB ──────────────────────────────────────────────────────────────────
 function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode }) {
   const [openWeek, setOpenWeek] = useState(null);
-  const weeklyDraft = _optionalChain([weeklyCheckins, 'optionalAccess', _413 => _413[String(currentWeek)]]) || { energy: 3, stress: 3, confidence: 3 };
+  const weeklyDraft = _optionalChain([weeklyCheckins, 'optionalAccess', _432 => _432[String(currentWeek)]]) || { energy: 3, stress: 3, confidence: 3 };
   const [miniWeekly, setMiniWeekly] = useState(weeklyDraft);
-  useEffect(() => { setMiniWeekly(weeklyDraft); }, [currentWeek, _optionalChain([weeklyCheckins, 'optionalAccess', _414 => _414[String(currentWeek)], 'optionalAccess', _415 => _415.ts])]);
+  useEffect(() => { setMiniWeekly(weeklyDraft); }, [currentWeek, _optionalChain([weeklyCheckins, 'optionalAccess', _433 => _433[String(currentWeek)], 'optionalAccess', _434 => _434.ts])]);
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
   const adjustedWeekMap = {};
@@ -3631,29 +3765,29 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
         , React.createElement('div', { className: "sect-title", style: { color:C.blue, marginBottom:"0.35rem" },}, "YOUR PROGRAM" )
         , React.createElement('div', { style: { fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.7 },}, "Current block: "  , React.createElement('span', { style: { color:C.blue },}, planComposer.architecture.replaceAll("_"," ")))
         , React.createElement('div', { style: { fontSize:"0.58rem", color:"#cbd5e1", marginTop:"0.25rem", lineHeight:1.7 },}
-          , _optionalChain([planComposer, 'optionalAccess', _416 => _416.blockIntent, 'optionalAccess', _417 => _417.narrative]) || arbitration.allocationNarrative
+          , _optionalChain([planComposer, 'optionalAccess', _435 => _435.blockIntent, 'optionalAccess', _436 => _436.narrative]) || arbitration.allocationNarrative
         )
-        , React.createElement('div', { style: { fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.2rem" },}, "Prioritized: " , _optionalChain([planComposer, 'optionalAccess', _418 => _418.blockIntent, 'optionalAccess', _419 => _419.prioritized]) || arbitration.goalAllocation.primary)
-        , React.createElement('div', { style: { fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.15rem" },}, "Maintained: " , (_optionalChain([planComposer, 'optionalAccess', _420 => _420.blockIntent, 'optionalAccess', _421 => _421.maintained]) || arbitration.goalAllocation.maintained || []).join(" · "))
-        , React.createElement('div', { style: { fontSize:"0.58rem", color:C.amber, marginTop:"0.15rem" },}, "Minimized: " , _optionalChain([planComposer, 'optionalAccess', _422 => _422.blockIntent, 'optionalAccess', _423 => _423.minimized]) || arbitration.goalAllocation.minimized)
+        , React.createElement('div', { style: { fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.2rem" },}, "Prioritized: " , _optionalChain([planComposer, 'optionalAccess', _437 => _437.blockIntent, 'optionalAccess', _438 => _438.prioritized]) || arbitration.goalAllocation.primary)
+        , React.createElement('div', { style: { fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.15rem" },}, "Maintained: " , (_optionalChain([planComposer, 'optionalAccess', _439 => _439.blockIntent, 'optionalAccess', _440 => _440.maintained]) || arbitration.goalAllocation.maintained || []).join(" · "))
+        , React.createElement('div', { style: { fontSize:"0.58rem", color:C.amber, marginTop:"0.15rem" },}, "Minimized: " , _optionalChain([planComposer, 'optionalAccess', _441 => _441.blockIntent, 'optionalAccess', _442 => _442.minimized]) || arbitration.goalAllocation.minimized)
         , React.createElement('div', { style: { fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.25rem" },}, "Strength inclusion: "
-            , _optionalChain([planComposer, 'optionalAccess', _424 => _424.strengthAllocation, 'optionalAccess', _425 => _425.sessionsPerWeek]) || 1, " session" , (_optionalChain([planComposer, 'optionalAccess', _426 => _426.strengthAllocation, 'optionalAccess', _427 => _427.sessionsPerWeek]) || 1) > 1 ? "s" : "", "/week · "  , _optionalChain([planComposer, 'optionalAccess', _428 => _428.strengthAllocation, 'optionalAccess', _429 => _429.targetSessionDuration]) || arbitration.strengthInclusion.duration
+            , _optionalChain([planComposer, 'optionalAccess', _443 => _443.strengthAllocation, 'optionalAccess', _444 => _444.sessionsPerWeek]) || 1, " session" , (_optionalChain([planComposer, 'optionalAccess', _445 => _445.strengthAllocation, 'optionalAccess', _446 => _446.sessionsPerWeek]) || 1) > 1 ? "s" : "", "/week · "  , _optionalChain([planComposer, 'optionalAccess', _447 => _447.strengthAllocation, 'optionalAccess', _448 => _448.targetSessionDuration]) || arbitration.strengthInclusion.duration
         )
-        , _optionalChain([planComposer, 'optionalAccess', _430 => _430.aestheticAllocation, 'optionalAccess', _431 => _431.active]) && (
+        , _optionalChain([planComposer, 'optionalAccess', _449 => _449.aestheticAllocation, 'optionalAccess', _450 => _450.active]) && (
           React.createElement('div', { style: { fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.15rem" },}, "Aesthetic support: "
               , planComposer.aestheticAllocation.dosage, " (" , planComposer.aestheticAllocation.weeklyCoreFinishers, "/week target)."
           )
         )
-        , React.createElement('div', { style: { fontSize:"0.58rem", color:C.amber, marginTop:"0.25rem" },}, "Tradeoff: " , arbitration.coachTradeoffLine || _optionalChain([arbitration, 'access', _432 => _432.conflicts, 'optionalAccess', _433 => _433[0]]) || strengthLayer.tradeoff)
+        , React.createElement('div', { style: { fontSize:"0.58rem", color:C.amber, marginTop:"0.25rem" },}, "Tradeoff: " , arbitration.coachTradeoffLine || _optionalChain([arbitration, 'access', _451 => _451.conflicts, 'optionalAccess', _452 => _452[0]]) || strengthLayer.tradeoff)
         , React.createElement('div', { style: { marginTop:"0.45rem", display:"grid", gridTemplateColumns:"1fr 1fr auto auto", gap:"0.3rem", alignItems:"center" },}
-          , React.createElement('select', { value: _optionalChain([environmentSelection, 'optionalAccess', _434 => _434.equipment]) || "dumbbells", onChange: e=>setEnvironmentMode({ equipment:e.target.value, time: _optionalChain([environmentSelection, 'optionalAccess', _435 => _435.time]) || "30", scope: "week" }), style: { fontSize:"0.55rem" },}
+          , React.createElement('select', { value: _optionalChain([environmentSelection, 'optionalAccess', _453 => _453.equipment]) || "dumbbells", onChange: e=>setEnvironmentMode({ equipment:e.target.value, time: _optionalChain([environmentSelection, 'optionalAccess', _454 => _454.time]) || "30", scope: "week" }), style: { fontSize:"0.55rem" },}
             , [["none","No equipment"],["dumbbells","Dumbbells"],["basic_gym","Basic gym"],["full_gym","Full gym"]].map(([v,l]) => React.createElement('option', { key: v, value: v,}, l))
           )
-          , React.createElement('select', { value: _optionalChain([environmentSelection, 'optionalAccess', _436 => _436.time]) || "30", onChange: e=>setEnvironmentMode({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _437 => _437.equipment]) || "dumbbells", time:e.target.value, scope: "week" }), style: { fontSize:"0.55rem" },}
+          , React.createElement('select', { value: _optionalChain([environmentSelection, 'optionalAccess', _455 => _455.time]) || "30", onChange: e=>setEnvironmentMode({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _456 => _456.equipment]) || "dumbbells", time:e.target.value, scope: "week" }), style: { fontSize:"0.55rem" },}
             , [["20","20 min"],["30","30 min"],["45+","45+ min"]].map(([v,l]) => React.createElement('option', { key: v, value: v,}, l))
           )
-          , React.createElement('button', { className: "btn", onClick: ()=>setEnvironmentMode({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _438 => _438.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _439 => _439.time]) || "30", scope: "week" }), style: { fontSize:"0.5rem" },}, "This week" )
-          , React.createElement('button', { className: "btn", onClick: ()=>setEnvironmentMode({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _440 => _440.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _441 => _441.time]) || "30", scope: "base" }), style: { fontSize:"0.5rem" },}, "Set default" )
+          , React.createElement('button', { className: "btn", onClick: ()=>setEnvironmentMode({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _457 => _457.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _458 => _458.time]) || "30", scope: "week" }), style: { fontSize:"0.5rem" },}, "This week" )
+          , React.createElement('button', { className: "btn", onClick: ()=>setEnvironmentMode({ equipment: _optionalChain([environmentSelection, 'optionalAccess', _459 => _459.equipment]) || "dumbbells", time: _optionalChain([environmentSelection, 'optionalAccess', _460 => _460.time]) || "30", scope: "base" }), style: { fontSize:"0.5rem" },}, "Set default" )
         )
       )
 
@@ -3717,7 +3851,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
                 )
               )
 
-              , openWeek === h.absoluteWeek && _optionalChain([adaptive, 'access', _442 => _442.changed, 'optionalAccess', _443 => _443.length]) > 0 && (
+              , openWeek === h.absoluteWeek && _optionalChain([adaptive, 'access', _461 => _461.changed, 'optionalAccess', _462 => _462.length]) > 0 && (
                 React.createElement('div', { style: { marginTop:"0.4rem", fontSize:"0.55rem", color:"#64748b", lineHeight:1.6 },}
                   , adaptive.changed.slice(0,3).map((line, i)=>React.createElement('div', { key: i,}, "• " , line))
                 )
@@ -3740,7 +3874,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
 function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout, exportData, importData }) {
   const today = new Date().toISOString().split("T")[0];
   const [quick, setQuick] = useState({ status:"", feel:"3", note:"", bodyweight:"" });
-  const [detailed, setDetailed] = useState({ date:today, type: _optionalChain([todayWorkout, 'optionalAccess', _444 => _444.label])||"", miles:"", pace:"", runTime:"", pushups:"", weight:"", notes:"", feel:"3", location:"home" });
+  const [detailed, setDetailed] = useState({ date:today, type: _optionalChain([todayWorkout, 'optionalAccess', _463 => _463.label])||"", miles:"", pace:"", runTime:"", pushups:"", weight:"", notes:"", feel:"3", location:"home" });
   const [saved, setSaved] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
   const [backupStr, setBackupStr] = useState("");
@@ -3750,10 +3884,10 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
 
   const history = Object.entries(logs || {}).sort((a,b)=>b[0].localeCompare(a[0]));
   const recent14 = history.slice(0,14);
-  const completed14 = recent14.filter(([,l]) => ["completed_as_planned","completed_modified"].includes(_optionalChain([l, 'optionalAccess', _445 => _445.checkin, 'optionalAccess', _446 => _446.status]))).length;
+  const completed14 = recent14.filter(([,l]) => ["completed_as_planned","completed_modified"].includes(_optionalChain([l, 'optionalAccess', _464 => _464.checkin, 'optionalAccess', _465 => _465.status]))).length;
   // New formula: exclude not_logged entries still within 48h grace period
   const countable14 = recent14.filter(([dateKey, l]) => {
-    const eff = resolveEffectiveStatus(_optionalChain([l, 'optionalAccess', _447 => _447.checkin]), dateKey);
+    const eff = resolveEffectiveStatus(_optionalChain([l, 'optionalAccess', _466 => _466.checkin]), dateKey);
     return eff !== "not_logged_grace" && eff !== "not_logged";
   }).length;
   const consistency = countable14 ? Math.round((completed14 / countable14) * 100) : 0;
@@ -3764,7 +3898,7 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
     if (!quick.status) return; // require explicit status selection
     const entry = {
       date: today,
-      type: _optionalChain([todayWorkout, 'optionalAccess', _448 => _448.label]) || "Quick log",
+      type: _optionalChain([todayWorkout, 'optionalAccess', _467 => _467.label]) || "Quick log",
       notes: quick.note || "",
       feel: quick.feel || "3",
       ts: Date.now(),
@@ -3843,7 +3977,7 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
           , React.createElement('div', { style: { background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" },}, React.createElement('div', { style: { fontSize:"0.5rem", color:"#64748b" },}, "Avg feel" ), React.createElement('div', { style: { fontSize:"0.72rem", color:C.blue },}, avgFeel))
           , React.createElement('div', { style: { background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" },}, React.createElement('div', { style: { fontSize:"0.5rem", color:"#64748b" },}, "Week"), React.createElement('div', { style: { fontSize:"0.72rem", color:C.amber },}, currentWeek))
         )
-        , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.56rem", color:"#94a3b8" },}, notable ? `Notable session: ${notable[0]} · ${_optionalChain([notable, 'access', _449 => _449[1], 'optionalAccess', _450 => _450.type]) || "session"}` : "Keep logging to surface notable sessions.")
+        , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.56rem", color:"#94a3b8" },}, notable ? `Notable session: ${notable[0]} · ${_optionalChain([notable, 'access', _468 => _468[1], 'optionalAccess', _469 => _469.type]) || "session"}` : "Keep logging to surface notable sessions.")
         , React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.55rem", color:"#64748b" },}, "What changed: plan intensity and nutrition guidance adapt directly from this logging pattern."            )
       )
 
@@ -3851,7 +3985,7 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
         , React.createElement('div', { className: "sect-title", style: { color:C.green, marginBottom:"0.45rem" },}, "HISTORY")
         , React.createElement('div', { style: { display:"grid", gap:"0.35rem" },}
           , history.slice(0, 20).map(([date, log]) => {
-            const effStatus = resolveEffectiveStatus(_optionalChain([log, 'optionalAccess', _451 => _451.checkin]), date);
+            const effStatus = resolveEffectiveStatus(_optionalChain([log, 'optionalAccess', _470 => _470.checkin]), date);
             const isNotLogged = effStatus === "not_logged_expired" || effStatus === "not_logged_grace";
             const isExpired = effStatus === "not_logged_expired";
             const displayNotes = (log.notes || "").replace(/Auto-assumed complete unless corrected\.?\s*/gi, "").trim();
@@ -3863,7 +3997,7 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
                 , displayNotes && React.createElement('div', { style: { fontSize:"0.54rem", color:"#64748b" },}, displayNotes)
               )
               , isExpired ? (
-                React.createElement('button', { className: "btn", onClick: ()=>setDetailed({ ...detailed, date, type: log.type || _optionalChain([todayWorkout, 'optionalAccess', _452 => _452.label]) || "" }), style: { fontSize:"0.5rem", color:"#64748b", borderColor:"#1e293b", gridColumn:"span 2" },}, "Add entry" )
+                React.createElement('button', { className: "btn", onClick: ()=>setDetailed({ ...detailed, date, type: log.type || _optionalChain([todayWorkout, 'optionalAccess', _471 => _471.label]) || "" }), style: { fontSize:"0.5rem", color:"#64748b", borderColor:"#1e293b", gridColumn:"span 2" },}, "Add entry" )
               ) : isNotLogged ? (
                 React.createElement('div', { style: { fontSize:"0.55rem", color:"#475569", gridColumn:"span 2" },})
               ) : (React.createElement(React.Fragment, null
@@ -3932,28 +4066,28 @@ function MiniChart({ data, color, baseline }) {
 
 // ── NUTRITION TAB (REDESIGNED) ──────────────────────────────────────────────
 function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer, realWorldNutrition, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
-  const localFoodContext = _optionalChain([personalization, 'optionalAccess', _453 => _453.localFoodContext]) || { city: "Chicago", groceryOptions: ["Trader Joe's"] };
-  const [store, setStore] = useState(_optionalChain([localFoodContext, 'access', _454 => _454.groceryOptions, 'optionalAccess', _455 => _455[0]]) || "Trader Joe's");
+  const localFoodContext = _optionalChain([personalization, 'optionalAccess', _472 => _472.localFoodContext]) || { city: "Chicago", groceryOptions: ["Trader Joe's"] };
+  const [store, setStore] = useState(_optionalChain([localFoodContext, 'access', _473 => _473.groceryOptions, 'optionalAccess', _474 => _474[0]]) || "Trader Joe's");
   const favorites = nutritionFavorites || { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] };
   const [nutritionCheck, setNutritionCheck] = useState({ status: "on_track", issue: "", note: "" });
   const [lastKey, setLastKey] = useState("");
   const goalContext = getGoalContext(goals) || { primary: null, secondary: [] };
-  const dayType = _optionalChain([nutritionLayer, 'optionalAccess', _456 => _456.dayType]) || _optionalChain([todayWorkout, 'optionalAccess', _457 => _457.nutri]) || "easyRun";
+  const dayType = _optionalChain([nutritionLayer, 'optionalAccess', _475 => _475.dayType]) || _optionalChain([todayWorkout, 'optionalAccess', _476 => _476.nutri]) || "easyRun";
   const city = localFoodContext.city || "Chicago";
   const nearby = (getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" }) || [])
-    .map((x, i) => ({ id: _optionalChain([x, 'optionalAccess', _458 => _458.id]) || `nearby_${i}_${_optionalChain([x, 'optionalAccess', _459 => _459.name]) || "option"}`, name: _optionalChain([x, 'optionalAccess', _460 => _460.name]) || "Nearby option", meal: _optionalChain([x, 'optionalAccess', _461 => _461.meal]) || "Protein + carbs + produce" }))
+    .map((x, i) => ({ id: _optionalChain([x, 'optionalAccess', _477 => _477.id]) || `nearby_${i}_${_optionalChain([x, 'optionalAccess', _478 => _478.name]) || "option"}`, name: _optionalChain([x, 'optionalAccess', _479 => _479.name]) || "Nearby option", meal: _optionalChain([x, 'optionalAccess', _480 => _480.meal]) || "Protein + carbs + produce" }))
     .filter(x => x.id !== lastKey)
     .slice(0, 2);
   const basket = buildGroceryBasket({ store, city, days: 3, dayType });
   const fastest = nearby[0] || { name: "Saved default", meal: "Protein shake + fruit + sandwich", tag: "fallback" };
   const travelBreakfast = ["Starbucks: egg bites + oatmeal + banana", "Hotel breakfast: eggs + Greek yogurt + fruit", "Airport: wrap + extra protein + water"];
-  const bodyCompActive = _optionalChain([goals, 'optionalAccess', _462 => _462.some, 'call', _463 => _463(g => g.active && g.category === "body_comp")]);
-  const strengthActive = _optionalChain([goals, 'optionalAccess', _464 => _464.some, 'call', _465 => _465(g => g.active && g.category === "strength")]);
-  const runningActive = _optionalChain([goals, 'optionalAccess', _466 => _466.some, 'call', _467 => _467(g => g.active && g.category === "running")]);
-  const hardDay = ["hardRun", "longRun"].includes(dayType) || ["hard-run", "long-run"].includes(_optionalChain([todayWorkout, 'optionalAccess', _468 => _468.type]));
-  const recoveryDay = dayType === "rest" || _optionalChain([todayWorkout, 'optionalAccess', _469 => _469.type]) === "rest";
-  const strengthDay = dayType === "strength" || ["run+strength", "strength+prehab"].includes(_optionalChain([todayWorkout, 'optionalAccess', _470 => _470.type]));
-  const simplifiedWeek = ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _471 => _471.momentumState])) || _optionalChain([learningLayer, 'optionalAccess', _472 => _472.adjustmentBias]) === "simplify";
+  const bodyCompActive = _optionalChain([goals, 'optionalAccess', _481 => _481.some, 'call', _482 => _482(g => g.active && g.category === "body_comp")]);
+  const strengthActive = _optionalChain([goals, 'optionalAccess', _483 => _483.some, 'call', _484 => _484(g => g.active && g.category === "strength")]);
+  const runningActive = _optionalChain([goals, 'optionalAccess', _485 => _485.some, 'call', _486 => _486(g => g.active && g.category === "running")]);
+  const hardDay = ["hardRun", "longRun"].includes(dayType) || ["hard-run", "long-run"].includes(_optionalChain([todayWorkout, 'optionalAccess', _487 => _487.type]));
+  const recoveryDay = dayType === "rest" || _optionalChain([todayWorkout, 'optionalAccess', _488 => _488.type]) === "rest";
+  const strengthDay = dayType === "strength" || ["run+strength", "strength+prehab"].includes(_optionalChain([todayWorkout, 'optionalAccess', _489 => _489.type]));
+  const simplifiedWeek = ["drifting","falling off"].includes(_optionalChain([momentum, 'optionalAccess', _490 => _490.momentumState])) || _optionalChain([learningLayer, 'optionalAccess', _491 => _491.adjustmentBias]) === "simplify";
   const nutritionUnavailable = !nutritionLayer || !realWorldNutrition;
 
   const proteinLevel = strengthActive || bodyCompActive ? "high" : "moderate";
@@ -3981,14 +4115,14 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
     ? "Hydrate early and add carbs around harder sessions."
     : "Pick meals you can repeat on busy days.";
 
-  const breakfast = _optionalChain([realWorldNutrition, 'optionalAccess', _473 => _473.mealStructure, 'optionalAccess', _474 => _474.breakfast]) || "Greek yogurt + fruit + granola";
-  const lunch = _optionalChain([realWorldNutrition, 'optionalAccess', _475 => _475.mealStructure, 'optionalAccess', _476 => _476.lunch]) || "Protein bowl with rice/potatoes + veggies";
-  const dinner = _optionalChain([realWorldNutrition, 'optionalAccess', _477 => _477.mealStructure, 'optionalAccess', _478 => _478.dinner]) || "Lean protein + carb + vegetable";
+  const breakfast = _optionalChain([realWorldNutrition, 'optionalAccess', _492 => _492.mealStructure, 'optionalAccess', _493 => _493.breakfast]) || "Greek yogurt + fruit + granola";
+  const lunch = _optionalChain([realWorldNutrition, 'optionalAccess', _494 => _494.mealStructure, 'optionalAccess', _495 => _495.lunch]) || "Protein bowl with rice/potatoes + veggies";
+  const dinner = _optionalChain([realWorldNutrition, 'optionalAccess', _496 => _496.mealStructure, 'optionalAccess', _497 => _497.dinner]) || "Lean protein + carb + vegetable";
   const snack = hardDay ? "Banana + protein shake" : "Apple + string cheese";
 
   const todayKey = new Date().toISOString().split("T")[0];
-  const feedbackToday = _optionalChain([nutritionFeedback, 'optionalAccess', _479 => _479[todayKey]]);
-  useEffect(() => { if (feedbackToday) setNutritionCheck(feedbackToday); }, [_optionalChain([feedbackToday, 'optionalAccess', _480 => _480.ts])]);
+  const feedbackToday = _optionalChain([nutritionFeedback, 'optionalAccess', _498 => _498[todayKey]]);
+  useEffect(() => { if (feedbackToday) setNutritionCheck(feedbackToday); }, [_optionalChain([feedbackToday, 'optionalAccess', _499 => _499.ts])]);
 
   return (
     React.createElement('div', { className: "fi",}
@@ -4013,7 +4147,7 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
             , simplifiedWeek ? "simplified meals and consistency" : hardDay ? "hard training fuel" : recoveryDay ? "recovery and appetite control" : strengthDay ? "protein-led recovery" : "steady intake and consistency", "."
         )
         , React.createElement('div', { style: { marginTop:"0.15rem", fontSize:"0.55rem", color:"#64748b" },}, "Goals covered: "
-            , _optionalChain([goalContext, 'access', _481 => _481.primary, 'optionalAccess', _482 => _482.name]) || "general fitness", _optionalChain([goalContext, 'access', _483 => _483.secondary, 'optionalAccess', _484 => _484.length]) ? ` + ${(goalContext.secondary || []).map(g=>_optionalChain([g, 'optionalAccess', _485 => _485.name])).filter(Boolean).join(" · ")}` : "", "."
+            , _optionalChain([goalContext, 'access', _500 => _500.primary, 'optionalAccess', _501 => _501.name]) || "general fitness", _optionalChain([goalContext, 'access', _502 => _502.secondary, 'optionalAccess', _503 => _503.length]) ? ` + ${(goalContext.secondary || []).map(g=>_optionalChain([g, 'optionalAccess', _504 => _504.name])).filter(Boolean).join(" · ")}` : "", "."
         )
       )
 
@@ -4045,14 +4179,14 @@ function NutritionTab({ todayWorkout, personalization, goals, momentum, bodyweig
         , React.createElement('div', { style: { fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.65 },}
           , React.createElement('div', null, React.createElement('span', { style: { color:C.blue },}, "Fastest good choice:"  ), " " , fastest.name, " — "  , fastest.meal)
           , React.createElement('div', null, React.createElement('span', { style: { color:C.blue },}, "Travel backup:" ), " " , travelBreakfast[0])
-          , React.createElement('div', null, React.createElement('span', { style: { color:C.blue },}, "Grocery reset:" ), " " , _optionalChain([basket, 'access', _486 => _486.items, 'optionalAccess', _487 => _487[0]]) || "pre-cooked protein + fruit + easy carbs")
+          , React.createElement('div', null, React.createElement('span', { style: { color:C.blue },}, "Grocery reset:" ), " " , _optionalChain([basket, 'access', _505 => _505.items, 'optionalAccess', _506 => _506[0]]) || "pre-cooked protein + fruit + easy carbs")
         )
       )
 
       , React.createElement('div', { className: "card", style: { marginBottom:"0.8rem" },}
         , React.createElement('div', { className: "sect-title", style: { color:C.purple, marginBottom:"0.5rem" },}, "QUICK GROCERY RESET"  )
         , React.createElement('select', { value: store, onChange: e=>setStore(e.target.value), style: { marginBottom:"0.35rem" },}
-          , [...new Set([...(localFoodContext.groceryOptions || []), ...Object.keys(_optionalChain([LOCAL_PLACE_TEMPLATES, 'access', _488 => _488[city], 'optionalAccess', _489 => _489.groceries]) || {})])].map(s => React.createElement('option', { key: s,}, s))
+          , [...new Set([...(localFoodContext.groceryOptions || []), ...Object.keys(_optionalChain([LOCAL_PLACE_TEMPLATES, 'access', _507 => _507[city], 'optionalAccess', _508 => _508.groceries]) || {})])].map(s => React.createElement('option', { key: s,}, s))
         )
         , React.createElement('div', { style: { fontSize:"0.56rem", color:"#94a3b8", marginBottom:"0.3rem" },}, basket.title || "Simple 3-day list")
         , (basket.items || []).slice(0, 5).map((it,i)=>React.createElement('div', { key: i, style: { fontSize:"0.56rem", color:"#64748b", lineHeight:1.6 },}, "• " , it))
@@ -4105,7 +4239,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   const commitAction = async (action) => {
     const runtime = { adjustments: coachPlanAdjustments, weekNotes, planAlerts, personalization };
     const mutation = applyCoachAction(action, runtime);
-    const nextActions = [{ ...action, id:`coach_act_${Date.now()}`, ts: Date.now(), source: "coach_confirmed", reason: action.reason || action.rationale || _optionalChain([action, 'access', _490 => _490.payload, 'optionalAccess', _491 => _491.reason]) || "coach-confirmed" }, ...coachActions].slice(0, 60);
+    const nextActions = [{ ...action, id:`coach_act_${Date.now()}`, ts: Date.now(), source: "coach_confirmed", reason: action.reason || action.rationale || _optionalChain([action, 'access', _509 => _509.payload, 'optionalAccess', _510 => _510.reason]) || "coach-confirmed" }, ...coachActions].slice(0, 60);
     setCoachActions(nextActions);
     setCoachPlanAdjustments(mutation.adjustments);
     setWeekNotes(mutation.weekNotes);
@@ -4124,20 +4258,20 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
         body: JSON.stringify({
           model: "claude-3-5-haiku-latest", max_tokens: 700,
           system: `Return strict JSON with keys notices[], recommendations[], effects[], actions[]. Actions must use these types only: ${Object.values(COACH_TOOL_ACTIONS).join(", ")}.`,
-          messages: [{ role: "user", content: `Week ${currentWeek}, today ${_optionalChain([todayWorkout, 'optionalAccess', _492 => _492.label])}. User said: "${userMsg}".` }]
+          messages: [{ role: "user", content: `Week ${currentWeek}, today ${_optionalChain([todayWorkout, 'optionalAccess', _511 => _511.label])}. User said: "${userMsg}".` }]
         })
       });
       if (!res.ok) throw new Error("API unavailable");
       const data = await res.json();
-      const text = _optionalChain([data, 'optionalAccess', _493 => _493.content, 'optionalAccess', _494 => _494[0], 'optionalAccess', _495 => _495.text]) || "{}";
+      const text = _optionalChain([data, 'optionalAccess', _512 => _512.content, 'optionalAccess', _513 => _513[0], 'optionalAccess', _514 => _514.text]) || "{}";
       const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
       return { ...deterministic, ...parsed, source: "llm" };
-    } catch (e8) {
+    } catch (e10) {
       return { ...deterministic, source: "deterministic-fallback" };
     }
   };
 
-  useEffect(() => { _optionalChain([bottomRef, 'access', _496 => _496.current, 'optionalAccess', _497 => _497.scrollIntoView, 'call', _498 => _498({ behavior:"smooth" })]); }, [messages, pendingActions]);
+  useEffect(() => { _optionalChain([bottomRef, 'access', _515 => _515.current, 'optionalAccess', _516 => _516.scrollIntoView, 'call', _517 => _517({ behavior:"smooth" })]); }, [messages, pendingActions]);
 
   const send = async (preset) => {
     const userMsg = (preset || input).trim();
@@ -4159,19 +4293,19 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   const todayKey = new Date().toISOString().split("T")[0];
   const env = resolveEnvironmentSelection({ personalization, todayKey, currentWeek });
   const dayTypeMap = { "long-run":"long", "hard-run":"tempo", "easy-run":"easy", "strength+prehab":"strength", rest:"recovery" };
-  const dayType = dayTypeMap[_optionalChain([todayWorkout, 'optionalAccess', _499 => _499.type])] || "hybrid";
-  const weekState = _optionalChain([failureMode, 'optionalAccess', _500 => _500.mode]) === "chaotic" ? "chaotic" : _optionalChain([momentum, 'optionalAccess', _501 => _501.fatigueNotes]) >= 2 ? "fatigued" : "normal";
-  const adherenceTrend = _optionalChain([momentum, 'optionalAccess', _502 => _502.completionRate]) >= 0.72 ? "stable" : _optionalChain([momentum, 'optionalAccess', _503 => _503.completionRate]) >= 0.5 ? "mixed" : "slipping";
-  const fatigueSignal = (_optionalChain([personalization, 'optionalAccess', _504 => _504.trainingState, 'optionalAccess', _505 => _505.fatigueScore]) || 1) >= 4 || _optionalChain([momentum, 'optionalAccess', _506 => _506.fatigueNotes]) >= 2;
-  const injuryFlag = _optionalChain([personalization, 'optionalAccess', _507 => _507.injuryPainState, 'optionalAccess', _508 => _508.level]) || "none";
-  const goalPriority = _optionalChain([arbitration, 'optionalAccess', _509 => _509.priorityStack, 'optionalAccess', _510 => _510.primary]) || "Consistency";
+  const dayType = dayTypeMap[_optionalChain([todayWorkout, 'optionalAccess', _518 => _518.type])] || "hybrid";
+  const weekState = _optionalChain([failureMode, 'optionalAccess', _519 => _519.mode]) === "chaotic" ? "chaotic" : _optionalChain([momentum, 'optionalAccess', _520 => _520.fatigueNotes]) >= 2 ? "fatigued" : "normal";
+  const adherenceTrend = _optionalChain([momentum, 'optionalAccess', _521 => _521.completionRate]) >= 0.72 ? "stable" : _optionalChain([momentum, 'optionalAccess', _522 => _522.completionRate]) >= 0.5 ? "mixed" : "slipping";
+  const fatigueSignal = (_optionalChain([personalization, 'optionalAccess', _523 => _523.trainingState, 'optionalAccess', _524 => _524.fatigueScore]) || 1) >= 4 || _optionalChain([momentum, 'optionalAccess', _525 => _525.fatigueNotes]) >= 2;
+  const injuryFlag = _optionalChain([personalization, 'optionalAccess', _526 => _526.injuryPainState, 'optionalAccess', _527 => _527.level]) || "none";
+  const goalPriority = _optionalChain([arbitration, 'optionalAccess', _528 => _528.priorityStack, 'optionalAccess', _529 => _529.primary]) || "Consistency";
   const recentLogCount = Object.keys(logs || {}).slice(-7).length;
 
   const coachDecisionMode = (() => {
     if (injuryFlag !== "none" || fatigueSignal) return "Protect";
     if (weekState === "chaotic" || env.time === "20" || adherenceTrend === "slipping") return "Simplify";
-    if (_optionalChain([momentum, 'optionalAccess', _511 => _511.logGapDays]) >= 4 || recentLogCount <= 2) return "Rebuild";
-    if ((_optionalChain([momentum, 'optionalAccess', _512 => _512.score]) || 0) >= 74 && weekState === "normal" && env.time !== "20") return "Push";
+    if (_optionalChain([momentum, 'optionalAccess', _530 => _530.logGapDays]) >= 4 || recentLogCount <= 2) return "Rebuild";
+    if ((_optionalChain([momentum, 'optionalAccess', _531 => _531.score]) || 0) >= 74 && weekState === "normal" && env.time !== "20") return "Push";
     return "Hold";
   })();
 
@@ -4225,12 +4359,12 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   })();
 
   const applyDecisionOption = async (opt) => {
-    if (!_optionalChain([opt, 'optionalAccess', _513 => _513.action])) {
+    if (!_optionalChain([opt, 'optionalAccess', _532 => _532.action])) {
       setMessages(m => [...m, { role:"assistant", packet:{ notices:["Staying with the full plan."], recommendations:["Execute cleanly and log it."], effects:[`Mode: ${coachMode}.`], actions:[] }, source:"deterministic" }]);
       setPendingActions([]);
       return;
     }
-    await commitAction({ ...opt.action, reason: _optionalChain([opt, 'access', _514 => _514.action, 'access', _515 => _515.payload, 'optionalAccess', _516 => _516.reason]) || "coach_decision" });
+    await commitAction({ ...opt.action, reason: _optionalChain([opt, 'access', _533 => _533.action, 'access', _534 => _534.payload, 'optionalAccess', _535 => _535.reason]) || "coach_decision" });
     setPendingActions([]);
     setMessages(m => [...m, { role:"assistant", packet:{ notices:["Decision applied."], recommendations:["Execute this version today."], effects:[`Mode: ${coachMode}.`], actions:[] }, source:"deterministic" }]);
   };
@@ -4307,7 +4441,7 @@ function CoachSection({ title, items, color }) {
   return (
     React.createElement('div', { style: { background:"#0f172a", borderRadius:8, padding:"8px 12px", border:`1px solid ${color}20` },}
       , React.createElement('div', { style: { fontSize:"0.7rem", color, fontWeight:600, marginBottom:"0.25rem" },}, title)
-      , (_optionalChain([items, 'optionalAccess', _517 => _517.length]) ? items : ["No issues detected."]).map((item, idx) => (
+      , (_optionalChain([items, 'optionalAccess', _536 => _536.length]) ? items : ["No issues detected."]).map((item, idx) => (
         React.createElement('div', { key: idx, style: { fontSize:"0.78rem", color:"#cbd5e1", lineHeight:1.6 },}, "• " , item)
       ))
     )
