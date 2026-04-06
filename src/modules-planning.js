@@ -136,10 +136,10 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
       0: { type: "rest", label: "Recovery", nutri: "rest" },
     },
     maintenance_rebuild: {
-      1: { type: "strength+prehab", label: "Minimum Viable Strength", strSess: "A", nutri: "strength" },
+      1: { type: "strength+prehab", label: "Short Version Strength", strSess: "A", nutri: "strength" },
       2: { type: "rest", label: "Recovery / Walk", nutri: "rest" },
       3: { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: "easyRun" },
-      4: { type: "strength+prehab", label: "Minimum Viable Strength B", strSess: "B", nutri: "strength" },
+      4: { type: "strength+prehab", label: "Short Version Strength B", strSess: "B", nutri: "strength" },
       5: { type: "rest", label: "Recovery", nutri: "rest" },
       6: { type: "conditioning", label: "Optional Conditioning", nutri: "easyRun" },
       0: { type: "rest", label: "Recovery", nutri: "rest" },
