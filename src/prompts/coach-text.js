@@ -8,7 +8,7 @@ export const buildWorkoutAdjustmentCoachNote = ({ plannedWorkout, adjustedWorkou
     || !!adjustedWorkout?.reason;
   const primaryGoal = (goals || []).filter(g => g?.active).sort((a, b) => (a?.priority || 9) - (b?.priority || 9))[0]?.name || "your primary goal";
   const adjustmentLine = changed
-    ? `${plannedLabel} was adjusted to ${adjustedLabel}${adjustedWorkout?.minDay ? " (minimum viable format)" : ""}.`
+    ? `${plannedLabel} was adjusted to ${adjustedLabel}${adjustedWorkout?.minDay ? " (short version)" : ""}.`
     : `${adjustedLabel} stays as planned today.`;
   const reasons = [
     adjustedWorkout?.reason ? `This change responds to ${String(adjustedWorkout.reason).replaceAll("_", " ")} in today's context.` : null,
