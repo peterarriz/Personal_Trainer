@@ -48,12 +48,39 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     return res.status === 204 ? {} : res.json();
   };
 
+  const refreshSession = async (refreshToken) => {
+    if (!refreshToken) return null;
+    try {
+      const data = await authRequest("token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: refreshToken }) });
+      if (!data?.access_token || !data?.user) return null;
+      return { access_token: data.access_token, refresh_token: data.refresh_token || refreshToken, user: data.user };
+    } catch {
+      return null;
+    }
+  };
+
+  const ensureValidSession = async (session) => {
+    if (!session?.access_token || !session?.user?.id) return null;
+    try {
+      const probe = await safeFetchWithTimeout(`${SB_URL}/auth/v1/user`, {
+        headers: { "apikey": SB_KEY, "Authorization": `Bearer ${session.access_token}` },
+      });
+      if (probe.ok) return session;
+      if (probe.status === 401 && session?.refresh_token) {
+        return await refreshSession(session.refresh_token);
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
   const handleSignIn = async ({ authEmail, authPassword, setAuthError, setAuthSession }) => {
     setAuthError("");
     try {
       const data = await authRequest("token?grant_type=password", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
       if (!data?.access_token || !data?.user) throw new Error("Invalid auth response");
-      const session = { access_token: data.access_token, user: data.user };
+      const session = { access_token: data.access_token, refresh_token: data.refresh_token || "", user: data.user };
       setAuthSession(session);
       saveAuthSession(session);
     } catch (e) { setAuthError("Sign in failed. Check email/password."); }
@@ -64,7 +91,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     try {
       const data = await authRequest("signup", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
       if (data?.access_token && data?.user) {
-        const session = { access_token: data.access_token, user: data.user };
+        const session = { access_token: data.access_token, refresh_token: data.refresh_token || "", user: data.user };
         setAuthSession(session);
         saveAuthSession(session);
       } else {
@@ -84,23 +111,41 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     setStorageStatus({ mode: "local", label: "SIGNED OUT" });
   };
 
-  const sbSave = async ({ payload, authSession }) => {
+  const sbSave = async ({ payload, authSession, setAuthSession }) => {
     if (SB_CONFIG_ERROR) throw new Error(SB_CONFIG_ERROR);
-    if (!authSession?.user?.id || !authSession?.access_token) throw new Error("No authenticated user");
-    const h = sbUserHeaders(authSession.access_token);
+    const validSession = await ensureValidSession(authSession);
+    if (!validSession?.user?.id || !validSession?.access_token) {
+      if (setAuthSession) setAuthSession(null);
+      saveAuthSession(null);
+      throw new Error("AUTH_REQUIRED");
+    }
+    if (validSession?.access_token !== authSession?.access_token) {
+      if (setAuthSession) setAuthSession(validSession);
+      saveAuthSession(validSession);
+    }
+    const h = sbUserHeaders(validSession.access_token);
     const res = await safeFetchWithTimeout(SB_URL + "/rest/v1/trainer_data", {
       method: "POST",
       headers: { ...h, "Prefer": "resolution=merge-duplicates" },
-      body: JSON.stringify({ id: `${SB_ROW}_${authSession.user.id}`, user_id: authSession.user.id, data: payload, updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ id: `${SB_ROW}_${validSession.user.id}`, user_id: validSession.user.id, data: payload, updated_at: new Date().toISOString() }),
     });
     if (!res.ok) throw new Error("Save failed " + res.status + ": " + await res.text());
   };
 
-  const sbLoad = async ({ authSession, setters, persistAll }) => {
+  const sbLoad = async ({ authSession, setters, persistAll, setAuthSession }) => {
     if (SB_CONFIG_ERROR) throw new Error(SB_CONFIG_ERROR);
-    if (!authSession?.user?.id || !authSession?.access_token) throw new Error("No authenticated user");
-    const h = sbUserHeaders(authSession.access_token);
-    const res = await safeFetchWithTimeout(SB_URL + "/rest/v1/trainer_data?user_id=eq." + authSession.user.id, { headers: h });
+    const validSession = await ensureValidSession(authSession);
+    if (!validSession?.user?.id || !validSession?.access_token) {
+      if (setAuthSession) setAuthSession(null);
+      saveAuthSession(null);
+      throw new Error("AUTH_REQUIRED");
+    }
+    if (validSession?.access_token !== authSession?.access_token) {
+      if (setAuthSession) setAuthSession(validSession);
+      saveAuthSession(validSession);
+    }
+    const h = sbUserHeaders(validSession.access_token);
+    const res = await safeFetchWithTimeout(SB_URL + "/rest/v1/trainer_data?user_id=eq." + validSession.user.id, { headers: h });
     if (!res.ok) throw new Error("Load failed " + res.status + ": " + await res.text());
     const rows = await res.json();
     if (rows && rows.length > 0 && rows[0].data) {
@@ -121,7 +166,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     } else {
       const cache = localLoad();
       if (cache?.v) {
-        await sbSave({ payload: cache, authSession });
+        await sbSave({ payload: cache, authSession: validSession, setAuthSession });
       } else {
         await persistAll({}, [], {}, {}, [], DEFAULT_PERSONALIZATION, [], { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} }, DEFAULT_MULTI_GOALS, {}, {}, { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] }, {});
       }
@@ -132,6 +177,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     payload,
     authSession,
     setStorageStatus,
+    setAuthSession,
   }) => {
     localSave(payload);
     if (!authSession?.user?.id) {
@@ -139,9 +185,13 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       return;
     }
     try {
-      await sbSave({ payload, authSession });
+      await sbSave({ payload, authSession, setAuthSession });
       setStorageStatus({ mode: "cloud", label: "SYNCED" });
     } catch (e) {
+      if (e?.message === "AUTH_REQUIRED") {
+        setStorageStatus({ mode: "local", label: "AUTH REQUIRED" });
+        return;
+      }
       logDiag("Cloud save failed, local fallback active:", e.message);
       setStorageStatus({ mode: "local", label: "LOCAL MODE" });
     }
@@ -157,6 +207,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     loadAuthSession,
     saveAuthSession,
     authRequest,
+    ensureValidSession,
     handleSignIn,
     handleSignUp,
     handleSignOut,
