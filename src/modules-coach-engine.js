@@ -74,7 +74,7 @@ const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, notices, reco
     ? "Hit today with intent and quality—this is a progression day."
     : "Execute the planned session as written with clean control.";
   const workoutLine = todayWorkout?.minDay
-    ? `${todayWorkout?.label || "Session"} — minimum viable version (${todayWorkout?.fallback || "20-30 minutes"}), then stop.`
+    ? `${todayWorkout?.label || "Session"} — short version (${todayWorkout?.fallback || "20-30 minutes"}), then stop.`
     : `${todayWorkout?.label || "Session"} — ${todayWorkout?.run?.d || todayWorkout?.d || "30-45 minutes"} with ${todayWorkout?.success || "steady execution and controlled effort"}.`;
   const whyLines = [
     recommendations?.[0]?.replace(/\s*\[[^\]]+\]\s*$/, "") || "This recommendation reflects your current readiness and consistency pattern.",
