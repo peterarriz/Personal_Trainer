@@ -1,4 +1,42 @@
 export const DEFAULT_PLANNING_HORIZON_WEEKS = 12;
+export const RECOVERY_BLOCK_WEEKS = 2;
+
+export const inferGoalType = (goal = {}) => {
+  if (goal?.type === "time_bound" || goal?.type === "ongoing") return goal.type;
+  return goal?.targetDate ? "time_bound" : "ongoing";
+};
+
+export const normalizeGoalObject = (goal = {}, idx = 0) => {
+  const type = inferGoalType(goal);
+  const tracking = goal?.tracking || (type === "ongoing"
+    ? {
+        mode: goal?.category === "body_comp" ? "weekly_checkin" : goal?.category === "strength" ? "logged_lifts" : "progress_tracker",
+        unit: goal?.category === "body_comp" ? "lb" : goal?.category === "strength" ? "lb" : "",
+      }
+    : { mode: "deadline" });
+  return {
+    id: goal?.id || `goal_${idx + 1}`,
+    name: goal?.name || "Goal",
+    category: goal?.category || "running",
+    priority: Number(goal?.priority || (idx + 1)),
+    targetDate: goal?.targetDate || "",
+    measurableTarget: goal?.measurableTarget || "",
+    active: goal?.active !== false,
+    ...goal,
+    type,
+    tracking,
+  };
+};
+
+export const normalizeGoals = (goals = []) => (goals || []).map((g, idx) => normalizeGoalObject(g, idx));
+
+export const getGoalBuckets = (goals = []) => {
+  const normalized = normalizeGoals(goals);
+  const active = normalized.filter(g => g.active).sort((a, b) => a.priority - b.priority);
+  const timeBound = active.filter(g => g.type === "time_bound");
+  const ongoing = active.filter(g => g.type === "ongoing");
+  return { normalized, active, timeBound, ongoing };
+};
 
 export const daysUntil = (dateStr) => {
   if (!dateStr) return 9999;
@@ -7,8 +45,16 @@ export const daysUntil = (dateStr) => {
   return Math.floor((t - Date.now()) / 86400000);
 };
 
+export const getActiveTimeBoundGoal = (goals = []) => {
+  const { timeBound } = getGoalBuckets(goals);
+  return (timeBound || [])
+    .map(g => ({ ...g, days: daysUntil(g.targetDate) }))
+    .filter(g => Number.isFinite(g.days))
+    .sort((a, b) => a.days - b.days)[0] || null;
+};
+
 export const composeGoalNativePlan = ({ goals, personalization, momentum, learningLayer, baseWeek }) => {
-  const active = (goals || []).filter(g => g.active).sort((a, b) => a.priority - b.priority);
+  const { active } = getGoalBuckets(goals);
   const primary = active[0] || null;
   const secondary = active.slice(1, 3);
   const env = personalization?.travelState?.environmentMode || personalization?.travelState?.access || "home";
@@ -163,23 +209,37 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
 export const getSpecificityBand = (offset) => offset <= 1 ? "high" : offset <= 5 ? "medium" : "directional";
 
 export const getHorizonAnchor = (goals = [], horizonWeeks = DEFAULT_PLANNING_HORIZON_WEEKS) => {
-  const activeDated = (goals || []).filter(g => g.active && g.targetDate).map(g => ({ ...g, days: daysUntil(g.targetDate) })).filter(g => g.days >= 0).sort((a,b) => a.days - b.days);
-  const nearest = activeDated[0] || null;
-  if (!nearest) return { nearest: null, withinHorizon: false, weekIndex: null };
-  const weekIndex = Math.ceil((nearest.days + 1) / 7);
-  return { nearest, withinHorizon: weekIndex <= horizonWeeks, weekIndex };
+  const timeGoal = getActiveTimeBoundGoal(goals);
+  if (!timeGoal) return { nearest: null, withinHorizon: false, weekIndex: null };
+  const weekIndex = Math.ceil((Math.max(0, timeGoal.days) + 1) / 7);
+  return { nearest: timeGoal, withinHorizon: weekIndex <= horizonWeeks, weekIndex };
+};
+
+const labelPhaseWeeks = (rows = []) => {
+  const counts = {};
+  return rows.map((row) => {
+    if (row.kind !== "plan") return row;
+    const phase = row?.template?.phase || "BASE";
+    counts[phase] = (counts[phase] || 0) + 1;
+    return { ...row, phaseWeek: counts[phase], phaseLabel: `${phase} · Week ${counts[phase]}` };
+  });
 };
 
 export const buildRollingHorizonWeeks = ({ currentWeek, horizonWeeks = DEFAULT_PLANNING_HORIZON_WEEKS, goals, weekTemplates }) => {
   const anchor = getHorizonAnchor(goals, horizonWeeks);
-  return Array.from({ length: horizonWeeks }).map((_, idx) => {
+  const timeGoal = getActiveTimeBoundGoal(goals);
+  const today = new Date();
+
+  const buildPlanWeek = (idx) => {
     const absoluteWeek = currentWeek + idx;
-    const template = weekTemplates[(absoluteWeek - 1) % weekTemplates.length] || weekTemplates[0];
+    const templateIndex = Math.max(0, Math.min((absoluteWeek - 1), (weekTemplates?.length || 1) - 1));
+    const template = weekTemplates[templateIndex] || weekTemplates[weekTemplates.length - 1] || {};
     const startDate = new Date();
     startDate.setDate(startDate.getDate() + (idx * 7));
     const endDate = new Date(startDate);
     endDate.setDate(endDate.getDate() + 6);
     return {
+      kind: "plan",
       slot: idx + 1,
       absoluteWeek,
       template,
@@ -188,5 +248,69 @@ export const buildRollingHorizonWeeks = ({ currentWeek, horizonWeeks = DEFAULT_P
       endDate,
       anchorHit: anchor.withinHorizon && anchor.weekIndex === (idx + 1),
     };
-  });
+  };
+
+  if (!timeGoal) {
+    const fallback = Array.from({ length: horizonWeeks }).map((_, idx) => buildPlanWeek(idx));
+    return fallback.map((row) => ({
+      ...row,
+      weekLabel: `${row?.template?.phase || "BASE"} · Week ${row.absoluteWeek}`,
+    }));
+  }
+
+  const daysToDeadline = daysUntil(timeGoal.targetDate);
+  if (daysToDeadline >= 0) {
+    const weeksToDeadline = Math.max(1, Math.ceil((daysToDeadline + 1) / 7));
+    const visiblePlanWeeks = Math.min(horizonWeeks, weeksToDeadline);
+    const rows = Array.from({ length: visiblePlanWeeks }).map((_, idx) => buildPlanWeek(idx));
+    if (visiblePlanWeeks < horizonWeeks) {
+      const recoveryStart = new Date(`${timeGoal.targetDate}T12:00:00`);
+      recoveryStart.setDate(recoveryStart.getDate() + 1);
+      const recoveryEnd = new Date(recoveryStart);
+      recoveryEnd.setDate(recoveryStart.getDate() + (RECOVERY_BLOCK_WEEKS * 7) - 1);
+      rows.push({
+        kind: "recovery",
+        slot: visiblePlanWeeks + 1,
+        absoluteWeek: currentWeek + visiblePlanWeeks,
+        weekLabel: "Recovery Block",
+        focus: "Post-race recovery, low intensity, mobility, and reflection.",
+        startDate: recoveryStart,
+        endDate: recoveryEnd,
+      });
+      rows.push({
+        kind: "next_goal_prompt",
+        slot: visiblePlanWeeks + 2,
+        absoluteWeek: currentWeek + visiblePlanWeeks + 1,
+        weekLabel: "Set Next Goal",
+        focus: "Choose the next time-bound objective while ongoing goals continue.",
+      });
+    }
+    return labelPhaseWeeks(rows).map(row => ({ ...row, weekLabel: row.weekLabel || row.phaseLabel || `Week ${row.absoluteWeek}` }));
+  }
+
+  const daysSinceDeadline = Math.abs(daysToDeadline);
+  const recoveryWeeksRemaining = Math.max(0, RECOVERY_BLOCK_WEEKS - Math.floor(daysSinceDeadline / 7));
+  if (recoveryWeeksRemaining > 0) {
+    const recoveryRows = Array.from({ length: Math.min(horizonWeeks, recoveryWeeksRemaining) }).map((_, idx) => {
+      const startDate = new Date(today);
+      startDate.setDate(startDate.getDate() + (idx * 7));
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 6);
+      return {
+        kind: "recovery",
+        slot: idx + 1,
+        absoluteWeek: currentWeek + idx,
+        weekLabel: `Recovery · Week ${idx + 1}`,
+        focus: "Rebuild freshness and mobility before selecting a new race block.",
+        startDate,
+        endDate,
+      };
+    });
+    if (recoveryRows.length < horizonWeeks) {
+      recoveryRows.push({ kind: "next_goal_prompt", slot: recoveryRows.length + 1, absoluteWeek: currentWeek + recoveryRows.length, weekLabel: "Set Next Goal", focus: "Recovery block complete. Set your next time-bound goal." });
+    }
+    return recoveryRows;
+  }
+
+  return [{ kind: "next_goal_prompt", slot: 1, absoluteWeek: currentWeek, weekLabel: "Set Next Goal", focus: "Your previous race block has ended. Start the next time-bound plan." }];
 };
