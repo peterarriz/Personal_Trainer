@@ -5378,6 +5378,354 @@ function OnboardingCoachLegacy({ onComplete }) {
     });
     setBuilding(false);
   };
+  const activeAppleTypes = appleHealth?.permissionsGranted?.length ? appleHealth.permissionsGranted.join(", ") : "None";
+  const lastGarminActivity = (garmin?.activities || []).slice(-1)[0];
+  const profileWeightVal = profile?.weight ?? profile?.bodyweight ?? "";
+  const profileHeightVal = profile?.height ?? "";
+
+  const checkConnection = async () => {
+    setChecking(true);
+    try {
+      const workouts = appleHealth?.workouts || {};
+      const cutoff = Date.now() - (7 * 86400000);
+      const recent = Object.entries(workouts).filter(([date]) => new Date(`${date}T12:00:00`).getTime() >= cutoff);
+      const hasGarmin = recent.some(([, w]) => /garmin/i.test(String(w?.source || w?.device || "")));
+      const msg = recent.length === 0
+        ? "No Apple Health workouts found in last 7 days."
+        : hasGarmin
+        ? `Connected: ${recent.length} workouts found, Garmin sessions detected.`
+        : `Apple Health connected: ${recent.length} workouts found, but Garmin source not detected yet.`;
+      setCheckMsg(msg);
+      await persistAppleHealth({ lastConnectionCheck: Date.now(), lastSyncStatus: hasGarmin ? "garmin_detected" : "health_only" });
+    } finally {
+      setChecking(false);
+    }
+  };
+  return (
+    <div className="fi">
+      <div className="card card-subtle">
+        <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
+        {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:C.green, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
+        <div style={{ fontSize:"0.56rem", color:"#8ea4c7", lineHeight:1.7, marginBottom:"1rem" }}>
+          Manage profile, devices, preferences, appearance, notifications, and privacy in one place.
+        </div>
+        <div style={{ borderTop:"1px solid #233851", marginTop:"0.4rem", paddingTop:"0.75rem" }}>
+          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>PROFILE</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 110px", gap:"0.35rem", marginBottom:"0.35rem" }}>
+            <input value={profile?.name || ""} onChange={e=>patchProfile({ name: e.target.value })} placeholder="Name" />
+            <input type="number" value={profile?.age || ""} onChange={e=>patchProfile({ age: Number(e.target.value) || "" })} placeholder="Age" />
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.35rem" }}>
+            <input
+              type="number"
+              step="0.1"
+              value={profileWeightVal}
+              onChange={e=>patchProfile({ weight: e.target.value === "" ? "" : Number(e.target.value), bodyweight: e.target.value === "" ? "" : Number(e.target.value) })}
+              placeholder={`Weight (${unitSettings?.weight || "lbs"})`}
+            />
+            {unitSettings?.height === "cm" ? (
+              <input
+                type="number"
+                value={profileHeightVal}
+                onChange={e=>patchProfile({ height: e.target.value === "" ? "" : Number(e.target.value) })}
+                placeholder="Height (cm)"
+              />
+            ) : (
+              <input
+                value={profileHeightVal}
+                onChange={e=>patchProfile({ height: e.target.value })}
+                placeholder={`Height (${unitSettings?.height === "ft_in" ? "e.g., 6'1\"" : "value"})`}
+              />
+            )}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.35rem" }}>
+            <select value={unitSettings?.weight || "lbs"} onChange={e=>patchSettings({ units: { ...unitSettings, weight: e.target.value } })}>
+              <option value="lbs">Weight: lbs</option>
+              <option value="kg">Weight: kg</option>
+            </select>
+            <select value={unitSettings?.height || "ft_in"} onChange={e=>patchSettings({ units: { ...unitSettings, height: e.target.value } })}>
+              <option value="ft_in">Height: ft-in</option>
+              <option value="cm">Height: cm</option>
+            </select>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+            <input type="number" value={profile?.restingHeartRate || ""} onChange={e=>patchProfile({ restingHeartRate: Number(e.target.value) || "" })} placeholder="Resting HR (optional)" />
+            <input type="number" value={profile?.actualMaxHr || ""} onChange={e=>patchProfile({ actualMaxHr: Number(e.target.value) || "" })} placeholder="Max HR (optional)" />
+          </div>
+        </div>
+
+        <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
+          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>CONNECTED DEVICES</div>
+          <div style={{ fontSize:"0.54rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.35rem" }}>
+            Your Garmin data will appear in Apple Health automatically once connected. Here&apos;s how:
+          </div>
+          <div style={{ fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.7 }}>
+            Step 1: Open Garmin Connect app<br />
+            Step 2: Tap your profile photo → Settings → Connected Apps → Apple Health → Enable All<br />
+            Step 3: Come back here and tap &quot;Check Connection&quot;
+          </div>
+          <div style={{ marginTop:"0.45rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
+              {appleHealth?.status === "connected" || appleHealth?.status === "simulated_web" ? "Reconnect Apple Health" : "Connect Apple Health"}
+            </button>
+            <button className="btn" onClick={checkConnection} disabled={checking} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
+              {checking ? "Checking..." : "Check Connection"}
+            </button>
+            <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
+              I enabled Health permissions
+            </button>
+          </div>
+          <div style={{ marginTop:"0.28rem", fontSize:"0.5rem", color:"#6f85a7" }}>
+            Status: {appleHealth?.status || "not_connected"} · Last check: {appleHealth?.lastConnectionCheck ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}
+          </div>
+          <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>
+            Permission confirmed: {appleHealth?.permissionConfirmedAt ? new Date(appleHealth.permissionConfirmedAt).toLocaleString() : "not confirmed"}
+          </div>
+          <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:appleHealth?.lastSyncStatus === "garmin_detected" ? C.green : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web" ? C.blue : "#8fa5c8" }}>
+            {appleHealth?.lastSyncStatus === "garmin_detected"
+              ? "Sync verified: Garmin activity detected in Apple Health."
+              : appleHealth?.lastSyncStatus === "permissions_confirmed"
+              ? "Permissions confirmed. Complete one Health workout, then tap Check Connection."
+              : appleHealth?.lastSyncStatus === "health_only"
+              ? "Connected, but Garmin source not detected yet."
+              : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web"
+              ? "Connected. Run one workout, then tap Check Connection."
+              : "Not connected yet."}
+          </div>
+          <div style={{ marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 }}>
+            iPhone permission path: Settings → Privacy &amp; Security → Health → Personal Trainer (or browser app) → Allow all categories.
+          </div>
+          <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
+          {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
+        </div>
+        <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>GARMIN CONNECT</div>
+          <div style={{ fontSize:"0.53rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.35rem" }}>
+            Secondary data layer over Apple Health. OAuth 1.0a is used for Garmin authorization.
+          </div>
+          <button className="btn" onClick={connectGarmin} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" }}>
+            Connect Garmin
+          </button>
+          <div style={{ marginTop:"0.25rem", fontSize:"0.52rem", color:garmin?.status === "connected" ? C.green : "#8fa5c8" }}>
+            {garmin?.status === "connected" ? `Garmin connected · ${garmin?.deviceName || "device"}` : "Garmin not connected"}
+          </div>
+          <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#6f85a7" }}>
+            Last activity synced: {lastGarminActivity?.startTime || "none"} · {lastGarminActivity?.type || ""}
+          </div>
+          <a href="#" onClick={(e)=>{ e.preventDefault(); setConnectOpen(true); }} style={{ display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue }}>How to sync Garmin → Apple Health</a>
+          {!!garminMsg && <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:"#cbd5e1" }}>{garminMsg}</div>}
+        </div>
+
+        <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
+          <div className="sect-title" style={{ color:C.purple, marginBottom:"0.35rem" }}>TRAINING PREFERENCES</div>
+          <div style={{ display:"grid", gap:"0.3rem" }}>
+            <button className="btn" onClick={()=>setShowEnvEditor(v=>!v)} style={{ justifyContent:"space-between", fontSize:"0.54rem", color:"#dbe7f6" }}>
+              Default environment: {trainingPrefs?.defaultEnvironment || "Home"} <span>{showEnvEditor ? "Hide" : "Edit"}</span>
+            </button>
+            {showEnvEditor && (
+              <div style={{ display:"grid", gap:"0.3rem", border:"1px solid #243752", borderRadius:9, padding:"0.45rem" }}>
+                <select value={trainingPrefs?.defaultEnvironment || "Home"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, defaultEnvironment: e.target.value } })}>
+                  {["Home","Gym","Travel"].map((m)=><option key={m} value={m}>{m}</option>)}
+                </select>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Use the Environment editor in Today/Program to update equipment list and session duration presets.</div>
+              </div>
+            )}
+            <select value={trainingPrefs?.weeklyCheckinDay || "Sun"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, weeklyCheckinDay: e.target.value } })}>
+              {["Sun","Mon","Sat"].map((d)=><option key={d} value={d}>Weekly check-in day: {d}</option>)}
+            </select>
+            <select value={unitSettings?.distance || "miles"} onChange={e=>patchSettings({ units: { ...unitSettings, distance: e.target.value } })}>
+              <option value="miles">Units: Miles</option>
+              <option value="kilometers">Units: Kilometers</option>
+            </select>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.28rem" }}>
+              {[
+                ["Conservative","Protect consistency, never overtrain"],
+                ["Standard","Balanced load and progression"],
+                ["Aggressive","Push harder, accept more risk"],
+              ].map(([mode, desc]) => (
+                <button key={mode} className="btn" onClick={()=>patchSettings({ trainingPreferences: { ...trainingPrefs, intensityPreference: mode } })} style={{ fontSize:"0.51rem", color:trainingPrefs?.intensityPreference===mode?C.green:"#9fb2d2", borderColor:trainingPrefs?.intensityPreference===mode?C.green+"35":"#324961", textAlign:"left" }}>
+                  <div>{mode}</div><div style={{ fontSize:"0.45rem", color:"#7f94b3", marginTop:"0.12rem" }}>{desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
+          <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>APPEARANCE</div>
+          <div style={{ display:"grid", gap:"0.3rem" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.25rem" }}>
+              {["System","Light","Dark"].map((t) => (
+                <button key={t} className="btn" onClick={()=>patchSettings({ appearance: { ...appearance, theme: t } })} style={{ fontSize:"0.52rem", color:appearance?.theme===t?C.green:"#9fb2d2", borderColor:appearance?.theme===t?C.green+"35":"#324961" }}>{t}</button>
+              ))}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:"0.28rem" }}>
+              {[["Green","#27f59a"],["Blue","#00c2ff"],["Orange","#ff8a00"],["Red","#ff3d81"],["Purple","#7c5cff"],["Neutral","#94a3b8"]].map(([name,color]) => (
+                <button key={name} onClick={()=>patchSettings({ appearance: { ...appearance, palette: name } })} style={{ height:24, borderRadius:7, border:appearance?.palette===name?`2px solid ${color}`:"1px solid #324961", background:color, cursor:"pointer" }} title={name} />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>NOTIFICATIONS</div>
+          <div style={{ display:"grid", gap:"0.3rem" }}>
+            <label style={{ fontSize:"0.53rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.allOff)} onChange={e=>patchSettings({ notifications: { ...notif, allOff: e.target.checked } })} /> All notifications off</label>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 110px", gap:"0.35rem" }}>
+              <label style={{ fontSize:"0.53rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.weeklyReminderOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, weeklyReminderOn: e.target.checked } })} /> Weekly check-in reminder</label>
+              <input type="time" value={notif?.weeklyReminderTime || "18:00"} disabled={notif?.allOff || !notif?.weeklyReminderOn} onChange={e=>patchSettings({ notifications: { ...notif, weeklyReminderTime: e.target.value } })} />
+            </div>
+            <label style={{ fontSize:"0.53rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.proactiveNudgeOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, proactiveNudgeOn: e.target.checked } })} /> Coach proactive nudge</label>
+            <div style={{ fontSize:"0.49rem", color:"#7f94b3" }}>One message if you&apos;ve been away 3+ days</div>
+          </div>
+        </div>
+
+        <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
+          <div className="sect-title" style={{ color:C.red, marginBottom:"0.35rem" }}>DATA & PRIVACY</div>
+          <div style={{ display:"grid", gap:"0.3rem" }}>
+            <button className="btn" onClick={exportData} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>Export my data</button>
+            <button className="btn" onClick={()=>{ setDeleteOpen(v=>!v); setDeleteStep(1); setDeleteConfirm(""); }} style={{ fontSize:"0.52rem", color:C.red, borderColor:C.red+"35" }}>Delete account</button>
+            {deleteOpen && (
+              <div style={{ border:"1px solid #3b2a39", borderRadius:8, padding:"0.45rem", display:"grid", gap:"0.3rem" }}>
+                {deleteStep === 1 ? (
+                  <>
+                    <div style={{ fontSize:"0.52rem", color:"#f1d4dd" }}>This deletes logs, goals, check-ins, device links, and personalization. Export first if needed.</div>
+                    <button className="btn" onClick={()=>{ exportData(); setDeleteStep(2); }} style={{ fontSize:"0.5rem" }}>Export first, then continue</button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize:"0.52rem", color:"#f1d4dd" }}>Type <b>DELETE</b> to confirm.</div>
+                    <input value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} placeholder="DELETE" />
+                    <button className="btn" disabled={deleteConfirm !== "DELETE"} onClick={onDeleteAccount} style={{ fontSize:"0.5rem", color:C.red, borderColor:C.red+"35" }}>Confirm delete account</button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ borderTop:"1px solid #233851", marginTop:"1.2rem", paddingTop:"1rem" }}>
+          <div className="sect-title" style={{ color:"#8fa5c8", marginBottom:"0.3rem" }}>PLAN MANAGEMENT</div>
+          <button className="btn" onClick={onStartFresh} style={{ fontSize:"0.52rem", color:"#7f94b3", borderColor:"#2d405b", background:"transparent", padding:"0.22rem 0.5rem" }}>
+            Start a new plan
+          </button>
+        </div>
+      </div>
+      {connectOpen && (
+        <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
+          <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
+            <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
+              To give you smarter recommendations, Personal Trainer reads health data from Apple Health. We never share this data. You can revoke access anytime in iOS Settings.
+            </div>
+            <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
+            <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
+              Skip for now
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OnboardingCoach({ onComplete }) {
+  const SCRIPT = [
+    { key: "primary_goal_text", text: "Before I build your plan, I need to understand what you're actually working toward. What's the most important thing you want to accomplish — and is there a date attached to it?", type: "text" },
+    { key: "other_goals", text: "What else matters to you? List anything — weight, strength goals, aesthetics, other races. I'll tell you honestly what we can prioritize.", type: "text" },
+    { key: "baseline_text", text: "Where are you starting from right now? Be honest — current weight if relevant, what you can comfortably run, what you're lifting. Rough estimates are fine.", type: "text" },
+    { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
+    { key: "injury_text", text: "Do you have any injuries or physical limitations I need to know about before I prescribe anything?", type: "text", placeholder: "None currently" },
+    { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
+  ];
+  const [messages, setMessages] = useState([{ role: "coach", text: SCRIPT[0].text }]);
+  const [answers, setAnswers] = useState({});
+  const [step, setStep] = useState(0);
+  const [draft, setDraft] = useState("");
+  const [awaitingTimeline, setAwaitingTimeline] = useState(false);
+  const [awaitingAdjustConfirm, setAwaitingAdjustConfirm] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const current = SCRIPT[step];
+  const needsEquipment = Boolean(answers.__needs_equipment);
+
+  const callAnthropicIntake = async (prompt) => {
+    const key = safeStorageGet(localStorage, "coach_api_key", "") || safeStorageGet(localStorage, "anthropic_api_key", "");
+    if (!key) return null;
+    try {
+      const res = await safeFetchWithTimeout("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: "claude-3-5-haiku-latest", max_tokens: 600, messages: [{ role: "user", content: prompt }] }),
+      }, 9000);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.content?.[0]?.text || null;
+    } catch { return null; }
+  };
+
+  const buildTimelineAssessment = async (payload) => {
+    const prompt = `The user has provided the following goals and baseline:\n${JSON.stringify(payload, null, 2)}\n\nAssess each goal against the baseline and days available. For each goal:\n1. State whether it is realistic within the user's primary deadline (if one exists)\n2. If not realistic within that deadline: state what IS realistic by that date and when the full goal could be reached\n3. Identify any goal conflicts (e.g. aggressive cut + peak strength simultaneously)\n\nRules:\n- Be honest but not discouraging\n- Lead with what IS achievable, not what isn't\n- Never say a goal is impossible — say what's needed to make it possible and how long it realistically takes\n- If goals are fully compatible: say so and move on\n- Maximum 3 sentences per goal\n- End with: 'Here's what I'm going to prioritize in your plan — tell me if you want to adjust anything.'`;
+    const ai = await callAnthropicIntake(prompt);
+    if (ai) return ai.trim();
+    return "Given your baseline and schedule, we'll prioritize one primary outcome and sequence secondary goals so recovery stays intact. By your deadline, we'll target measurable progress toward the main outcome while keeping competing goals in maintenance range, then progress them in the next block. Here's what I'm going to prioritize in your plan — tell me if you want to adjust anything.";
+  };
+
+  const askNext = (nextStep) => {
+    if (nextStep >= SCRIPT.length) return;
+    setMessages((prev) => [...prev, { role: "coach", text: SCRIPT[nextStep].text }]);
+    setStep(nextStep);
+    setDraft("");
+  };
+
+  const submitAnswer = async (value) => {
+    const clean = String(value || "").trim();
+    if (!clean && current?.type === "text") return;
+    const answerText = clean || "None currently";
+    setMessages((prev) => [...prev, { role: "user", text: answerText }]);
+
+    if (answers.__needs_equipment) {
+      const patched = { ...answers, equipment_text: answerText, __needs_equipment: false };
+      setAnswers(patched);
+      setAwaitingTimeline(true);
+      const timeline = await buildTimelineAssessment(patched);
+      setMessages((prev) => [...prev, { role: "coach", text: timeline }]);
+      setAwaitingTimeline(false);
+      setAwaitingAdjustConfirm(true);
+      return;
+    }
+
+    const nextAnswers = { ...answers, [current.key]: answerText };
+    setAnswers(nextAnswers);
+    if (current.key === "training_location" && ["Home", "Varies"].includes(answerText)) {
+      setAnswers({ ...nextAnswers, __needs_equipment: true });
+      setMessages((prev) => [...prev, { role: "coach", text: "What equipment is available where you train?" }]);
+      setDraft("");
+      return;
+    }
+    if (step < SCRIPT.length - 1) {
+      askNext(step + 1);
+      return;
+    }
+    setAwaitingTimeline(true);
+    const timeline = await buildTimelineAssessment(nextAnswers);
+    setMessages((prev) => [...prev, { role: "coach", text: timeline }]);
+    setAwaitingTimeline(false);
+    setAwaitingAdjustConfirm(true);
+  };
+
+  const finalize = async (adjust = "") => {
+    if (adjust.trim()) setMessages((prev) => [...prev, { role: "user", text: adjust.trim() }]);
+    setBuilding(true);
+    setMessages((prev) => [...prev, { role: "coach", text: "Building your plan..." }]);
+    await onComplete({
+      ...answers,
+      training_days: answers.training_days || "3",
+      secondary_goals: answers.other_goals || "",
+      primary_goal_detail: answers.primary_goal_text || "",
+      timeline_feedback: adjust.trim(),
+      timeline_assessment: messages.filter((m) => m.role === "coach").slice(-1)[0]?.text || "",
+    });
+    setBuilding(false);
+  };
 
   return (
     <div style={{ maxWidth:860, margin:"0 auto" }}>
