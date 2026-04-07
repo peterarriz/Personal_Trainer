@@ -267,6 +267,16 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     }
     try {
       await sbSave({ payload, authSession, setAuthSession });
+      try {
+        await syncGoals({ goals: payload?.goals || [], authSession, setAuthSession });
+      } catch (e) {
+        logDiag("goals sync failed", e?.message || "unknown");
+      }
+      try {
+        await syncCoachMemory({ personalization: payload?.personalization || DEFAULT_PERSONALIZATION, authSession, setAuthSession });
+      } catch (e) {
+        logDiag("coach memory sync failed", e?.message || "unknown");
+      }
       setStorageStatus({ mode: "cloud", label: "SYNCED" });
     } catch (e) {
       if (e?.message === AUTH_REQUIRED) {
@@ -299,6 +309,10 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     handleSignOut,
     sbLoad,
     sbSave,
+    syncExercisePerformanceForDate,
+    syncSessionLogForDate,
+    syncGoals,
+    syncCoachMemory,
     persistAll,
   };
 }

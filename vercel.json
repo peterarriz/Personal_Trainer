@@ -1,5 +1,11 @@
 {
   "buildCommand": "npm install && npm run build",
   "outputDirectory": ".",
-  "installCommand": "npm install"
+  "installCommand": "npm install",
+  "rewrites": [
+    {
+      "source": "/auth/garmin/callback",
+      "destination": "/api/auth/garmin/callback"
+    }
+  ]
 }
