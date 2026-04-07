@@ -3387,6 +3387,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const [checking, setChecking] = useState(false);
   const [checkMsg, setCheckMsg] = useState("");
   const [garminMsg, setGarminMsg] = useState("");
+  const [settingsSaveMsg, setSettingsSaveMsg] = useState("");
   const [showEnvEditor, setShowEnvEditor] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
@@ -3411,12 +3412,14 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     });
     setPersonalization(next);
     await onPersist(next);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   };
 
   const patchProfile = async (patch = {}) => {
     const next = mergePersonalization(personalization, { profile: { ...(profile || {}), ...(patch || {}) } });
     setPersonalization(next);
     await onPersist(next);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   };
 
   const persistAppleHealth = async (patch = {}) => {
@@ -3428,6 +3431,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     });
     setPersonalization(next);
     await onPersist(next);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   };
   const requestAppleHealth = async () => {
     const now = Date.now();
@@ -3472,6 +3476,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     setPersonalization(next);
     await onPersist(next);
     setGarminMsg(`Garmin connected · ${nextGarmin.deviceName}`);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   };
   const activeAppleTypes = appleHealth?.permissionsGranted?.length ? appleHealth.permissionsGranted.join(", ") : "None";
   const lastGarminActivity = (garmin?.activities || []).slice(-1)[0];
@@ -3498,6 +3503,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     <div className="fi">
       <div className="card card-subtle">
         <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
+        {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:C.green, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
         <div style={{ fontSize:"0.56rem", color:"#8ea4c7", lineHeight:1.7, marginBottom:"1rem" }}>
           Manage profile, devices, preferences, appearance, notifications, and privacy in one place.
         </div>
@@ -3543,6 +3549,15 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
           </div>
           <div style={{ marginTop:"0.28rem", fontSize:"0.5rem", color:"#6f85a7" }}>
             Status: {appleHealth?.status || "not_connected"} · Last check: {appleHealth?.lastConnectionCheck ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}
+          </div>
+          <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:appleHealth?.lastSyncStatus === "garmin_detected" ? C.green : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web" ? C.blue : "#8fa5c8" }}>
+            {appleHealth?.lastSyncStatus === "garmin_detected"
+              ? "Sync verified: Garmin activity detected in Apple Health."
+              : appleHealth?.lastSyncStatus === "health_only"
+              ? "Connected, but Garmin source not detected yet."
+              : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web"
+              ? "Connected. Run one workout, then tap Check Connection."
+              : "Not connected yet."}
           </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
           {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
@@ -4645,18 +4660,33 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
   useEffect(() => { setMiniWeekly(weeklyDraft); }, [currentWeek, weeklyCheckins?.[String(currentWeek)]?.ts]);
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
+  const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon : [];
+  const fallbackProgramWeeks = useMemo(() => {
+    return Array.from({ length: 4 }).map((_, idx) => {
+      const absoluteWeek = currentWeek + idx;
+      const template = WEEKS[Math.max(0, Math.min(absoluteWeek - 1, WEEKS.length - 1))] || WEEKS[0];
+      return {
+        kind: "plan",
+        slot: idx + 1,
+        absoluteWeek,
+        template,
+        weekLabel: `${template?.phase || "BASE"} · Week ${absoluteWeek}`,
+      };
+    });
+  }, [currentWeek]);
+  const displayHorizon = safeRollingHorizon.length > 0 ? safeRollingHorizon : fallbackProgramWeeks;
   const adjustedWeekMap = {};
-  (rollingHorizon || []).forEach((h) => {
+  (displayHorizon || []).forEach((h) => {
     const w = h?.template;
     if (h?.slot >= 1 && w?.mon && w?.thu && w?.fri && w?.sat) {
       const baseAdaptive = buildAdaptiveWeek(w, signals, personalization, memoryInsights);
       adjustedWeekMap[h.absoluteWeek] = baseAdaptive;
     }
   });
-  const phaseNarrative = buildNamedPhaseArc({ rollingHorizon, goals });
+  const phaseNarrative = buildNamedPhaseArc({ rollingHorizon: displayHorizon, goals });
   const primaryCategory = goals.find(g => g.active)?.category || "running";
   const phaseLabels = PHASE_ARC_LABELS[primaryCategory] || PHASE_ARC_LABELS.running;
-  const currentTemplate = (rollingHorizon || []).find(h => h.absoluteWeek === currentWeek)?.template || {};
+  const currentTemplate = (displayHorizon || []).find(h => h.absoluteWeek === currentWeek)?.template || {};
   const currentPhase = currentTemplate.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
   const currentPhaseMeta = phaseLabels[currentPhase] || { name: currentPhase, objective: "Execute core plan priorities." };
   const nextPhaseBlock = phaseNarrative.find(b => b.startWeek > currentWeek);
@@ -4782,6 +4812,11 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
       )}
       <div className="card card-strong card-hero" style={{ marginBottom:"0.85rem", borderColor:C.blue+"30" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>YOUR PROGRAM</div>
+        {safeRollingHorizon.length === 0 && (
+          <div style={{ fontSize:"0.54rem", color:"#9fb2d2", marginBottom:"0.35rem" }}>
+            Program horizon was empty, so a 4-week fallback view is shown.
+          </div>
+        )}
         <button className="btn" onClick={()=>setPhaseExpanded(v=>!v)} style={{ width:"100%", justifyContent:"flex-start", textAlign:"left", fontSize:"0.56rem", color:"#dbe7f6", borderColor:"#2b3f5e", background:"rgba(9,16,30,0.45)", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", marginBottom:"0.35rem" }}>
           {phaseBanner}
         </button>
@@ -4961,7 +4996,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
       )}
 
       <div style={{ display:"grid", gap:"0.65rem" }}>
-        {(rollingHorizon || []).map((h) => {
+        {(displayHorizon || []).map((h) => {
           const w = h?.template || null;
           if (h.kind === "recovery" || h.kind === "next_goal_prompt") {
             return (
@@ -6002,7 +6037,7 @@ Rules for every response:
     return { text: deterministic?.coachBrief || "Execute today with control.", source: "deterministic-fallback" };
   };
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, pendingActions, streamingText]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, pendingActions, loading]);
 
   const send = async (preset) => {
     const prepared = preset ? buildQuickPromptMessage(preset) : input;
@@ -6202,7 +6237,7 @@ Rules for every response:
             {loading && (
               <div className="coach-fade" style={{ justifySelf:"start", maxWidth:"92%", background:"#101b2d", border:"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
                 <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap" }}>
-                  {streamingText}{streamingCursor ? <span style={{ opacity:0.8, animation:"pulse 0.9s ease-in-out infinite" }}>▍</span> : null}
+                  Coach is drafting a response…
                 </div>
               </div>
             )}
