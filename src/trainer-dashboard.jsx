@@ -135,6 +135,26 @@ const parseSetPrescription = (setsText = "") => {
   return { sets: "As prescribed", reps: normalized || "As prescribed" };
 };
 
+const safeStorageGet = (storageLike, key, fallback = "") => {
+  try {
+    if (!storageLike?.getItem) return fallback;
+    const value = storageLike.getItem(key);
+    return value ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const safeStorageSet = (storageLike, key, value) => {
+  try {
+    if (!storageLike?.setItem) return false;
+    storageLike.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const normalizeStrengthExercise = (entry = {}) => {
   const { sets, reps } = parseSetPrescription(entry.sets || "");
   const cue = entry.cue || entry.note || "Controlled reps with full range and stable form.";
@@ -439,6 +459,37 @@ const deriveGarminReadiness = (personalization = {}, todayKey = new Date().toISO
   if (score >= 50) return { score, mode: "standard", source: "garmin" };
   if (score >= 25) return { score, mode: "reduced_load", source: "garmin" };
   return { score, mode: "recovery", source: "garmin" };
+};
+
+const deriveDeviceSyncAudit = (personalization = {}, todayKey = new Date().toISOString().split("T")[0]) => {
+  const appleWorkouts = personalization?.connectedDevices?.appleHealth?.workouts || {};
+  const garminActivities = personalization?.connectedDevices?.garmin?.activities || [];
+  const garminSummary = personalization?.connectedDevices?.garmin?.dailySummaries?.[todayKey] || {};
+  const recentCutoff = Date.now() - (7 * 86400000);
+  const appleRecent = Object.entries(appleWorkouts).filter(([date]) => new Date(`${date}T12:00:00`).getTime() >= recentCutoff);
+  const garminRecent = (garminActivities || []).filter((a) => {
+    const t = new Date(a?.startTime || a?.date || "").getTime();
+    return Number.isFinite(t) && t >= recentCutoff;
+  });
+  const readiness = Number(garminSummary?.trainingReadinessScore ?? personalization?.connectedDevices?.garmin?.trainingReadinessScore ?? 0);
+  const sleep = Number(garminSummary?.sleepScore ?? 0);
+  const stress = Number(garminSummary?.stressScore ?? 0);
+  const utilization = [
+    appleRecent.length > 0 ? `Apple Health workouts (7d): ${appleRecent.length}` : "Apple Health workouts (7d): none",
+    garminRecent.length > 0 ? `Garmin activities (7d): ${garminRecent.length}` : "Garmin activities (7d): none",
+    readiness > 0 ? `Garmin readiness: ${readiness}` : "Garmin readiness: unavailable",
+    sleep > 0 ? `Sleep score: ${sleep}` : "Sleep score: unavailable",
+  ];
+  let planMode = "normal";
+  let reason = "";
+  if (readiness > 0 && readiness <= 30) {
+    planMode = "recovery";
+    reason = "Low Garmin readiness";
+  } else if ((sleep > 0 && sleep < 45) || stress >= 80) {
+    planMode = "reduced_load";
+    reason = sleep > 0 && sleep < 45 ? "Low sleep score" : "High stress score";
+  }
+  return { appleRecentCount: appleRecent.length, garminRecentCount: garminRecent.length, readiness, sleep, stress, planMode, reason, utilization };
 };
 
 const matchGarminRunActivity = ({ garminActivities = [], dateKey = "", log = {} }) => {
@@ -2016,7 +2067,7 @@ export default function TrainerDashboard() {
   const historyRelabelAppliedRef = useRef(false);
   const [startFreshConfirmOpen, setStartFreshConfirmOpen] = useState(false);
   const [showAppleHealthFirstLaunch, setShowAppleHealthFirstLaunch] = useState(false);
-  const DEBUG_MODE = typeof window !== "undefined" && localStorage.getItem("trainer_debug") === "1";
+  const DEBUG_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
   const logDiag = (...args) => { if (DEBUG_MODE) console.log("[trainer-debug]", ...args); };
   const goalsModel = useMemo(() => normalizeGoals(goals), [goals]);
   const goalBuckets = useMemo(() => getGoalBuckets(goalsModel), [goalsModel]);
@@ -2048,6 +2099,7 @@ export default function TrainerDashboard() {
   const injuryRule = buildInjuryRuleResult(todayWorkoutEnvironment, personalization.injuryPainState);
   const todayWorkout = applySessionNamingRules(injuryRule.workout, personalization.injuryPainState);
   const garminReadiness = deriveGarminReadiness(personalization, todayKey);
+  const deviceSyncAudit = deriveDeviceSyncAudit(personalization, todayKey);
   const arbitration = arbitrateGoals({ goals: goalsModel, momentum, personalization });
   const strengthLayer = deriveStrengthLayer({ goals: goalsModel, momentum, personalization, logs });
   const progressEngine = deriveProgressEngine({ logs, bodyweights, momentum, strengthLayer });
@@ -2076,6 +2128,10 @@ export default function TrainerDashboard() {
     ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Garmin readiness)", run: null, strSess: null, nutri: "rest", success: "Walk + mobility only today. Resume loading when readiness improves." }
     : garminReadiness?.mode === "reduced_load"
     ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Reduced-load)` }
+    : deviceSyncAudit?.planMode === "recovery"
+    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data suggests recovery focus today." }
+    : deviceSyncAudit?.planMode === "reduced_load"
+    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Device-adjusted)` }
     : todayWorkoutHardenedBase;
   const cadenceRuns = (personalization?.connectedDevices?.garmin?.activities || []).filter((a) => /run/i.test(String(a?.type || a?.sport || "")) && Number(a?.cadence || 0) > 0);
   const avgCadence = cadenceRuns.length ? (cadenceRuns.reduce((acc, a) => acc + Number(a?.cadence || 0), 0) / cadenceRuns.length) : null;
@@ -2307,7 +2363,8 @@ export default function TrainerDashboard() {
   useEffect(() => {
     console.log("[supabase] resolved URL:", SB_URL || "(missing)");
     if (SB_CONFIG_ERROR) {
-      setAuthError(`Supabase setup error: ${SB_CONFIG_ERROR}`);
+      const isMissingConfig = /Missing Supabase (URL|anon key)/i.test(SB_CONFIG_ERROR || "");
+      setAuthError(isMissingConfig ? "" : `Supabase setup error: ${SB_CONFIG_ERROR}`);
       setStorageStatus({ mode: "local", label: "CONFIG ERROR" });
       setAuthInitializing(false);
       setLoading(false);
@@ -2352,7 +2409,13 @@ export default function TrainerDashboard() {
           setAuthError("Cloud sync issue. Continuing in local mode.");
         }
         const cache = localLoad();
-        if (cache) await importData(btoa(unescape(encodeURIComponent(JSON.stringify(cache)))));
+        if (cache) {
+          try {
+            await importData(btoa(unescape(encodeURIComponent(JSON.stringify(cache)))));
+          } catch (cacheErr) {
+            logDiag("local cache import fallback failed", cacheErr?.message || "unknown");
+          }
+        }
         setStorageStatus({ mode: "local", label: "LOCAL MODE" });
       }
       setLoading(false);
@@ -2842,7 +2905,7 @@ export default function TrainerDashboard() {
   // ── AI PLAN ANALYSIS ──────────────────────────────────────────────────────
   // Fires after every log save. Compares actual vs prescribed, detects patterns,
   // returns JSON modifications to apply to the plan.
-  const getAnthropicKey = () => (typeof window !== "undefined" ? (localStorage.getItem("coach_api_key") || localStorage.getItem("anthropic_api_key") || "") : "");
+  const getAnthropicKey = () => (typeof window !== "undefined" ? (safeStorageGet(localStorage, "coach_api_key", "") || safeStorageGet(localStorage, "anthropic_api_key", "")) : "");
   const callAnthropic = async ({ system, user, maxTokens = 800 }) => {
     const key = getAnthropicKey();
     if (!key) return null;
@@ -3273,7 +3336,7 @@ export default function TrainerDashboard() {
         ══════════════════════════════════════════════════════════ */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goalsModel} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} goalBuckets={goalBuckets} activeTimeBoundGoal={activeTimeBoundGoal} />
+            <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goalsModel} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} goalBuckets={goalBuckets} activeTimeBoundGoal={activeTimeBoundGoal} deviceSyncAudit={deviceSyncAudit} />
           </ProgramTabErrorBoundary>
         )}
 
@@ -3299,7 +3362,7 @@ export default function TrainerDashboard() {
           await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
         }} />}
 
-        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} onDeleteAccount={async ()=>{
+        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} deviceSyncAudit={deviceSyncAudit} onDeleteAccount={async ()=>{
           const clearedLogs = {};
           const clearedBodyweights = [];
           const clearedDaily = {};
@@ -3353,17 +3416,22 @@ export default function TrainerDashboard() {
   );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, onDeleteAccount }) {
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, onDeleteAccount, deviceSyncAudit }) {
   const appleHealth = personalization?.connectedDevices?.appleHealth || {};
   const garmin = personalization?.connectedDevices?.garmin || {};
   const [connectOpen, setConnectOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkMsg, setCheckMsg] = useState("");
   const [garminMsg, setGarminMsg] = useState("");
+  const [settingsSaveMsg, setSettingsSaveMsg] = useState("");
   const [showEnvEditor, setShowEnvEditor] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleteStep, setDeleteStep] = useState(1);
+  const [appleImportText, setAppleImportText] = useState("");
+  const [garminImportText, setGarminImportText] = useState("");
+  const [importMsg, setImportMsg] = useState("");
+  const [locationMsg, setLocationMsg] = useState("");
   const settings = personalization?.settings || DEFAULT_PERSONALIZATION.settings;
   const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
   const unitSettings = settings?.units || DEFAULT_PERSONALIZATION.settings.units;
@@ -3384,12 +3452,14 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     });
     setPersonalization(next);
     await onPersist(next);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   };
 
   const patchProfile = async (patch = {}) => {
     const next = mergePersonalization(personalization, { profile: { ...(profile || {}), ...(patch || {}) } });
     setPersonalization(next);
     await onPersist(next);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   };
 
   const persistAppleHealth = async (patch = {}) => {
@@ -3401,6 +3471,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     });
     setPersonalization(next);
     await onPersist(next);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   };
   const requestAppleHealth = async () => {
     const now = Date.now();
@@ -3445,9 +3516,12 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     setPersonalization(next);
     await onPersist(next);
     setGarminMsg(`Garmin connected · ${nextGarmin.deviceName}`);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   };
   const activeAppleTypes = appleHealth?.permissionsGranted?.length ? appleHealth.permissionsGranted.join(", ") : "None";
   const lastGarminActivity = (garmin?.activities || []).slice(-1)[0];
+  const profileWeightVal = profile?.weight ?? profile?.bodyweight ?? "";
+  const profileHeightVal = profile?.height ?? "";
 
   const checkConnection = async () => {
     setChecking(true);
@@ -3467,10 +3541,81 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       setChecking(false);
     }
   };
+  const importDeviceData = async (provider = "apple") => {
+    try {
+      const raw = provider === "apple" ? appleImportText : garminImportText;
+      const parsed = JSON.parse(raw || "{}");
+      if (provider === "apple") {
+        const workouts = Array.isArray(parsed)
+          ? Object.fromEntries(parsed.map((w, idx) => [w?.date || w?.startDate || `${new Date().toISOString().split("T")[0]}_${idx}`, w]))
+          : (parsed?.workouts || {});
+        await persistAppleHealth({
+          status: "connected",
+          workouts,
+          importedAt: Date.now(),
+          lastSyncStatus: Object.keys(workouts || {}).length > 0 ? "health_only" : (appleHealth?.lastSyncStatus || "connected"),
+        });
+        setImportMsg(`Imported ${Object.keys(workouts || {}).length} Apple Health workout entries.`);
+      } else {
+        const activities = Array.isArray(parsed) ? parsed : (parsed?.activities || []);
+        const dailySummaries = parsed?.dailySummaries || garmin?.dailySummaries || {};
+        const nextGarmin = {
+          ...garmin,
+          status: "connected",
+          activities,
+          dailySummaries,
+          trainingReadinessScore: Number(parsed?.trainingReadinessScore ?? garmin?.trainingReadinessScore ?? 0) || garmin?.trainingReadinessScore || null,
+          importedAt: Date.now(),
+          lastApiStatus: "ok",
+        };
+        const next = mergePersonalization(personalization, { connectedDevices: { ...(personalization?.connectedDevices || {}), garmin: nextGarmin } });
+        setPersonalization(next);
+        await onPersist(next);
+        setImportMsg(`Imported ${activities.length} Garmin activities.`);
+      }
+    } catch (e) {
+      setImportMsg(`Import failed: ${e?.message || "invalid JSON"}`);
+    }
+  };
+  const requestLocationAccess = async () => {
+    if (!(typeof navigator !== "undefined" && navigator?.geolocation?.getCurrentPosition)) {
+      setLocationMsg("Location services are unavailable in this browser.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(async (position) => {
+      const next = mergePersonalization(personalization, {
+        connectedDevices: {
+          ...(personalization?.connectedDevices || {}),
+          location: {
+            status: "granted",
+            lat: Number(position?.coords?.latitude || 0),
+            lng: Number(position?.coords?.longitude || 0),
+            accuracyM: Number(position?.coords?.accuracy || 0),
+            updatedAt: Date.now(),
+            source: "ios_geolocation",
+          },
+        },
+      });
+      setPersonalization(next);
+      await onPersist(next);
+      setLocationMsg("Location permission granted and saved.");
+    }, async (err) => {
+      const next = mergePersonalization(personalization, {
+        connectedDevices: {
+          ...(personalization?.connectedDevices || {}),
+          location: { status: "denied", error: err?.message || "permission_denied", updatedAt: Date.now() },
+        },
+      });
+      setPersonalization(next);
+      await onPersist(next);
+      setLocationMsg("Location permission denied. Enable it in iPhone Settings → Privacy & Security → Location Services.");
+    }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 600000 });
+  };
   return (
     <div className="fi">
       <div className="card card-subtle">
         <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
+        {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:C.green, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
         <div style={{ fontSize:"0.56rem", color:"#8ea4c7", lineHeight:1.7, marginBottom:"1rem" }}>
           Manage profile, devices, preferences, appearance, notifications, and privacy in one place.
         </div>
@@ -3479,6 +3624,29 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
           <div style={{ display:"grid", gridTemplateColumns:"1fr 110px", gap:"0.35rem", marginBottom:"0.35rem" }}>
             <input value={profile?.name || ""} onChange={e=>patchProfile({ name: e.target.value })} placeholder="Name" />
             <input type="number" value={profile?.age || ""} onChange={e=>patchProfile({ age: Number(e.target.value) || "" })} placeholder="Age" />
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.35rem" }}>
+            <input
+              type="number"
+              step="0.1"
+              value={profileWeightVal}
+              onChange={e=>patchProfile({ weight: e.target.value === "" ? "" : Number(e.target.value), bodyweight: e.target.value === "" ? "" : Number(e.target.value) })}
+              placeholder={`Weight (${unitSettings?.weight || "lbs"})`}
+            />
+            {unitSettings?.height === "cm" ? (
+              <input
+                type="number"
+                value={profileHeightVal}
+                onChange={e=>patchProfile({ height: e.target.value === "" ? "" : Number(e.target.value) })}
+                placeholder="Height (cm)"
+              />
+            ) : (
+              <input
+                value={profileHeightVal}
+                onChange={e=>patchProfile({ height: e.target.value })}
+                placeholder={`Height (${unitSettings?.height === "ft_in" ? "e.g., 6'1\"" : "value"})`}
+              />
+            )}
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.35rem" }}>
             <select value={unitSettings?.weight || "lbs"} onChange={e=>patchSettings({ units: { ...unitSettings, weight: e.target.value } })}>
@@ -3513,12 +3681,37 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             <button className="btn" onClick={checkConnection} disabled={checking} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
               {checking ? "Checking..." : "Check Connection"}
             </button>
+            <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
+              I enabled Health permissions
+            </button>
           </div>
           <div style={{ marginTop:"0.28rem", fontSize:"0.5rem", color:"#6f85a7" }}>
             Status: {appleHealth?.status || "not_connected"} · Last check: {appleHealth?.lastConnectionCheck ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}
           </div>
+          <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>
+            Permission confirmed: {appleHealth?.permissionConfirmedAt ? new Date(appleHealth.permissionConfirmedAt).toLocaleString() : "not confirmed"}
+          </div>
+          <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:appleHealth?.lastSyncStatus === "garmin_detected" ? C.green : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web" ? C.blue : "#8fa5c8" }}>
+            {appleHealth?.lastSyncStatus === "garmin_detected"
+              ? "Sync verified: Garmin activity detected in Apple Health."
+              : appleHealth?.lastSyncStatus === "permissions_confirmed"
+              ? "Permissions confirmed. Complete one Health workout, then tap Check Connection."
+              : appleHealth?.lastSyncStatus === "health_only"
+              ? "Connected, but Garmin source not detected yet."
+              : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web"
+              ? "Connected. Run one workout, then tap Check Connection."
+              : "Not connected yet."}
+          </div>
+          <div style={{ marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 }}>
+            iPhone permission path: Settings → Privacy &amp; Security → Health → Personal Trainer (or browser app) → Allow all categories.
+          </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
           {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
+          <div style={{ marginTop:"0.4rem", borderTop:"1px solid #243752", paddingTop:"0.35rem", display:"grid", gap:"0.28rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Manual Apple Health import (JSON from exporter)</div>
+            <textarea value={appleImportText} onChange={e=>setAppleImportText(e.target.value)} placeholder='{"workouts":{"2026-04-07":{"distanceMiles":3.2,"avgHr":148}}}' style={{ minHeight:62, fontSize:"0.5rem" }} />
+            <button className="btn" onClick={()=>importDeviceData("apple")} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"35" }}>Import Apple JSON</button>
+          </div>
         </div>
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>GARMIN CONNECT</div>
@@ -3536,7 +3729,24 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
           </div>
           <a href="#" onClick={(e)=>{ e.preventDefault(); setConnectOpen(true); }} style={{ display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue }}>How to sync Garmin → Apple Health</a>
           {!!garminMsg && <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:"#cbd5e1" }}>{garminMsg}</div>}
+          <div style={{ marginTop:"0.4rem", borderTop:"1px solid #243752", paddingTop:"0.35rem", display:"grid", gap:"0.28rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Manual Garmin import (JSON from Garmin export/API)</div>
+            <textarea value={garminImportText} onChange={e=>setGarminImportText(e.target.value)} placeholder='{"activities":[{"startTime":"2026-04-07T07:30:00Z","type":"Run","distanceMiles":4.1}]}' style={{ minHeight:62, fontSize:"0.5rem" }} />
+            <button className="btn" onClick={()=>importDeviceData("garmin")} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Import Garmin JSON</button>
+          </div>
         </div>
+        <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
+          <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>LOCATION SERVICES (IPHONE)</div>
+          <div style={{ fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.65, marginBottom:"0.35rem" }}>
+            Location helps auto-detect travel context and local food guidance.
+          </div>
+          <button className="btn" onClick={requestLocationAccess} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Enable location permission</button>
+          <div style={{ marginTop:"0.22rem", fontSize:"0.5rem", color:"#8fa5c8" }}>
+            iPhone path: Settings → Privacy &amp; Security → Location Services → Personal Trainer → While Using App.
+          </div>
+          {!!locationMsg && <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:"#cbd5e1" }}>{locationMsg}</div>}
+        </div>
+        {!!importMsg && <div style={{ marginTop:"0.35rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{importMsg}</div>}
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.purple, marginBottom:"0.35rem" }}>TRAINING PREFERENCES</div>
@@ -3670,7 +3880,7 @@ function OnboardingCoach({ onComplete }) {
   const needsEquipment = Boolean(answers.__needs_equipment);
 
   const callAnthropicIntake = async (prompt) => {
-    const key = localStorage.getItem("coach_api_key") || localStorage.getItem("anthropic_api_key") || "";
+    const key = safeStorageGet(localStorage, "coach_api_key", "") || safeStorageGet(localStorage, "anthropic_api_key", "");
     if (!key) return null;
     try {
       const res = await safeFetchWithTimeout("https://api.anthropic.com/v1/messages", {
@@ -4604,7 +4814,7 @@ class ProgramTabErrorBoundary extends React.Component {
   }
 }
 
-function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, goalBuckets, activeTimeBoundGoal }) {
+function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, goalBuckets, activeTimeBoundGoal, deviceSyncAudit }) {
   const [openWeek, setOpenWeek] = useState(null);
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
   const [miniWeekly, setMiniWeekly] = useState(weeklyDraft);
@@ -4618,18 +4828,33 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
   useEffect(() => { setMiniWeekly(weeklyDraft); }, [currentWeek, weeklyCheckins?.[String(currentWeek)]?.ts]);
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
+  const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon : [];
+  const fallbackProgramWeeks = useMemo(() => {
+    return Array.from({ length: 4 }).map((_, idx) => {
+      const absoluteWeek = currentWeek + idx;
+      const template = WEEKS[Math.max(0, Math.min(absoluteWeek - 1, WEEKS.length - 1))] || WEEKS[0];
+      return {
+        kind: "plan",
+        slot: idx + 1,
+        absoluteWeek,
+        template,
+        weekLabel: `${template?.phase || "BASE"} · Week ${absoluteWeek}`,
+      };
+    });
+  }, [currentWeek]);
+  const displayHorizon = safeRollingHorizon.length > 0 ? safeRollingHorizon : fallbackProgramWeeks;
   const adjustedWeekMap = {};
-  (rollingHorizon || []).forEach((h) => {
+  (displayHorizon || []).forEach((h) => {
     const w = h?.template;
     if (h?.slot >= 1 && w?.mon && w?.thu && w?.fri && w?.sat) {
       const baseAdaptive = buildAdaptiveWeek(w, signals, personalization, memoryInsights);
       adjustedWeekMap[h.absoluteWeek] = baseAdaptive;
     }
   });
-  const phaseNarrative = buildNamedPhaseArc({ rollingHorizon, goals });
+  const phaseNarrative = buildNamedPhaseArc({ rollingHorizon: displayHorizon, goals });
   const primaryCategory = goals.find(g => g.active)?.category || "running";
   const phaseLabels = PHASE_ARC_LABELS[primaryCategory] || PHASE_ARC_LABELS.running;
-  const currentTemplate = (rollingHorizon || []).find(h => h.absoluteWeek === currentWeek)?.template || {};
+  const currentTemplate = (displayHorizon || []).find(h => h.absoluteWeek === currentWeek)?.template || {};
   const currentPhase = currentTemplate.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
   const currentPhaseMeta = phaseLabels[currentPhase] || { name: currentPhase, objective: "Execute core plan priorities." };
   const nextPhaseBlock = phaseNarrative.find(b => b.startWeek > currentWeek);
@@ -4743,6 +4968,17 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>WEEKLY COACH BRIEF</div>
         <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap", lineHeight:1.65 }}>{weeklyCoachBrief}</div>
       </div>
+      <div className="card card-soft" style={{ marginBottom:"0.85rem", borderColor:C.blue+"30" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>DEVICE DATA UTILIZATION</div>
+        <div style={{ fontSize:"0.54rem", color:"#cbd5e1", lineHeight:1.65 }}>
+          {(deviceSyncAudit?.utilization || ["No device signals available yet."]).map((line, idx) => (
+            <div key={idx}>• {line}</div>
+          ))}
+        </div>
+        <div style={{ marginTop:"0.25rem", fontSize:"0.52rem", color:"#8fa5c8" }}>
+          Plan mode signal: {deviceSyncAudit?.planMode || "normal"}{deviceSyncAudit?.reason ? ` · ${deviceSyncAudit.reason}` : ""}
+        </div>
+      </div>
       <div className="card card-soft" style={{ marginBottom:"0.85rem", borderColor:C.blue+"35" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>WEEKLY CONSISTENCY ANCHOR</div>
         <div className="coach-copy" style={{ fontSize:"0.56rem", lineHeight:1.62 }}>{weeklyConsistencyAnchor}</div>
@@ -4755,6 +4991,11 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
       )}
       <div className="card card-strong card-hero" style={{ marginBottom:"0.85rem", borderColor:C.blue+"30" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>YOUR PROGRAM</div>
+        {safeRollingHorizon.length === 0 && (
+          <div style={{ fontSize:"0.54rem", color:"#9fb2d2", marginBottom:"0.35rem" }}>
+            Program horizon was empty, so a 4-week fallback view is shown.
+          </div>
+        )}
         <button className="btn" onClick={()=>setPhaseExpanded(v=>!v)} style={{ width:"100%", justifyContent:"flex-start", textAlign:"left", fontSize:"0.56rem", color:"#dbe7f6", borderColor:"#2b3f5e", background:"rgba(9,16,30,0.45)", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", marginBottom:"0.35rem" }}>
           {phaseBanner}
         </button>
@@ -4934,7 +5175,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
       )}
 
       <div style={{ display:"grid", gap:"0.65rem" }}>
-        {(rollingHorizon || []).map((h) => {
+        {(displayHorizon || []).map((h) => {
           const w = h?.template || null;
           if (h.kind === "recovery" || h.kind === "next_goal_prompt") {
             return (
@@ -5795,10 +6036,10 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
     simplicityVsVariety: personalization.coachMemory.simplicityVsVariety || "",
     preferredFoodPatterns: (personalization.coachMemory.preferredFoodPatterns || []).join(", "),
   });
-  const [apiKey, setApiKey] = useState(typeof window !== "undefined" ? (localStorage.getItem("coach_api_key") || "") : "");
+  const [apiKey, setApiKey] = useState(typeof window !== "undefined" ? safeStorageGet(localStorage, "coach_api_key", "") : "");
   const [coachMode, setCoachMode] = useState("auto");
   const [feedbackLog, setFeedbackLog] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("coach_feedback_log") || "[]"); } catch { return []; }
+    try { return JSON.parse(safeStorageGet(localStorage, "coach_feedback_log", "[]") || "[]"); } catch { return []; }
   });
   const [presetDraft, setPresetDraft] = useState({
     Home: { equipment: (personalization?.environmentConfig?.presets?.Home?.equipment || []).join(", "), time: personalization?.environmentConfig?.presets?.Home?.time || "30" },
@@ -5807,7 +6048,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   });
   const bottomRef = useRef(null);
   useEffect(() => {
-    try { localStorage.setItem("coach_feedback_log", JSON.stringify(feedbackLog.slice(0, 100))); } catch {}
+    safeStorageSet(localStorage, "coach_feedback_log", JSON.stringify(feedbackLog.slice(0, 100)));
   }, [feedbackLog]);
 
   useEffect(() => {
@@ -5975,7 +6216,7 @@ Rules for every response:
     return { text: deterministic?.coachBrief || "Execute today with control.", source: "deterministic-fallback" };
   };
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, pendingActions, streamingText]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, pendingActions, loading]);
 
   const send = async (preset) => {
     const prepared = preset ? buildQuickPromptMessage(preset) : input;
@@ -6175,7 +6416,7 @@ Rules for every response:
             {loading && (
               <div className="coach-fade" style={{ justifySelf:"start", maxWidth:"92%", background:"#101b2d", border:"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
                 <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap" }}>
-                  {streamingText}{streamingCursor ? <span style={{ opacity:0.8, animation:"pulse 0.9s ease-in-out infinite" }}>▍</span> : null}
+                  Coach is drafting a response…
                 </div>
               </div>
             )}
@@ -6213,7 +6454,7 @@ Rules for every response:
             <select value={coachMode} onChange={e=>setCoachMode(e.target.value)} style={{ fontSize:"0.78rem" }}>
               <option value="auto">Let coach decide</option><option value="deterministic">Deterministic</option>
             </select>
-            <input value={apiKey} onChange={e=>{ setApiKey(e.target.value); if (typeof window !== "undefined") localStorage.setItem("coach_api_key", e.target.value); }} placeholder="Anthropic key (optional)" style={{ fontSize:"0.75rem" }} />
+            <input value={apiKey} onChange={e=>{ setApiKey(e.target.value); if (typeof window !== "undefined") safeStorageSet(localStorage, "coach_api_key", e.target.value); }} placeholder="Anthropic key (optional)" style={{ fontSize:"0.75rem" }} />
           </div>
           <input value={memoryDraft.failurePatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, failurePatterns:e.target.value })} placeholder="Failure patterns" style={{ fontSize:"0.78rem" }} />
           <input value={memoryDraft.commonBarriers} onChange={e=>setMemoryDraft({ ...memoryDraft, commonBarriers:e.target.value })} placeholder="Common barriers" style={{ fontSize:"0.78rem" }} />
