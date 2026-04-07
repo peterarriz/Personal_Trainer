@@ -903,6 +903,10 @@ const deriveReadinessAdjustedCheckin = (checkin = {}) => {
   return { readinessFilled: true, readiness: { sleep, soreness, stress }, adjusted };
 };
 const stripInternalTags = (text = "") => String(text || "").replace(/\[.*?\]/g, "").replace(/\s{2,}/g, " ").trim();
+const normalizePendingStrengthAdjustments = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  return value ? [value] : [];
+};
 const sanitizeDisplayText = (text = "") => stripInternalTags(
   String(text || "")
     .replace(/Auto-assumed complete unless corrected\.?/gi, "")
@@ -3190,11 +3194,6 @@ export default function TrainerDashboard() {
 
   const savePlanState = async (newOvr, newNotes, newAlerts) => {
     try { await persistAll(logs, bodyweights, newOvr, newNotes, newAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback); } catch(e) {}
-  };
-
-  const normalizePendingStrengthAdjustments = (value) => {
-    if (Array.isArray(value)) return value.filter(Boolean);
-    return value ? [value] : [];
   };
 
   const syncExercisePerformanceRows = async (dateKey, performance = []) => {
