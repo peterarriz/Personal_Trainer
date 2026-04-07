@@ -35,11 +35,19 @@ export const normalizeSession = (session, fallback = null) => {
 };
 
 export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePersonalization, DEFAULT_PERSONALIZATION, DEFAULT_MULTI_GOALS }) {
-  const SB_URL = (typeof window !== "undefined" ? (window.__SUPABASE_URL || "") : "").trim();
+  const rawSupabaseUrl = (typeof window !== "undefined" ? (window.__SUPABASE_URL || "") : "").trim();
+  const SB_URL = rawSupabaseUrl.replace(/\/+$/, "");
   const SB_KEY = (typeof window !== "undefined" ? (window.__SUPABASE_ANON_KEY || "") : "").trim();
+  let hasValidSupabaseUrl = false;
+  try {
+    const parsed = new URL(SB_URL || "https://invalid.local");
+    hasValidSupabaseUrl = parsed.protocol === "https:" && !!parsed.hostname;
+  } catch {
+    hasValidSupabaseUrl = false;
+  }
   const SB_CONFIG_ERROR = !SB_URL
     ? "Missing Supabase URL. Set VITE_SUPABASE_URL."
-    : !/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(SB_URL)
+    : !hasValidSupabaseUrl
     ? `Malformed Supabase URL: ${SB_URL}`
     : !SB_KEY
     ? "Missing Supabase anon key. Set VITE_SUPABASE_ANON_KEY."
