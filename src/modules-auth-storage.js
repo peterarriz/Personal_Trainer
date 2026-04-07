@@ -200,6 +200,209 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     return { res, sessionUsed: refreshed };
   };
 
+  const toFiniteNumber = (value) => {
+    if (value === "" || value === null || value === undefined) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const toFiniteInteger = (value) => {
+    const parsed = toFiniteNumber(value);
+    return parsed === null ? null : Math.round(parsed);
+  };
+
+  const toJsonDate = (value) => {
+    const dateKey = String(value || "").split("T")[0];
+    return /^\d{4}-\d{2}-\d{2}$/.test(dateKey) ? dateKey : null;
+  };
+
+  const encodeCoachMemoryField = (value) => {
+    try {
+      return JSON.stringify(value ?? null);
+    } catch {
+      return JSON.stringify(null);
+    }
+  };
+
+  const normalizeGoalRow = (goal = {}, idx = 0) => {
+    const targetValue = toFiniteNumber(goal?.targetValue);
+    const currentValue = toFiniteNumber(goal?.currentValue);
+    return {
+      id: goal?.id || undefined,
+      type: goal?.type || (goal?.targetDate ? "time_bound" : "ongoing"),
+      category: goal?.category || "running",
+      title: String(goal?.title || goal?.name || `Goal ${idx + 1}`),
+      target_value: targetValue,
+      current_value: currentValue,
+      target_date: toJsonDate(goal?.targetDate),
+      priority: toFiniteInteger(goal?.priority) || (idx + 1),
+      status: goal?.active === false ? "archived" : String(goal?.status || "active"),
+    };
+  };
+
+  const syncExercisePerformanceForDate = async ({ dateKey, rows = [], authSession, setAuthSession }) => {
+    const normalized = normalizeSession(authSession);
+    const userId = normalized?.user?.id || authSession?.user?.id;
+    const safeDateKey = toJsonDate(dateKey);
+    if (!userId || !safeDateKey) throw new Error(AUTH_REQUIRED);
+
+    const sanitizedRows = (rows || []).map((row) => ({
+      user_id: userId,
+      exercise_name: String(row?.exercise_name || row?.exercise || "").trim(),
+      date: safeDateKey,
+      prescribed_weight: toFiniteNumber(row?.prescribed_weight),
+      actual_weight: toFiniteNumber(row?.actual_weight),
+      prescribed_reps: toFiniteInteger(row?.prescribed_reps),
+      actual_reps: toFiniteInteger(row?.actual_reps),
+      prescribed_sets: toFiniteInteger(row?.prescribed_sets),
+      actual_sets: toFiniteInteger(row?.actual_sets),
+      band_tension: row?.band_tension ? String(row.band_tension) : null,
+      bodyweight_only: Boolean(row?.bodyweight_only),
+      feel_this_session: toFiniteInteger(row?.feel_this_session),
+    })).filter((row) => row.exercise_name);
+
+    const { res: deleteRes } = await authFetchWithRetry({
+      path: `exercise_performance?user_id=eq.${userId}&date=eq.${safeDateKey}`,
+      method: "DELETE",
+      authSession,
+      setAuthSession,
+      reason: "sync_exercise_performance_delete",
+    });
+    if (!deleteRes.ok) throw new Error("Exercise performance delete failed");
+    if (!sanitizedRows.length) return;
+
+    const { res } = await authFetchWithRetry({
+      path: "exercise_performance",
+      method: "POST",
+      body: sanitizedRows,
+      authSession,
+      setAuthSession,
+      reason: "sync_exercise_performance_upsert",
+    });
+    if (!res.ok) throw new Error("Exercise performance upsert failed");
+  };
+
+  const syncSessionLogForDate = async ({ dateKey, entry = null, authSession, setAuthSession }) => {
+    const normalized = normalizeSession(authSession);
+    const userId = normalized?.user?.id || authSession?.user?.id;
+    const safeDateKey = toJsonDate(dateKey);
+    if (!userId || !safeDateKey) throw new Error(AUTH_REQUIRED);
+
+    const { res: deleteRes } = await authFetchWithRetry({
+      path: `session_logs?user_id=eq.${userId}&date=eq.${safeDateKey}`,
+      method: "DELETE",
+      authSession,
+      setAuthSession,
+      reason: "sync_session_log_delete",
+    });
+    if (!deleteRes.ok) throw new Error("Session log delete failed");
+    if (!entry) return;
+
+    const sessionLogRow = {
+      user_id: userId,
+      date: safeDateKey,
+      completion_status: entry?.checkin?.status ? String(entry.checkin.status) : null,
+      feel_rating: toFiniteInteger(entry?.feel ?? entry?.checkin?.feelRating),
+      note: entry?.notes ? String(entry.notes) : null,
+      distance_mi: toFiniteNumber(entry?.miles),
+      duration_min: toFiniteNumber(entry?.runTime),
+      avg_hr: toFiniteInteger(entry?.healthMetrics?.avgHr),
+      exercises: Array.isArray(entry?.strengthPerformance) ? entry.strengthPerformance : [],
+    };
+
+    const { res } = await authFetchWithRetry({
+      path: "session_logs",
+      method: "POST",
+      body: sessionLogRow,
+      authSession,
+      setAuthSession,
+      reason: "sync_session_log_upsert",
+    });
+    if (!res.ok) throw new Error("Session log upsert failed");
+  };
+
+  const syncGoals = async ({ goals = [], authSession, setAuthSession }) => {
+    const normalized = normalizeSession(authSession);
+    const userId = normalized?.user?.id || authSession?.user?.id;
+    if (!userId) throw new Error(AUTH_REQUIRED);
+
+    const { res: deleteRes } = await authFetchWithRetry({
+      path: `goals?user_id=eq.${userId}`,
+      method: "DELETE",
+      authSession,
+      setAuthSession,
+      reason: "sync_goals_delete",
+    });
+    if (!deleteRes.ok) throw new Error("Goals reset failed");
+
+    const normalizedGoals = (goals || []).map((goal, idx) => ({
+      user_id: userId,
+      ...normalizeGoalRow(goal, idx),
+    })).filter((goal) => goal.title);
+
+    if (!normalizedGoals.length) return;
+
+    const { res } = await authFetchWithRetry({
+      path: "goals",
+      method: "POST",
+      body: normalizedGoals,
+      authSession,
+      setAuthSession,
+      reason: "sync_goals_insert",
+    });
+    if (!res.ok) throw new Error("Goals insert failed");
+  };
+
+  const syncCoachMemory = async ({ personalization = {}, authSession, setAuthSession }) => {
+    const normalized = normalizeSession(authSession);
+    const userId = normalized?.user?.id || authSession?.user?.id;
+    if (!userId) throw new Error(AUTH_REQUIRED);
+
+    const memory = personalization?.coachMemory || {};
+    const row = {
+      user_id: userId,
+      field_1: encodeCoachMemoryField({
+        wins: memory?.wins || [],
+        constraints: memory?.constraints || [],
+        failurePatterns: memory?.failurePatterns || [],
+        commonBarriers: memory?.commonBarriers || [],
+        preferredFoodPatterns: memory?.preferredFoodPatterns || [],
+      }),
+      field_2: encodeCoachMemoryField({
+        longTermMemory: memory?.longTermMemory || [],
+        compounding: memory?.compounding || {},
+        sundayReviews: memory?.sundayReviews || [],
+      }),
+      field_3: encodeCoachMemoryField({
+        pushResponse: memory?.pushResponse || "",
+        protectResponse: memory?.protectResponse || "",
+        scheduleConstraints: memory?.scheduleConstraints || [],
+        simplicityVsVariety: memory?.simplicityVsVariety || "",
+        lastAdjustment: memory?.lastAdjustment || "",
+        lastSundayPushWeek: memory?.lastSundayPushWeek || "",
+      }),
+    };
+
+    const { res: deleteRes } = await authFetchWithRetry({
+      path: `coach_memory?user_id=eq.${userId}`,
+      method: "DELETE",
+      authSession,
+      setAuthSession,
+      reason: "sync_coach_memory_delete",
+    });
+    if (!deleteRes.ok) throw new Error("Coach memory reset failed");
+
+    const { res } = await authFetchWithRetry({
+      path: "coach_memory",
+      method: "POST",
+      body: row,
+      authSession,
+      setAuthSession,
+      reason: "sync_coach_memory_insert",
+    });
+    if (!res.ok) throw new Error("Coach memory insert failed");
+  };
+
   const sbSave = async ({ payload, authSession, setAuthSession }) => {
     const normalized = normalizeSession(authSession);
     const userId = normalized?.user?.id || authSession?.user?.id;
