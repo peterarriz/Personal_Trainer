@@ -2628,7 +2628,7 @@ const deriveProgressiveOverloadAdjustments = ({ logs = {}, todayWorkout = {}, ch
       ruleTriggered = "hold_weight";
     }
     const cleanThreeAtSameWeight = sessions.length >= 3
-      && sessions.slice(-3).every((s) => Number(_optionalChain([s, 'optionalAccess', _343 => _343.completionRatio]) || 0) >= 1 && Math.abs(Number(_optionalChain([s, 'optionalAccess', _344 => _344.weightUsed]) || 0) - Number(preset.workingWeight || 0)) < 0.01);
+    && sessions.slice(-3).every((s) => Number(_optionalChain([s, 'optionalAccess', _343 => _343.completionRatio]) || 0) >= 1 && Math.abs(Number(_optionalChain([s, 'optionalAccess', _344 => _344.weightUsed]) || 0) - Number(preset.workingWeight || 0)) < 0.01);
     if (cleanThreeAtSameWeight && isBuild && nextSets < maxSets) {
       nextSets += 1;
       ruleTriggered = "add_set_build_phase";
@@ -5735,6 +5735,18 @@ function TrainerDashboard() {
           )
         )
       )
+      , connectOpen && (
+        React.createElement('div', { onClick: ()=>setConnectOpen(false), style: { position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" },}
+          , React.createElement('div', { onClick: e=>e.stopPropagation(), className: "card card-soft" , style: { width:"100%", maxWidth:520, borderColor:"#30455f" },}
+            , React.createElement('div', { style: { fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" },}, "To give you smarter recommendations, Personal Trainer reads health data from Apple Health. We never share this data. You can revoke access anytime in iOS Settings."
+
+            )
+            , React.createElement('button', { className: "btn btn-primary" , onClick: requestAppleHealth, style: { width:"100%", marginBottom:"0.45rem" },}, "Connect Apple Health"  )
+            , React.createElement('button', { className: "btn", onClick: async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }, style: { width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" },}, "Skip for now"
+
+            )
+          )
+        )
       )
     )
   );
