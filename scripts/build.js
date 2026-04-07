@@ -14,6 +14,7 @@ const SRC = path.join(ROOT, "src", "trainer-dashboard.jsx");
 const OUT = path.join(ROOT, "index.html");
 const REACT = fs.readFileSync(path.join(__dirname, "react.min.js"), "utf8");
 const REACT_DOM = fs.readFileSync(path.join(__dirname, "react-dom.min.js"), "utf8");
+const SUPABASE_UMD = fs.readFileSync(path.join(ROOT, "node_modules", "@supabase", "supabase-js", "dist", "umd", "supabase.js"), "utf8");
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || "";
 
@@ -75,6 +76,7 @@ const html = `<!DOCTYPE html>
   </style>
   <script>${REACT}</script>
   <script>${REACT_DOM}</script>
+  <script>${SUPABASE_UMD}</script>
 </head>
 <body>
   <div id="root">
@@ -84,6 +86,7 @@ const html = `<!DOCTYPE html>
 window.__SUPABASE_URL = ${JSON.stringify(SUPABASE_URL)};
 window.__SUPABASE_ANON_KEY = ${JSON.stringify(SUPABASE_ANON_KEY)};
 const { useState, useEffect, useRef, useMemo } = React;
+const { createClient } = supabase;
 
 ${js}
 
