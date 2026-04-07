@@ -3480,6 +3480,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   };
   const activeAppleTypes = appleHealth?.permissionsGranted?.length ? appleHealth.permissionsGranted.join(", ") : "None";
   const lastGarminActivity = (garmin?.activities || []).slice(-1)[0];
+  const profileWeightVal = profile?.weight ?? profile?.bodyweight ?? "";
+  const profileHeightVal = profile?.height ?? "";
 
   const checkConnection = async () => {
     setChecking(true);
@@ -3514,6 +3516,29 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             <input type="number" value={profile?.age || ""} onChange={e=>patchProfile({ age: Number(e.target.value) || "" })} placeholder="Age" />
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.35rem" }}>
+            <input
+              type="number"
+              step="0.1"
+              value={profileWeightVal}
+              onChange={e=>patchProfile({ weight: e.target.value === "" ? "" : Number(e.target.value), bodyweight: e.target.value === "" ? "" : Number(e.target.value) })}
+              placeholder={`Weight (${unitSettings?.weight || "lbs"})`}
+            />
+            {unitSettings?.height === "cm" ? (
+              <input
+                type="number"
+                value={profileHeightVal}
+                onChange={e=>patchProfile({ height: e.target.value === "" ? "" : Number(e.target.value) })}
+                placeholder="Height (cm)"
+              />
+            ) : (
+              <input
+                value={profileHeightVal}
+                onChange={e=>patchProfile({ height: e.target.value })}
+                placeholder={`Height (${unitSettings?.height === "ft_in" ? "e.g., 6'1\"" : "value"})`}
+              />
+            )}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.35rem" }}>
             <select value={unitSettings?.weight || "lbs"} onChange={e=>patchSettings({ units: { ...unitSettings, weight: e.target.value } })}>
               <option value="lbs">Weight: lbs</option>
               <option value="kg">Weight: kg</option>
@@ -3546,18 +3571,29 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             <button className="btn" onClick={checkConnection} disabled={checking} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
               {checking ? "Checking..." : "Check Connection"}
             </button>
+            <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
+              I enabled Health permissions
+            </button>
           </div>
           <div style={{ marginTop:"0.28rem", fontSize:"0.5rem", color:"#6f85a7" }}>
             Status: {appleHealth?.status || "not_connected"} · Last check: {appleHealth?.lastConnectionCheck ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}
           </div>
+          <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>
+            Permission confirmed: {appleHealth?.permissionConfirmedAt ? new Date(appleHealth.permissionConfirmedAt).toLocaleString() : "not confirmed"}
+          </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:appleHealth?.lastSyncStatus === "garmin_detected" ? C.green : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web" ? C.blue : "#8fa5c8" }}>
             {appleHealth?.lastSyncStatus === "garmin_detected"
               ? "Sync verified: Garmin activity detected in Apple Health."
+              : appleHealth?.lastSyncStatus === "permissions_confirmed"
+              ? "Permissions confirmed. Complete one Health workout, then tap Check Connection."
               : appleHealth?.lastSyncStatus === "health_only"
               ? "Connected, but Garmin source not detected yet."
               : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web"
               ? "Connected. Run one workout, then tap Check Connection."
               : "Not connected yet."}
+          </div>
+          <div style={{ marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 }}>
+            iPhone permission path: Settings → Privacy &amp; Security → Health → Personal Trainer (or browser app) → Allow all categories.
           </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
           {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
