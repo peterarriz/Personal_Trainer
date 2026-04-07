@@ -2607,19 +2607,22 @@ export default function TrainerDashboard() {
   const compoundingCoachMemory = deriveCompoundingCoachMemory({ dailyCheckins, weeklyCheckins, personalization, momentum });
   const recalibration = deriveRecalibrationEngine({ currentWeek, progress: progressEngine, momentum, learningLayer, memoryInsights, arbitration });
   const todayWorkoutHardenedBase = failureMode.isReEntry
-    ? { ...todayWorkout, label: `Re-entry day: ${todayWorkout?.label || "short version"}`, minDay: true, success: "Re-entry week: complete one essential session and log it. Momentum first." }
+    ? { ...todayWorkout, label: `Re-entry day: ${todayWorkout?.label || "short version"}`, minDay: true, success: "Re-entry week: complete one essential session and log it. Momentum first.", explanation: `You haven't trained in a while, so today is a re-entry session. The goal is to rebuild rhythm with one manageable session — not to catch up.` }
     : (failureMode.mode === "chaotic" || failureMode.isLowEngagement)
-    ? { ...todayWorkout, minDay: true, success: "Complete the short version only." }
+    ? { ...todayWorkout, minDay: true, success: "Complete the short version only.", explanation: `Life has been chaotic recently, so today is the short version. Completing something small protects your momentum better than skipping entirely.` }
     : todayWorkout;
   const todayWorkoutHardened = garminReadiness?.mode === "recovery"
-    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Garmin readiness)", run: null, strSess: null, nutri: "rest", success: "Walk + mobility only today. Resume loading when readiness improves." }
+    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Garmin readiness)", run: null, strSess: null, nutri: "rest", success: "Walk + mobility only today. Resume loading when readiness improves.", explanation: `Your Garmin readiness score is low, indicating your body hasn't recovered from recent load. Recovery today means tomorrow's session will be higher quality.` }
     : garminReadiness?.mode === "reduced_load"
-    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Reduced-load)` }
+    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Reduced-load)`, explanation: `Garmin readiness suggests partial recovery — today's session is reduced to prevent overreaching while still making progress.` }
     : deviceSyncAudit?.planMode === "recovery"
-    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data suggests recovery focus today." }
+    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data suggests recovery focus today.", explanation: `Your connected device data indicates recovery is needed. Resting today protects your training quality for the rest of the week.` }
     : deviceSyncAudit?.planMode === "reduced_load"
-    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Device-adjusted)` }
+    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Device-adjusted)`, explanation: `Device signals suggest slightly reducing today's load to stay within productive training ranges.` }
     : todayWorkoutHardenedBase;
+  if (!todayWorkoutHardened.explanation && todayWorkoutHardened.todayPlan?.reason) {
+    todayWorkoutHardened.explanation = todayWorkoutHardened.todayPlan.reason;
+  }
   const cadenceRuns = (personalization?.connectedDevices?.garmin?.activities || []).filter((a) => /run/i.test(String(a?.type || a?.sport || "")) && Number(a?.cadence || 0) > 0);
   const avgCadence = cadenceRuns.length ? (cadenceRuns.reduce((acc, a) => acc + Number(a?.cadence || 0), 0) / cadenceRuns.length) : null;
   if (todayWorkoutHardened?.run?.t === "Easy" && cadenceRuns.length >= 10) {
@@ -6171,6 +6174,11 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
       <div style={{ marginBottom:"0.85rem", display:"grid", gap:"0.2rem" }}>
         <div style={{ fontSize:"0.56rem", color:"#64748b", letterSpacing:"0.14em" }}>TODAY</div>
         <div style={{ fontFamily:"’Inter’,sans-serif", fontSize:"1.45rem", color:"#f8fafc", fontWeight:600, lineHeight:1.15 }}>{activeWorkout?.label || "Rest Day"}</div>
+        {todayWorkout?.explanation && (
+          <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.6, marginTop:"0.15rem" }}>
+            {todayWorkout.explanation}
+          </div>
+        )}
         <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.55 }}>{conciseFocus}</div>
       </div>
 
@@ -6343,6 +6351,11 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
                 ×
               </button>
             </div>
+            {primaryAdjustment.reason && (
+              <div style={{ fontSize:"0.5rem", color:"#7f92aa", lineHeight:1.5, paddingLeft:"0.15rem" }}>
+                Why: {primaryAdjustment.reason}
+              </div>
+            )}
             {secondaryAdjustments.length > 0 && (
               <button
                 className="btn"
@@ -6353,22 +6366,29 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
               </button>
             )}
             {showMoreAdjustments && secondaryAdjustments.map((card) => (
-              <div key={card.id} style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem", paddingLeft:"0.15rem" }}>
-                <button
-                  className="btn"
-                  onClick={() => openAdjustmentDetail(card)}
-                  style={{ border:"none", background:"none", padding:0, fontSize:"0.54rem", color:"#9fb2d2", textAlign:"left", justifyContent:"flex-start" }}
-                >
-                  {card.icon} {card.summary}
-                </button>
-                <button
-                  className="btn"
-                  onClick={() => dismissAdjustment(card.id)}
-                  style={{ border:"none", background:"none", padding:0, fontSize:"0.6rem", color:"#64748b" }}
-                  aria-label="Dismiss coach adjustment notification"
-                >
-                  ×
-                </button>
+              <div key={card.id} style={{ display:"grid", gap:"0.2rem", paddingLeft:"0.15rem" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem" }}>
+                  <button
+                    className="btn"
+                    onClick={() => openAdjustmentDetail(card)}
+                    style={{ border:"none", background:"none", padding:0, fontSize:"0.54rem", color:"#9fb2d2", textAlign:"left", justifyContent:"flex-start" }}
+                  >
+                    {card.icon} {card.summary}
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => dismissAdjustment(card.id)}
+                    style={{ border:"none", background:"none", padding:0, fontSize:"0.6rem", color:"#64748b" }}
+                    aria-label="Dismiss coach adjustment notification"
+                  >
+                    ×
+                  </button>
+                </div>
+                {card.reason && (
+                  <div style={{ fontSize:"0.48rem", color:"#7f92aa", lineHeight:1.5 }}>
+                    Why: {card.reason}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -6391,15 +6411,18 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
 
       {/* Proactive nudge */}
       {primaryTrigger && (
-        <div style={{ marginBottom:"0.75rem", display:"flex", gap:"0.35rem", alignItems:"center" }}>
-          <button
-            className="btn"
-            onClick={() => isTravelModeSuggestion ? toggleTravelModeForToday() : onApplyTrigger(primaryTrigger)}
-            style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}
-          >
-            {isTravelModeSuggestion ? (isTodayTravelOverride ? "Exit travel mode" : "Switch travel mode") : (primaryTrigger.actionLabel || "Apply nudge")}
-          </button>
-          <button className="btn" onClick={()=>onDismissTrigger(primaryTrigger.id)} style={{ fontSize:"0.52rem" }}>Dismiss</button>
+        <div style={{ marginBottom:"0.75rem", display:"grid", gap:"0.3rem" }}>
+          <div style={{ fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 }}>{primaryTrigger.msg}</div>
+          <div style={{ display:"flex", gap:"0.35rem", alignItems:"center" }}>
+            <button
+              className="btn"
+              onClick={() => isTravelModeSuggestion ? toggleTravelModeForToday() : onApplyTrigger(primaryTrigger)}
+              style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}
+            >
+              {isTravelModeSuggestion ? (isTodayTravelOverride ? "Exit travel mode" : "Switch travel mode") : (primaryTrigger.actionLabel || "Apply nudge")}
+            </button>
+            <button className="btn" onClick={()=>onDismissTrigger(primaryTrigger.id)} style={{ fontSize:"0.52rem" }}>Dismiss</button>
+          </div>
         </div>
       )}
 
