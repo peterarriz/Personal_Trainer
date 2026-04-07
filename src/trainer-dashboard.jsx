@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildRollingHorizonWeeks, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal } from "./modules-planning.js";
+import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildRollingHorizonWeeks, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
 import { createAuthStorageModule } from "./modules-auth-storage.js";
 import { getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket } from "./modules-nutrition.js";
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, isWithinGracePeriod, resolveEffectiveStatus } from "./modules-checkins.js";
@@ -937,7 +937,7 @@ const getTodayWorkout = (weekNum, dayNum) => {
     4: { type: "hard-run", run: week.thu, label: `${week.thu?.t} Run` },
     5: { type: "easy-run", run: week.fri, label: "Easy Run" },
     6: { type: "long-run", run: week.sat, label: "Long Run" },
-    0: { type: "rest", label: "Full Rest + Mobility" },
+    0: { type: "rest", label: "Rest Day", isRecoverySlot: true },
   };
   return { ...dayMap[dayNum], week, zones };
 };
@@ -1064,7 +1064,7 @@ const PHASE_ARC_LABELS = {
 };
 const SESSION_NAMING = {
   EASY_RUN: "Easy Run",
-  RECOVERY_MOBILITY: "Recovery / Mobility",
+  RECOVERY_MOBILITY: "Active Recovery",
   LOW_IMPACT: "Low-Impact Cardio",
   HYBRID_PREFIX: "Easy Run + Strength",
   WALK_MOBILITY: "Walk + Mobility",
@@ -1212,7 +1212,24 @@ const safeFetchWithTimeout = async (url, options = {}, timeoutMs = 8500) => {
   }
 };
 
+const PRIMARY_GOAL_OPTIONS = ["fat_loss", "muscle_gain", "endurance", "general_fitness"];
+const PRIMARY_GOAL_LABELS = { fat_loss: "Fat Loss", muscle_gain: "Muscle Gain", endurance: "Endurance", general_fitness: "General Fitness" };
+const EXPERIENCE_LEVEL_OPTIONS = ["beginner", "intermediate", "advanced"];
+const EXPERIENCE_LEVEL_LABELS = { beginner: "Beginner", intermediate: "Intermediate", advanced: "Advanced" };
+const SESSION_LENGTH_OPTIONS = ["20", "30", "45", "60+"];
+const SESSION_LENGTH_LABELS = { "20": "20 min", "30": "30 min", "45": "45 min", "60+": "60+ min" };
+
+const DEFAULT_USER_GOAL_PROFILE = {
+  primary_goal: "",
+  experience_level: "",
+  days_per_week: 3,
+  session_length: "30",
+  equipment_access: [],
+  constraints: [],
+};
+
 const DEFAULT_PERSONALIZATION = {
+  userGoalProfile: { ...DEFAULT_USER_GOAL_PROFILE },
   profile: {
     name: "Athlete",
     onboardingComplete: false,
@@ -1570,7 +1587,7 @@ const applyEnvironmentToWorkout = (workout, env, context = {}) => {
 
   if (dayIdentity === "recovery") {
     next.type = "rest";
-    next.label = "Recovery / Mobility";
+    next.label = next.todayPlan?.label || "Active Recovery — Walk + Mobility";
     next.environmentNote = "Recovery stays recovery. Walk, mobility, rehab only.";
     next.optionalSecondary = null;
     next.fallback = "Easy walk + mobility only.";
@@ -2544,9 +2561,25 @@ export default function TrainerDashboard() {
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
   const planComposer = composeGoalNativePlan({ goals: goalsModel, personalization, momentum, learningLayer, currentWeek, baseWeek });
+  const todayPlan = generateTodayPlan(
+    personalization.userGoalProfile || {},
+    { logs, todayKey },
+    {
+      fatigueScore: personalization.trainingState?.fatigueScore ?? 2,
+      trend: personalization.trainingState?.trend || "stable",
+      momentum: momentum.momentumState,
+      injuryLevel: personalization.injuryPainState?.level || "none",
+    }
+  );
   const rollingHorizon = buildRollingHorizonWeeks({ currentWeek, horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS, goals: goalsModel, weekTemplates: WEEKS });
   const horizonAnchor = getHorizonAnchor(goalsModel, DEFAULT_PLANNING_HORIZON_WEEKS);
-  const goalNativeWorkout = planComposer?.dayTemplates?.[dayOfWeek] ? { ...baseTodayWorkout, ...planComposer.dayTemplates[dayOfWeek], week: baseWeek, zones: baseTodayWorkout?.zones } : baseTodayWorkout;
+  const hasStructuredProfile = Boolean(personalization.userGoalProfile?.primary_goal);
+  const goalNativeBase = planComposer?.dayTemplates?.[dayOfWeek] ? { ...baseTodayWorkout, ...planComposer.dayTemplates[dayOfWeek], week: baseWeek, zones: baseTodayWorkout?.zones } : baseTodayWorkout;
+  const goalNativeWorkout = hasStructuredProfile
+    ? todayPlan.type === "recovery"
+      ? { ...goalNativeBase, type: "rest", label: todayPlan.label, nutri: "rest", run: null, strSess: null, todayPlan }
+      : { ...goalNativeBase, label: todayPlan.label, planIntensity: todayPlan.intensity, planDuration: todayPlan.duration, todayPlan }
+    : goalNativeBase;
   const todayWorkoutBase = dayOverride ? { ...goalNativeWorkout, ...dayOverride, coachOverride: true, nutri: nutritionOverride || dayOverride.nutri || goalNativeWorkout?.week?.nutri } : { ...goalNativeWorkout, nutri: nutritionOverride || goalNativeWorkout?.week?.nutri };
   const weekState = failureMode?.mode === "chaotic" ? "chaotic" : momentum?.fatigueNotes >= 2 ? "fatigued" : "normal";
   const todayWorkoutEnvironment = applyEnvironmentToWorkout(todayWorkoutBase, environmentSelection, { weekState, injuryFlag: personalization?.injuryPainState?.level || "none" });
@@ -2574,19 +2607,22 @@ export default function TrainerDashboard() {
   const compoundingCoachMemory = deriveCompoundingCoachMemory({ dailyCheckins, weeklyCheckins, personalization, momentum });
   const recalibration = deriveRecalibrationEngine({ currentWeek, progress: progressEngine, momentum, learningLayer, memoryInsights, arbitration });
   const todayWorkoutHardenedBase = failureMode.isReEntry
-    ? { ...todayWorkout, label: `Re-entry day: ${todayWorkout?.label || "short version"}`, minDay: true, success: "Re-entry week: complete one essential session and log it. Momentum first." }
+    ? { ...todayWorkout, label: `Re-entry day: ${todayWorkout?.label || "short version"}`, minDay: true, success: "Re-entry week: complete one essential session and log it. Momentum first.", explanation: `You haven't trained in a while, so today is a re-entry session. The goal is to rebuild rhythm with one manageable session — not to catch up.` }
     : (failureMode.mode === "chaotic" || failureMode.isLowEngagement)
-    ? { ...todayWorkout, minDay: true, success: "Complete the short version only." }
+    ? { ...todayWorkout, minDay: true, success: "Complete the short version only.", explanation: `Life has been chaotic recently, so today is the short version. Completing something small protects your momentum better than skipping entirely.` }
     : todayWorkout;
   const todayWorkoutHardened = garminReadiness?.mode === "recovery"
-    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Garmin readiness)", run: null, strSess: null, nutri: "rest", success: "Walk + mobility only today. Resume loading when readiness improves." }
+    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Garmin readiness)", run: null, strSess: null, nutri: "rest", success: "Walk + mobility only today. Resume loading when readiness improves.", explanation: `Your Garmin readiness score is low, indicating your body hasn't recovered from recent load. Recovery today means tomorrow's session will be higher quality.` }
     : garminReadiness?.mode === "reduced_load"
-    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Reduced-load)` }
+    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Reduced-load)`, explanation: `Garmin readiness suggests partial recovery — today's session is reduced to prevent overreaching while still making progress.` }
     : deviceSyncAudit?.planMode === "recovery"
-    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data suggests recovery focus today." }
+    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data suggests recovery focus today.", explanation: `Your connected device data indicates recovery is needed. Resting today protects your training quality for the rest of the week.` }
     : deviceSyncAudit?.planMode === "reduced_load"
-    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Device-adjusted)` }
+    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Device-adjusted)`, explanation: `Device signals suggest slightly reducing today's load to stay within productive training ranges.` }
     : todayWorkoutHardenedBase;
+  if (!todayWorkoutHardened.explanation && todayWorkoutHardened.todayPlan?.reason) {
+    todayWorkoutHardened.explanation = todayWorkoutHardened.todayPlan.reason;
+  }
   const cadenceRuns = (personalization?.connectedDevices?.garmin?.activities || []).filter((a) => /run/i.test(String(a?.type || a?.sport || "")) && Number(a?.cadence || 0) > 0);
   const avgCadence = cadenceRuns.length ? (cadenceRuns.reduce((acc, a) => acc + Number(a?.cadence || 0), 0) / cadenceRuns.length) : null;
   if (todayWorkoutHardened?.run?.t === "Easy" && cadenceRuns.length >= 10) {
@@ -3835,27 +3871,17 @@ Keep it plain and specific.`;
   const onboardingComplete = personalization?.profile?.onboardingComplete;
   const finishOnboarding = async (answers) => {
     const todayKey = new Date().toISOString().split("T")[0];
-    const inferGoalCategory = (text = "") => {
-      const normalized = String(text || "").toLowerCase();
-      if (/bench|squat|deadlift|press|lift|strength|pull-up|muscle/.test(normalized)) return "strength";
-      if (/weight|fat|lean|cut|abs|body comp|lose/.test(normalized)) return "body_comp";
-      if (/race|run|marathon|half|5k|10k|pace|mile/.test(normalized)) return "running";
-      return "running";
-    };
-    const labelPrimaryGoal = (text = "", category = "running") => {
-      const prefix = category === "strength" ? "Strength Milestone" : category === "body_comp" ? "Body Composition" : "Performance Goal";
-      return `${prefix}: ${text}`;
-    };
+    const GOAL_TO_CATEGORY = { fat_loss: "body_comp", muscle_gain: "strength", endurance: "running", general_fitness: "running" };
+    const primaryGoalKey = answers.primary_goal || "general_fitness";
+    const primaryCategory = GOAL_TO_CATEGORY[primaryGoalKey] || "running";
+    const primaryGoalLabel = PRIMARY_GOAL_LABELS[primaryGoalKey] || "General Fitness";
+    const primaryGoal = primaryGoalLabel;
+    const experienceLevel = answers.experience_level || "beginner";
+    const sessionLength = answers.session_length || "30";
     const coachingStyle = String(answers.coaching_style || "Find the balance").trim();
     const trainingDaysLabel = String(answers.training_days || "3").trim();
     const trainingDays = trainingDaysLabel === "6+" ? 6 : Math.max(2, Number(trainingDaysLabel) || 3);
     const trainingLocation = String(answers.training_location || "Home").trim();
-    const primaryGoalText = String(answers.primary_goal_text || "Get fitter").trim();
-    const secondaryRaw = String(answers.secondary_goals || "").trim();
-    const secondaryGoals = /that'?s it for now/i.test(secondaryRaw)
-      ? []
-      : secondaryRaw.split(/\n|,|\/+/).map((item) => item.trim()).filter(Boolean).slice(0, 3);
-    const baselineText = String(answers.baseline_text || "").trim();
     const injuryText = String(answers.injury_text || "").trim();
     const homeEquipment = Array.isArray(answers.home_equipment) ? answers.home_equipment.filter(Boolean) : [];
     const homeEquipmentOther = String(answers.home_equipment_other || "").trim();
@@ -3866,33 +3892,42 @@ Keep it plain and specific.`;
     if (["Home", "Both"].includes(trainingLocation) && normalizedEquipment.length === 0) {
       normalizedEquipment.push("Bodyweight only");
     }
-    const primaryCategory = inferGoalCategory(primaryGoalText);
-    const primaryGoal = labelPrimaryGoal(primaryGoalText, primaryCategory);
-    const rankedGoals = [primaryGoalText, ...secondaryGoals].filter(Boolean);
+    const constraints = [];
+    if (injuryText && !/nothing current|none|nope|healthy/i.test(injuryText)) {
+      constraints.push(injuryText);
+    }
+    const userGoalProfile = {
+      primary_goal: primaryGoalKey,
+      experience_level: experienceLevel,
+      days_per_week: trainingDays,
+      session_length: sessionLength,
+      equipment_access: normalizedEquipment,
+      constraints,
+    };
     const refreshedGoals = normalizeGoals((goalsModel || DEFAULT_MULTI_GOALS).map((goal, index) => {
-      const rawName = rankedGoals[index];
-      if (!rawName) return { ...goal, active: false };
-      const category = inferGoalCategory(rawName);
-      return {
-        ...goal,
-        name: index === 0 ? labelPrimaryGoal(rawName, category) : rawName,
-        category,
-        type: "ongoing",
-        targetDate: "",
-        active: true,
-        priority: index + 1,
-      };
+      if (index === 0) {
+        return {
+          ...goal,
+          name: primaryGoalLabel,
+          category: primaryCategory,
+          type: "ongoing",
+          targetDate: "",
+          active: true,
+          priority: 1,
+        };
+      }
+      return { ...goal, active: goal.id === "g_resilience" };
     }));
     const nextPresets = {
       ...(DEFAULT_PERSONALIZATION.environmentConfig?.presets || {}),
       ...(personalization.environmentConfig?.presets || {}),
       Home: {
         equipment: normalizedEquipment.length ? normalizedEquipment : (personalization.environmentConfig?.presets?.Home?.equipment || ["Bodyweight only"]),
-        time: trainingDays >= 5 ? "30" : "20",
+        time: sessionLength,
       },
       Gym: {
         equipment: personalization.environmentConfig?.presets?.Gym?.equipment || ["full rack", "barbell", "cable stack"],
-        time: trainingDays >= 5 ? "45+" : "30",
+        time: trainingDays >= 5 ? "45+" : sessionLength,
       },
       Travel: {
         equipment: ["Bodyweight only"],
@@ -3906,25 +3941,27 @@ Keep it plain and specific.`;
       : coachingStyle === "Keep it simple"
       ? "Conservative"
       : "Standard";
-    const goalMix = rankedGoals.join(" / ") || primaryGoalText;
+    const goalMix = primaryGoalLabel;
     const onboardingMemory = [
       answers.timeline_assessment ? `Timeline assessment: ${answers.timeline_assessment}` : null,
       answers.timeline_adjustment ? `Timeline adjustment requested: ${answers.timeline_adjustment}` : null,
-      `Primary goal: ${primaryGoalText}`,
-      secondaryGoals.length ? `Secondary goals: ${secondaryGoals.join(", ")}` : null,
-      baselineText ? `Starting point: ${baselineText}` : null,
-      injuryText ? `Injury note: ${injuryText}` : "Injury note: Nothing current",
+      `Primary goal: ${primaryGoalLabel}`,
+      `Experience level: ${EXPERIENCE_LEVEL_LABELS[experienceLevel] || experienceLevel}`,
+      `Session length: ${SESSION_LENGTH_LABELS[sessionLength] || sessionLength}`,
+      constraints.length ? `Constraints: ${constraints.join(", ")}` : "Constraints: None",
       `Training availability: ${trainingDaysLabel} days per week`,
       `Primary environment: ${trainingLocation}`,
-      normalizedEquipment.length ? `Home equipment: ${normalizedEquipment.join(", ")}` : null,
+      normalizedEquipment.length ? `Equipment: ${normalizedEquipment.join(", ")}` : null,
       `Coaching preference: ${coachingStyle}`,
     ].filter(Boolean);
     const nextPersonalization = mergePersonalization(personalization, {
+      userGoalProfile,
       profile: {
         ...personalization.profile,
         onboardingComplete: true,
         preferredTrainingStyle: coachingStyle,
         goalMix,
+        estimatedFitnessLevel: experienceLevel,
       },
       settings: {
         ...(personalization.settings || DEFAULT_PERSONALIZATION.settings),
@@ -3938,7 +3975,7 @@ Keep it plain and specific.`;
         ...personalization.goalState,
         primaryGoal,
         priority: primaryCategory,
-        priorityOrder: [primaryGoal, ...secondaryGoals].filter(Boolean).join(" > "),
+        priorityOrder: primaryGoalLabel,
         deadline: "",
         planStartDate: todayKey,
         milestones: {
@@ -3949,8 +3986,8 @@ Keep it plain and specific.`;
       },
       injuryPainState: {
         ...personalization.injuryPainState,
-        level: !injuryText || /nothing current|none|nope|healthy/i.test(injuryText) ? "none" : "mild_tightness",
-        notes: !injuryText || /nothing current|none|nope|healthy/i.test(injuryText) ? "" : `Onboarding note: ${injuryText}`,
+        level: constraints.length === 0 ? "none" : "mild_tightness",
+        notes: constraints.length === 0 ? "" : `Onboarding note: ${constraints.join("; ")}`,
       },
       environmentConfig: {
         ...personalization.environmentConfig,
@@ -3975,7 +4012,7 @@ Keep it plain and specific.`;
           `${trainingDaysLabel} day reality`,
           trainingLocation === "Varies a lot" ? "environment changes often" : "recovery consistency",
         ],
-        scheduleConstraints: [`Available ${trainingDaysLabel} days per week`],
+        scheduleConstraints: [`Available ${trainingDaysLabel} days per week`, `Session length: ${SESSION_LENGTH_LABELS[sessionLength] || sessionLength}`],
         pushResponse: coachingStyle === "Push me hard" ? "Responds well to direct, demanding coaching." : personalization.coachMemory?.pushResponse || "",
         protectResponse: coachingStyle === "Find the balance" ? "Wants a balance between push and protection." : coachingStyle === "Keep it simple" ? "Prefers simple, sustainable prescriptions over aggressive progressions." : personalization.coachMemory?.protectResponse || "",
         preferredFoodPatterns: [
@@ -4271,8 +4308,8 @@ Keep it plain and specific.`;
 
 function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [] }) {
   const initialPrompt = startingFresh
-    ? "Starting fresh. I still remember everything from before — I'm just building a new plan from today. What are we working toward?"
-    : "Hey. I'm going to ask you a few questions before I build your plan. No right answers — just be honest. What's the main thing you want to accomplish? Could be a race, a weight goal, a strength milestone, or something else entirely.";
+    ? "Starting fresh. I still remember everything from before — I'm just building a new plan from today. What's the primary goal this time?"
+    : "Hey. I'm going to ask you a few questions before I build your plan. No right answers — just pick what fits best. What's your primary goal?";
   const BUILD_STAGES = [
     "Mapping your training blocks...",
     "Calibrating intensity to your baseline...",
@@ -4297,11 +4334,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
 
   const flow = useMemo(() => ([
-    { key: "primary_goal_text", type: "text", message: initialPrompt, placeholder: "Type your goal..." },
-    { key: "secondary_goals", type: "text_optional", message: "Got it. Anything else on the list? I can work multiple goals into one plan as long as I know what they are and what matters most.", placeholder: "Add another goal if you want", skipLabel: "That's it for now", skipValue: "That's it for now" },
-    { key: "baseline_text", type: "text", message: "Where are you starting from right now? Current weight if relevant, how far you can comfortably run, what you're lifting. Honest estimates — I'd rather know the truth than build a plan you can't execute.", placeholder: "Current baseline" },
-    { key: "injury_text", type: "text_optional", message: "Do you have any injuries or physical issues I need to plan around?", placeholder: "Anything current?", skipLabel: "Nothing current", skipValue: "Nothing current" },
+    { key: "primary_goal", type: "buttons", message: initialPrompt, options: PRIMARY_GOAL_OPTIONS.map(k => PRIMARY_GOAL_LABELS[k]), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
+    { key: "experience_level", type: "buttons", message: "Got it. How long have you been training consistently?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
     { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week — not your best one.", options: ["2", "3", "4", "5", "6+"] },
+    { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
     ...(["Home", "Both"].includes(answers.training_location || "") ? [{
       key: "home_equipment",
@@ -4309,7 +4345,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       message: "What do you have available at home?",
       options: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
     }] : []),
-    { key: "coaching_style", type: "buttons", message: "Last one — is there anything about how you want to be coached that I should know? Some people want to be pushed hard. Some want to be protected from overtraining. Some just want the plan and no commentary.", options: ["Push me hard", "Find the balance", "Keep it simple", "Let the data decide"] },
+    { key: "injury_text", type: "text_optional", message: "Do you have any injuries or physical limitations I need to plan around?", placeholder: "Anything current?", skipLabel: "Nothing current", skipValue: "Nothing current" },
+    { key: "coaching_style", type: "buttons", message: "Last one — how do you want to be coached?", options: ["Push me hard", "Find the balance", "Keep it simple", "Let the data decide"] },
   ]), [answers.training_location, initialPrompt]);
   const currentPrompt = flow[stepIndex] || null;
   const isCoachStreaming = Boolean(streamTargetId);
@@ -4423,34 +4460,30 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }
   };
   const buildTimelineFallback = (payload) => {
-    const primary = String(payload.primary_goal_text || "your main goal").trim();
+    const goalLabel = PRIMARY_GOAL_LABELS[payload.primary_goal] || "your main goal";
     const days = String(payload.training_days || "3");
-    const baseline = String(payload.baseline_text || "").trim();
-    const secondary = String(payload.secondary_goals || "").trim();
-    const combined = `${primary} ${secondary}`.toLowerCase();
-    const hasRun = /race|run|marathon|half|5k|10k|pace|mile/.test(combined);
-    const hasBodyComp = /weight|fat|lean|cut|abs|body comp|lose/.test(combined);
-    const hasStrength = /strength|bench|squat|deadlift|press|pull-up|lift/.test(combined);
-    const conflictLine = hasRun && hasBodyComp && hasStrength
-      ? "The only tension is chasing race fitness, fat loss, and strength jumps all at once, so one goal needs to lead."
-      : hasRun && hasBodyComp
-      ? "The main tension is pushing run performance while driving bodyweight down too aggressively, so recovery has to stay protected."
-      : hasRun && hasStrength
-      ? "Running progress and strength progress can live together, but one has to be the lead goal each block."
-      : "What you want is workable together if recovery stays honest.";
-    const baselineLine = baseline ? `From the baseline you gave me, ` : "";
-    return `${baselineLine}the next 30 days are about building a repeatable ${days}-day rhythm around ${primary}. By 60 days you should feel fitter, more stable, and clearly moving in the right direction, and by 90 days you can have meaningful progress if consistency is real. ${conflictLine} Here's what I'm prioritizing in your plan: ${primary}${secondary && !/that's it for now/i.test(secondary) ? ` first, with ${secondary} supporting it.` : " first."}`;
+    const sessionLen = SESSION_LENGTH_LABELS[payload.session_length] || "30 min";
+    const expLevel = EXPERIENCE_LEVEL_LABELS[payload.experience_level] || "your level";
+    const injuryNote = payload.injury_text && !/nothing current|none|nope|healthy/i.test(payload.injury_text)
+      ? ` I'll work around ${payload.injury_text.toLowerCase()}.`
+      : "";
+    return `With ${goalLabel.toLowerCase()} as the focus, ${days} days a week at ${sessionLen} per session is a solid setup for someone at the ${expLevel.toLowerCase()} level. The next 30 days are about locking in a repeatable rhythm. By 60 days you should see measurable progress, and by 90 days the results compound if consistency stays real.${injuryNote} Here's what I'm prioritizing in your plan: ${goalLabel.toLowerCase()} first.`;
   };
   const buildTimelineAssessment = async (payload) => {
     const prompt = `User intake data: ${JSON.stringify({
-      ...payload,
+      primary_goal: payload.primary_goal,
+      experience_level: payload.experience_level,
+      training_days: payload.training_days,
+      session_length: payload.session_length,
+      training_location: payload.training_location,
+      equipment: payload.home_equipment || [],
+      injuries: payload.injury_text || "None",
       previous_coach_memory: (existingMemory || []).slice(-8),
     }, null, 2)}
 
-Generate a realistic assessment of their goals.
-For each goal:
-- What is achievable in 30, 60, 90 days at their baseline and availability
-- Surface any conflicts between goals honestly but without discouragement
+Generate a realistic assessment for this goal profile.
+- What is achievable in 30, 60, 90 days given their experience and availability
+- Note any constraints from injuries or equipment
 - Lead with what IS possible, not what isn't
 - End with: here's what I'm prioritizing in your plan
 Maximum 150 words total.
@@ -4465,11 +4498,10 @@ Sound like a coach who has done this a hundred times.`;
     setAnswers(updatedAnswers);
     setDraft("");
     const nextFlow = [
-      { key: "primary_goal_text", type: "text", message: initialPrompt, placeholder: "Type your goal..." },
-      { key: "secondary_goals", type: "text_optional", message: "Got it. Anything else on the list? I can work multiple goals into one plan as long as I know what they are and what matters most.", placeholder: "Add another goal if you want", skipLabel: "That's it for now", skipValue: "That's it for now" },
-      { key: "baseline_text", type: "text", message: "Where are you starting from right now? Current weight if relevant, how far you can comfortably run, what you're lifting. Honest estimates — I'd rather know the truth than build a plan you can't execute.", placeholder: "Current baseline" },
-      { key: "injury_text", type: "text_optional", message: "Do you have any injuries or physical issues I need to plan around?", placeholder: "Anything current?", skipLabel: "Nothing current", skipValue: "Nothing current" },
+      { key: "primary_goal", type: "buttons", message: initialPrompt, options: PRIMARY_GOAL_OPTIONS.map(k => PRIMARY_GOAL_LABELS[k]), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
+      { key: "experience_level", type: "buttons", message: "Got it. How long have you been training consistently?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
       { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week — not your best one.", options: ["2", "3", "4", "5", "6+"] },
+      { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
       { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
       ...(["Home", "Both"].includes(updatedAnswers.training_location || "") ? [{
         key: "home_equipment",
@@ -4477,7 +4509,8 @@ Sound like a coach who has done this a hundred times.`;
         message: "What do you have available at home?",
         options: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
       }] : []),
-      { key: "coaching_style", type: "buttons", message: "Last one — is there anything about how you want to be coached that I should know? Some people want to be pushed hard. Some want to be protected from overtraining. Some just want the plan and no commentary.", options: ["Push me hard", "Find the balance", "Keep it simple", "Let the data decide"] },
+      { key: "injury_text", type: "text_optional", message: "Do you have any injuries or physical limitations I need to plan around?", placeholder: "Anything current?", skipLabel: "Nothing current", skipValue: "Nothing current" },
+      { key: "coaching_style", type: "buttons", message: "Last one — how do you want to be coached?", options: ["Push me hard", "Find the balance", "Keep it simple", "Let the data decide"] },
     ];
     if (nextIndex < nextFlow.length) {
       setStepIndex(nextIndex);
@@ -4497,7 +4530,8 @@ Sound like a coach who has done this a hundred times.`;
     if (!explicitKey) return;
     if (!clean && currentPrompt?.type === "text") return;
     appendUserMessage(clean);
-    await advanceConversation({ ...answers, [explicitKey]: clean });
+    const storedValue = currentPrompt?.valueMap?.[clean] ?? clean;
+    await advanceConversation({ ...answers, [explicitKey]: storedValue });
   };
   const submitEquipmentAnswer = async () => {
     const normalized = [
@@ -5281,11 +5315,11 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 
 function OnboardingCoachLegacy({ onComplete }) {
   const SCRIPT = [
-    { key: "primary_goal_text", text: "Before I build your plan, I need to understand what you're actually working toward. What's the most important thing you want to accomplish — and is there a date attached to it?", type: "text" },
-    { key: "other_goals", text: "What else matters to you? List anything — weight, strength goals, aesthetics, other races. I'll tell you honestly what we can prioritize.", type: "text" },
-    { key: "baseline_text", text: "Where are you starting from right now? Be honest — current weight if relevant, what you can comfortably run, what you're lifting. Rough estimates are fine.", type: "text" },
+    { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
+    { key: "experience_level", text: "How long have you been training consistently?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
     { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
-    { key: "injury_text", text: "Do you have any injuries or physical limitations I need to know about before I prescribe anything?", type: "text", placeholder: "None currently" },
+    { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
+    { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
   ];
   const [messages, setMessages] = useState([{ role: "coach", text: SCRIPT[0].text }]);
@@ -5627,13 +5661,13 @@ function OnboardingCoachLegacy({ onComplete }) {
   );
 }
 
-function OnboardingCoach({ onComplete }) {
+function OnboardingCoachLegacyFallback({ onComplete }) {
   const SCRIPT = [
-    { key: "primary_goal_text", text: "Before I build your plan, I need to understand what you're actually working toward. What's the most important thing you want to accomplish — and is there a date attached to it?", type: "text" },
-    { key: "other_goals", text: "What else matters to you? List anything — weight, strength goals, aesthetics, other races. I'll tell you honestly what we can prioritize.", type: "text" },
-    { key: "baseline_text", text: "Where are you starting from right now? Be honest — current weight if relevant, what you can comfortably run, what you're lifting. Rough estimates are fine.", type: "text" },
+    { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
+    { key: "experience_level", text: "How long have you been training consistently?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
     { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
-    { key: "injury_text", text: "Do you have any injuries or physical limitations I need to know about before I prescribe anything?", type: "text", placeholder: "None currently" },
+    { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
+    { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
   ];
   const [messages, setMessages] = useState([{ role: "coach", text: SCRIPT[0].text }]);
@@ -5692,7 +5726,8 @@ function OnboardingCoach({ onComplete }) {
       return;
     }
 
-    const nextAnswers = { ...answers, [current.key]: answerText };
+    const storedVal = current?.valueMap?.[answerText] ?? answerText;
+    const nextAnswers = { ...answers, [current.key]: storedVal };
     setAnswers(nextAnswers);
     if (current.key === "training_location" && ["Home", "Varies"].includes(answerText)) {
       setAnswers({ ...nextAnswers, __needs_equipment: true });
@@ -5718,8 +5753,6 @@ function OnboardingCoach({ onComplete }) {
     await onComplete({
       ...answers,
       training_days: answers.training_days || "3",
-      secondary_goals: answers.other_goals || "",
-      primary_goal_detail: answers.primary_goal_text || "",
       timeline_feedback: adjust.trim(),
       timeline_assessment: messages.filter((m) => m.role === "coach").slice(-1)[0]?.text || "",
     });
@@ -6141,6 +6174,11 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
       <div style={{ marginBottom:"0.85rem", display:"grid", gap:"0.2rem" }}>
         <div style={{ fontSize:"0.56rem", color:"#64748b", letterSpacing:"0.14em" }}>TODAY</div>
         <div style={{ fontFamily:"’Inter’,sans-serif", fontSize:"1.45rem", color:"#f8fafc", fontWeight:600, lineHeight:1.15 }}>{activeWorkout?.label || "Rest Day"}</div>
+        {todayWorkout?.explanation && (
+          <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.6, marginTop:"0.15rem" }}>
+            {todayWorkout.explanation}
+          </div>
+        )}
         <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.55 }}>{conciseFocus}</div>
       </div>
 
@@ -6313,6 +6351,11 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
                 ×
               </button>
             </div>
+            {primaryAdjustment.reason && (
+              <div style={{ fontSize:"0.5rem", color:"#7f92aa", lineHeight:1.5, paddingLeft:"0.15rem" }}>
+                Why: {primaryAdjustment.reason}
+              </div>
+            )}
             {secondaryAdjustments.length > 0 && (
               <button
                 className="btn"
@@ -6323,22 +6366,29 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
               </button>
             )}
             {showMoreAdjustments && secondaryAdjustments.map((card) => (
-              <div key={card.id} style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem", paddingLeft:"0.15rem" }}>
-                <button
-                  className="btn"
-                  onClick={() => openAdjustmentDetail(card)}
-                  style={{ border:"none", background:"none", padding:0, fontSize:"0.54rem", color:"#9fb2d2", textAlign:"left", justifyContent:"flex-start" }}
-                >
-                  {card.icon} {card.summary}
-                </button>
-                <button
-                  className="btn"
-                  onClick={() => dismissAdjustment(card.id)}
-                  style={{ border:"none", background:"none", padding:0, fontSize:"0.6rem", color:"#64748b" }}
-                  aria-label="Dismiss coach adjustment notification"
-                >
-                  ×
-                </button>
+              <div key={card.id} style={{ display:"grid", gap:"0.2rem", paddingLeft:"0.15rem" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem" }}>
+                  <button
+                    className="btn"
+                    onClick={() => openAdjustmentDetail(card)}
+                    style={{ border:"none", background:"none", padding:0, fontSize:"0.54rem", color:"#9fb2d2", textAlign:"left", justifyContent:"flex-start" }}
+                  >
+                    {card.icon} {card.summary}
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => dismissAdjustment(card.id)}
+                    style={{ border:"none", background:"none", padding:0, fontSize:"0.6rem", color:"#64748b" }}
+                    aria-label="Dismiss coach adjustment notification"
+                  >
+                    ×
+                  </button>
+                </div>
+                {card.reason && (
+                  <div style={{ fontSize:"0.48rem", color:"#7f92aa", lineHeight:1.5 }}>
+                    Why: {card.reason}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -6361,15 +6411,18 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
 
       {/* Proactive nudge */}
       {primaryTrigger && (
-        <div style={{ marginBottom:"0.75rem", display:"flex", gap:"0.35rem", alignItems:"center" }}>
-          <button
-            className="btn"
-            onClick={() => isTravelModeSuggestion ? toggleTravelModeForToday() : onApplyTrigger(primaryTrigger)}
-            style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}
-          >
-            {isTravelModeSuggestion ? (isTodayTravelOverride ? "Exit travel mode" : "Switch travel mode") : (primaryTrigger.actionLabel || "Apply nudge")}
-          </button>
-          <button className="btn" onClick={()=>onDismissTrigger(primaryTrigger.id)} style={{ fontSize:"0.52rem" }}>Dismiss</button>
+        <div style={{ marginBottom:"0.75rem", display:"grid", gap:"0.3rem" }}>
+          <div style={{ fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 }}>{primaryTrigger.msg}</div>
+          <div style={{ display:"flex", gap:"0.35rem", alignItems:"center" }}>
+            <button
+              className="btn"
+              onClick={() => isTravelModeSuggestion ? toggleTravelModeForToday() : onApplyTrigger(primaryTrigger)}
+              style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}
+            >
+              {isTravelModeSuggestion ? (isTodayTravelOverride ? "Exit travel mode" : "Switch travel mode") : (primaryTrigger.actionLabel || "Apply nudge")}
+            </button>
+            <button className="btn" onClick={()=>onDismissTrigger(primaryTrigger.id)} style={{ fontSize:"0.52rem" }}>Dismiss</button>
+          </div>
         </div>
       )}
 
