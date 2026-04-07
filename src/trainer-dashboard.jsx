@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildRollingHorizonWeeks, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal } from "./modules-planning.js";
+import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildRollingHorizonWeeks, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
 import { createAuthStorageModule } from "./modules-auth-storage.js";
 import { getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket } from "./modules-nutrition.js";
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, isWithinGracePeriod, resolveEffectiveStatus } from "./modules-checkins.js";
@@ -937,7 +937,7 @@ const getTodayWorkout = (weekNum, dayNum) => {
     4: { type: "hard-run", run: week.thu, label: `${week.thu?.t} Run` },
     5: { type: "easy-run", run: week.fri, label: "Easy Run" },
     6: { type: "long-run", run: week.sat, label: "Long Run" },
-    0: { type: "rest", label: "Full Rest + Mobility" },
+    0: { type: "rest", label: "Rest Day", isRecoverySlot: true },
   };
   return { ...dayMap[dayNum], week, zones };
 };
@@ -1064,7 +1064,7 @@ const PHASE_ARC_LABELS = {
 };
 const SESSION_NAMING = {
   EASY_RUN: "Easy Run",
-  RECOVERY_MOBILITY: "Recovery / Mobility",
+  RECOVERY_MOBILITY: "Active Recovery",
   LOW_IMPACT: "Low-Impact Cardio",
   HYBRID_PREFIX: "Easy Run + Strength",
   WALK_MOBILITY: "Walk + Mobility",
@@ -1587,7 +1587,7 @@ const applyEnvironmentToWorkout = (workout, env, context = {}) => {
 
   if (dayIdentity === "recovery") {
     next.type = "rest";
-    next.label = "Recovery / Mobility";
+    next.label = next.todayPlan?.label || "Active Recovery — Walk + Mobility";
     next.environmentNote = "Recovery stays recovery. Walk, mobility, rehab only.";
     next.optionalSecondary = null;
     next.fallback = "Easy walk + mobility only.";
@@ -2561,9 +2561,25 @@ export default function TrainerDashboard() {
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
   const planComposer = composeGoalNativePlan({ goals: goalsModel, personalization, momentum, learningLayer, currentWeek, baseWeek });
+  const todayPlan = generateTodayPlan(
+    personalization.userGoalProfile || {},
+    { logs, todayKey },
+    {
+      fatigueScore: personalization.trainingState?.fatigueScore ?? 2,
+      trend: personalization.trainingState?.trend || "stable",
+      momentum: momentum.momentumState,
+      injuryLevel: personalization.injuryPainState?.level || "none",
+    }
+  );
   const rollingHorizon = buildRollingHorizonWeeks({ currentWeek, horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS, goals: goalsModel, weekTemplates: WEEKS });
   const horizonAnchor = getHorizonAnchor(goalsModel, DEFAULT_PLANNING_HORIZON_WEEKS);
-  const goalNativeWorkout = planComposer?.dayTemplates?.[dayOfWeek] ? { ...baseTodayWorkout, ...planComposer.dayTemplates[dayOfWeek], week: baseWeek, zones: baseTodayWorkout?.zones } : baseTodayWorkout;
+  const hasStructuredProfile = Boolean(personalization.userGoalProfile?.primary_goal);
+  const goalNativeBase = planComposer?.dayTemplates?.[dayOfWeek] ? { ...baseTodayWorkout, ...planComposer.dayTemplates[dayOfWeek], week: baseWeek, zones: baseTodayWorkout?.zones } : baseTodayWorkout;
+  const goalNativeWorkout = hasStructuredProfile
+    ? todayPlan.type === "recovery"
+      ? { ...goalNativeBase, type: "rest", label: todayPlan.label, nutri: "rest", run: null, strSess: null, todayPlan }
+      : { ...goalNativeBase, label: todayPlan.label, planIntensity: todayPlan.intensity, planDuration: todayPlan.duration, todayPlan }
+    : goalNativeBase;
   const todayWorkoutBase = dayOverride ? { ...goalNativeWorkout, ...dayOverride, coachOverride: true, nutri: nutritionOverride || dayOverride.nutri || goalNativeWorkout?.week?.nutri } : { ...goalNativeWorkout, nutri: nutritionOverride || goalNativeWorkout?.week?.nutri };
   const weekState = failureMode?.mode === "chaotic" ? "chaotic" : momentum?.fatigueNotes >= 2 ? "fatigued" : "normal";
   const todayWorkoutEnvironment = applyEnvironmentToWorkout(todayWorkoutBase, environmentSelection, { weekState, injuryFlag: personalization?.injuryPainState?.level || "none" });
