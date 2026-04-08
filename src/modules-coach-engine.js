@@ -24,6 +24,13 @@ export const COACH_TOOL_ACTIONS = {
 const PAIN_LEVELS = ["none", "mild_tightness", "moderate_pain", "sharp_pain_stop"];
 export const AFFECTED_AREAS = ["Achilles", "calf", "knee", "shin", "hip", "general fatigue"];
 
+const sanitizeText = (value = "", maxLength = 120) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+const clampNumber = (value, min, max, fallback = min) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, numeric));
+};
+
 const inferPainLevel = (msg) => {
   const x = msg.toLowerCase();
   if (/sharp|stabbing|stop/.test(x)) return "sharp_pain_stop";
@@ -62,7 +69,7 @@ export const withConfidenceTone = (message, confidence = "moderate", voiceMode =
   return `${tonePrefix} ${message} ${confidenceTag}`;
 };
 
-const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, notices, recommendations, effects, coachMemoryContext }) => {
+const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, nutritionComparison, notices, recommendations, effects, coachMemoryContext }) => {
   const chaotic = ["drifting", "falling off"].includes(momentum?.momentumState) || momentum?.inconsistencyRisk === "high";
   const lockedIn = momentum?.momentumState === "building momentum" && momentum?.inconsistencyRisk !== "high";
   const recoveryRisk = notices.some(n => /pain|recovery|fatigue|hardening/i.test(n));
@@ -85,6 +92,9 @@ const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, notices, reco
   const nutritionLine = nutritionLayer?.targets
     ? `${Math.round(nutritionLayer.targets.p || 0)}g protein · ${Math.round(nutritionLayer.targets.cal || 0)} kcal · ${Math.round(nutritionLayer.targets.c || 0)}g carbs`
     : "Protein-first meals and normal intake today.";
+  const nutritionActualLine = nutritionComparison?.hasActual
+    ? `Actual nutrition: ${String(nutritionComparison.deviationKind || "unknown").replace(/_/g, " ")} · adherence ${nutritionComparison.adherence || "unknown"} · impact ${nutritionComparison.matters || "unknown"}`
+    : "Actual nutrition: not logged yet.";
   const coachNote = coachMemoryContext?.recurringBreakdowns?.[0]
     ? `Last breakdown came from ${coachMemoryContext.recurringBreakdowns[0].why}; today we remove that friction before it starts.`
     : coachMemoryContext?.injuryHistory?.[0]
@@ -93,10 +103,10 @@ const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, notices, reco
     ? "You’re trending in the right direction—use today to build on that streak."
     : "Stay direct: complete today, log it, and move on.";
 
-  return `TODAY'S FOCUS:\n${focusLine}\n\nWORKOUT:\n${workoutLine}\n\nWHY THIS TODAY:\n- ${whyLines.join("\n- ")}\n\nNUTRITION:\n${nutritionLine}\n\nCOACH NOTE:\n${coachNote}`;
+  return `TODAY'S FOCUS:\n${focusLine}\n\nWORKOUT:\n${workoutLine}\n\nWHY THIS TODAY:\n- ${whyLines.join("\n- ")}\n\nNUTRITION:\n${nutritionLine}\n${nutritionActualLine}\n\nCOACH NOTE:\n${coachNote}`;
 };
 
-export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights = [], coachMemoryContext = null, realWorldNutrition, recalibration }) => {
+export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual = null, nutritionComparison = null, arbitration, expectations, memoryInsights = [], coachMemoryContext = null, realWorldNutrition, recalibration }) => {
   const s = detectCoachSignals(input);
   const voiceMode = inferCoachVoiceMode(momentum);
   const painLevel = inferPainLevel(input);
@@ -153,6 +163,23 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
     notices.push("Nutrition friction detected; simplification mode already favored.");
     addRecommendation("anchor meals to defaults for 3-7 days and reduce decision load.", "high");
     actions.push({ type: COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY, payload: { dayType: todayWorkout?.type === "rest" ? "rest" : "easyRun" } });
+  }
+
+  if (nutritionComparison?.hasActual && nutritionComparison?.deviationKind === "under_fueled") {
+    notices.push("Actual nutrition suggests you under-fueled relative to plan.");
+    addRecommendation("protect recovery by adding a low-friction protein + carb anchor today.", nutritionComparison?.matters === "high" ? "high" : "moderate");
+    effects.push("Fueling gap is called out explicitly so tomorrow's training quality is easier to protect.");
+  }
+  if (nutritionComparison?.hasActual && nutritionComparison?.deviationKind === "over_indulged") {
+    notices.push("Actual nutrition overshot the intended plan.");
+    addRecommendation("reset with the next planned meal instead of compensating aggressively.", "moderate");
+  }
+  if (nutritionComparison?.hasActual && nutritionComparison?.deviationKind === "deviated") {
+    notices.push("Actual nutrition drifted from the prescribed structure.");
+  }
+  if (nutritionActual?.hydration?.pct != null && nutritionActual.hydration.pct < 60) {
+    notices.push("Hydration is still below target.");
+    addRecommendation("close the hydration gap before evening so recovery is less compromised.", "moderate");
   }
 
   if (optimizationLayer?.adaptiveRecommendations?.reduceDensity) {
@@ -277,6 +304,7 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
       todayWorkout,
       momentum,
       nutritionLayer,
+      nutritionComparison,
       notices: notices.slice(0, 5),
       recommendations: recommendations.slice(0, 5),
       effects: effects.slice(0, 5),
@@ -293,6 +321,99 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
       nutritionMode: nutritionLayer?.simplified ? "simplified" : "full",
       memoryApplied: !!coachMemoryContext,
     }
+  };
+};
+
+const sanitizeCoachActionPayload = (type, payload = {}) => {
+  if (type === COACH_TOOL_ACTIONS.SET_PAIN_STATE) {
+    return {
+      level: PAIN_LEVELS.includes(payload?.level) ? payload.level : "mild_tightness",
+      area: AFFECTED_AREAS.includes(payload?.area) ? payload.area : "Achilles",
+    };
+  }
+  if (type === COACH_TOOL_ACTIONS.CLEAR_PAIN_STATE) return {};
+  if (type === COACH_TOOL_ACTIONS.SWAP_TODAY_RECOVERY) {
+    return { reason: sanitizeText(payload?.reason || "protect_day", 80) || "protect_day" };
+  }
+  if (type === COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME || type === COACH_TOOL_ACTIONS.REDUCE_LONG_RUN_AGGRESSIVENESS) {
+    return { pct: clampNumber(payload?.pct, 5, 40, 10), reason: sanitizeText(payload?.reason || "", 80) };
+  }
+  if (type === COACH_TOOL_ACTIONS.CONVERT_RUN_TO_LOW_IMPACT || type === COACH_TOOL_ACTIONS.REPLACE_SPEED_EASY) {
+    return { week: clampNumber(payload?.week, 1, 52, 1), reason: sanitizeText(payload?.reason || "", 80) };
+  }
+  if (type === COACH_TOOL_ACTIONS.ADD_ACHILLES_BLOCK) {
+    return { block: sanitizeText(payload?.block || "extra_achilles_8min", 60) || "extra_achilles_8min" };
+  }
+  if (type === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) {
+    const dayType = sanitizeText(payload?.dayType || "", 40);
+    return dayType ? { dayType, reason: sanitizeText(payload?.reason || "", 80) } : null;
+  }
+  if (type === COACH_TOOL_ACTIONS.INCREASE_PRELONGRUN_CARBS) {
+    return { grams: clampNumber(payload?.grams, 10, 120, 30), reason: sanitizeText(payload?.reason || "", 80) };
+  }
+  if (type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS || type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE) {
+    return { enabled: payload?.enabled !== false, reason: sanitizeText(payload?.reason || "", 80) };
+  }
+  if (type === COACH_TOOL_ACTIONS.MOVE_LONG_RUN) {
+    return {
+      days: clampNumber(payload?.days, 1, 3, 1),
+      toDay: sanitizeText(payload?.toDay || "", 20),
+      week: clampNumber(payload?.week, 1, 52, 1),
+      reason: sanitizeText(payload?.reason || "", 80),
+    };
+  }
+  if (type === COACH_TOOL_ACTIONS.INSERT_DELOAD_WEEK) {
+    return { week: clampNumber(payload?.week, 1, 52, 1), reason: sanitizeText(payload?.reason || "", 80) };
+  }
+  if (type === COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS) {
+    return { weeks: clampNumber(payload?.weeks, 1, 4, 1), reason: sanitizeText(payload?.reason || "", 80) };
+  }
+  if (type === COACH_TOOL_ACTIONS.INCREASE_CALORIES_SLIGHTLY || type === COACH_TOOL_ACTIONS.REDUCE_DEFICIT_AGGRESSIVENESS) {
+    return { kcal: clampNumber(payload?.kcal, 50, 300, 120), reason: sanitizeText(payload?.reason || "", 80) };
+  }
+  if (type === COACH_TOOL_ACTIONS.SHIFT_CARBS_AROUND_WORKOUT) {
+    return {
+      pre: clampNumber(payload?.pre, 0, 120, 30),
+      post: clampNumber(payload?.post, 0, 120, 40),
+      reason: sanitizeText(payload?.reason || "", 80),
+    };
+  }
+  if (type === COACH_TOOL_ACTIONS.SIMPLIFY_MEALS_THIS_WEEK || type === COACH_TOOL_ACTIONS.USE_DEFAULT_MEAL_STRUCTURE_3_DAYS) {
+    return { days: clampNumber(payload?.days, 1, 7, 3), reason: sanitizeText(payload?.reason || "", 80) };
+  }
+  return cloneUnsupportedPayload(payload);
+};
+
+const cloneUnsupportedPayload = (payload = {}) => {
+  try {
+    return JSON.parse(JSON.stringify(payload || {}));
+  } catch {
+    return {};
+  }
+};
+
+export const acceptCoachActionProposal = ({ action = null, allowedActions = Object.values(COACH_TOOL_ACTIONS), proposalSource = "coach_surface" } = {}) => {
+  if (!action || typeof action !== "object") {
+    return { accepted: null, rejected: ["action_missing"] };
+  }
+  const type = sanitizeText(action?.type || "", 80);
+  if (!type || !allowedActions.includes(type)) {
+    return { accepted: null, rejected: [`action_type_not_allowed:${type || "unknown"}`] };
+  }
+  const payload = sanitizeCoachActionPayload(type, action?.payload || {});
+  if (payload == null) {
+    return { accepted: null, rejected: [`action_payload_invalid:${type}`] };
+  }
+  return {
+    accepted: {
+      type,
+      payload,
+      rationale: sanitizeText(action?.rationale || action?.reason || action?.payload?.reason || "", 160),
+      proposalSource: sanitizeText(action?.proposalSource || proposalSource, 40) || proposalSource,
+      acceptedBy: "deterministic_gate",
+      acceptancePolicy: "acceptance_only",
+    },
+    rejected: [],
   };
 };
 

@@ -53,6 +53,657 @@ export const getActiveTimeBoundGoal = (goals = []) => {
     .sort((a, b) => a.days - b.days)[0] || null;
 };
 
+const CATEGORY_TO_PRIMARY_GOAL = {
+  body_comp: "fat_loss",
+  strength: "muscle_gain",
+  running: "endurance",
+  injury_prevention: "general_fitness",
+  general_fitness: "general_fitness",
+};
+
+const dedupeStrings = (values = []) => (
+  Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)))
+);
+
+export const deriveCanonicalGoalProfileState = ({ goals = [], personalization = {} } = {}) => {
+  const normalizedGoals = normalizeGoals(goals);
+  const goalBuckets = getGoalBuckets(normalizedGoals);
+  const activeTimeBoundGoal = getActiveTimeBoundGoal(goalBuckets.active);
+  const primaryGoal = goalBuckets.active[0] || null;
+  const storedUserProfile = personalization?.userGoalProfile || {};
+  const storedGoalState = personalization?.goalState || {};
+  const priorityOrder = goalBuckets.active.map((goal) => goal?.name).filter(Boolean);
+  const primaryGoalKey = storedUserProfile?.primary_goal
+    || CATEGORY_TO_PRIMARY_GOAL[primaryGoal?.category]
+    || "general_fitness";
+
+  return {
+    goals: normalizedGoals,
+    goalBuckets,
+    activeTimeBoundGoal,
+    primaryGoal,
+    userProfile: {
+      primary_goal: primaryGoalKey,
+      experience_level: storedUserProfile?.experience_level || "beginner",
+      days_per_week: Math.max(2, Number(storedUserProfile?.days_per_week || 3) || 3),
+      session_length: storedUserProfile?.session_length || "30",
+      equipment_access: dedupeStrings(storedUserProfile?.equipment_access || []),
+      constraints: dedupeStrings(storedUserProfile?.constraints || []),
+    },
+    goalState: {
+      ...storedGoalState,
+      primaryGoal: primaryGoal?.name || storedGoalState?.primaryGoal || "",
+      priority: primaryGoal?.category || storedGoalState?.priority || "undecided",
+      priorityOrder: priorityOrder.length ? priorityOrder.join(" > ") : (storedGoalState?.priorityOrder || ""),
+      deadline: activeTimeBoundGoal?.targetDate || storedGoalState?.deadline || "",
+      planStartDate: storedGoalState?.planStartDate || "",
+    },
+  };
+};
+
+const clonePlainValue = (value) => {
+  if (value == null) return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+};
+
+const normalizeTrainingSignature = (day = {}) => JSON.stringify({
+  type: day?.type || "",
+  label: day?.label || "",
+  runType: day?.run?.t || "",
+  runDuration: day?.run?.d || "",
+  strSess: day?.strSess || "",
+  strengthTrack: day?.strengthTrack || "",
+  strengthDuration: day?.strengthDuration || "",
+  nutri: day?.nutri || "",
+  minDay: Boolean(day?.minDay),
+  readinessState: day?.readinessState || "",
+});
+
+const buildPlanDaySummary = (drivers = [], modifiedFromBase = false) => {
+  const uniqueDrivers = dedupeStrings(drivers).slice(0, 3);
+  if (!uniqueDrivers.length) {
+    return modifiedFromBase
+      ? "Today's recommendation reflects deterministic plan adjustments."
+      : "Today's recommendation matches the planned day.";
+  }
+  if (!modifiedFromBase) {
+    return `Today's recommendation reflects ${uniqueDrivers.join(", ")}.`;
+  }
+  return `Today's recommendation was adjusted from the base plan by ${uniqueDrivers.join(", ")}.`;
+};
+
+const clampNumber = (value, min, max) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : min));
+
+const buildSessionsByDayFromTemplate = (template = {}) => {
+  const restDay = { type: "rest", label: "Active Recovery", nutri: "rest", isRecoverySlot: true };
+  return {
+    1: template?.mon ? { type: "easy-run", label: `${template.mon.t || "Easy"} Run`, run: clonePlainValue(template.mon), nutri: template?.nutri || "easyRun" } : null,
+    2: null,
+    3: template?.str ? { type: "strength+prehab", label: `Strength ${template.str}`, strSess: template.str, nutri: "strength" } : null,
+    4: template?.thu ? { type: "hard-run", label: `${template.thu.t || "Quality"} Run`, run: clonePlainValue(template.thu), nutri: template?.nutri || "hardRun" } : null,
+    5: template?.fri ? { type: "easy-run", label: `${template.fri.t || "Easy"} Run`, run: clonePlainValue(template.fri), nutri: "easyRun" } : null,
+    6: template?.sat ? { type: "long-run", label: `${template.sat.t || "Long"} Run`, run: clonePlainValue(template.sat), nutri: "longRun" } : null,
+    0: restDay,
+  };
+};
+
+const normalizeRunSignature = (run = null) => JSON.stringify({
+  t: run?.t || "",
+  d: run?.d || "",
+});
+
+const invertStrengthSession = (value = "") => value === "A" ? "B" : value === "B" ? "A" : value;
+
+const resolveProjectedRunTemplateSlot = ({ dayKey = null, session = null, referenceTemplate = {} } = {}) => {
+  const sessionSignature = normalizeRunSignature(session?.run || null);
+  const templateSlots = [
+    ["mon", referenceTemplate?.mon || null],
+    ["thu", referenceTemplate?.thu || null],
+    ["fri", referenceTemplate?.fri || null],
+    ["sat", referenceTemplate?.sat || null],
+  ];
+  const matchedSlot = templateSlots.find(([, templateRun]) => normalizeRunSignature(templateRun || null) === sessionSignature);
+  if (matchedSlot?.[0]) return matchedSlot[0];
+  return null;
+};
+
+const projectSessionsByDayFromCanonicalPattern = ({
+  template = {},
+  referenceTemplate = {},
+  sessionsByDay = null,
+} = {}) => {
+  if (!sessionsByDay || !Object.keys(sessionsByDay || {}).length) {
+    return buildSessionsByDayFromTemplate(template);
+  }
+
+  const projected = Object.fromEntries(
+    Object.entries(sessionsByDay || {}).map(([dayKeyRaw, session]) => {
+      if (!session) return [dayKeyRaw, null];
+      const dayKey = Number(dayKeyRaw);
+      const nextSession = clonePlainValue(session);
+      const runSlot = nextSession?.run
+        ? resolveProjectedRunTemplateSlot({ dayKey, session: nextSession, referenceTemplate })
+        : null;
+      const projectedRun = runSlot ? clonePlainValue(template?.[runSlot] || null) : null;
+
+      if (projectedRun) {
+        nextSession.run = projectedRun;
+        const currentLabel = String(nextSession?.label || "");
+        const shouldRewriteRunLabel = ["hard-run", "easy-run", "long-run"].includes(String(nextSession?.type || ""))
+          && /run$/i.test(currentLabel);
+        if (shouldRewriteRunLabel) {
+          nextSession.label = `${projectedRun.t || (nextSession.type === "long-run" ? "Long" : nextSession.type === "hard-run" ? "Quality" : "Easy")} Run`;
+        }
+      }
+
+      const referenceStrength = String(referenceTemplate?.str || "");
+      const templateStrength = String(template?.str || "");
+      if (nextSession?.strSess && referenceStrength && templateStrength) {
+        const alternateReference = invertStrengthSession(referenceStrength);
+        if (String(nextSession.strSess) === referenceStrength) nextSession.strSess = templateStrength;
+        else if (alternateReference && String(nextSession.strSess) === alternateReference) nextSession.strSess = invertStrengthSession(templateStrength) || nextSession.strSess;
+      }
+
+      return [dayKeyRaw, nextSession];
+    })
+  );
+
+  return projected;
+};
+
+const resolveWeeklyNutritionEmphasis = ({
+  primaryCategory = "running",
+  architecture = "hybrid_performance",
+  recoveryBias = "moderate",
+  performanceBias = "moderate",
+} = {}) => {
+  if (recoveryBias === "high") return "recovery support and consistent fueling";
+  if (primaryCategory === "body_comp" || architecture === "body_comp_conditioning") return "satiety, recovery, and deficit adherence";
+  if (primaryCategory === "strength" || architecture === "strength_dominant") return "protein coverage and session recovery";
+  if (performanceBias === "high" || architecture === "race_prep_dominant") return "fuel key sessions and replenish quality work";
+  if (architecture === "maintenance_rebuild") return "consistency and low-friction meals";
+  return "balanced support for training and recovery";
+};
+
+export const deriveWeeklyIntent = ({
+  weekNumber = 1,
+  weekTemplate = {},
+  goals = [],
+  architecture = "hybrid_performance",
+  blockIntent = null,
+  momentum = {},
+  learningLayer = {},
+  weeklyCheckin = {},
+  coachPlanAdjustments = {},
+  failureMode = {},
+  environmentSelection = null,
+  constraints = [],
+} = {}) => {
+  const { active } = getGoalBuckets(goals);
+  const primaryGoal = active[0] || null;
+  const volumePctRaw = Number(coachPlanAdjustments?.weekVolumePct?.[String(weekNumber)] || 100);
+  const volumePct = clampNumber(volumePctRaw, 70, 120);
+  const lowEnergy = Number(weeklyCheckin?.energy || 3) <= 2;
+  const highStress = Number(weeklyCheckin?.stress || 3) >= 4;
+  const lowConfidence = Number(weeklyCheckin?.confidence || 3) <= 2;
+  const simplifyBias = learningLayer?.adjustmentBias === "simplify";
+  const cutback = Boolean(weekTemplate?.cutback);
+  const chaotic = failureMode?.mode === "chaotic";
+  const reEntry = Boolean(failureMode?.isReEntry);
+  const adjusted = Boolean(
+    chaotic
+    || reEntry
+    || cutback
+    || lowEnergy
+    || highStress
+    || lowConfidence
+    || simplifyBias
+    || volumePct !== 100
+    || environmentSelection?.scope === "week"
+  );
+
+  let aggressionLevel = "steady";
+  if (chaotic || reEntry) aggressionLevel = "rebuild";
+  else if (cutback || lowEnergy || highStress || lowConfidence || simplifyBias || volumePct < 100) aggressionLevel = "controlled";
+  else if (volumePct > 100 || ["race_prep_dominant", "strength_dominant"].includes(architecture)) aggressionLevel = "progressive";
+
+  let recoveryBias = "moderate";
+  if (chaotic || reEntry || cutback || lowEnergy || highStress) recoveryBias = "high";
+  else if (aggressionLevel === "progressive") recoveryBias = "low";
+
+  let volumeBias = "baseline";
+  if (cutback || volumePct < 100) volumeBias = "reduced";
+  else if (volumePct > 100) volumeBias = "expanded";
+
+  let performanceBias = "moderate";
+  if (recoveryBias === "high") performanceBias = "low";
+  else if (["race_prep_dominant", "strength_dominant"].includes(architecture) && aggressionLevel === "progressive") performanceBias = "high";
+
+  const focus = weekTemplate?.label
+    || blockIntent?.prioritized
+    || primaryGoal?.name
+    || "Consistency and execution";
+  const primaryCategory = primaryGoal?.category || "running";
+  const weeklyConstraints = dedupeStrings([
+    ...(constraints || []),
+    weekTemplate?.cutback ? "Cutback week" : "",
+    chaotic ? "Salvage mode is active this week" : "",
+    reEntry ? "Re-entry week: protect momentum first" : "",
+    weeklyCheckin?.blocker ? `Weekly blocker: ${String(weeklyCheckin.blocker).replace(/_/g, " ")}` : "",
+    environmentSelection?.scope === "week" ? `${String(environmentSelection?.mode || "custom").replace(/_/g, " ")} environment this week` : "",
+    volumePct !== 100 ? `Volume set to ${volumePct}%` : "",
+  ]);
+  const nutritionEmphasis = resolveWeeklyNutritionEmphasis({
+    primaryCategory,
+    architecture,
+    recoveryBias,
+    performanceBias,
+  });
+  const status = adjusted ? "adjusted" : "planned";
+  const successDefinition = recoveryBias === "high"
+    ? "Protect recovery, land the minimum effective work, and keep logging."
+    : performanceBias === "high"
+    ? "Hit the key quality sessions without sacrificing recovery."
+    : "String together repeatable sessions and keep the week stable.";
+  const rationale = adjusted
+    ? `This week is adjusted around ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture.`
+    : `This week is organized around ${focus.toLowerCase()} with a steady planning posture.`;
+
+  return {
+    id: `weekly_intent_${weekNumber}`,
+    weekNumber,
+    focus,
+    aggressionLevel,
+    recoveryBias,
+    volumeBias,
+    performanceBias,
+    nutritionEmphasis,
+    weeklyConstraints,
+    status,
+    adjusted,
+    volumePct,
+    successDefinition,
+    drivers: dedupeStrings([
+      focus,
+      blockIntent?.prioritized || "",
+      primaryGoal?.name || "",
+      volumePct !== 100 ? `volume ${volumePct}%` : "",
+      weeklyCheckin?.blocker ? String(weeklyCheckin.blocker).replace(/_/g, " ") : "",
+    ]),
+    rationale,
+  };
+};
+
+export const buildPlanWeek = ({
+  weekNumber = 1,
+  template = {},
+  referenceTemplate = null,
+  label = "",
+  specificity = "high",
+  kind = "plan",
+  startDate = null,
+  endDate = null,
+  goals = [],
+  architecture = "hybrid_performance",
+  blockIntent = null,
+  split = null,
+  sessionsByDay = null,
+  momentum = {},
+  learningLayer = {},
+  weeklyCheckin = {},
+  coachPlanAdjustments = {},
+  failureMode = {},
+  environmentSelection = null,
+  constraints = [],
+} = {}) => {
+  const hasCanonicalSessionPattern = Boolean(sessionsByDay && Object.keys(sessionsByDay || {}).length);
+  const normalizedSessions = clonePlainValue(
+    projectSessionsByDayFromCanonicalPattern({
+      template,
+      referenceTemplate: referenceTemplate || template,
+      sessionsByDay: hasCanonicalSessionPattern ? sessionsByDay : null,
+    })
+  );
+  const weeklyIntent = deriveWeeklyIntent({
+    weekNumber,
+    weekTemplate: template,
+    goals,
+    architecture,
+    blockIntent,
+    momentum,
+    learningLayer,
+    weeklyCheckin,
+    coachPlanAdjustments,
+    failureMode,
+    environmentSelection,
+    constraints,
+  });
+  const sessionSource = hasCanonicalSessionPattern
+    ? normalizeRunSignature(referenceTemplate?.mon || null) === normalizeRunSignature(template?.mon || null)
+      && normalizeRunSignature(referenceTemplate?.thu || null) === normalizeRunSignature(template?.thu || null)
+      && normalizeRunSignature(referenceTemplate?.fri || null) === normalizeRunSignature(template?.fri || null)
+      && normalizeRunSignature(referenceTemplate?.sat || null) === normalizeRunSignature(template?.sat || null)
+      && String(referenceTemplate?.str || "") === String(template?.str || "")
+      ? "canonical_week_pattern"
+      : "projected_canonical_week_pattern"
+    : "template_fallback";
+
+  return {
+    id: `plan_week_${weekNumber}`,
+    weekNumber,
+    absoluteWeek: weekNumber,
+    phase: template?.phase || "",
+    label: label || `${template?.phase || "BASE"} · Week ${weekNumber}`,
+    kind,
+    specificity,
+    startDate: startDate || null,
+    endDate: endDate || null,
+    status: weeklyIntent.status,
+    adjusted: Boolean(weeklyIntent.adjusted),
+    architecture,
+    blockIntent: clonePlainValue(blockIntent || null),
+    split: clonePlainValue(split || null),
+    weeklyIntent,
+    focus: weeklyIntent.focus,
+    aggressionLevel: weeklyIntent.aggressionLevel,
+    recoveryBias: weeklyIntent.recoveryBias,
+    volumeBias: weeklyIntent.volumeBias,
+    performanceBias: weeklyIntent.performanceBias,
+    nutritionEmphasis: weeklyIntent.nutritionEmphasis,
+    successDefinition: weeklyIntent.successDefinition,
+    drivers: clonePlainValue(weeklyIntent.drivers || []),
+    rationale: weeklyIntent.rationale,
+    sessionsByDay: normalizedSessions,
+    template: clonePlainValue(template || {}),
+    summary: weeklyIntent.rationale,
+    constraints: clonePlainValue(weeklyIntent.weeklyConstraints || []),
+    source: {
+      sessionModel: sessionSource,
+      specificity,
+      hasCanonicalSessions: hasCanonicalSessionPattern,
+      usesTemplateFallback: sessionSource === "template_fallback",
+    },
+  };
+};
+
+/**
+ * Canonical PlanDay contract shared by Today, Program, Coach, Nutrition, and Logging.
+ *
+ * Shape:
+ * {
+ *   id,
+ *   dateKey,
+ *   dayOfWeek,
+ *   week,
+ *   base: {
+ *     training,
+ *     nutrition,
+ *     recovery,
+ *     supplements,
+ *     logging,
+ *   },
+ *   resolved: {
+ *     training,
+ *     nutrition: { prescription, reality },
+ *     recovery,
+ *     supplements,
+ *     logging,
+ *   },
+ *   decision: {
+ *     mode,
+ *     modeLabel,
+ *     confidence,
+ *     source,
+ *     inputDriven,
+ *     modifiedFromBase,
+ *   },
+ *   provenance: {
+ *     keyDrivers,
+ *     adjustments,
+ *     summary,
+ *   },
+ *   flags,
+ * }
+ */
+export const buildCanonicalPlanDay = ({
+  dateKey = "",
+  dayOfWeek = 0,
+  currentWeek = 1,
+  baseWeek = {},
+  basePlannedDay = null,
+  resolvedDay = null,
+  todayPlan = null,
+  readiness = null,
+  nutrition = {},
+  adjustments = {},
+  context = {},
+  logging = {},
+} = {}) => {
+  const baseTraining = clonePlainValue(basePlannedDay || {});
+  const resolvedTraining = clonePlainValue(resolvedDay || basePlannedDay || {});
+  const planWeek = clonePlainValue(context?.planWeek || null);
+  const weeklyIntent = clonePlainValue(context?.weeklyIntent || planWeek?.weeklyIntent || null);
+  const readinessState = clonePlainValue(readiness || {});
+  const nutritionPrescription = clonePlainValue(nutrition?.prescription || null);
+  const nutritionReality = clonePlainValue(nutrition?.reality || null);
+  const nutritionActual = clonePlainValue(nutrition?.actual || null);
+  const nutritionComparison = clonePlainValue(nutrition?.comparison || null);
+  const dailyCheckin = clonePlainValue(logging?.dailyCheckin || null);
+  const sessionLog = clonePlainValue(logging?.sessionLog || null);
+  const nutritionLog = clonePlainValue(logging?.nutritionLog || null);
+  const supplementLog = clonePlainValue(logging?.supplementLog || null);
+  const dayOverride = adjustments?.dayOverride || null;
+  const nutritionOverride = adjustments?.nutritionOverride || null;
+  const injuryRule = adjustments?.injuryRule || null;
+  const failureMode = adjustments?.failureMode || null;
+  const garminReadiness = adjustments?.garminReadiness || null;
+  const deviceSyncAudit = adjustments?.deviceSyncAudit || null;
+  const environmentSelection = adjustments?.environmentSelection || null;
+  const supplementsPlan = clonePlainValue(
+    nutritionPrescription?.supplements
+    || context?.supplementPlan
+    || []
+  );
+  const supplementsActual = clonePlainValue(
+    supplementLog
+    || nutritionLog?.supplementTaken
+    || []
+  );
+
+  const baseSignature = normalizeTrainingSignature(baseTraining);
+  const resolvedSignature = normalizeTrainingSignature(resolvedTraining);
+  const comparisonModified = baseSignature !== resolvedSignature;
+
+  const adjustmentRecords = [
+    dayOverride ? {
+      type: "day_override",
+      actor: "coach",
+      reason: String(dayOverride?.reason || "day override").replace(/_/g, " "),
+      source: "coachPlanAdjustments.dayOverrides",
+    } : null,
+    nutritionOverride ? {
+      type: "nutrition_override",
+      actor: "coach",
+      reason: String(nutritionOverride).replace(/_/g, " "),
+      source: "coachPlanAdjustments.nutritionOverrides",
+    } : null,
+    injuryRule?.mods?.length ? {
+      type: "injury_rule",
+      actor: "deterministic_engine",
+      reason: injuryRule.mods.join("; "),
+      source: "injuryRule",
+    } : null,
+    failureMode?.mode && failureMode.mode !== "normal" ? {
+      type: "failure_mode",
+      actor: "deterministic_engine",
+      reason: String(failureMode.mode).replace(/_/g, " "),
+      source: "failureMode",
+    } : null,
+    garminReadiness?.mode ? {
+      type: "device_readiness",
+      actor: "deterministic_engine",
+      reason: `garmin readiness ${String(garminReadiness.mode).replace(/_/g, " ")}`,
+      source: "garminReadiness",
+    } : null,
+    deviceSyncAudit?.planMode && deviceSyncAudit.planMode !== "normal" ? {
+      type: "device_sync",
+      actor: "deterministic_engine",
+      reason: String(deviceSyncAudit.reason || `device plan mode ${deviceSyncAudit.planMode}`).trim(),
+      source: "deviceSyncAudit",
+    } : null,
+    environmentSelection?.scope === "today" ? {
+      type: "environment_override",
+      actor: "user",
+      reason: `${String(environmentSelection?.mode || "custom")} mode for today`,
+      source: "environmentSelection",
+    } : null,
+    readinessState?.state && readinessState.state !== "steady" ? {
+      type: "readiness_adjustment",
+      actor: "deterministic_engine",
+      reason: readinessState?.userVisibleLine || readinessState?.stateLabel || readinessState?.state,
+      source: "readiness",
+    } : null,
+  ].filter(Boolean);
+
+  const keyDrivers = dedupeStrings([
+    todayPlan?.reason,
+    weeklyIntent?.focus ? `week focus ${weeklyIntent.focus}` : "",
+    weeklyIntent?.aggressionLevel ? `week posture ${String(weeklyIntent.aggressionLevel).replace(/_/g, " ")}` : "",
+    ...(Array.isArray(readinessState?.factors) ? readinessState.factors : []),
+    dayOverride?.reason ? String(dayOverride.reason).replace(/_/g, " ") : "",
+    nutritionOverride ? `nutrition ${String(nutritionOverride).replace(/_/g, " ")}` : "",
+    injuryRule?.mods?.[0] || "",
+    failureMode?.mode && failureMode.mode !== "normal" ? `failure mode ${String(failureMode.mode).replace(/_/g, " ")}` : "",
+    garminReadiness?.mode ? `garmin readiness ${String(garminReadiness.mode).replace(/_/g, " ")}` : "",
+    deviceSyncAudit?.planMode && deviceSyncAudit.planMode !== "normal" ? String(deviceSyncAudit.reason || `device plan mode ${deviceSyncAudit.planMode}`) : "",
+    environmentSelection?.mode ? `${String(environmentSelection.mode).toLowerCase()} environment` : "",
+  ]).slice(0, 6);
+
+  const modifiedFromBase = comparisonModified || adjustmentRecords.length > 0;
+  const decisionMode = readinessState?.state
+    || resolvedTraining?.readinessState
+    || (modifiedFromBase ? "adjusted" : "planned");
+  const decisionModeLabel = readinessState?.stateLabel
+    || resolvedTraining?.readinessStateLabel
+    || (modifiedFromBase ? "Adjusted" : "Planned");
+
+  return {
+    id: dateKey ? `plan_day_${dateKey}` : `plan_day_week_${currentWeek}_day_${dayOfWeek}`,
+    dateKey,
+    dayOfWeek,
+    week: {
+      currentWeek,
+      phase: resolvedTraining?.week?.phase || baseWeek?.phase || "",
+      label: resolvedTraining?.week?.label || baseWeek?.label || "",
+      architecture: context?.architecture || "",
+      blockIntent: clonePlainValue(context?.blockIntent || null),
+      planWeekId: planWeek?.id || "",
+      status: planWeek?.status || weeklyIntent?.status || "planned",
+      adjusted: Boolean(planWeek?.adjusted || weeklyIntent?.adjusted),
+      summary: planWeek?.summary || weeklyIntent?.rationale || "",
+      constraints: clonePlainValue(planWeek?.constraints || weeklyIntent?.weeklyConstraints || []),
+      successDefinition: weeklyIntent?.successDefinition || "",
+      weeklyIntent,
+      planWeek,
+      todayPlan: clonePlainValue(todayPlan || null),
+    },
+    base: {
+      training: baseTraining,
+      nutrition: {
+        dayType: baseTraining?.nutri || nutritionPrescription?.dayType || null,
+        prescription: null,
+        actual: null,
+        comparison: null,
+      },
+      recovery: {
+        mode: baseTraining?.type === "rest" ? "recovery" : "planned",
+        recommendation: baseTraining?.recoveryRecommendation || "",
+        success: baseTraining?.success || "",
+      },
+      supplements: {
+        plan: supplementsPlan,
+      },
+      logging: {
+        dateKey,
+        expectedStatus: "planned",
+      },
+    },
+    resolved: {
+      training: resolvedTraining,
+      nutrition: {
+        dayType: nutritionPrescription?.dayType || resolvedTraining?.nutri || baseTraining?.nutri || null,
+        prescription: nutritionPrescription,
+        reality: nutritionReality,
+        actual: nutritionActual,
+        comparison: nutritionComparison,
+      },
+      recovery: {
+        state: readinessState?.state || resolvedTraining?.readinessState || "steady",
+        stateLabel: readinessState?.stateLabel || resolvedTraining?.readinessStateLabel || "Steady",
+        source: readinessState?.source || "deterministic_engine",
+        inputDriven: Boolean(readinessState?.inputDriven),
+        coachLine: readinessState?.coachLine || "",
+        recoveryLine: readinessState?.recoveryLine || resolvedTraining?.recoveryRecommendation || "",
+        userVisibleLine: readinessState?.userVisibleLine || "",
+        factors: clonePlainValue(readinessState?.factors || []),
+        metrics: clonePlainValue(readinessState?.metrics || resolvedTraining?.readinessInputs || {}),
+        prescription: {
+          recommendation: resolvedTraining?.recoveryRecommendation || "",
+          success: resolvedTraining?.success || "",
+          intensityGuidance: resolvedTraining?.intensityGuidance || "",
+        },
+      },
+      supplements: {
+        plan: supplementsPlan,
+        actual: supplementsActual,
+      },
+      logging: {
+        dateKey,
+        status: logging?.sessionStatus || "not_logged",
+        dailyCheckin,
+        sessionLog,
+        nutritionLog,
+        supplementLog: supplementsActual,
+        hasCheckin: Boolean(dailyCheckin),
+        hasSessionLog: Boolean(sessionLog),
+        hasNutritionLog: Boolean(nutritionLog),
+      },
+    },
+    decision: {
+      mode: decisionMode,
+      modeLabel: decisionModeLabel,
+      confidence: null,
+      source: readinessState?.source || (adjustmentRecords[0]?.source || "deterministic_engine"),
+      inputDriven: Boolean(readinessState?.inputDriven),
+      modifiedFromBase,
+    },
+    provenance: {
+      keyDrivers,
+      adjustments: adjustmentRecords,
+      summary: buildPlanDaySummary(keyDrivers, modifiedFromBase),
+    },
+    flags: {
+      isModified: modifiedFromBase,
+      coachModified: Boolean(dayOverride || nutritionOverride),
+      environmentModified: Boolean(environmentSelection?.scope === "today" || resolvedTraining?.environmentNote),
+      injuryModified: Boolean(injuryRule?.mods?.length),
+      readinessModified: Boolean(readinessState?.state && readinessState.state !== "steady"),
+      nutritionModified: Boolean(
+        nutritionOverride
+        || (nutritionPrescription?.dayType && nutritionPrescription.dayType !== baseTraining?.nutri)
+      ),
+      deviceModified: Boolean(garminReadiness?.mode || (deviceSyncAudit?.planMode && deviceSyncAudit.planMode !== "normal")),
+      failureModeModified: Boolean(failureMode?.mode && failureMode.mode !== "normal"),
+      minDay: Boolean(resolvedTraining?.minDay),
+      restDay: ["rest", "recovery"].includes(String(resolvedTraining?.type || "").toLowerCase()),
+    },
+  };
+};
+
 export const composeGoalNativePlan = ({ goals, personalization, momentum, learningLayer, baseWeek }) => {
   const { active } = getGoalBuckets(goals);
   const primary = active[0] || null;
@@ -227,12 +878,29 @@ const labelPhaseWeeks = (rows = []) => {
   });
 };
 
-export const buildRollingHorizonWeeks = ({ currentWeek, horizonWeeks = DEFAULT_PLANNING_HORIZON_WEEKS, goals, weekTemplates }) => {
+export const buildRollingHorizonWeeks = ({
+  currentWeek,
+  horizonWeeks = DEFAULT_PLANNING_HORIZON_WEEKS,
+  goals,
+  weekTemplates,
+  architecture = "hybrid_performance",
+  blockIntent = null,
+  split = null,
+  sessionsByDay = null,
+  referenceTemplate = null,
+  momentum = {},
+  learningLayer = {},
+  weeklyCheckins = {},
+  coachPlanAdjustments = {},
+  failureMode = {},
+  environmentSelection = null,
+  constraints = [],
+}) => {
   const anchor = getHorizonAnchor(goals, horizonWeeks);
   const timeGoal = getActiveTimeBoundGoal(goals);
   const today = new Date();
 
-  const buildPlanWeek = (idx) => {
+  const buildPlanWeekRow = (idx) => {
     const absoluteWeek = currentWeek + idx;
     const templateIndex = Math.max(0, Math.min((absoluteWeek - 1), (weekTemplates?.length || 1) - 1));
     const template = weekTemplates[templateIndex] || weekTemplates[weekTemplates.length - 1] || {};
@@ -240,11 +908,35 @@ export const buildRollingHorizonWeeks = ({ currentWeek, horizonWeeks = DEFAULT_P
     startDate.setDate(startDate.getDate() + (idx * 7));
     const endDate = new Date(startDate);
     endDate.setDate(endDate.getDate() + 6);
+    const isCurrentWeek = absoluteWeek === currentWeek;
+    const planWeek = buildPlanWeek({
+      weekNumber: absoluteWeek,
+      template,
+      referenceTemplate: referenceTemplate || template,
+      label: `${template?.phase || "BASE"} - Week ${absoluteWeek}`,
+      specificity: getSpecificityBand(idx),
+      kind: "plan",
+      startDate,
+      endDate,
+      goals,
+      architecture,
+      blockIntent,
+      split,
+      sessionsByDay,
+      momentum,
+      learningLayer,
+      weeklyCheckin: weeklyCheckins?.[String(absoluteWeek)] || {},
+      coachPlanAdjustments,
+      failureMode: isCurrentWeek ? failureMode : {},
+      environmentSelection: isCurrentWeek ? environmentSelection : null,
+      constraints,
+    });
     return {
       kind: "plan",
       slot: idx + 1,
       absoluteWeek,
       template,
+      planWeek,
       specificity: getSpecificityBand(idx),
       startDate,
       endDate,
@@ -253,17 +945,20 @@ export const buildRollingHorizonWeeks = ({ currentWeek, horizonWeeks = DEFAULT_P
   };
 
   if (!timeGoal) {
-    const fallback = Array.from({ length: horizonWeeks }).map((_, idx) => buildPlanWeek(idx));
+    const fallback = Array.from({ length: horizonWeeks }).map((_, idx) => buildPlanWeekRow(idx));
     return fallback.map((row) => ({
       ...row,
-      weekLabel: `${row?.template?.phase || "BASE"} · Week ${row.absoluteWeek}`,
+      weekLabel: row?.planWeek?.label || `${row?.template?.phase || "BASE"} - Week ${row.absoluteWeek}`,
     }));
   }
 
   const daysToDeadline = daysUntil(timeGoal.targetDate);
   if (daysToDeadline >= 0) {
-    const rows = Array.from({ length: horizonWeeks }).map((_, idx) => buildPlanWeek(idx));
-    return labelPhaseWeeks(rows).map(row => ({ ...row, weekLabel: row.weekLabel || row.phaseLabel || `Week ${row.absoluteWeek}` }));
+    const rows = Array.from({ length: horizonWeeks }).map((_, idx) => buildPlanWeekRow(idx));
+    return labelPhaseWeeks(rows).map(row => ({
+      ...row,
+      weekLabel: row?.planWeek?.label || row.weekLabel || row.phaseLabel || `Week ${row.absoluteWeek}`,
+    }));
   }
 
   const daysSinceDeadline = Math.abs(daysToDeadline);
@@ -333,12 +1028,12 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
  * @param {Object} fatigueSignals - { fatigueScore (0-10), trend: "improving"|"stable"|"worsening", momentum: string, injuryLevel: string }
  * @returns {{ type, duration, intensity, label, reason }}
  */
-export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigueSignals = {}) => {
+export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigueSignals = {}, planningContext = {}) => {
   const goal = userProfile.primary_goal || "general_fitness";
   const experience = userProfile.experience_level || "beginner";
   const targetDays = userProfile.days_per_week || 3;
   const sessionLen = userProfile.session_length || "30";
-  const duration = SESSION_DURATIONS[sessionLen] || 30;
+  let duration = SESSION_DURATIONS[sessionLen] || 30;
   const hasConstraints = (userProfile.constraints || []).length > 0;
 
   const todayKey = recentActivity.todayKey || new Date().toISOString().split("T")[0];
@@ -347,6 +1042,9 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
   const fatigueTrend = fatigueSignals.trend || "stable";
   const momentum = fatigueSignals.momentum || "stable";
   const injuryLevel = fatigueSignals.injuryLevel || "none";
+  const planWeek = planningContext?.planWeek || null;
+  const weeklyIntent = planningContext?.weeklyIntent || planWeek?.weeklyIntent || null;
+  const plannedSession = planningContext?.plannedSession || null;
 
   // ── 1. Compute recent activity window (last 7 days) ──────────────
   const today = new Date(todayKey + "T12:00:00");
@@ -408,6 +1106,18 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
   }
 
   // ── 4. Re-entry logic (long gap) ─────────────────────────────────
+  if (plannedSession?.type === "rest") {
+    return {
+      type: "recovery",
+      duration: Math.min(duration, 20),
+      intensity: "low",
+      label: plannedSession?.label || "Active Recovery",
+      reason: weeklyIntent?.focus
+        ? `This week's plan protects ${String(weeklyIntent.focus).toLowerCase()} with a recovery day today.`
+        : "This week's plan calls for recovery today.",
+    };
+  }
+
   const isReEntry = daysSinceLastWorkout >= 4;
   if (isReEntry) {
     return {
@@ -424,6 +1134,9 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
   // Position in rotation = total sessions completed this week
   const rotationIndex = sessionsThisWeek % rotation.length;
   let sessionType = rotation[rotationIndex];
+  const plannedSessionType = String(plannedSession?.type || "").toLowerCase();
+  if (/strength/.test(plannedSessionType)) sessionType = "strength";
+  else if (/run|conditioning/.test(plannedSessionType)) sessionType = "cardio";
 
   // Balance correction: if one type is overrepresented, flip
   const targetSplit = rotation.filter(t => t === "strength").length / rotation.length;
@@ -445,13 +1158,23 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
   if (hasConstraints || fatigue >= 5) {
     intensity = "low";
   }
+  if (weeklyIntent?.recoveryBias === "high") {
+    intensity = "low";
+  } else if (weeklyIntent?.aggressionLevel === "progressive" && !hasConstraints && fatigue <= 3) {
+    intensity = intensityBase.push;
+  }
+  if (weeklyIntent?.volumeBias === "reduced") {
+    duration = Math.max(20, duration - 10);
+  } else if (weeklyIntent?.volumeBias === "expanded") {
+    duration = Math.min(60, duration + 10);
+  }
 
   // ── 7. Select label ──────────────────────────────────────────────
   const labelPool = sessionType === "strength"
     ? (STRENGTH_LABELS[goal] || STRENGTH_LABELS.general_fitness)
     : (CARDIO_LABELS[goal] || CARDIO_LABELS.general_fitness);
   const labelIndex = (sessionType === "strength" ? recentStrength : recentCardio) % labelPool.length;
-  const label = labelPool[labelIndex];
+  const label = plannedSession?.label || labelPool[labelIndex];
 
   // ── 8. Build reason ──────────────────────────────────────────────
   const reasonParts = [
@@ -464,6 +1187,8 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
       : null,
     fatigue >= 4 ? `Fatigue elevated (${fatigue}/10) — intensity adjusted.` : null,
     hasConstraints ? `Active constraints: ${userProfile.constraints.join(", ")}.` : null,
+    weeklyIntent?.focus ? `Week focus: ${weeklyIntent.focus}.` : null,
+    weeklyIntent?.aggressionLevel ? `Week posture: ${String(weeklyIntent.aggressionLevel).replace(/_/g, " ")}.` : null,
   ].filter(Boolean);
 
   return {

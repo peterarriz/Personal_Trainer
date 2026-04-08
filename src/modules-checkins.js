@@ -34,6 +34,229 @@ export const resolveEffectiveStatus = (checkin, dateKey) => {
   return "not_logged_expired";
 };
 
+const clonePlainValue = (value) => {
+  if (value == null) return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+};
+
+const normalizeSessionText = (value = "") => String(value || "")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, " ")
+  .trim();
+
+const inferSessionFamily = ({ type = "", label = "", run = null, strengthPerformance = [] } = {}) => {
+  const raw = `${type} ${label} ${run?.t || ""}`.toLowerCase();
+  if (!raw.trim() && Array.isArray(strengthPerformance) && strengthPerformance.length > 0) return "strength";
+  if (/rest|recovery|mobility|walk/.test(raw)) return "recovery";
+  if (/run|tempo|interval|easy|long|aerobic|cardio|stride/.test(raw)) return "run";
+  if (/strength|push|pull|bench|squat|deadlift|press|row|lift|prehab/.test(raw) || (Array.isArray(strengthPerformance) && strengthPerformance.length > 0)) return "strength";
+  if (/condition|otf|hybrid/.test(raw)) return "hybrid";
+  return raw ? "custom" : "unknown";
+};
+
+const getPlannedTraining = (plannedDayRecord = null) => (
+  plannedDayRecord?.resolved?.training
+  || plannedDayRecord?.plan?.resolved?.training
+  || plannedDayRecord?.training
+  || null
+);
+
+export const resolveActualStatus = ({ dateKey, dailyCheckin = {}, logEntry = {} } = {}) => {
+  const explicitCheckinStatus = dailyCheckin?.status && dailyCheckin.status !== "not_logged"
+    ? dailyCheckin.status
+    : "";
+  const status = logEntry?.actualSession?.status
+    || explicitCheckinStatus
+    || logEntry?.checkin?.status
+    || dailyCheckin?.status
+    || "not_logged";
+  return resolveEffectiveStatus({ status }, dateKey);
+};
+
+export const buildPlannedDayRecord = (planDay = null) => {
+  if (!planDay?.dateKey) return null;
+  return {
+    id: planDay?.id || `plan_day_${planDay.dateKey}`,
+    dateKey: planDay.dateKey,
+    source: "daily_decision_engine",
+    week: clonePlainValue(planDay?.week || {}),
+    base: clonePlainValue({
+      training: planDay?.base?.training || null,
+      nutrition: planDay?.base?.nutrition || null,
+      recovery: planDay?.base?.recovery || null,
+      supplements: planDay?.base?.supplements || null,
+    }),
+    resolved: clonePlainValue({
+      training: planDay?.resolved?.training || null,
+      nutrition: planDay?.resolved?.nutrition || null,
+      recovery: planDay?.resolved?.recovery || null,
+      supplements: planDay?.resolved?.supplements || null,
+    }),
+    decision: clonePlainValue(planDay?.decision || {}),
+    provenance: clonePlainValue(planDay?.provenance || {}),
+    flags: clonePlainValue(planDay?.flags || {}),
+  };
+};
+
+export const comparePlannedDayToActual = ({ plannedDayRecord = null, actualLog = {}, dailyCheckin = {}, dateKey = "" } = {}) => {
+  const plannedTraining = getPlannedTraining(plannedDayRecord);
+  const plannedType = String(plannedTraining?.type || "");
+  const plannedLabel = String(plannedTraining?.label || "");
+  const plannedFamily = inferSessionFamily({ type: plannedType, label: plannedLabel, run: plannedTraining?.run });
+  const expectedSession = Boolean(plannedTraining && !["rest", "recovery"].includes(plannedType.toLowerCase()));
+
+  const actualSession = actualLog?.actualSession || {};
+  const actualType = String(actualSession?.sessionType || actualLog?.type || actualLog?.label || "");
+  const actualLabel = String(actualSession?.sessionLabel || actualLog?.type || actualLog?.label || "");
+  const actualFamily = inferSessionFamily({
+    type: actualType,
+    label: actualLabel,
+    strengthPerformance: actualLog?.strengthPerformance || [],
+  });
+  const status = resolveActualStatus({ dateKey, dailyCheckin, logEntry: actualLog });
+  const hasStructuredActual = Boolean(
+    actualType
+    || Number(actualLog?.miles || 0) > 0
+    || Number(actualLog?.runTime || 0) > 0
+    || (Array.isArray(actualLog?.strengthPerformance) && actualLog.strengthPerformance.length > 0)
+    || ["completed_as_planned", "completed_modified", "partial_completed", "skipped"].includes(status)
+  );
+
+  let completionKind = "unknown";
+  let differenceKind = "unknown";
+  let severity = "none";
+  let matters = false;
+  let summary = "Awaiting actual outcome.";
+
+  if (!plannedDayRecord) {
+    if (hasStructuredActual) {
+      completionKind = "custom_session";
+      differenceKind = "custom_session";
+      severity = "minor";
+      matters = true;
+      summary = "Custom session logged without a stored prescribed day.";
+    } else if (status === "not_logged_expired") {
+      differenceKind = "unknown_plan";
+      severity = "minor";
+      matters = false;
+      summary = "No stored prescribed day or actual session record is available.";
+    }
+    return {
+      status,
+      completionKind,
+      differenceKind,
+      severity,
+      matters,
+      summary,
+      hasPlannedDay: false,
+      expectedSession: false,
+      plannedLabel: "",
+      plannedType: "",
+      actualLabel,
+      actualType,
+      customSession: completionKind === "custom_session",
+    };
+  }
+
+  if (!expectedSession) {
+    if (hasStructuredActual && actualFamily !== "unknown" && actualFamily !== "recovery") {
+      completionKind = "custom_session";
+      differenceKind = "custom_session";
+      severity = "material";
+      matters = true;
+      summary = `A session was logged on a planned recovery/rest day (${plannedLabel || "recovery"}).`;
+    } else {
+      completionKind = "recovery_day";
+      differenceKind = "none";
+      severity = "none";
+      matters = false;
+      summary = plannedLabel ? `${plannedLabel} was the prescribed day.` : "Recovery day was prescribed.";
+    }
+    return {
+      status,
+      completionKind,
+      differenceKind,
+      severity,
+      matters,
+      summary,
+      hasPlannedDay: true,
+      expectedSession,
+      plannedLabel,
+      plannedType,
+      actualLabel,
+      actualType,
+      customSession: completionKind === "custom_session",
+    };
+  }
+
+  if (status === "completed_as_planned") {
+    completionKind = "as_prescribed";
+    differenceKind = "none";
+    severity = "none";
+    matters = false;
+    summary = plannedLabel ? `Completed as prescribed: ${plannedLabel}.` : "Completed as prescribed.";
+  } else if (status === "completed_modified" || status === "partial_completed") {
+    completionKind = "modified";
+    differenceKind = "modified";
+    severity = actualFamily === plannedFamily || actualFamily === "unknown" ? "minor" : "material";
+    matters = true;
+    summary = actualLabel
+      ? `Modified from plan: prescribed ${plannedLabel || plannedType}, actual ${actualLabel}.`
+      : `Modified from plan: ${plannedLabel || plannedType}.`;
+  } else if (status === "skipped") {
+    completionKind = "skipped";
+    differenceKind = "skipped";
+    severity = "material";
+    matters = true;
+    summary = plannedLabel ? `Skipped planned session: ${plannedLabel}.` : "Skipped planned session.";
+  } else if (status === "not_logged_expired") {
+    completionKind = "unknown";
+    differenceKind = "not_logged_over_48h";
+    severity = "material";
+    matters = true;
+    summary = plannedLabel
+      ? `No actual outcome logged for prescribed session ${plannedLabel} after 48 hours.`
+      : "No actual outcome logged for the prescribed session after 48 hours.";
+  } else if (hasStructuredActual) {
+    completionKind = "custom_session";
+    differenceKind = "custom_session";
+    severity = actualFamily === plannedFamily ? "minor" : "material";
+    matters = true;
+    summary = actualLabel
+      ? `Custom session logged against prescribed ${plannedLabel || plannedType}: ${actualLabel}.`
+      : `Custom session logged against prescribed ${plannedLabel || plannedType}.`;
+  } else if (status === "not_logged_grace") {
+    completionKind = "pending";
+    differenceKind = "pending";
+    severity = "none";
+    matters = false;
+    summary = plannedLabel
+      ? `Prescribed ${plannedLabel}; still inside the logging grace period.`
+      : "Prescribed session is still inside the logging grace period.";
+  }
+
+  return {
+    status,
+    completionKind,
+    differenceKind,
+    severity,
+    matters,
+    summary,
+    hasPlannedDay: true,
+    expectedSession,
+    plannedLabel,
+    plannedType,
+    actualLabel,
+    actualType,
+    customSession: completionKind === "custom_session",
+    sameSessionFamily: actualFamily === plannedFamily,
+  };
+};
+
 export const CHECKIN_FEEL_OPTIONS = [
   { key: "easier_than_expected", label: "easier than expected" },
   { key: "about_right", label: "about right" },
@@ -83,16 +306,23 @@ const getDateKeyFromTs = (ts) => {
 };
 
 const getWindowMetrics = ({ logs, dailyCheckins, startTs, endTs }) => {
-  const checkins = Object.entries(dailyCheckins || {}).filter(([date]) => {
+  const dateKeys = Array.from(new Set([...(Object.keys(dailyCheckins || {})), ...(Object.keys(logs || {}))])).filter((date) => {
     const t = new Date(`${date}T12:00:00`).getTime();
     return t >= startTs && t <= endTs;
-  }).map(([, c]) => c || {});
+  });
+  const checkins = dateKeys.map((date) => ({ date, ...(dailyCheckins?.[date] || {}) }));
   const logRows = Object.entries(logs || {}).filter(([date]) => {
     const t = new Date(`${date}T12:00:00`).getTime();
     return t >= startTs && t <= endTs;
   }).map(([, l]) => l || {});
-  const completed = checkins.filter(c => ["completed_as_planned", "completed_modified"].includes(c.status)).length;
-  const countable = checkins.filter(c => c.status !== "not_logged" && c.status !== "not_logged_grace").length;
+  const completed = dateKeys.filter((date) => {
+    const status = resolveActualStatus({ dateKey: date, dailyCheckin: dailyCheckins?.[date] || {}, logEntry: logs?.[date] || {} });
+    return ["completed_as_planned", "completed_modified", "partial_completed"].includes(status);
+  }).length;
+  const countable = dateKeys.filter((date) => {
+    const status = resolveActualStatus({ dateKey: date, dailyCheckin: dailyCheckins?.[date] || {}, logEntry: logs?.[date] || {} });
+    return status !== "not_logged" && status !== "not_logged_grace";
+  }).length;
   const adherence = countable ? completed / countable : 0;
   const avgFeel = logRows.length ? (logRows.reduce((s, l) => s + Number(l.feel || 3), 0) / logRows.length) : 3;
   const progressHits = logRows.filter(l => /progress|solid|better|good|strong/i.test((l.notes || "").toLowerCase())).length;
