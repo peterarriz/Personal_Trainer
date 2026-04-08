@@ -3663,7 +3663,7 @@ const clonePlainValueAiState = (value) => {
   }
 };
 
-const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+const sanitizeTextAiState = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const clampNumberAiState = (value, min, max, fallback = min) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
@@ -3761,12 +3761,12 @@ const buildRecentSessions = (logs = {}, limit = 7) => sortEntriesByDate(logs)
   .slice(-Math.max(1, limit))
   .map(([dateKey, log]) => ({
     dateKey,
-    label: sanitizeText(_optionalChain([log, 'optionalAccess', _727 => _727.type]) || _optionalChain([log, 'optionalAccess', _728 => _728.label]) || "Session", 80),
-    status: sanitizeText(_optionalChain([log, 'optionalAccess', _729 => _729.actualSession, 'optionalAccess', _730 => _730.status]) || _optionalChain([log, 'optionalAccess', _731 => _731.checkin, 'optionalAccess', _732 => _732.status]) || "", 40),
+    label: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _727 => _727.type]) || _optionalChain([log, 'optionalAccess', _728 => _728.label]) || "Session", 80),
+    status: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _729 => _729.actualSession, 'optionalAccess', _730 => _730.status]) || _optionalChain([log, 'optionalAccess', _731 => _731.checkin, 'optionalAccess', _732 => _732.status]) || "", 40),
     feel: Number(_optionalChain([log, 'optionalAccess', _733 => _733.feel]) || 0) || null,
     miles: Number(_optionalChain([log, 'optionalAccess', _734 => _734.miles]) || 0) || null,
-    pace: sanitizeText(_optionalChain([log, 'optionalAccess', _735 => _735.pace]) || "", 24),
-    note: sanitizeText(_optionalChain([log, 'optionalAccess', _736 => _736.notes]) || "", 140),
+    pace: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _735 => _735.pace]) || "", 24),
+    note: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _736 => _736.notes]) || "", 140),
     comparison: clonePlainValueAiState(_optionalChain([log, 'optionalAccess', _737 => _737.comparison]) || null),
   }));
 
@@ -3774,9 +3774,9 @@ const buildRecentCheckins = (dailyCheckins = {}, limit = 7) => sortEntriesByDate
   .slice(-Math.max(1, limit))
   .map(([dateKey, checkin]) => ({
     dateKey,
-    status: sanitizeText(_optionalChain([checkin, 'optionalAccess', _738 => _738.status]) || "", 40),
-    sessionFeel: sanitizeText(_optionalChain([checkin, 'optionalAccess', _739 => _739.sessionFeel]) || "", 40),
-    blocker: sanitizeText(_optionalChain([checkin, 'optionalAccess', _740 => _740.blocker]) || "", 40),
+    status: sanitizeTextAiState(_optionalChain([checkin, 'optionalAccess', _738 => _738.status]) || "", 40),
+    sessionFeel: sanitizeTextAiState(_optionalChain([checkin, 'optionalAccess', _739 => _739.sessionFeel]) || "", 40),
+    blocker: sanitizeTextAiState(_optionalChain([checkin, 'optionalAccess', _740 => _740.blocker]) || "", 40),
     readiness: clonePlainValueAiState(_optionalChain([checkin, 'optionalAccess', _741 => _741.readiness]) || {}),
   }));
 
@@ -3784,11 +3784,11 @@ const buildRecentNutritionLogs = (nutritionActualLogs = {}, limit = 7) => sortEn
   .slice(-Math.max(1, limit))
   .map(([dateKey, log]) => ({
     dateKey,
-    quickStatus: sanitizeText(_optionalChain([log, 'optionalAccess', _742 => _742.quickStatus]) || "", 40),
-    adherence: sanitizeText(_optionalChain([log, 'optionalAccess', _743 => _743.adherence]) || "", 40),
-    deviationKind: sanitizeText(_optionalChain([log, 'optionalAccess', _744 => _744.deviationKind]) || "", 40),
-    issue: sanitizeText(_optionalChain([log, 'optionalAccess', _745 => _745.issue]) || "", 60),
-    note: sanitizeText(_optionalChain([log, 'optionalAccess', _746 => _746.note]) || "", 120),
+    quickStatus: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _742 => _742.quickStatus]) || "", 40),
+    adherence: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _743 => _743.adherence]) || "", 40),
+    deviationKind: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _744 => _744.deviationKind]) || "", 40),
+    issue: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _745 => _745.issue]) || "", 60),
+    note: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _746 => _746.note]) || "", 120),
     hydration: clonePlainValueAiState(_optionalChain([log, 'optionalAccess', _747 => _747.hydration]) || null),
     supplements: clonePlainValueAiState(_optionalChain([log, 'optionalAccess', _748 => _748.supplements]) || null),
   }));
@@ -3805,17 +3805,17 @@ const buildGoalsSnapshot = (goals = []) => (Array.isArray(goals) ? goals : [])
   .slice(0, 5)
   .map((goal) => ({
     id: _optionalChain([goal, 'optionalAccess', _754 => _754.id]) || "",
-    name: sanitizeText(_optionalChain([goal, 'optionalAccess', _755 => _755.name]) || "", 120),
-    category: sanitizeText(_optionalChain([goal, 'optionalAccess', _756 => _756.category]) || "", 40),
+    name: sanitizeTextAiState(_optionalChain([goal, 'optionalAccess', _755 => _755.name]) || "", 120),
+    category: sanitizeTextAiState(_optionalChain([goal, 'optionalAccess', _756 => _756.category]) || "", 40),
     priority: Number(_optionalChain([goal, 'optionalAccess', _757 => _757.priority]) || 0) || null,
-    horizon: sanitizeText(_optionalChain([goal, 'optionalAccess', _758 => _758.horizon]) || "", 40),
-    target: sanitizeText(_optionalChain([goal, 'optionalAccess', _759 => _759.target]) || _optionalChain([goal, 'optionalAccess', _760 => _760.metric]) || "", 120),
+    horizon: sanitizeTextAiState(_optionalChain([goal, 'optionalAccess', _758 => _758.horizon]) || "", 40),
+    target: sanitizeTextAiState(_optionalChain([goal, 'optionalAccess', _759 => _759.target]) || _optionalChain([goal, 'optionalAccess', _760 => _760.metric]) || "", 120),
     deadline: _optionalChain([goal, 'optionalAccess', _761 => _761.deadline]) || _optionalChain([goal, 'optionalAccess', _762 => _762.targetDate]) || "",
-    status: sanitizeText(_optionalChain([goal, 'optionalAccess', _763 => _763.status]) || "", 40),
+    status: sanitizeTextAiState(_optionalChain([goal, 'optionalAccess', _763 => _763.status]) || "", 40),
   }));
 
 const sanitizePaceValue = (value = "") => {
-  const text = sanitizeText(value, 24);
+  const text = sanitizeTextAiState(value, 24);
   if (!text) return "";
   return /^[0-9:\/\-\u2013\u2014 .mi]+$/i.test(text) ? text : "";
 };
@@ -3867,7 +3867,7 @@ const buildAiStatePacket = ({
     scope: {
       dateKey: dateKey || _optionalChain([compactDay, 'optionalAccess', _774 => _774.dateKey]) || "",
       currentWeek: Number(currentWeek) || _optionalChain([compactWeek, 'optionalAccess', _775 => _775.weekNumber]) || _optionalChain([compactDay, 'optionalAccess', _776 => _776.week, 'optionalAccess', _777 => _777.currentWeek]) || 1,
-      input: sanitizeText(input, 280),
+      input: sanitizeTextAiState(input, 280),
     },
     canonical: {
       goalState: clonePlainValueAiState({
@@ -4023,7 +4023,7 @@ const acceptAiPlanAnalysisProposal = ({ proposal = null, statePacket = null } = 
   }
 
   Object.entries(_optionalChain([proposal, 'optionalAccess', _827 => _827.paceAdjustments]) || {}).forEach(([phase, zones]) => {
-    const phaseKey = sanitizeText(String(phase || "").toUpperCase(), 24);
+    const phaseKey = sanitizeTextAiState(String(phase || "").toUpperCase(), 24);
     if (!phaseKey || !allowedPhases.has(phaseKey)) {
       rejected.push(`pace_phase_rejected:${phaseKey || "unknown"}`);
       return;
@@ -4038,7 +4038,7 @@ const acceptAiPlanAnalysisProposal = ({ proposal = null, statePacket = null } = 
 
   Object.entries(_optionalChain([proposal, 'optionalAccess', _829 => _829.weekNotes]) || {}).forEach(([weekKey, note]) => {
     const numericWeek = Number(weekKey);
-    const safeNote = sanitizeText(note, 220);
+    const safeNote = sanitizeTextAiState(note, 220);
     if (!Number.isFinite(numericWeek) || numericWeek < (currentWeek - 1) || numericWeek > (currentWeek + 2) || !safeNote) {
       rejected.push(`week_note_rejected:${weekKey}`);
       return;
@@ -4048,13 +4048,13 @@ const acceptAiPlanAnalysisProposal = ({ proposal = null, statePacket = null } = 
 
   const allowedAlertTypes = new Set(["upgrade", "warning", "info", "makeup"]);
   (Array.isArray(_optionalChain([proposal, 'optionalAccess', _830 => _830.alerts])) ? proposal.alerts : []).slice(0, 3).forEach((alert, index) => {
-    const type = sanitizeText(_optionalChain([alert, 'optionalAccess', _831 => _831.type]) || "", 24).toLowerCase();
-    const msg = sanitizeText(_optionalChain([alert, 'optionalAccess', _832 => _832.msg]) || "", 160);
+    const type = sanitizeTextAiState(_optionalChain([alert, 'optionalAccess', _831 => _831.type]) || "", 24).toLowerCase();
+    const msg = sanitizeTextAiState(_optionalChain([alert, 'optionalAccess', _832 => _832.msg]) || "", 160);
     if (!allowedAlertTypes.has(type) || !msg) {
       rejected.push(`alert_rejected:${type || index}`);
       return;
     }
-    const rawId = sanitizeText(_optionalChain([alert, 'optionalAccess', _833 => _833.id]) || `alert_${index + 1}`, 40).replace(/[^a-z0-9_-]/gi, "_").toLowerCase();
+    const rawId = sanitizeTextAiState(_optionalChain([alert, 'optionalAccess', _833 => _833.id]) || `alert_${index + 1}`, 40).replace(/[^a-z0-9_-]/gi, "_").toLowerCase();
     accepted.alerts.push({
       id: rawId ? `ai_plan_${rawId}` : `ai_plan_${index + 1}`,
       type,

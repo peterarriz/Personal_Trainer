@@ -14,7 +14,7 @@ const clonePlainValueAiState = (value) => {
   }
 };
 
-const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+const sanitizeTextAiState = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const clampNumberAiState = (value, min, max, fallback = min) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
@@ -112,12 +112,12 @@ const buildRecentSessions = (logs = {}, limit = 7) => sortEntriesByDate(logs)
   .slice(-Math.max(1, limit))
   .map(([dateKey, log]) => ({
     dateKey,
-    label: sanitizeText(log?.type || log?.label || "Session", 80),
-    status: sanitizeText(log?.actualSession?.status || log?.checkin?.status || "", 40),
+    label: sanitizeTextAiState(log?.type || log?.label || "Session", 80),
+    status: sanitizeTextAiState(log?.actualSession?.status || log?.checkin?.status || "", 40),
     feel: Number(log?.feel || 0) || null,
     miles: Number(log?.miles || 0) || null,
-    pace: sanitizeText(log?.pace || "", 24),
-    note: sanitizeText(log?.notes || "", 140),
+    pace: sanitizeTextAiState(log?.pace || "", 24),
+    note: sanitizeTextAiState(log?.notes || "", 140),
     comparison: clonePlainValueAiState(log?.comparison || null),
   }));
 
@@ -125,9 +125,9 @@ const buildRecentCheckins = (dailyCheckins = {}, limit = 7) => sortEntriesByDate
   .slice(-Math.max(1, limit))
   .map(([dateKey, checkin]) => ({
     dateKey,
-    status: sanitizeText(checkin?.status || "", 40),
-    sessionFeel: sanitizeText(checkin?.sessionFeel || "", 40),
-    blocker: sanitizeText(checkin?.blocker || "", 40),
+    status: sanitizeTextAiState(checkin?.status || "", 40),
+    sessionFeel: sanitizeTextAiState(checkin?.sessionFeel || "", 40),
+    blocker: sanitizeTextAiState(checkin?.blocker || "", 40),
     readiness: clonePlainValueAiState(checkin?.readiness || {}),
   }));
 
@@ -135,11 +135,11 @@ const buildRecentNutritionLogs = (nutritionActualLogs = {}, limit = 7) => sortEn
   .slice(-Math.max(1, limit))
   .map(([dateKey, log]) => ({
     dateKey,
-    quickStatus: sanitizeText(log?.quickStatus || "", 40),
-    adherence: sanitizeText(log?.adherence || "", 40),
-    deviationKind: sanitizeText(log?.deviationKind || "", 40),
-    issue: sanitizeText(log?.issue || "", 60),
-    note: sanitizeText(log?.note || "", 120),
+    quickStatus: sanitizeTextAiState(log?.quickStatus || "", 40),
+    adherence: sanitizeTextAiState(log?.adherence || "", 40),
+    deviationKind: sanitizeTextAiState(log?.deviationKind || "", 40),
+    issue: sanitizeTextAiState(log?.issue || "", 60),
+    note: sanitizeTextAiState(log?.note || "", 120),
     hydration: clonePlainValueAiState(log?.hydration || null),
     supplements: clonePlainValueAiState(log?.supplements || null),
   }));
@@ -156,17 +156,17 @@ const buildGoalsSnapshot = (goals = []) => (Array.isArray(goals) ? goals : [])
   .slice(0, 5)
   .map((goal) => ({
     id: goal?.id || "",
-    name: sanitizeText(goal?.name || "", 120),
-    category: sanitizeText(goal?.category || "", 40),
+    name: sanitizeTextAiState(goal?.name || "", 120),
+    category: sanitizeTextAiState(goal?.category || "", 40),
     priority: Number(goal?.priority || 0) || null,
-    horizon: sanitizeText(goal?.horizon || "", 40),
-    target: sanitizeText(goal?.target || goal?.metric || "", 120),
+    horizon: sanitizeTextAiState(goal?.horizon || "", 40),
+    target: sanitizeTextAiState(goal?.target || goal?.metric || "", 120),
     deadline: goal?.deadline || goal?.targetDate || "",
-    status: sanitizeText(goal?.status || "", 40),
+    status: sanitizeTextAiState(goal?.status || "", 40),
   }));
 
 const sanitizePaceValue = (value = "") => {
-  const text = sanitizeText(value, 24);
+  const text = sanitizeTextAiState(value, 24);
   if (!text) return "";
   return /^[0-9:\/\-\u2013\u2014 .mi]+$/i.test(text) ? text : "";
 };
@@ -218,7 +218,7 @@ export const buildAiStatePacket = ({
     scope: {
       dateKey: dateKey || compactDay?.dateKey || "",
       currentWeek: Number(currentWeek) || compactWeek?.weekNumber || compactDay?.week?.currentWeek || 1,
-      input: sanitizeText(input, 280),
+      input: sanitizeTextAiState(input, 280),
     },
     canonical: {
       goalState: clonePlainValueAiState({
@@ -374,7 +374,7 @@ export const acceptAiPlanAnalysisProposal = ({ proposal = null, statePacket = nu
   }
 
   Object.entries(proposal?.paceAdjustments || {}).forEach(([phase, zones]) => {
-    const phaseKey = sanitizeText(String(phase || "").toUpperCase(), 24);
+    const phaseKey = sanitizeTextAiState(String(phase || "").toUpperCase(), 24);
     if (!phaseKey || !allowedPhases.has(phaseKey)) {
       rejected.push(`pace_phase_rejected:${phaseKey || "unknown"}`);
       return;
@@ -389,7 +389,7 @@ export const acceptAiPlanAnalysisProposal = ({ proposal = null, statePacket = nu
 
   Object.entries(proposal?.weekNotes || {}).forEach(([weekKey, note]) => {
     const numericWeek = Number(weekKey);
-    const safeNote = sanitizeText(note, 220);
+    const safeNote = sanitizeTextAiState(note, 220);
     if (!Number.isFinite(numericWeek) || numericWeek < (currentWeek - 1) || numericWeek > (currentWeek + 2) || !safeNote) {
       rejected.push(`week_note_rejected:${weekKey}`);
       return;
@@ -399,13 +399,13 @@ export const acceptAiPlanAnalysisProposal = ({ proposal = null, statePacket = nu
 
   const allowedAlertTypes = new Set(["upgrade", "warning", "info", "makeup"]);
   (Array.isArray(proposal?.alerts) ? proposal.alerts : []).slice(0, 3).forEach((alert, index) => {
-    const type = sanitizeText(alert?.type || "", 24).toLowerCase();
-    const msg = sanitizeText(alert?.msg || "", 160);
+    const type = sanitizeTextAiState(alert?.type || "", 24).toLowerCase();
+    const msg = sanitizeTextAiState(alert?.msg || "", 160);
     if (!allowedAlertTypes.has(type) || !msg) {
       rejected.push(`alert_rejected:${type || index}`);
       return;
     }
-    const rawId = sanitizeText(alert?.id || `alert_${index + 1}`, 40).replace(/[^a-z0-9_-]/gi, "_").toLowerCase();
+    const rawId = sanitizeTextAiState(alert?.id || `alert_${index + 1}`, 40).replace(/[^a-z0-9_-]/gi, "_").toLowerCase();
     accepted.alerts.push({
       id: rawId ? `ai_plan_${rawId}` : `ai_plan_${index + 1}`,
       type,
