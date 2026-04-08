@@ -33,6 +33,7 @@ const inlineLocalImports = (sourceCode, sourceFile) => {
     const raw = fs.readFileSync(full, "utf8");
     const nested = inlineLocalImports(raw, full);
     const normalized = nested
+      .replace(/^import\s+.*$/gm, "")
       .replace(/^export\s+const\s+/gm, "const ")
       .replace(/^export\s+function\s+/gm, "function ")
       .replace(/^export\s+\{[^}]+\};?\n/gm, "");
@@ -45,7 +46,7 @@ const inlineLocalImports = (sourceCode, sourceFile) => {
 let jsx = inlineLocalImports(fs.readFileSync(SRC, "utf8"), SRC);
 
 // Remove React import — we use the inlined global
-jsx = jsx.replace(/^import \{[^}]+\} from ['"]react['"];?\n/m, "");
+jsx = jsx.replace(/^import\s+.*$/gm, "");
 
 const { code } = transform(jsx, {
   transforms: ["jsx"],
@@ -53,7 +54,7 @@ const { code } = transform(jsx, {
   production: true,
 });
 
-const js = code.replace(
+const js = code.replace(/^import\s+.*$/gm, "").replace(
   "export default function TrainerDashboard",
   "function TrainerDashboard"
 );
