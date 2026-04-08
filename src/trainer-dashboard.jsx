@@ -5,6 +5,7 @@ import { getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, isWithinGracePeriod, resolveEffectiveStatus } from "./modules-checkins.js";
 import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, withConfidenceTone, deterministicCoachPacket, applyCoachActionMutation } from "./modules-coach-engine.js";
 import { buildWorkoutAdjustmentCoachNote, buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildNutritionCoachBrief, buildCoachChatSystemPrompt, buildPlanAnalysisSystemPrompt, buildTodayWhyNowSentence, buildMacroShiftLine, buildEasierSessionsObservation, buildSkippedQualityDecision, buildLoadSpikeInlineWarning, buildWeeklyConsistencyAnchor, buildStreakSignalResponse, buildBadWeekTriageResponse, buildDiscomfortProtocolResponse, buildCompressedSessionPrescription, buildMinimumEffectiveTravelSession } from "./prompts/coach-text.js";
+import { SettingsIcon } from "./icons.js";
 
 // ── PROFILE ──────────────────────────────────────────────────────────────────
 const PROFILE = {
@@ -913,8 +914,55 @@ const sanitizeDisplayText = (text = "") => stripInternalTags(
     .replace(/\btravelRun\b/gi, "run")
     .replace(/\bhybridRun\b/gi, "run + strength")
 ).trim();
+const joinHumanList = (items = []) => {
+  const filtered = (items || []).filter(Boolean);
+  if (!filtered.length) return "";
+  if (filtered.length === 1) return filtered[0];
+  if (filtered.length === 2) return `${filtered[0]} and ${filtered[1]}`;
+  return `${filtered.slice(0, -1).join(", ")}, and ${filtered[filtered.length - 1]}`;
+};
+const buildProvenanceText = ({ inputs = [], limitation = "" }) => {
+  const joined = joinHumanList(inputs);
+  if (!joined) return limitation || "";
+  return limitation ? `Based on ${joined}. ${limitation}` : `Based on ${joined}.`;
+};
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
+const READINESS_SUCCESS_STATUSES = new Set(["completed_as_planned", "completed_modified", "partial_completed"]);
+const toReadinessNumber = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+const hasReadinessInputs = (checkin = {}) => {
+  const sleep = toReadinessNumber(checkin?.readiness?.sleep);
+  const stress = toReadinessNumber(checkin?.readiness?.stress);
+  const soreness = toReadinessNumber(checkin?.readiness?.soreness);
+  const feel = String(checkin?.sessionFeel || "").trim();
+  return sleep > 0 || stress > 0 || soreness > 0 || Boolean(feel);
+};
+const classifySessionDemand = (session = {}) => {
+  const text = `${session?.type || ""} ${session?.label || ""} ${session?.run?.t || ""}`.toLowerCase();
+  if (/rest|recovery|mobility|walk/.test(text)) return "recovery";
+  if (/interval|tempo|long|hard|race|conditioning|otf|hiit|quality/.test(text)) return "high";
+  if (/strength|run\+strength|strength\+prehab|hybrid|upper|lower|full.body|metabolic/.test(text)) return "moderate";
+  if (/easy|steady|zone-2|zone 2/.test(text)) return "low";
+  return "moderate";
+};
+const appendWorkoutQualifier = (label = "", qualifier = "") => {
+  const base = String(label || "Session").trim() || "Session";
+  if (!qualifier) return base;
+  return base.toLowerCase().includes(String(qualifier).toLowerCase()) ? base : `${base} (${qualifier})`;
+};
+const scaleSessionDescriptor = (text = "", fallback = "20-30 min controlled", ratio = 0.72) => {
+  const input = String(text || "").trim();
+  if (!input) return fallback;
+  const scaled = input.replace(/(\d+(\.\d+)?)/g, (match) => {
+    const num = Number(match);
+    if (!Number.isFinite(num)) return match;
+    return String(Math.max(1, Math.round(num * ratio * 10) / 10));
+  });
+  return scaled === input ? fallback : scaled;
+};
 const getCurrentWeek = (planStartDate = "") => {
   const now = new Date();
   const anchor = planStartDate ? new Date(`${planStartDate}T12:00:00`) : PROFILE.startDate;
@@ -924,6 +972,254 @@ const getCurrentWeek = (planStartDate = "") => {
 
 const getDayOfWeek = () => {
   return new Date().getDay(); // 0=Sun,1=Mon,...,6=Sat
+};
+
+const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().split("T")[0], checkin = {}, promptSignal = null, workout = null, logs = {}, dailyCheckins = {}, personalization = {}, momentum = {}, userProfile = {} }) => {
+  const promptState = String(promptSignal?.state || "").toLowerCase();
+  const baseWorkout = { ...(workout || {}), run: workout?.run ? { ...workout.run } : workout?.run };
+  if (!Object.keys(baseWorkout).length) return null;
+
+  const isNegativeRecovery = (candidate = {}) => {
+    const sleep = toReadinessNumber(candidate?.readiness?.sleep);
+    const stress = toReadinessNumber(candidate?.readiness?.stress);
+    const soreness = toReadinessNumber(candidate?.readiness?.soreness);
+    const feel = String(candidate?.sessionFeel || "").toLowerCase();
+    return feel === "harder_than_expected" || (sleep > 0 && sleep <= 2) || stress >= 4 || soreness >= 4;
+  };
+  const isPositiveRecovery = (candidate = {}) => {
+    const sleep = toReadinessNumber(candidate?.readiness?.sleep);
+    const stress = toReadinessNumber(candidate?.readiness?.stress);
+    const soreness = toReadinessNumber(candidate?.readiness?.soreness);
+    const feel = String(candidate?.sessionFeel || "").toLowerCase();
+    return feel === "easier_than_expected" || (sleep >= 4 && stress > 0 && stress <= 2 && soreness > 0 && soreness <= 2);
+  };
+
+  const todayTs = new Date(`${todayKey}T12:00:00`).getTime();
+  const targetDays = Math.max(2, Number(userProfile?.days_per_week) || 3);
+  const allDates = Array.from(new Set([...(Object.keys(logs || {})), ...(Object.keys(dailyCheckins || {}))]));
+  const recentRows = allDates
+    .filter((dateKey) => {
+      const t = new Date(`${dateKey}T12:00:00`).getTime();
+      const diff = (todayTs - t) / 86400000;
+      return diff > 0 && diff <= 10;
+    })
+    .sort((a, b) => b.localeCompare(a))
+    .map((dateKey) => {
+      const t = new Date(`${dateKey}T12:00:00`).getTime();
+      const daysBack = Math.max(0, Math.round(((todayTs - t) / 86400000) * 10) / 10);
+      const log = logs?.[dateKey] || {};
+      const mergedCheckin = { ...(log?.checkin || {}), ...(dailyCheckins?.[dateKey] || {}) };
+      return {
+        date: dateKey,
+        daysBack,
+        log,
+        checkin: mergedCheckin,
+        status: resolveEffectiveStatus(mergedCheckin, dateKey),
+        demand: classifySessionDemand({ type: log?.type, label: log?.label, run: { t: log?.type } }),
+      };
+    });
+  const recent7 = recentRows.filter((row) => row.daysBack <= 7);
+  const completedCount = recent7.filter((row) => READINESS_SUCCESS_STATUSES.has(row.status)).length;
+  const skippedCount = recent7.filter((row) => row.status === "skipped" || row.status === "not_logged_expired").length;
+  const modifiedCount = recent7.filter((row) => row.status === "completed_modified" || row.status === "partial_completed").length;
+  const consistencyRatio = Math.min(1.25, completedCount / Math.max(1, targetDays));
+  const hardSessions72h = recentRows.filter((row) => row.daysBack <= 3 && row.demand === "high").length;
+  const hardSessions7d = recent7.filter((row) => row.demand === "high").length;
+  const recentSupportiveCount = recentRows.slice(0, 3).filter((row) => isPositiveRecovery(row.checkin)).length;
+  const recentStrainedCount = recentRows.slice(0, 3).filter((row) => isNegativeRecovery(row.checkin)).length;
+  const latestRecoveryRow = recentRows.find((row) => hasReadinessInputs(row.checkin)) || null;
+  const activeCheckin = hasReadinessInputs(checkin) ? checkin : (latestRecoveryRow?.checkin || {});
+  const sleep = toReadinessNumber(activeCheckin?.readiness?.sleep);
+  const stress = toReadinessNumber(activeCheckin?.readiness?.stress);
+  const soreness = toReadinessNumber(activeCheckin?.readiness?.soreness);
+  const feel = String(activeCheckin?.sessionFeel || "").toLowerCase();
+  const inputDriven = hasReadinessInputs(checkin) || Boolean(promptState);
+  const explicitDeviceBias = String(baseWorkout?.readinessBias || "").toLowerCase();
+  const planBias = explicitDeviceBias
+    || (baseWorkout?.type === "rest" && /recovery mode/i.test(String(baseWorkout?.label || "")) ? "recover" : "")
+    || (baseWorkout?.minDay ? "reduce" : "");
+
+  let protectScore = 0;
+  let progressScore = 0;
+  const protectReasons = [];
+  const progressReasons = [];
+
+  if (planBias === "recover") {
+    protectScore += 4;
+    protectReasons.push(explicitDeviceBias === "recover" ? "device readiness is low" : "the current plan is already protecting recovery");
+  } else if (planBias === "reduce") {
+    protectScore += 2;
+    protectReasons.push(explicitDeviceBias === "reduce" ? "device readiness is cautious" : "the current plan is already reduced");
+  }
+  if (String(personalization?.injuryPainState?.level || "none") !== "none") {
+    protectScore += 2;
+    protectReasons.push("injury status still needs protection");
+  }
+  if (promptState === "recover") {
+    protectScore += 2;
+    protectReasons.push("you flagged low readiness");
+  }
+  if ((sleep > 0 && sleep <= 1) || stress >= 5 || soreness >= 5) {
+    protectScore += 4;
+    protectReasons.push("today's recovery input is clearly strained");
+  } else if (isNegativeRecovery(activeCheckin)) {
+    protectScore += 3;
+    protectReasons.push("today's recovery input is strained");
+  } else if (recentStrainedCount >= 2) {
+    protectScore += 1;
+    protectReasons.push("recent recovery signals have been trending heavy");
+  }
+  if (hardSessions72h >= 2) {
+    protectScore += 2;
+    protectReasons.push("recent intensity stacked up");
+  } else if (hardSessions72h === 1 && (isNegativeRecovery(activeCheckin) || recentStrainedCount >= 1)) {
+    protectScore += 1;
+    protectReasons.push("a recent hard session is still hanging around");
+  }
+  if (consistencyRatio < 0.45) {
+    protectScore += 2;
+    protectReasons.push("recent schedule consistency is low");
+  } else if (consistencyRatio < 0.6 || skippedCount >= 2) {
+    protectScore += 1;
+    protectReasons.push("consistency is better served by a finishable day");
+  }
+  if (modifiedCount >= 2) {
+    protectScore += 1;
+    protectReasons.push("recent sessions have needed modification");
+  }
+
+  if (promptState === "push") {
+    progressScore += 1;
+    progressReasons.push("you flagged high readiness");
+  }
+  if (isPositiveRecovery(activeCheckin)) {
+    progressScore += 3;
+    progressReasons.push("today's recovery input is supportive");
+  } else if (recentSupportiveCount >= 2) {
+    progressScore += 1;
+    progressReasons.push("recent recovery inputs have been steady");
+  }
+  if (consistencyRatio >= 0.85 && skippedCount === 0) {
+    progressScore += 1;
+    progressReasons.push("recent completion has been consistent");
+  }
+  if (hardSessions72h === 0 && hardSessions7d <= 2) {
+    progressScore += 1;
+    progressReasons.push("recent intensity is under control");
+  }
+  if (momentum?.momentumState === "building momentum") {
+    progressScore += 1;
+    progressReasons.push("training momentum is building");
+  }
+
+  const state = protectScore >= 6 || (protectScore >= 4 && (hardSessions72h >= 1 || planBias === "recover"))
+    ? "recovery"
+    : protectScore >= 3
+    ? "reduced_load"
+    : progressScore >= 4 && protectScore === 0
+    ? "progression"
+    : "steady";
+
+  const adjustedWorkout = { ...baseWorkout, run: baseWorkout?.run ? { ...baseWorkout.run } : baseWorkout?.run };
+  const baseDemand = classifySessionDemand(baseWorkout);
+  const reasonText = joinHumanList((state === "progression" ? progressReasons : protectReasons).slice(0, 3));
+  const baseExplanation = String(baseWorkout?.explanation || "").trim();
+  const appendEnvironmentNote = (note = "") => {
+    adjustedWorkout.environmentNote = [baseWorkout?.environmentNote, note].filter(Boolean).join(" ").trim();
+  };
+
+  let badge = "";
+  let coachLine = "";
+  let recoveryLine = "";
+  let userVisibleLine = "";
+
+  if (state === "recovery") {
+    badge = "Recovery focus";
+    if (adjustedWorkout?.run) {
+      adjustedWorkout.run.t = "Recovery Aerobic";
+      adjustedWorkout.run.d = baseDemand === "high" ? "20-30 min easy aerobic" : "15-25 min walk or easy spin";
+    }
+    adjustedWorkout.type = adjustedWorkout?.run ? "recovery" : "rest";
+    adjustedWorkout.label = appendWorkoutQualifier(baseWorkout?.label, "Recovery focus");
+    adjustedWorkout.minDay = true;
+    adjustedWorkout.nutri = "rest";
+    adjustedWorkout.success = "Keep effort easy, do the mobility work, and finish fresher than you started.";
+    adjustedWorkout.recoveryRecommendation = "Walk or easy spin + 8-10 min mobility.";
+    adjustedWorkout.intensityGuidance = "low";
+    adjustedWorkout.optionalSecondary = "8-10 min mobility reset";
+    if (adjustedWorkout?.strSess) adjustedWorkout.strengthDuration = "12-15 min mobility + activation";
+    appendEnvironmentNote("Recovery focus today: walking, easy aerobic work, and mobility only.");
+    coachLine = "Recovery focus today: remove intensity, keep movement easy, and protect the next 48 hours.";
+    recoveryLine = "Recovery recommendation: walk or easy spin, then 8-10 minutes of mobility.";
+    userVisibleLine = "Your recovery inputs and recent load shifted today toward recovery work.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is recovery focus based on ${reasonText || "strained recovery and recent load"}. Today's call is easy movement, mobility, and no hard effort.`;
+  } else if (state === "reduced_load") {
+    badge = "Reduced-load";
+    if (adjustedWorkout?.run) {
+      adjustedWorkout.run.t = baseDemand === "high" ? "Easy Aerobic" : (adjustedWorkout.run.t || "Controlled Aerobic");
+      adjustedWorkout.run.d = baseDemand === "high" ? "20-30 min easy aerobic" : scaleSessionDescriptor(adjustedWorkout.run.d || "", "20-30 min controlled");
+    }
+    adjustedWorkout.label = appendWorkoutQualifier(baseWorkout?.label, "Reduced-load");
+    adjustedWorkout.minDay = true;
+    adjustedWorkout.nutri = adjustedWorkout?.run ? "easyRun" : (baseWorkout?.nutri || "strength");
+    adjustedWorkout.success = "Keep intensity capped, finish the first useful block, and stop there.";
+    adjustedWorkout.recoveryRecommendation = "Finish with 5-8 min mobility and keep the rest of the day easy.";
+    adjustedWorkout.intensityGuidance = "controlled";
+    adjustedWorkout.optionalSecondary = "5-8 min mobility or tissue work";
+    if (adjustedWorkout?.strSess) adjustedWorkout.strengthDuration = "15-25 min";
+    appendEnvironmentNote("Reduced-load today: cap intensity, shorten the session, and use mobility as the finish.");
+    coachLine = "Reduced-load today: keep the session, lower the strain, and finish before fatigue starts to drift.";
+    recoveryLine = "Recovery recommendation: cap intensity, finish with mobility, and skip extra volume.";
+    userVisibleLine = "Your recovery and recent training pattern trimmed today's load.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is reduced-load based on ${reasonText || "recent strain and consistency signals"}. Keep the stimulus, but lower the intensity and total load.`;
+  } else if (state === "progression") {
+    badge = "Progression-ready";
+    if (adjustedWorkout?.run && /easy/i.test(String(adjustedWorkout?.run?.t || ""))) adjustedWorkout.run.t = "Easy + strides";
+    adjustedWorkout.label = appendWorkoutQualifier(baseWorkout?.label, "Progression-ready");
+    adjustedWorkout.success = "Keep the planned session and add only one controlled progression if it stays smooth.";
+    adjustedWorkout.recoveryRecommendation = "Keep your normal fueling and recovery; no extra hero volume after the session.";
+    adjustedWorkout.intensityGuidance = "steady with one small progression";
+    adjustedWorkout.extendedFinisher = adjustedWorkout?.extendedFinisher || (adjustedWorkout?.run ? "Optional: 4 × 20s strides if the session stays smooth." : "Optional: add one final quality set if form stays crisp.");
+    appendEnvironmentNote("Progression-ready today: one small progression is available if execution stays controlled.");
+    coachLine = "Progression is available today: keep the plan intact and add only one small progression if it stays smooth.";
+    recoveryLine = "Recovery recommendation: normal fueling, normal mobility, and no extra bonus work after the progression.";
+    userVisibleLine = "Your recovery and recent consistency allow a small progression today.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "supportive recovery and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
+  } else {
+    adjustedWorkout.recoveryRecommendation = "Normal recovery: finish the session, refuel, and do your usual mobility.";
+    adjustedWorkout.intensityGuidance = "planned";
+    appendEnvironmentNote("Readiness is steady today: run the planned session with clean control.");
+    coachLine = "Readiness is steady today: execute the planned session cleanly and keep the effort controlled.";
+    recoveryLine = "Recovery recommendation: follow your normal fueling and mobility routine after the session.";
+    userVisibleLine = "Your recent recovery and training load support the planned session.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness looks steady based on ${reasonText || "recent completion, recovery, and training load"}. Run the planned session as written and keep recovery normal.`;
+  }
+
+  adjustedWorkout.readinessState = state;
+  adjustedWorkout.readinessInputs = {
+    completedCount,
+    skippedCount,
+    modifiedCount,
+    consistencyRatio,
+    hardSessions72h,
+    hardSessions7d,
+    sleep,
+    stress,
+    soreness,
+    feel,
+  };
+
+  return {
+    state,
+    source: promptSignal?.label || (hasReadinessInputs(checkin) ? "check-in" : "readiness engine"),
+    badge,
+    coachLine,
+    recoveryLine,
+    userVisibleLine,
+    inputDriven,
+    factors: state === "progression" ? progressReasons : protectReasons,
+    adjustedWorkout,
+  };
 };
 
 const getTodayWorkout = (weekNum, dayNum) => {
@@ -1296,6 +1592,12 @@ const DEFAULT_PERSONALIZATION = {
     city: "",
     groceryOptions: [],
     quickOptions: [],
+    locationPermissionGranted: false,
+    locationStatus: "unknown",
+    locationLabel: "",
+    lastKnownLat: null,
+    lastKnownLng: null,
+    lastUpdatedAt: 0,
   },
   coachMemory: {
     wins: [],
@@ -2633,19 +2935,25 @@ export default function TrainerDashboard() {
   if (todayWorkoutHardened?.type === "rest" && Number(todaySummary?.steps || 0) > 0) {
     todayWorkoutHardened.environmentNote = `${todayWorkoutHardened.environmentNote ? `${todayWorkoutHardened.environmentNote} ` : ""}Today steps: ${todaySummary.steps}. Keep rest day movement easy.`;
   }
-  const nutritionLayer = deriveAdaptiveNutrition({ todayWorkout: todayWorkoutHardened, goals: goalsModel, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer, failureMode });
+  const savedTodayCheckin = dailyCheckins?.[todayKey] || logs?.[todayKey]?.checkin || {};
+  const savedReadinessPromptSignal = coachPlanAdjustments?.extra?.readinessSignals?.[todayKey] || null;
+  const sharedReadinessInfluence = deriveTodayReadinessInfluence({ checkin: savedTodayCheckin, promptSignal: savedReadinessPromptSignal, workout: todayWorkoutHardened });
+  const effectiveTodayWorkout = sharedReadinessInfluence?.adjustedWorkout || todayWorkoutHardened;
+  const nutritionLayer = deriveAdaptiveNutrition({ todayWorkout: effectiveTodayWorkout, goals: goalsModel, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer, failureMode });
   const realWorldNutrition = deriveRealWorldNutritionEngine({
-    location: personalization?.localFoodContext?.city,
+    location: personalization?.localFoodContext?.city || personalization?.localFoodContext?.locationLabel || (personalization?.connectedDevices?.location?.status === "granted" ? "Nearby area" : ""),
     dayType: nutritionLayer.dayType,
     goalContext: getGoalContext(goalsModel),
     nutritionLayer,
     momentum,
     favorites: nutritionFavorites,
     travelMode: personalization.travelState.isTravelWeek || (personalization.travelState.environmentMode || "").includes("travel"),
-    learningLayer
+    learningLayer,
+    timeOfDay: today.getHours() < 12 ? "morning" : today.getHours() < 18 ? "afternoon" : "evening",
+    loggedIntake: nutritionFeedback?.[todayKey]
   });
-  const dailyBrief = generateDailyCoachBrief({ momentum, todayWorkout: todayWorkoutHardened, arbitration, injuryState: personalization.injuryPainState, patterns, learning: learningLayer, salvage: salvageLayer });
-  const dailyStory = buildUnifiedDailyStory({ todayWorkout: todayWorkoutHardened, dailyBrief, progress: progressEngine, arbitration, expectations, salvage: salvageLayer, momentum });
+  const dailyBrief = generateDailyCoachBrief({ momentum, todayWorkout: effectiveTodayWorkout, arbitration, injuryState: personalization.injuryPainState, patterns, learning: learningLayer, salvage: salvageLayer });
+  const dailyStory = buildUnifiedDailyStory({ todayWorkout: effectiveTodayWorkout, dailyBrief, progress: progressEngine, arbitration, expectations, salvage: salvageLayer, momentum });
   const weeklyReview = generateWeeklyCoachReview({ momentum, arbitration, signals: computeAdaptiveSignals({ logs, bodyweights, personalization }), personalization, patterns, learning: learningLayer, nutritionFeedback, expectations, recalibration });
   const baseProactiveTriggers = buildProactiveTriggers({ momentum, personalization, goals: goalsModel, learning: learningLayer, nutritionFeedback, longTermMemory }).filter(t => !dismissedTriggers.includes(t.id));
   const optimizationTrigger = optimizationLayer.experimentation.canExperiment && optimizationLayer.experimentation.pendingExperiment
@@ -3817,7 +4125,7 @@ Keep it plain and specific.`;
     setAnalyzing(false);
   };
 
-  const TABS = ["Today", "Program", "Log", "Nutrition", "Coach", "Settings"];
+  const TABS = ["Today", "Program", "Log", "Nutrition", "Coach"];
 
   if (authInitializing || loading) return (
     <div style={{ background:"radial-gradient(110% 110% at 85% -5%, rgba(124,92,255,0.32), transparent 48%), radial-gradient(120% 120% at -10% 0%, rgba(0,194,255,0.2), transparent 42%), linear-gradient(175deg,#06080f 0%, #0b1220 45%, #10192d 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#6b7c99", fontSize:"0.7rem", letterSpacing:"0.2em" }}>
@@ -3865,6 +4173,47 @@ Keep it plain and specific.`;
   const selectedPalette = personalization?.settings?.appearance?.palette || "Green";
   const userAccent = PALETTE_THEME[selectedPalette] || phaseTheme.accent;
   const selectedThemeMode = personalization?.settings?.appearance?.theme || "System";
+  const themeTokens = selectedThemeMode === "Light"
+    ? {
+        "--bg": "#edf3fb",
+        "--panel": "rgba(255,255,255,0.88)",
+        "--panel-2": "rgba(248,251,255,0.94)",
+        "--panel-3": "rgba(237,243,251,0.98)",
+        "--border": "rgba(115,138,176,0.34)",
+        "--muted": "#5b6f91",
+        "--text": "#10203a",
+        "--card-border": "rgba(115,138,176,0.28)",
+        "--card-shadow": "0 10px 24px rgba(102,123,155,0.16), inset 0 1px 0 rgba(255,255,255,0.72), inset 0 -10px 18px rgba(219,228,242,0.22)",
+        "--card-shadow-hover": "0 16px 32px rgba(84,104,138,0.2)",
+        "--card-strong-shadow": "0 14px 30px rgba(84,104,138,0.18), 0 0 0 1px var(--phase-accent-soft)",
+        "--card-soft-border": "rgba(255,61,129,0.2)",
+        "--card-soft-shadow": "0 8px 18px rgba(102,123,155,0.14)",
+        "--shell-overlay": "radial-gradient(140% 100% at 50% -5%, var(--phase-accent-soft), transparent 58%)",
+        "--tab-strip-bg": "rgba(255,255,255,0.7)",
+        "--tab-strip-border": "rgba(115,138,176,0.28)",
+        "--tab-text": "#4e6486",
+        "--heading-start": "#10203a",
+      }
+    : {
+        "--bg": "#0b1220",
+        "--panel": "#121d33",
+        "--panel-2": "#172742",
+        "--panel-3": "#203253",
+        "--border": "#324767",
+        "--muted": "#8ea2c4",
+        "--text": "#e8eefc",
+        "--card-border": "rgba(111,148,198,0.22)",
+        "--card-shadow": "0 8px 20px rgba(4,8,14,0.34), inset 0 1px 0 rgba(255,255,255,0.03), inset 0 -14px 24px rgba(0,0,0,0.2)",
+        "--card-shadow-hover": "0 16px 34px rgba(4,8,14,0.52)",
+        "--card-strong-shadow": "0 14px 32px rgba(6,12,22,0.52), 0 0 0 1px var(--phase-accent-soft)",
+        "--card-soft-border": "rgba(255,61,129,0.22)",
+        "--card-soft-shadow": "0 6px 14px rgba(4,8,14,0.3)",
+        "--shell-overlay": "radial-gradient(140% 100% at 50% -5%, var(--phase-accent-soft), transparent 58%)",
+        "--tab-strip-bg": "rgba(17,29,50,0.9)",
+        "--tab-strip-border": "rgba(90,126,179,0.4)",
+        "--tab-text": "#95abd0",
+        "--heading-start": "#dff6ff",
+      };
   const appBackground = selectedThemeMode === "Light"
     ? "linear-gradient(175deg,#f4f8ff 0%, #e8effb 100%)"
     : "radial-gradient(110% 110% at 85% -5%, var(--phase-accent-glow), transparent 48%), radial-gradient(120% 120% at -10% 0%, rgba(0,194,255,0.2), transparent 42%), linear-gradient(175deg,#06080f 0%, #0b1220 45%, #10192d 100%)";
@@ -4034,17 +4383,10 @@ Keep it plain and specific.`;
   };
 
   return (
-    <div style={{ "--phase-accent": userAccent, "--phase-accent-soft": phaseTheme.accentSoft, "--phase-accent-glow": phaseTheme.accentGlow, fontFamily:"'Inter',sans-serif", background:appBackground, minHeight:"100vh", color:selectedThemeMode === "Light" ? "#0f172a" : "#e8eefc", padding:onboardingComplete ? "1.65rem 1.2rem" : 0 }}>
+    <div style={{ "--phase-accent": userAccent, "--phase-accent-soft": phaseTheme.accentSoft, "--phase-accent-glow": phaseTheme.accentGlow, ...themeTokens, fontFamily:"'Inter',sans-serif", background:appBackground, minHeight:"100vh", color:"var(--text)", padding:onboardingComplete ? "1.65rem 1.2rem" : 0 }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap');
         :root{
-          --bg:#0b1220;
-          --panel:#121d33;
-          --panel-2:#172742;
-          --panel-3:#203253;
-          --border:#324767;
-          --muted:#8ea2c4;
-          --text:#e8eefc;
           --accent:var(--phase-accent);
           --accent-2:#7c5cff;
           --hot:#ff3d81;
@@ -4055,8 +4397,8 @@ Keep it plain and specific.`;
         .fi{animation:fi 0.22s ease forwards}
         .hov{transition:all 0.2s ease;cursor:pointer} .hov:hover{background:rgba(0,194,255,0.08)!important}
         .btn{
-          background:linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0)), #182742;
-          border:1px solid #395177;
+          background:linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0)), var(--panel-2);
+          border:1px solid var(--border);
           border-radius:10px;
           font-family:'Inter',sans-serif;
           font-size:0.62rem;
@@ -4065,7 +4407,7 @@ Keep it plain and specific.`;
           cursor:pointer;
           padding:7px 11px;
           transition:all 0.2s ease;
-          color:#d5e5ff;
+          color:var(--text);
         }
         .btn:hover{border-color:var(--phase-accent);color:#ffffff;transform:translateY(-1px);box-shadow:0 0 0 1px var(--phase-accent-soft), 0 8px 16px var(--phase-accent-soft)}
         .btn:active{transform:translateY(0) scale(0.985)}
@@ -4077,7 +4419,7 @@ Keep it plain and specific.`;
           box-shadow:0 7px 24px var(--phase-accent-soft);
         }
         .btn-primary:hover{filter:brightness(1.05);box-shadow:0 10px 26px var(--phase-accent-glow)}
-        input,textarea,select{background:#15233d;border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'Inter',sans-serif;font-size:0.7rem;padding:8px 10px;outline:none;width:100%;transition:border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease}
+        input,textarea,select{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'Inter',sans-serif;font-size:0.7rem;padding:8px 10px;outline:none;width:100%;transition:border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease}
         input:focus,textarea:focus,select:focus{border-color:#00c2ff;box-shadow:0 0 0 3px rgba(0,194,255,0.16);transform:translateY(-1px)}
         @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
         @keyframes pulseGlow{0%,100%{box-shadow:0 0 0 0 rgba(124,92,255,0)}50%{box-shadow:0 0 0 10px rgba(124,92,255,0.14)}}
@@ -4099,15 +4441,15 @@ Keep it plain and specific.`;
           from{opacity:0; transform:translateY(6px)}
           to{opacity:1; transform:translateY(0)}
         }
-        .tag{font-size:0.56rem;padding:3px 7px;border-radius:999px;letter-spacing:0.03em;white-space:nowrap;background:#1b2638}
+        .tag{font-size:0.56rem;padding:3px 7px;border-radius:999px;letter-spacing:0.03em;white-space:nowrap;background:var(--panel-2);color:var(--text)}
         .card{
           position:relative;
           overflow:hidden;
           background:linear-gradient(180deg, var(--phase-accent-soft), rgba(255,255,255,0)) , var(--panel);
-          border:1px solid rgba(111,148,198,0.22);
+          border:1px solid var(--card-border);
           border-radius:14px;
           padding:1.05rem;
-          box-shadow:0 8px 20px rgba(4,8,14,0.34), inset 0 1px 0 rgba(255,255,255,0.03), inset 0 -14px 24px rgba(0,0,0,0.2);
+          box-shadow:var(--card-shadow);
           transition:transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, filter 0.2s ease
         }
         .card::before{
@@ -4131,20 +4473,20 @@ Keep it plain and specific.`;
           pointer-events:none;
           opacity:0.75;
         }
-        .card:hover{transform:translateY(-1px); box-shadow:0 16px 34px rgba(4,8,14,0.52); border-color:var(--phase-accent); filter:saturate(1.08)}
+        .card:hover{transform:translateY(-1px); box-shadow:var(--card-shadow-hover); border-color:var(--phase-accent); filter:saturate(1.08)}
         .card-strong{
           background:linear-gradient(180deg, var(--phase-accent-soft), rgba(0,194,255,0.03)), var(--panel-2);
           border-color:var(--phase-accent-soft);
-          box-shadow:0 14px 32px rgba(6,12,22,0.52), 0 0 0 1px var(--phase-accent-soft);
+          box-shadow:var(--card-strong-shadow);
         }
         .card-soft{
           background:linear-gradient(180deg, rgba(255,61,129,0.07), rgba(255,255,255,0)), var(--panel);
-          border-color:rgba(255,61,129,0.22);
-          box-shadow:0 6px 14px rgba(4,8,14,0.3);
+          border-color:var(--card-soft-border);
+          box-shadow:var(--card-soft-shadow);
         }
-        .sect-title{font-family:'Space Grotesk',sans-serif;font-size:1.02rem;font-weight:700;letter-spacing:0.03em;text-transform:none;color:#f1f6ff}
+        .sect-title{font-family:'Space Grotesk',sans-serif;font-size:1.02rem;font-weight:700;letter-spacing:0.03em;text-transform:none;color:var(--text)}
         .mono{font-family:'JetBrains Mono',monospace; letter-spacing:0.01em}
-        .coach-copy{font-family:'Inter',sans-serif; color:#d8e3f8; line-height:1.7}
+        .coach-copy{font-family:'Inter',sans-serif; color:var(--text); line-height:1.7}
         .completion-pop{animation:completePop 0.35s ease-out}
         .pulse-ring{animation:ringPulse 1.35s ease-in-out infinite; border-radius:999px}
         .coach-fade{animation:coachFadeIn 0.28s ease-out both}
@@ -4171,35 +4513,21 @@ Keep it plain and specific.`;
       {!onboardingComplete ? (
         <OnboardingCoach onComplete={finishOnboarding} startingFresh={Boolean(personalization?.planResetUndo?.startedAt)} existingMemory={personalization?.coachMemory?.longTermMemory || []} />
       ) : (
-      <div style={{ maxWidth:860, margin:"0 auto", background:"radial-gradient(140% 100% at 50% -5%, var(--phase-accent-soft), transparent 58%)" }}>
+      <div style={{ maxWidth:860, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
 
         {/* ── HEADER BAR ── */}
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"1.25rem", flexWrap:"wrap", gap:"0.5rem" }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:"1.25rem", gap:"0.75rem" }}>
           <div>
-            <h1 style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:"1.95rem", letterSpacing:"0.04em", background:"linear-gradient(120deg,#dff6ff 15%,var(--phase-accent) 58%,#ff3d81 95%)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", lineHeight:1 }}>
+            <h1 style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:"1.95rem", letterSpacing:"0.04em", background:"linear-gradient(120deg,var(--heading-start) 15%,var(--phase-accent) 58%,#ff3d81 95%)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", lineHeight:1 }}>
               PERSONAL TRAINER
             </h1>
-            <div style={{ fontFamily:"'Inter',sans-serif", fontSize:"0.58rem", color:"#8ca2c6", letterSpacing:"0.12em", marginTop:2 }}>
-              {fmtDate(today).toUpperCase()} · {currentPhaseWeekLabel}
+            <div style={{ fontFamily:"'Inter',sans-serif", fontSize:"0.58rem", color:"var(--muted)", letterSpacing:"0.12em", marginTop:2 }}>
+              {fmtDate(today).toUpperCase()} · WEEK {currentWeek}
             </div>
           </div>
-          <div style={{ textAlign:"right" }}>
-            {activeTimeBoundGoal ? (
-              <>
-                <div className="mono" style={{ fontSize:"1.75rem", color:(daysToRace || 0) <= 30 ? C.red : "#89a0c2", fontWeight:500, lineHeight:1, animation:(daysToRace || 0) <= 30 ? "pulseGlow 1.8s ease-in-out infinite" : "none", borderRadius:10 }}>{daysToRace}</div>
-                <div style={{ fontSize:"0.7rem", color:"#7f95b7", marginTop:2 }}>days to race</div>
-              </>
-            ) : (
-              <>
-                <div className="mono" style={{ fontSize:"0.88rem", color:"#9fb4d3", fontWeight:500, lineHeight:1.2 }}>Ongoing goals</div>
-                <div style={{ fontSize:"0.64rem", color:"#7f95b7", marginTop:2 }}>progress tracker mode</div>
-              </>
-            )}
-            <div style={{ marginTop:6, display:"flex", gap:"0.75rem", alignItems:"center", justifyContent:"flex-end" }}>
-              <div style={{ fontSize:"0.65rem", color: storageStatus.mode === "cloud" ? "#27f59a" : "#ff8a00" }}>{storageStatus.mode === "cloud" ? "Synced" : "Offline"}</div>
-              <button className="btn" onClick={handleSignOut} style={{ fontSize:"0.65rem", padding:"4px 10px" }}>Sign out</button>
-            </div>
-          </div>
+          <button className="btn" onClick={()=>setTab(5)} aria-label="Open settings" title="Settings" style={{ width:40, height:40, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+            <SettingsIcon size={18} />
+          </button>
         </div>
         {undoBanner && (
           <div className="card card-soft" style={{ marginBottom:"0.75rem", borderColor:C.amber+"35", display:"flex", alignItems:"center", justifyContent:"space-between", gap:"0.5rem", padding:"0.45rem 0.55rem" }}>
@@ -4207,10 +4535,10 @@ Keep it plain and specific.`;
           </div>
         )}
         {/* ── TABS ── */}
-        <div style={{ display:"flex", gap:"0.3rem", marginBottom:"1.25rem", background:"rgba(17,29,50,0.9)", padding:"0.35rem", borderRadius:12, border:"1px solid rgba(90,126,179,0.4)", overflowX:"auto", boxShadow:"inset 0 1px 0 rgba(255,255,255,0.05)" }}>
+        <div style={{ display:"flex", gap:"0.3rem", marginBottom:"1.25rem", background:"var(--tab-strip-bg)", padding:"0.35rem", borderRadius:12, border:"1px solid var(--tab-strip-border)", overflowX:"auto", boxShadow:"inset 0 1px 0 rgba(255,255,255,0.05)" }}>
           {TABS.map((t,i) => (
             <button key={t} className="btn" onClick={()=>setTab(i)}
-              style={{ color:tab===i?"#041220":"#95abd0", background:tab===i?"linear-gradient(130deg,var(--phase-accent),#27f59a)":"transparent", borderColor:tab===i?"transparent":"rgba(84,113,158,0.5)", fontWeight:tab===i?700:500, flexShrink:0 }}>
+              style={{ color:tab===i?"#041220":"var(--tab-text)", background:tab===i?"linear-gradient(130deg,var(--phase-accent),#27f59a)":"transparent", borderColor:tab===i?"transparent":"var(--border)", fontWeight:tab===i?700:500, flexShrink:0 }}>
               {t}
             </button>
           ))}
@@ -4226,7 +4554,7 @@ Keep it plain and specific.`;
         ══════════════════════════════════════════════════════════ */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goalsModel} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} goalBuckets={goalBuckets} activeTimeBoundGoal={activeTimeBoundGoal} deviceSyncAudit={deviceSyncAudit} />
+            <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goalsModel} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} goalBuckets={goalBuckets} activeTimeBoundGoal={activeTimeBoundGoal} deviceSyncAudit={deviceSyncAudit} todayWorkout={effectiveTodayWorkout} />
           </ProgramTabErrorBoundary>
         )}
 
@@ -4238,12 +4566,12 @@ Keep it plain and specific.`;
         {/* ══════════════════════════════════════════════════════════
             NUTRITION
         ══════════════════════════════════════════════════════════ */}
-        {tab === 3 && <NutritionTab todayWorkout={todayWorkoutHardened} currentWeek={currentWeek} logs={logs} personalization={personalization} goals={goalsModel} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} nutritionFeedback={nutritionFeedback} saveNutritionFeedback={saveNutritionFeedback} />}
+        {tab === 3 && <NutritionTab todayWorkout={effectiveTodayWorkout} currentWeek={currentWeek} logs={logs} personalization={personalization} goals={goalsModel} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} nutritionFeedback={nutritionFeedback} saveNutritionFeedback={saveNutritionFeedback} />}
 
         {/* ══════════════════════════════════════════════════════════
             COACH
         ══════════════════════════════════════════════════════════ */}
-        {tab === 4 && <CoachTab logs={logs} currentWeek={currentWeek} todayWorkout={todayWorkoutHardened} bodyweights={bodyweights} personalization={personalization} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFeedback={nutritionFeedback} goals={goalsModel} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+        {tab === 4 && <CoachTab logs={logs} currentWeek={currentWeek} todayWorkout={effectiveTodayWorkout} bodyweights={bodyweights} personalization={personalization} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFeedback={nutritionFeedback} goals={goalsModel} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
           setCoachPlanAdjustments(nextCoachPlanAdjustments);
@@ -4276,12 +4604,12 @@ Keep it plain and specific.`;
         }} />}
         {showAppleHealthFirstLaunch && (
           <div style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:56, padding:"1rem" }}>
-            <div className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f", background:"#0b1628", padding:"0.9rem" }}>
-              <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
-                To give you smarter recommendations, Personal Trainer reads health data from Apple Health. We never share this data. You can revoke access anytime in iOS Settings.
+            <div className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"var(--border)", background:"var(--panel)", padding:"0.9rem" }}>
+              <div style={{ fontSize:"0.62rem", color:"var(--text)", lineHeight:1.7, marginBottom:"0.6rem" }}>
+                Personal Trainer can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
               </div>
               <button className="btn btn-primary" onClick={requestAppleHealthPermissions} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
-              <button className="btn" onClick={async ()=>{ await updateAppleHealthState({ skipped: true }); setShowAppleHealthFirstLaunch(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
+              <button className="btn" onClick={async ()=>{ await updateAppleHealthState({ skipped: true }); setShowAppleHealthFirstLaunch(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"var(--muted)", borderColor:"var(--border)" }}>
                 Skip for now
               </button>
             </div>
@@ -4289,13 +4617,13 @@ Keep it plain and specific.`;
         )}
         {startFreshConfirmOpen && (
           <div style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:50, padding:"1rem" }}>
-            <div className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f", background:"#0b1628", padding:"0.9rem" }}>
-              <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
+            <div className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"var(--border)", background:"var(--panel)", padding:"0.9rem" }}>
+              <div style={{ fontSize:"0.62rem", color:"var(--text)", lineHeight:1.7, marginBottom:"0.6rem" }}>
                 This will archive your current plan and start a new intake from today. Your history stays saved, your coach memory carries forward, and you can rebuild around new priorities. This cannot be reversed automatically — but you have 7 days to undo it.
               </div>
               <div style={{ display:"flex", justifyContent:"flex-end", gap:"0.45rem" }}>
                 <button className="btn btn-primary" onClick={()=>setStartFreshConfirmOpen(false)} style={{ fontSize:"0.56rem" }}>Cancel</button>
-                <button className="btn" onClick={startFreshPlan} style={{ fontSize:"0.56rem", color:"#8da4c7", borderColor:"#2f415d", background:"transparent" }}>Yes, start fresh</button>
+                <button className="btn" onClick={startFreshPlan} style={{ fontSize:"0.56rem", color:"var(--muted)", borderColor:"var(--border)", background:"transparent" }}>Yes, start fresh</button>
               </div>
             </div>
           </div>
@@ -4938,10 +5266,22 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   };
   const requestLocationAccess = async () => {
     if (!(typeof navigator !== "undefined" && navigator?.geolocation?.getCurrentPosition)) {
+      const next = mergePersonalization(personalization, {
+        localFoodContext: {
+          ...(personalization?.localFoodContext || {}),
+          locationPermissionGranted: false,
+          locationStatus: "unavailable",
+          locationLabel: personalization?.localFoodContext?.locationLabel || personalization?.localFoodContext?.city || "Saved city only",
+          lastUpdatedAt: Date.now(),
+        },
+      });
+      setPersonalization(next);
+      await onPersist(next);
       setLocationMsg("Location services are unavailable in this browser.");
       return;
     }
     navigator.geolocation.getCurrentPosition(async (position) => {
+      const fallbackLocationLabel = personalization?.localFoodContext?.city || personalization?.localFoodContext?.locationLabel || "Nearby area";
       const next = mergePersonalization(personalization, {
         connectedDevices: {
           ...(personalization?.connectedDevices || {}),
@@ -4954,6 +5294,16 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             source: "ios_geolocation",
           },
         },
+        localFoodContext: {
+          ...(personalization?.localFoodContext || {}),
+          city: personalization?.localFoodContext?.city || fallbackLocationLabel,
+          locationPermissionGranted: true,
+          locationStatus: "granted",
+          locationLabel: fallbackLocationLabel,
+          lastKnownLat: Number(position?.coords?.latitude || 0),
+          lastKnownLng: Number(position?.coords?.longitude || 0),
+          lastUpdatedAt: Date.now(),
+        },
       });
       setPersonalization(next);
       await onPersist(next);
@@ -4963,6 +5313,13 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         connectedDevices: {
           ...(personalization?.connectedDevices || {}),
           location: { status: "denied", error: err?.message || "permission_denied", updatedAt: Date.now() },
+        },
+        localFoodContext: {
+          ...(personalization?.localFoodContext || {}),
+          locationPermissionGranted: false,
+          locationStatus: "denied",
+          locationLabel: personalization?.localFoodContext?.locationLabel || personalization?.localFoodContext?.city || "",
+          lastUpdatedAt: Date.now(),
         },
       });
       setPersonalization(next);
@@ -5287,7 +5644,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
           <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
             <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
-              To give you smarter recommendations, Personal Trainer reads health data from Apple Health. We never share this data. You can revoke access anytime in iOS Settings.
+              Personal Trainer can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
             </div>
             <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
             <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
@@ -5648,7 +6005,7 @@ function OnboardingCoachLegacy({ onComplete }) {
         <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
           <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
             <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
-              To give you smarter recommendations, Personal Trainer reads health data from Apple Health. We never share this data. You can revoke access anytime in iOS Settings.
+              Personal Trainer can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
             </div>
             <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
             <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
@@ -5820,6 +6177,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
   const [checkinAck, setCheckinAck] = useState("");
   const [postSaveInsight, setPostSaveInsight] = useState("");
   const [todayDataError, setTodayDataError] = useState("");
+  const [checkinSaving, setCheckinSaving] = useState(false);
   const [sessionVariant, setSessionVariant] = useState("standard");
   const [shiftChoiceOpen, setShiftChoiceOpen] = useState(false);
   const [shiftUndo, setShiftUndo] = useState(null);
@@ -5978,13 +6336,27 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
   const timeLabel = environmentSelection?.time === "45+" ? "45+ min" : `${environmentSelection?.time || "30"} min`;
   const injuryLevel = personalization.injuryPainState.level;
   const injuryBadge = injuryLevel === "none" ? null : injuryLevel === "mild_tightness" ? { label: "Mild", color: C.blue } : injuryLevel === "moderate_pain" ? { label: "Moderate", color: C.amber } : { label: "Pain/Stop", color: C.red };
-  const strTrack = activeWorkout?.strengthTrack || todayWorkout?.strengthTrack || "home";
-  const strSess = activeWorkout?.strSess || todayWorkout?.strSess || "A";
+  const readinessPromptSignal = coachPlanAdjustments?.extra?.readinessSignals?.[todayKey] || null;
+  const readinessInfluence = deriveTodayReadinessInfluence({ checkin, promptSignal: readinessPromptSignal, workout: activeWorkout });
+  const displayWorkout = readinessInfluence?.adjustedWorkout || activeWorkout;
+  const todayUsesDeviceRecovery = /garmin readiness|device signals/i.test(`${todayWorkout?.label || ""} ${todayWorkout?.explanation || ""}`);
+  const todayReadinessLogged = Boolean(readinessInfluence || Number(checkin?.readiness?.sleep || 0) > 0 || Number(checkin?.readiness?.stress || 0) > 0 || Number(checkin?.readiness?.soreness || 0) > 0);
+  const todayProvenance = buildProvenanceText({
+    inputs: [
+      "your active goals",
+      historicalLogs.length ? "recent training momentum" : "today's planned session",
+      environmentSelection?.mode ? `today's ${String(environmentSelection.mode || "training").toLowerCase()} setup` : "today's setup",
+      todayReadinessLogged ? "saved readiness input" : todayUsesDeviceRecovery ? "device recovery signals" : null,
+    ],
+    limitation: !historicalLogs.length ? "Recent training history is still limited." : "",
+  });
+  const strTrack = displayWorkout?.strengthTrack || todayWorkout?.strengthTrack || "home";
+  const strSess = displayWorkout?.strSess || todayWorkout?.strSess || "A";
   const strExercises = STRENGTH[strSess]?.[strTrack] || [];
-  const hasStrength = activeWorkout?.type === "run+strength" || activeWorkout?.type === "strength+prehab";
-  const hasPrehab = activeWorkout?.type === "strength+prehab";
-  const runColor = activeWorkout?.run?.t === "Intervals" ? C.amber : activeWorkout?.run?.t === "Long" ? C.red : activeWorkout?.run?.t === "Tempo" ? C.amber : C.green;
-  const runPace = activeWorkout?.run ? (activeWorkout.run.t === "Intervals" ? zones?.int : activeWorkout.run.t === "Long" ? zones?.long : activeWorkout.run.t === "Tempo" ? zones?.tempo : zones?.easy) : null;
+  const hasStrength = displayWorkout?.type === "run+strength" || displayWorkout?.type === "strength+prehab";
+  const hasPrehab = displayWorkout?.type === "strength+prehab";
+  const runColor = displayWorkout?.run?.t === "Intervals" ? C.amber : displayWorkout?.run?.t === "Long" ? C.red : displayWorkout?.run?.t === "Tempo" ? C.amber : readinessInfluence?.state === "recover" ? C.blue : C.green;
+  const runPace = displayWorkout?.run ? (displayWorkout.run.t === "Intervals" ? zones?.int : displayWorkout.run.t === "Long" ? zones?.long : displayWorkout.run.t === "Tempo" ? zones?.tempo : zones?.easy) : null;
   const tomorrowWorkout = getTodayWorkout(currentWeek, (getDayOfWeek() + 1) % 7);
   const tomorrowHasSession = !!tomorrowWorkout?.label && tomorrowWorkout?.type !== "rest";
   const activeStrengthAdjustments = normalizePendingStrengthAdjustments(personalization?.strengthProgression?.pendingByDate?.[todayKey]);
@@ -6173,13 +6545,19 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
       {/* Header */}
       <div style={{ marginBottom:"0.85rem", display:"grid", gap:"0.2rem" }}>
         <div style={{ fontSize:"0.56rem", color:"#64748b", letterSpacing:"0.14em" }}>TODAY</div>
-        <div style={{ fontFamily:"’Inter’,sans-serif", fontSize:"1.45rem", color:"#f8fafc", fontWeight:600, lineHeight:1.15 }}>{activeWorkout?.label || "Rest Day"}</div>
+        <div style={{ fontFamily:"’Inter’,sans-serif", fontSize:"1.45rem", color:"#f8fafc", fontWeight:600, lineHeight:1.15 }}>{displayWorkout?.label || "Rest Day"}</div>
         {todayWorkout?.explanation && (
           <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.6, marginTop:"0.15rem" }}>
             {todayWorkout.explanation}
           </div>
         )}
-        <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.55 }}>{conciseFocus}</div>
+        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{todayProvenance}</div>
+        <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.55 }}>{readinessInfluence?.coachLine || conciseFocus}</div>
+        {readinessInfluence && (
+          <div style={{ fontSize:"0.54rem", color:readinessInfluence.state === "recover" ? C.amber : C.green, lineHeight:1.55 }}>
+            Influenced by your input: {readinessInfluence.userVisibleLine}
+          </div>
+        )}
       </div>
 
       {/* ── Expandable Workout Card ── */}
@@ -6190,7 +6568,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         {/* Card header row: badges + chevron */}
         <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.55rem", flexWrap:"wrap" }}>
           <span style={{ fontSize:"0.48rem", color:dayColor, background:dayColor+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500, letterSpacing:"0.04em" }}>
-            {todayWorkout?.type?.replace(/[+-]/g," + ").toUpperCase() || "REST"}
+            {displayWorkout?.type?.replace(/[+-]/g," + ").toUpperCase() || "REST"}
           </span>
           <span onClick={e=>{ e.stopPropagation(); setEnvDraft({ equipment: environmentSelection?.equipment || "dumbbells", time: environmentSelection?.time || "30", scope: "today" }); setShowEnvEditor(true); }} style={{ fontSize:"0.48rem", color:"#94a3b8", background:"#1e293b", padding:"0.15rem 0.45rem", borderRadius:6, cursor:"pointer" }}>
             {equipmentLabel} · {timeLabel}
@@ -6200,24 +6578,24 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
               {injuryBadge.label}
             </span>
           )}
-          {activeWorkout?.modifierBadge && (
+          {displayWorkout?.modifierBadge && (
             <span style={{ fontSize:"0.48rem", color:C.amber, background:C.amber+"15", padding:"0.15rem 0.45rem", borderRadius:6 }}>
-              {activeWorkout.modifierBadge}
+              {displayWorkout.modifierBadge}
             </span>
           )}
-          {activeWorkout?.variantBadge && (
+          {(displayWorkout?.variantBadge || readinessInfluence?.badge) && (
             <span style={{ fontSize:"0.48rem", color:C.green, background:C.green+"15", padding:"0.15rem 0.45rem", borderRadius:6 }}>
-              {activeWorkout.variantBadge}
+              {displayWorkout?.variantBadge || readinessInfluence?.badge}
             </span>
           )}
           <span style={{ marginLeft:"auto", fontSize:"0.65rem", color:"#475569", transform: cardExpanded ? "rotate(180deg)" : "rotate(0deg)", transition:"transform 0.2s" }}>▾</span>
         </div>
         {/* Key stats row (always visible) */}
-        {activeWorkout?.run && (
+        {displayWorkout?.run && (
           <div style={{ display:"flex", gap:"1.2rem", marginBottom: hasStrength ? "0.35rem" : 0 }}>
             <div>
               <div style={{ fontSize:"0.52rem", color:"#475569" }}>Distance</div>
-              <div className="mono" style={{ fontSize:"0.85rem", color:runColor, fontWeight:500 }}>{activeWorkout.run.d}</div>
+              <div className="mono" style={{ fontSize:"0.85rem", color:runColor, fontWeight:500 }}>{displayWorkout.run.d}</div>
             </div>
             <div>
               <div style={{ fontSize:"0.52rem", color:"#475569" }}>Pace</div>
@@ -6225,11 +6603,11 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             </div>
             <div>
               <div style={{ fontSize:"0.52rem", color:"#475569" }}>Type</div>
-              <div style={{ fontSize:"0.85rem", color:runColor, fontWeight:500 }}>{activeWorkout.run.t}</div>
+              <div style={{ fontSize:"0.85rem", color:runColor, fontWeight:500 }}>{displayWorkout.run.t}</div>
             </div>
           </div>
         )}
-        {hasStrength && !activeWorkout?.run && (
+        {hasStrength && !displayWorkout?.run && (
           <div style={{ display:"flex", gap:"1.2rem" }}>
             <div>
               <div style={{ fontSize:"0.52rem", color:"#475569" }}>Session</div>
@@ -6241,13 +6619,13 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             </div>
             <div>
               <div style={{ fontSize:"0.52rem", color:"#475569" }}>Duration</div>
-              <div className="mono" style={{ fontSize:"0.85rem", color:C.blue, fontWeight:500 }}>{activeWorkout?.strengthDuration || "20-30 min"}</div>
+              <div className="mono" style={{ fontSize:"0.85rem", color:C.blue, fontWeight:500 }}>{displayWorkout?.strengthDuration || "20-30 min"}</div>
             </div>
           </div>
         )}
-        {hasStrength && activeWorkout?.run && (
+        {hasStrength && displayWorkout?.run && (
           <div style={{ fontSize:"0.56rem", color:"#94a3b8" }}>
-            + Strength {strSess} ({strTrack === "hotel" ? "Gym" : "Home"}) · {activeWorkout?.strengthDuration || "20-30 min"}
+            + Strength {strSess} ({strTrack === "hotel" ? "Gym" : "Home"}) · {displayWorkout?.strengthDuration || "20-30 min"}
           </div>
         )}
 
@@ -6255,13 +6633,14 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         {cardExpanded && (
           <div style={{ marginTop:"0.75rem", borderTop:"1px solid #1e293b", paddingTop:"0.75rem" }} onClick={e => e.stopPropagation()}>
             {/* Run section */}
-            {activeWorkout?.run && (
+            {displayWorkout?.run && (
               <div style={{ marginBottom: hasStrength ? "0.85rem" : 0 }}>
                 <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>RUN</div>
                 <div style={{ fontSize:"0.62rem", color:"#cbd5e1", lineHeight:1.65 }}>
-                  {activeWorkout.run.t} — {activeWorkout.run.d} at {runPace}/mi
+                  {displayWorkout.run.t} — {displayWorkout.run.d} at {runPace}/mi
                 </div>
-                {activeWorkout?.environmentNote && <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" }}>{activeWorkout.environmentNote}</div>}
+                {displayWorkout?.environmentNote && <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" }}>{displayWorkout.environmentNote}</div>}
+                {readinessInfluence?.recoveryLine && <div style={{ fontSize:"0.54rem", color:readinessInfluence.state === "recover" ? C.amber : C.green, marginTop:"0.2rem" }}>{readinessInfluence.recoveryLine}</div>}
               </div>
             )}
 
@@ -6318,15 +6697,15 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
             )}
 
             {/* Optional secondary */}
-            {(activeWorkout?.optionalSecondary || planComposer?.aestheticAllocation?.active) && (
+            {(displayWorkout?.optionalSecondary || planComposer?.aestheticAllocation?.active) && (
               <div style={{ marginTop:"0.6rem", fontSize:"0.56rem", color:"#cbd5e1" }}>
-                + {activeWorkout?.optionalSecondary || "Optional: 10 min core"}
+                + {displayWorkout?.optionalSecondary || "Optional: 10 min core"}
               </div>
             )}
             {!!advancedVolumeFinisher && <div style={{ marginTop:"0.45rem", fontSize:"0.54rem", color:C.green }}>{advancedVolumeFinisher}</div>}
             {!!developingVolumeGuardrail && <div style={{ marginTop:"0.45rem", fontSize:"0.54rem", color:C.amber }}>{developingVolumeGuardrail}</div>}
-            {activeWorkout?.compressionWhy && <div style={{ marginTop:"0.55rem", fontSize:"0.54rem", color:C.green }}>{activeWorkout.compressionWhy}</div>}
-            {activeWorkout?.extendedFinisher && <div style={{ marginTop:"0.55rem", fontSize:"0.54rem", color:C.blue }}>{activeWorkout.extendedFinisher}</div>}
+            {displayWorkout?.compressionWhy && <div style={{ marginTop:"0.55rem", fontSize:"0.54rem", color:C.green }}>{displayWorkout.compressionWhy}</div>}
+            {displayWorkout?.extendedFinisher && <div style={{ marginTop:"0.55rem", fontSize:"0.54rem", color:C.blue }}>{displayWorkout.extendedFinisher}</div>}
           </div>
         )}
       </div>
@@ -6434,12 +6813,15 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
           <div style={{ display:"grid", gridTemplateColumns:"1fr 120px auto", gap:"0.35rem" }}>
             <input value={checkin.note || ""} onChange={e=>setCheckin(c=>({ ...c, note: e.target.value }))} placeholder="Optional note" />
             <input type="number" step="0.1" value={checkin.bodyweight || ""} onChange={e=>setCheckin(c=>({ ...c, bodyweight: e.target.value }))} placeholder="BW" />
-            <button className="btn btn-primary" disabled={checkin.status === "not_logged"} onClick={async ()=>{
-              if (checkin.status === "not_logged") return;
+            <button className="btn btn-primary" disabled={checkin.status === "not_logged" || checkinSaving} onClick={async ()=>{
+              if (checkin.status === "not_logged" || checkinSaving) return;
+              setCheckinSaving(true);
+              setCheckinAck("");
               try {
                 setTodayDataError("");
                 const parsed = parseMicroCheckin(checkin.note || "");
                 const basePayload = parsed ? { ...checkin, ...parsed } : { ...checkin };
+                const readinessUpdate = deriveReadinessAdjustedCheckin(basePayload);
                 const strengthPerformance = hasStrength
                   ? Object.values(strengthInputs || {})
                       .map((row) => ({
@@ -6462,7 +6844,12 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
                         };
                       })
                   : [];
-                const payload = { ...basePayload, strengthPerformance };
+                const payload = {
+                  ...basePayload,
+                  ...(readinessUpdate.adjusted || {}),
+                  readiness: readinessUpdate.readiness || basePayload.readiness || DEFAULT_DAILY_CHECKIN.readiness,
+                  strengthPerformance,
+                };
                 await saveDailyCheckin(todayKey, payload);
                 setCheckinAck(readinessUpdate.readinessFilled ? "Saved. Readiness captured for quiet coach adjustment." : "Saved.");
                 const daysToRaceNow = Math.max(0, Math.ceil((new Date("2026-07-19T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24)));
@@ -6489,11 +6876,14 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
                   await saveBodyweights(nextBW);
                 }
               } catch (e) {
-                setTodayDataError("Could not save check-in right now. Your screen is still usable; try again in a moment.");
+                setCheckinAck("");
+                setTodayDataError("Save did not finish. Try again. If it still fails, refresh once and retry; your local data stays available.");
+              } finally {
+                setCheckinSaving(false);
               }
-            }} style={{ fontSize:"0.55rem", opacity: checkin.status === "not_logged" ? 0.4 : 1 }}>SAVE</button>
+            }} style={{ fontSize:"0.55rem", opacity: (checkin.status === "not_logged" || checkinSaving) ? 0.4 : 1 }}>{checkinSaving ? "SAVING..." : "SAVE"}</button>
           </div>
-          {checkinAck && <div style={{ fontSize:"0.54rem", color:C.green }}>{checkinAck}</div>}
+          {checkinAck && <div role="status" style={{ fontSize:"0.54rem", color:C.green }}>{checkinAck}</div>}
           {hasStrength && (
             <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.2rem", borderTop:"1px solid #1e293b", paddingTop:"0.35rem" }}>
               <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Strength performance (for automatic load adjustment)</div>
@@ -6521,7 +6911,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
               })}
             </div>
           )}
-          {todayDataError && <div style={{ fontSize:"0.54rem", color:C.amber }}>{todayDataError}</div>}
+          {todayDataError && <div role="alert" style={{ fontSize:"0.54rem", color:C.amber }}>{todayDataError}</div>}
           {postSaveInsight && <div style={{ fontSize:"0.54rem", color:C.amber, whiteSpace:"pre-wrap", lineHeight:1.6 }}>{postSaveInsight}</div>}
         </div>
       </div>
@@ -6716,8 +7106,8 @@ class ProgramTabErrorBoundary extends React.Component {
   }
 }
 
-function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, goalBuckets, activeTimeBoundGoal, deviceSyncAudit }) {
-  const [openWeek, setOpenWeek] = useState(null);
+function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, goalBuckets, activeTimeBoundGoal, deviceSyncAudit, todayWorkout }) {
+  const [openWeek, setOpenWeek] = useState(currentWeek);
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
   const [miniWeekly, setMiniWeekly] = useState(weeklyDraft);
   const [scheduleDraft, setScheduleDraft] = useState({ startDate: "", endDate: "", mode: "Travel" });
@@ -6745,14 +7135,74 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
     });
   }, [currentWeek]);
   const displayHorizon = safeRollingHorizon.length > 0 ? safeRollingHorizon : fallbackProgramWeeks;
-  const adjustedWeekMap = {};
-  (displayHorizon || []).forEach((h) => {
-    const w = h?.template;
-    if (h?.slot >= 1 && w?.mon && w?.thu && w?.fri && w?.sat) {
-      const baseAdaptive = buildAdaptiveWeek(w, signals, personalization, memoryInsights);
-      adjustedWeekMap[h.absoluteWeek] = baseAdaptive;
+  const runningGoalActive = Boolean(
+    activeTimeBoundGoal?.category === "running" ||
+    (goals || []).some((goal) => goal?.active && goal?.category === "running")
+  );
+  const availableProgramWeeks = useMemo(
+    () => (displayHorizon || []).map((h) => h?.absoluteWeek).filter((week) => Number.isFinite(week)),
+    [displayHorizon]
+  );
+  useEffect(() => {
+    if (!availableProgramWeeks.length) {
+      setOpenWeek(null);
+      return;
     }
-  });
+    setOpenWeek((prev) => (availableProgramWeeks.includes(prev) ? prev : availableProgramWeeks[0]));
+  }, [availableProgramWeeks]);
+  const adjustedWeekMap = {};
+  if (runningGoalActive) {
+    (displayHorizon || []).forEach((h) => {
+      const w = h?.template;
+      if (h?.slot >= 1 && w?.mon && w?.thu && w?.fri && w?.sat) {
+        const baseAdaptive = buildAdaptiveWeek(w, signals, personalization, memoryInsights);
+        adjustedWeekMap[h.absoluteWeek] = baseAdaptive;
+      }
+    });
+  }
+  const dayLabels = { 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 0: "Sun" };
+  const dayOrder = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+  const liveTodaySession = (() => {
+    if (!todayWorkout) return null;
+    const dayLabel = dayLabels[new Date().getDay()] || "Sun";
+    const title = todayWorkout?.label || String(todayWorkout?.type || "Session").replaceAll("-", " ");
+    const detail = todayWorkout?.run?.d || todayWorkout?.strengthDuration || todayWorkout?.success || todayWorkout?.fallback || "Adjusted session";
+    const icon = todayWorkout?.run ? (RUN_TYPE_ICON[todayWorkout?.run?.t] || RUN_TYPE_ICON[todayWorkout?.type] || "easy_run") : null;
+    return { day: dayLabel, title, detail, icon, live: true };
+  })();
+  const overlayLiveTodaySession = (sessions = [], absoluteWeek) => {
+    if (!liveTodaySession || absoluteWeek !== currentWeek) return sessions;
+    const next = [...sessions];
+    const existingIndex = next.findIndex((session) => session.day === liveTodaySession.day);
+    if (existingIndex >= 0) next[existingIndex] = { ...next[existingIndex], ...liveTodaySession };
+    else if (todayWorkout?.type !== "rest") next.push(liveTodaySession);
+    return next.sort((a, b) => (dayOrder[a?.day] || 99) - (dayOrder[b?.day] || 99));
+  };
+  const getProgramWeekSessions = (absoluteWeek, weekTemplate = null) => {
+    if (runningGoalActive) {
+      const adaptive = adjustedWeekMap[absoluteWeek] || { adjusted: weekTemplate || {}, changed: [] };
+      const adjusted = adaptive?.adjusted || {};
+      return overlayLiveTodaySession([
+        { day: "Mon", title: adjusted?.mon?.t || "Easy", detail: adjusted?.mon?.d || "30 min", icon: RUN_TYPE_ICON[adjusted?.mon?.t] || "easy_run" },
+        { day: "Thu", title: adjusted?.thu?.t || "Steady", detail: adjusted?.thu?.d || "30 min", icon: RUN_TYPE_ICON[adjusted?.thu?.t] || "easy_run" },
+        { day: "Fri", title: adjusted?.fri?.t || "Easy", detail: adjusted?.fri?.d || "30 min", icon: RUN_TYPE_ICON[adjusted?.fri?.t] || "easy_run" },
+        { day: "Sat", title: adjusted?.sat?.t || "Long", detail: adjusted?.sat?.d || "40 min", icon: RUN_TYPE_ICON[adjusted?.sat?.t] || "long_run" },
+      ], absoluteWeek);
+    }
+    const dayTemplates = planComposer?.dayTemplates || {};
+    return overlayLiveTodaySession([1, 2, 3, 4, 5, 6, 0]
+      .map((dayKey) => {
+        const session = dayTemplates?.[dayKey];
+        if (!session || session.type === "rest") return null;
+        return {
+          day: dayLabels[dayKey],
+          title: session?.label || String(session?.type || "Session").replaceAll("-", " "),
+          detail: session?.run?.d || session?.strengthDose || session?.nutri || "Planned session",
+          icon: null,
+        };
+      })
+      .filter(Boolean), absoluteWeek);
+  };
   const phaseNarrative = buildNamedPhaseArc({ rollingHorizon: displayHorizon, goals });
   const primaryCategory = goals.find(g => g.active)?.category || "running";
   const phaseLabels = PHASE_ARC_LABELS[primaryCategory] || PHASE_ARC_LABELS.running;
@@ -6796,9 +7246,19 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
     environmentSelection,
     patterns,
   });
-  const plannedSessionsThisWeek = ([1, 2, 3, 4, 5, 6] ?? [])
-    .map((d) => getTodayWorkout(currentWeek, d))
-    .filter((w) => w && w.type !== "rest").length;
+  const hasWeeklyCheckinInput = Boolean(weeklyCheckins?.[String(currentWeek)]?.ts);
+  const showingLiveTodayInProgram = Boolean(todayWorkout?.label && availableProgramWeeks.includes(currentWeek));
+  const programProvenance = buildProvenanceText({
+    inputs: [
+      "your active goals",
+      "recent completion trend",
+      environmentSelection?.mode ? `your ${String(environmentSelection.mode || "training").toLowerCase()} environment` : "your training environment",
+      hasWeeklyCheckinInput ? "this week's check-in" : null,
+      showingLiveTodayInProgram ? "today's live adjustment" : null,
+    ],
+    limitation: hasWeeklyCheckinInput ? "" : "Weekly check-in input is limited.",
+  });
+  const plannedSessionsThisWeek = getProgramWeekSessions(currentWeek, currentTemplate).length;
   const currentWeekStart = new Date();
   currentWeekStart.setHours(0, 0, 0, 0);
   const currentWeekDay = currentWeekStart.getDay();
@@ -6878,6 +7338,8 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
         nextWeekPlan: nextWeekType,
       })
     : "";
+  const viewedWeekIndex = availableProgramWeeks.indexOf(openWeek);
+  const viewedWeekLabel = (displayHorizon || []).find((h) => h?.absoluteWeek === openWeek)?.weekLabel || `Week ${openWeek || currentWeek}`;
 
   return (
     <div className="fi">
@@ -6929,6 +7391,7 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
           </div>
         )}
         <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.7 }}>Current block: <span style={{ color:C.blue }}>{String(planComposer?.architecture || "balanced").replaceAll("_"," ")}</span></div>
+        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55, marginTop:"0.2rem" }}>{programProvenance}</div>
         <div style={{ fontSize:"0.58rem", color:"#cbd5e1", marginTop:"0.25rem", lineHeight:1.7 }}>
           {planComposer?.blockIntent?.narrative || arbitration.allocationNarrative}
         </div>
@@ -7092,6 +7555,15 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
         </div>
       )}
 
+      <div className="card card-subtle" style={{ marginBottom:"0.85rem", borderColor:C.blue+"25" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>PLAN NAVIGATION</div>
+        <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.4rem", alignItems:"center" }}>
+          <button className="btn" disabled={viewedWeekIndex <= 0} onClick={()=>setOpenWeek(availableProgramWeeks[Math.max(0, viewedWeekIndex - 1)] ?? openWeek)} style={{ fontSize:"0.52rem", opacity:viewedWeekIndex <= 0 ? 0.45 : 1 }}>Prev</button>
+          <div style={{ fontSize:"0.58rem", color:"#dbe7f6", textAlign:"center" }}>Viewing {viewedWeekLabel}</div>
+          <button className="btn" disabled={viewedWeekIndex < 0 || viewedWeekIndex >= availableProgramWeeks.length - 1} onClick={()=>setOpenWeek(availableProgramWeeks[Math.min(availableProgramWeeks.length - 1, viewedWeekIndex + 1)] ?? openWeek)} style={{ fontSize:"0.52rem", opacity:viewedWeekIndex < 0 || viewedWeekIndex >= availableProgramWeeks.length - 1 ? 0.45 : 1 }}>Next</button>
+        </div>
+      </div>
+
       <div style={{ display:"grid", gap:"0.65rem" }}>
         {(displayHorizon ?? []).map((h) => {
           const w = h?.template || null;
@@ -7111,49 +7583,55 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
             );
           }
           const adaptive = adjustedWeekMap[h.absoluteWeek] || { adjusted: w, changed: [] };
-          const mon = adaptive?.adjusted?.mon || { t: "Easy", d: "30 min" };
-          const thu = adaptive?.adjusted?.thu || { t: "Steady", d: "30 min" };
-          const fri = adaptive?.adjusted?.fri || { t: "Easy", d: "30 min" };
-          const sat = adaptive?.adjusted?.sat || { t: "Long", d: "40 min" };
+          const weekSessions = getProgramWeekSessions(h.absoluteWeek, w);
+          const showingLiveToday = Boolean(h.absoluteWeek === currentWeek && weekSessions.some((session) => session?.live));
           const isCurrent = h.absoluteWeek === currentWeek;
+          const isExpanded = openWeek === h.absoluteWeek;
+          const mon = { t: weekSessions?.[0]?.title || "Plan", d: weekSessions?.[0]?.detail || "Planned session" };
+          const thu = { t: weekSessions?.[1]?.title || weekSessions?.[0]?.title || "Plan", d: weekSessions?.[1]?.detail || weekSessions?.[0]?.detail || "Planned session" };
+          const fri = { t: weekSessions?.[2]?.title || weekSessions?.[1]?.title || "Plan", d: weekSessions?.[2]?.detail || weekSessions?.[1]?.detail || "Planned session" };
+          const sat = { t: weekSessions?.[3]?.title || weekSessions?.[2]?.title || "Plan", d: weekSessions?.[3]?.detail || weekSessions?.[2]?.detail || "Planned session" };
           const isNear = h.slot >= 2 && h.slot <= 4;
-          const isFar = h.slot >= 5;
-          const detailLevel = isCurrent ? "full" : isNear ? "medium" : "directional";
-          const boxTone = isCurrent ? C.green : isNear ? C.blue : C.slate;
+          const detailLevel = isExpanded ? "full" : (isCurrent || isNear ? "medium" : "directional");
+          const boxTone = isCurrent ? C.green : C.blue;
+          const collapsedSummary = weekSessions.length > 0
+            ? weekSessions.slice(0, 3).map((session) => `${session.day} ${session.title}${session.detail ? ` (${session.detail})` : ""}`).join(" · ")
+            : "Program week unavailable.";
           return (
             <div key={h.absoluteWeek} className={`card ${isCurrent ? "card-action" : "card-subtle"}`} style={{ borderColor:isCurrent ? C.green+"55" : "#1e293b", background:isCurrent ? "#0a160f" : "#0d1117" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.5rem", marginBottom:"0.35rem", flexWrap:"wrap" }}>
                 <div>
                   <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.15rem", color:boxTone, letterSpacing:"0.06em" }}>{h.weekLabel || `${w.phase} · Week ${h.absoluteWeek}`}</div>
-                  <div style={{ fontSize:"0.56rem", color:"#64748b" }}>{isCurrent ? "Most detailed" : isNear ? "Next up" : "Directional"}</div>
+                  <div style={{ fontSize:"0.56rem", color:"#64748b" }}>{isExpanded ? "Expanded" : isCurrent ? "Current week" : "Preview"}</div>
+                  {showingLiveToday && <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Today reflects your current daily adjustment.</div>}
                 </div>
-                <button className="btn" onClick={()=>setOpenWeek(openWeek===h.absoluteWeek?null:h.absoluteWeek)} style={{ fontSize:"0.52rem" }}>{openWeek===h.absoluteWeek?"Hide":"View"}</button>
+                <button className="btn" onClick={()=>setOpenWeek(openWeek===h.absoluteWeek?null:h.absoluteWeek)} style={{ fontSize:"0.52rem" }}>{isExpanded?"Hide":"View"}</button>
               </div>
 
-              {detailLevel === "full" && (
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.45rem" }}>
-                  {([["Mon", mon], ["Thu", thu], ["Fri", fri], ["Sat", sat]] ?? []).map(([d,val]) => (
-                    <div key={d} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
-                      <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.08em" }}>{d}</div>
+              {isExpanded && (
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.45rem" }}>
+                  {(weekSessions ?? []).map((session) => (
+                    <div key={`${h.absoluteWeek}_${session.day}_${session.title}`} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
+                      <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.08em" }}>{session.day}</div>
                       <div style={{ fontSize:"0.58rem", color:"#e2e8f0", marginTop:"0.1rem", display:"flex", alignItems:"center", gap:"0.28rem" }}>
-                        <InlineGlyph name={RUN_TYPE_ICON[val?.t] || "easy_run"} color={boxTone} size={12} />
-                        <span>{val?.t || "Easy"}</span>
+                        {session.icon && <InlineGlyph name={session.icon} color={boxTone} size={12} />}
+                        <span>{session.title}</span>
                       </div>
-                      <div style={{ fontSize:"0.55rem", color:boxTone }}>{val?.d || "30 min"}</div>
+                      <div style={{ fontSize:"0.55rem", color:boxTone }}>{session.detail || "Planned session"}</div>
                     </div>
                   ))}
                 </div>
               )}
 
               {detailLevel === "medium" && (
-                <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.7 }}>
-                  {mon.t} ({mon.d}) · {thu.t} ({thu.d}) · Long run {sat.d}
+                <div style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.7 }}>
+                  {mon.t} ({mon.d}) · {thu.t} ({thu.d}) · {sat.t} ({sat.d})
                 </div>
               )}
 
               {detailLevel === "directional" && (
                 <div style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.7 }}>
-                  Directional focus: maintain consistency, keep one quality run, one long run, and one strength touchpoint.
+                  {collapsedSummary}
                 </div>
               )}
 
@@ -7319,23 +7797,19 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
     }];
   };
 
-  const saveQuick = async () => {
-    if (!quick.status) return; // require explicit status selection
+  const savePrescribed = async () => {
+    // one-tap completion path
     const entry = {
       date: today,
-      type: todayWorkout?.label || "Quick log",
-      notes: quick.note || "",
-      feel: quick.feel || "3",
+      type: cleanHistorySessionName(todayWorkout?.label || "Prescribed workout"),
+      notes: "Marked prescribed workout complete.",
+      feel: "3",
       ts: Date.now(),
-      checkin: { status: quick.status, sessionFeel: quick.feel === "5" ? "easier_than_expected" : quick.feel === "1" ? "harder_than_expected" : "about_right", note: quick.note || "", ts: Date.now() }
+      checkin: { status: "completed_as_planned", sessionFeel: "about_right", note: "", ts: Date.now() }
     };
     await saveLogs({ ...logs, [today]: entry }, { changedDateKey: today });
-    if (quick.bodyweight && !Number.isNaN(parseFloat(quick.bodyweight))) {
-      const nextBW = [...bodyweights.filter(b => b.date !== today), { date: today, w: parseFloat(quick.bodyweight) }].sort((a,b)=>a.date.localeCompare(b.date));
-      await saveBodyweights(nextBW);
-    }
     setSaved(true);
-    setSavedMsg("Saved — momentum captured.");
+    setSavedMsg("Prescribed workout completed.");
     setTimeout(()=>setSaved(false), 1800);
   };
 
@@ -7355,7 +7829,7 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
     };
     await saveLogs({ ...logs, [detailed.date]: nextEntry }, { changedDateKey: detailed.date });
     setSaved(true);
-    setSavedMsg(detailed.date < today ? "Detailed entry saved. Edited." : "Detailed entry saved.");
+    setSavedMsg(detailed.date < today ? "Custom workout saved. Edited." : "Custom workout saved.");
     setTimeout(()=>setSaved(false), 1800);
   };
 
@@ -7378,53 +7852,16 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
   return (
     <div className="fi">
       <div className="card card-action" style={{ marginBottom:"0.8rem", borderColor:C.green+"40", background:"#0d1711" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>QUICK LOG</div>
-        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Fast capture for today. Keep it simple.</div>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>LOG WORKOUT</div>
+        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Pick the fast path, or add details if you need them.</div>
         <div style={{ display:"grid", gap:"0.4rem" }}>
-          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-            {[["completed_as_planned","Completed"],["completed_modified","Modified"],["skipped","Skipped"]].map(([k,lab]) => (
-              <button key={k} className="btn" onClick={()=>setQuick(q=>({ ...q, status:k }))} style={{ fontSize:"0.52rem", color:quick.status===k?C.green:"#64748b", borderColor:quick.status===k?C.green+"35":"#1e293b", fontWeight:quick.status===k?600:400 }}>{lab}</button>
-            ))}
-            {!quick.status && <div style={{ fontSize:"0.54rem", color:"#475569" }}>Select one</div>}
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(5,minmax(0,1fr))", gap:"0.35rem" }}>
-            {[1,2,3,4,5].map(n => (
-              <button
-                key={n}
-                className="btn"
-                onClick={()=>{
-                  setFeelTooltip("");
-                  setQuick(q=>({ ...q, feel:String(n) }));
-                  showFeelTooltip(String(n));
-                }}
-                style={{
-                  minHeight:44,
-                  padding:"0.3rem 0.25rem",
-                  display:"grid",
-                  placeItems:"center",
-                  lineHeight:1.1,
-                  color:quick.feel===String(n)?C.blue:"#64748b",
-                  borderColor:quick.feel===String(n)?C.blue+"35":"#1e293b",
-                  fontSize:"0.56rem",
-                }}
-              >
-                <span style={{ fontWeight:600 }}>{FEEL_LABELS[String(n)]?.title}</span>
-                <span className="mono" style={{ fontSize:"0.48rem", opacity:0.8 }}>{n}</span>
-              </button>
-            ))}
-          </div>
-          {feelTooltip && <div style={{ fontSize:"0.54rem", color:C.blue }}>{feelTooltip}</div>}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 120px auto", gap:"0.35rem" }}>
-            <input value={quick.note} onChange={e=>setQuick(q=>({ ...q, note:e.target.value }))} placeholder="Optional note" />
-            <input type="number" step="0.1" value={quick.bodyweight} onChange={e=>setQuick(q=>({ ...q, bodyweight:e.target.value }))} placeholder="BW" />
-            <button className="btn btn-primary" onClick={saveQuick} style={{ fontSize:"0.55rem" }}>SAVE</button>
-          </div>
+          <button className="btn btn-primary" onClick={savePrescribed} style={{ fontSize:"0.55rem" }}>Mark Prescribed Workout Complete</button>
           {saved && <div className="completion-pop" style={{ fontSize:"0.57rem", color:C.green, display:"inline-flex", alignItems:"center", gap:"0.3rem", background:"rgba(39,245,154,0.1)", border:"1px solid rgba(39,245,154,0.38)", borderRadius:999, padding:"0.18rem 0.5rem" }}><span className="mono">✓</span> {savedMsg}</div>}
         </div>
       </div>
 
       <details className="card" style={{ marginBottom:"0.8rem" }} open={detailedOpen} onToggle={e=>setDetailedOpen(e.currentTarget.open)}>
-        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:C.blue, letterSpacing:"0.08em" }}>DETAILED ENTRY (OPTIONAL)</summary>
+        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:C.blue, letterSpacing:"0.08em" }}>Log Custom Workout Details</summary>
         <div style={{ marginTop:"0.55rem", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem" }}>
           <input type="date" value={detailed.date} onChange={e=>setDetailed({ ...detailed, date:e.target.value })} />
           <input value={detailed.type} onChange={e=>setDetailed({ ...detailed, type:e.target.value })} placeholder="Workout type" />
@@ -7435,7 +7872,7 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
           <input value={detailed.weight} onChange={e=>setDetailed({ ...detailed, weight:e.target.value })} placeholder="Weight" />
           <select value={detailed.feel} onChange={e=>setDetailed({ ...detailed, feel:e.target.value })}>{[1,2,3,4,5].map(n=><option key={n} value={String(n)}>{`${n} · ${FEEL_LABELS[String(n)]?.title}`}</option>)}</select>
           <input style={{ gridColumn:"1 / -1" }} value={detailed.notes} onChange={e=>setDetailed({ ...detailed, notes:e.target.value })} placeholder="Notes" />
-          <button className="btn btn-primary" onClick={saveDetailed} style={{ width:"fit-content", fontSize:"0.55rem" }}>SAVE DETAILED</button>
+          <button className="btn btn-primary" onClick={saveDetailed} style={{ width:"fit-content", fontSize:"0.55rem" }}>Save custom workout</button>
         </div>
       </details>
 
@@ -7601,6 +8038,8 @@ const buildLocationAwareOrderSuggestion = ({ nearby = [] }) => {
 // ── NUTRITION TAB (REDESIGNED) ──────────────────────────────────────────────
 function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer, realWorldNutrition, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
   const localFoodContext = personalization?.localFoodContext || { city: "Chicago", groceryOptions: ["Trader Joe's"] };
+  const savedLocation = personalization?.connectedDevices?.location || {};
+  const resolvedLocationLabel = localFoodContext.city || localFoodContext.locationLabel || (savedLocation?.status === "granted" ? "Nearby area" : "Chicago");
   const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || "Trader Joe's");
   const favorites = nutritionFavorites || { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] };
   const [nutritionCheck, setNutritionCheck] = useState({ status: "on_track", issue: "", note: "" });
@@ -7620,7 +8059,7 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
   const [newSupplementTiming, setNewSupplementTiming] = useState("");
   const goalContext = getGoalContext(goals) || { primary: null, secondary: [] };
   const dayType = nutritionLayer?.dayType || todayWorkout?.nutri || "easyRun";
-  const city = localFoodContext.city || "Chicago";
+  const city = resolvedLocationLabel;
   const nearby = (getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" }) || [])
     .map((x, i) => ({ id: x?.id || `nearby_${i}_${x?.name || "option"}`, name: x?.name || "Nearby option", meal: x?.meal || "Protein + carbs + produce" }))
     .filter(x => x.id !== lastKey)
@@ -7671,7 +8110,10 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
   const breakfast = realWorldNutrition?.mealStructure?.breakfast || "Greek yogurt + fruit + granola";
   const lunch = realWorldNutrition?.mealStructure?.lunch || "Protein bowl with rice/potatoes + veggies";
   const dinner = realWorldNutrition?.mealStructure?.dinner || "Lean protein + carb + vegetable";
-  const snack = hardDay ? "Banana + protein shake" : "Apple + string cheese";
+  const snack = realWorldNutrition?.mealStructure?.snack || (hardDay ? "Banana + protein shake" : "Apple + string cheese");
+  const dailyRecommendations = Array.isArray(realWorldNutrition?.dailyRecommendations) ? realWorldNutrition.dailyRecommendations : [];
+  const whyThisToday = realWorldNutrition?.whyToday || macroShiftLine;
+  const groceryHooks = realWorldNutrition?.groceryHooks || null;
   const customSupplementStack = Array.isArray(favorites?.supplementStack) ? favorites.supplementStack : [];
   const phaseModeLower = String(nutritionLayer?.phaseMode || "maintain").toLowerCase();
   const sessionKind = String(todayWorkout?.type || dayType || "rest");
@@ -7688,9 +8130,9 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
     : recoveryDay
     ? "Recovery day — keep protein high and appetite decisions simple."
     : "Steady day — balanced meals and consistency win.";
-  const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted);
-  const isAtHome = (personalization?.environmentConfig?.defaultMode || "Home") === "Home";
-  const showNearbySection = locationPermissionGranted && !isAtHome;
+  const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
+  const locationUnavailable = !locationPermissionGranted && ["denied", "unavailable"].includes(String(localFoodContext?.locationStatus || savedLocation?.status || "").toLowerCase());
+  const showNearbySection = locationPermissionGranted;
   const shoppingDay = Number(favorites?.shoppingDay ?? 0);
   const todayDow = new Date().getDay();
   const showSundayGrocerySection = todayDow === shoppingDay || todayDow === ((shoppingDay + 6) % 7);
@@ -7785,6 +8227,16 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
 
   const todayKey = new Date().toISOString().split("T")[0];
   const feedbackToday = nutritionFeedback?.[todayKey];
+  const nutritionGoalName = goalContext?.primary?.name || "current goal";
+  const nutritionProvenance = buildProvenanceText({
+    inputs: [
+      "today's training demand",
+      `your ${nutritionGoalName}`,
+      "time of day",
+      feedbackToday ? "your logged nutrition today" : null,
+    ],
+    limitation: feedbackToday ? "" : "Today's intake log is limited.",
+  });
   useEffect(() => {
     if (!feedbackToday) return;
     setNutritionCheck(feedbackToday);
@@ -7836,7 +8288,21 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
           <div className="sect-title" style={{ color:C.blue }}>TODAY</div>
           <button className="btn" onClick={()=>setShowNutritionWhy(v=>!v)} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"35" }}>?</button>
         </div>
+        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55, marginBottom:"0.3rem" }}>{nutritionProvenance}</div>
         <div style={{ fontSize:"0.64rem", color:"#e2e8f0", lineHeight:1.6, marginBottom:"0.35rem" }}>{directiveSentence}</div>
+        <div style={{ background:"#0f172a", border:"1px solid #243752", borderRadius:8, padding:"0.38rem 0.42rem", marginBottom:"0.35rem" }}>
+          <div style={{ fontSize:"0.5rem", letterSpacing:"0.08em", color:"#8fa5c8", marginBottom:"0.16rem" }}>WHY THIS TODAY</div>
+          <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.6 }}>{whyThisToday}</div>
+        </div>
+        {dailyRecommendations.length > 0 && (
+          <div style={{ display:"grid", gap:"0.22rem", marginBottom:"0.35rem" }}>
+            {dailyRecommendations.map((line, idx) => (
+              <div key={`nutrition_rec_${idx}`} style={{ fontSize:"0.54rem", color:"#c7d5ea", lineHeight:1.55 }}>
+                {idx + 1}. {line}
+              </div>
+            ))}
+          </div>
+        )}
         {showNutritionWhy && (
           <div style={{ fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.55, marginBottom:"0.35rem" }}>{macroShiftLine}</div>
         )}
@@ -7912,9 +8378,11 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
       </details>
 
       <details className="card" style={{ marginBottom:"0.7rem" }}>
-        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#dbe7f6" }}>Nearby options</summary>
+        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#dbe7f6" }}>Saved-city options</summary>
         <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.3rem" }}>
-          {!showNearbySection && <div style={{ fontSize:"0.55rem", color:"#8fa5c8" }}>Enable location for nearby suggestions</div>}
+          {!showNearbySection && !locationUnavailable && <div style={{ fontSize:"0.55rem", color:"#8fa5c8" }}>Enable location to set the city defaults used for these meal options.</div>}
+          {!showNearbySection && locationUnavailable && <div style={{ fontSize:"0.55rem", color:"#8fa5c8" }}>Location is unavailable, so these are saved-city defaults rather than live nearby results.</div>}
+          {showNearbySection && <div style={{ fontSize:"0.53rem", color:"#8fa5c8" }}>Using saved location to choose city defaults: {resolvedLocationLabel}.</div>}
           {showNearbySection && nearby.slice(0,2).map((p) => (
             <div key={p.id} style={{ background:"#0f172a", border:"1px solid #20314a", borderRadius:8, padding:"0.35rem 0.4rem" }}>
               <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>{p.name}</div>
@@ -7937,6 +8405,14 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
         <details className="card" style={{ marginBottom:"0.7rem" }}>
           <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#dbe7f6" }}>Sunday grocery list</summary>
           <div style={{ marginTop:"0.35rem" }}>
+            {groceryHooks?.active && (
+              <div style={{ marginBottom:"0.35rem", display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.54rem", color:"#dbe7f6" }}>Grocery focus: {String(groceryHooks.focus || "balanced_defaults").replace(/_/g, " ")}</div>
+                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                  Priority items: {(groceryHooks.priorityItems || []).join(", ") || "lean protein, fruit, easy staples"}
+                </div>
+              </div>
+            )}
             <select value={String(shoppingDay)} onChange={e=>saveNutritionFavorites({ ...favorites, shoppingDay: Number(e.target.value) })} style={{ marginBottom:"0.3rem" }}>
               {[["0","Sunday"],["1","Monday"],["2","Tuesday"],["3","Wednesday"],["4","Thursday"],["5","Friday"],["6","Saturday"]].map(([v,l]) => <option key={v} value={v}>Typical shop day: {l}</option>)}
             </select>
@@ -8182,6 +8658,28 @@ Rules for every response:
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, pendingActions, loading]);
 
+  const persistReadinessPromptSignal = async (label) => {
+    const signalMap = {
+      "I feel amazing this week": { state: "push", label, source: "coach_quick_prompt", updatedAt: Date.now() },
+      "I want to push harder": { state: "push", label, source: "coach_quick_prompt", updatedAt: Date.now() },
+      "I slept badly": { state: "recover", label, source: "coach_quick_prompt", updatedAt: Date.now() },
+    };
+    const nextSignal = signalMap[label];
+    if (!nextSignal) return;
+    const nextAdjustments = {
+      ...coachPlanAdjustments,
+      extra: {
+        ...(coachPlanAdjustments?.extra || {}),
+        readinessSignals: {
+          ...(coachPlanAdjustments?.extra?.readinessSignals || {}),
+          [todayKey]: nextSignal,
+        },
+      },
+    };
+    setCoachPlanAdjustments(nextAdjustments);
+    await onPersist(personalization, coachActions, nextAdjustments, weekNotes, planAlerts);
+  };
+
   const send = async (preset) => {
     const prepared = preset ? buildQuickPromptMessage(preset) : input;
     const userMsg = (prepared || "").trim();
@@ -8190,6 +8688,7 @@ Rules for every response:
     setLoading(true);
     setStreamingText("");
     setStreamingCursor(true);
+    if (preset) await persistReadinessPromptSignal(preset);
     const ts = Date.now();
     const nextHistory = [...messages, { role:"user", text:userMsg, ts }].slice(-20);
     setMessages(nextHistory);
@@ -8206,19 +8705,57 @@ Rules for every response:
   const todayKey = new Date().toISOString().split("T")[0];
   const sundayArchive = personalization?.coachMemory?.sundayReviews || [];
   const env = resolveEnvironmentSelection({ personalization, todayKey, currentWeek });
-  const dayTypeMap = { "long-run":"long", "hard-run":"tempo", "easy-run":"easy", "strength+prehab":"strength", rest:"recovery" };
+  const dayTypeMap = { "long-run":"long", long:"long", "hard-run":"tempo", hard:"tempo", "easy-run":"easy", easy:"easy", "strength+prehab":"strength", strength:"strength", "run+strength":"hybrid", conditioning:"hybrid", otf:"hybrid", recovery:"recovery", rest:"recovery" };
   const dayType = dayTypeMap[todayWorkout?.type] || "hybrid";
   const weekState = failureMode?.mode === "chaotic" ? "chaotic" : momentum?.fatigueNotes >= 2 ? "fatigued" : "normal";
   const adherenceTrend = momentum?.completionRate >= 0.72 ? "stable" : momentum?.completionRate >= 0.5 ? "mixed" : "slipping";
   const fatigueSignal = (personalization?.trainingState?.fatigueScore || 1) >= 4 || momentum?.fatigueNotes >= 2;
   const injuryFlag = personalization?.injuryPainState?.level || "none";
+  const recoveryAdjustedToday = todayWorkout?.type === "rest" || todayWorkout?.type === "recovery" || /recovery/i.test(String(todayWorkout?.label || ""));
+  const reducedLoadToday = Boolean(todayWorkout?.minDay);
+  const progressionReadyToday = /progression-ready/i.test(String(todayWorkout?.label || ""));
   const goalPriority = arbitration?.priorityStack?.primary || "Consistency";
   const recentLogCount = Object.keys(logs || {}).slice(-7).length;
+  const datedLogs = Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0]));
+  const recentEntries = datedLogs.slice(-7);
+  const completedStatuses = new Set(["completed_as_planned", "completed_modified", "partial_completed"]);
+  const recentSessionLabels = recentEntries
+    .map(([, entry]) => entry?.type || entry?.label || "")
+    .filter(Boolean)
+    .slice(-3);
+  const recentCountableStatuses = recentEntries
+    .map(([dateKey, entry]) => resolveEffectiveStatus(entry?.checkin, dateKey))
+    .filter((status) => status !== "not_logged" && status !== "not_logged_grace");
+  const recentCompletedCount = recentCountableStatuses.filter((status) => completedStatuses.has(status)).length;
+  const recentSkippedCount = recentCountableStatuses.filter((status) => status === "skipped").length;
+  const recentModifiedCount = recentCountableStatuses.filter((status) => status === "completed_modified" || status === "partial_completed").length;
+  const recentAdherence = recentCountableStatuses.length ? (recentCompletedCount / recentCountableStatuses.length) : 0;
+  const latestCompletedEntry = [...recentEntries].reverse().find(([dateKey, entry]) => completedStatuses.has(resolveEffectiveStatus(entry?.checkin, dateKey)));
+  const latestCheckinEntry = [...recentEntries].reverse().find(([, entry]) => entry?.checkin);
+  const latestCheckin = latestCheckinEntry?.[1]?.checkin || {};
+  const latestFeel = String(latestCheckin?.sessionFeel || latestCheckinEntry?.[1]?.feel || "").toLowerCase();
+  const latestSleep = Number(latestCheckin?.readiness?.sleep || 0);
+  const latestStress = Number(latestCheckin?.readiness?.stress || 0);
+  const latestSoreness = Number(latestCheckin?.readiness?.soreness || 0);
+  const lowRecoverySignal = (latestSleep > 0 && latestSleep <= 2) || latestStress >= 4 || latestSoreness >= 4 || latestFeel === "harder_than_expected";
+  const highRecoverySignal = latestSleep >= 4 && latestStress > 0 && latestStress <= 2 && latestSoreness > 0 && latestSoreness <= 2 && latestFeel !== "harder_than_expected";
+  const latestCompletedLabel = latestCompletedEntry?.[1]?.type || latestCompletedEntry?.[1]?.label || "recent session";
+  const todaySessionLabel = todayWorkout?.label || todayWorkout?.type || "today's session";
+  const feelDescriptor = latestFeel === "easier_than_expected"
+    ? "easier than expected"
+    : latestFeel === "harder_than_expected"
+    ? "harder than expected"
+    : latestFeel
+    ? "steady"
+    : "not recently logged";
 
   const coachDecisionMode = (() => {
+    if (recoveryAdjustedToday) return "Protect";
     if (injuryFlag !== "none" || fatigueSignal) return "Protect";
+    if (reducedLoadToday) return "Simplify";
     if (weekState === "chaotic" || env.time === "20" || adherenceTrend === "slipping") return "Simplify";
     if (momentum?.logGapDays >= 4 || recentLogCount <= 2) return "Rebuild";
+    if (progressionReadyToday && (momentum?.score || 0) >= 60 && weekState === "normal" && env.time !== "20") return "Push";
     if ((momentum?.score || 0) >= 74 && weekState === "normal" && env.time !== "20") return "Push";
     return "Hold";
   })();
@@ -8271,6 +8808,51 @@ Rules for every response:
       ]
     };
   })();
+  const coachSnapshot = (() => {
+    const recentNames = recentSessionLabels.length ? recentSessionLabels.join(", ") : "no recent workouts logged";
+    const adherenceLine = recentCountableStatuses.length
+      ? `${recentCompletedCount}/${recentCountableStatuses.length} recent logged sessions were completed`
+      : "recent adherence data is limited";
+    const recoveryLine = lowRecoverySignal
+      ? `latest recovery check-in is strained (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
+      : highRecoverySignal
+      ? `latest recovery check-in is supportive (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
+      : `latest session felt ${feelDescriptor}`;
+
+    let watching = "";
+    let doToday = "";
+    let noticed = "";
+
+    if (coachDecisionMode === "Protect") {
+      watching = `Watching recovery after ${latestCompletedLabel}: ${recoveryLine}.`;
+      doToday = `Do the shortest controlled version of ${todaySessionLabel}; stop the moment pain or session feel worsens.`;
+      noticed = recentModifiedCount > 0
+        ? `You kept training alive with ${recentModifiedCount} modified session${recentModifiedCount > 1 ? "s" : ""}, but recovery is the limiter right now.`
+        : `Recent work (${recentNames}) stacked stress faster than recovery caught up.`;
+    } else if (coachDecisionMode === "Simplify") {
+      watching = `Watching whether the next 72 hours turn ${adherenceLine} into a cleaner rhythm.`;
+      doToday = `Strip ${todaySessionLabel} down to the first meaningful block and log it immediately when finished.`;
+      noticed = recentSkippedCount > 0
+        ? `You skipped ${recentSkippedCount} recent session${recentSkippedCount > 1 ? "s" : ""}; simplicity is more useful than adding load.`
+        : `Execution has been mixed, so reducing friction matters more than perfect programming this week.`;
+    } else if (coachDecisionMode === "Rebuild") {
+      watching = `Watching whether you can stack the next 2 sessions after ${recentNames}.`;
+      doToday = `Treat ${todaySessionLabel} as a rebuild rep: show up, finish the first block, and bank momentum.`;
+      noticed = `Recent adherence is ${Math.round(recentAdherence * 100)}%, so the priority is rebuilding frequency before intensity.`;
+    } else if (coachDecisionMode === "Push") {
+      watching = `Watching whether today's quality stays smooth and tomorrow's recovery still looks normal after ${latestCompletedLabel}.`;
+      doToday = `Keep the full ${todaySessionLabel} and add one small progression only if the first half feels controlled.`;
+      noticed = `You are coming in off ${adherenceLine}, and the last session felt ${feelDescriptor}.`;
+    } else {
+      watching = `Watching for stable recovery and clean execution across ${recentNames}.`;
+      doToday = `Run ${todaySessionLabel} as written and keep the effort boringly consistent.`;
+      noticed = lowRecoverySignal
+        ? `You are still carrying some recovery drag, but not enough to force a full pullback.`
+        : `This week looks steady: ${adherenceLine}, with no strong signal to either push or cut back.`;
+    }
+
+    return { watch: watching, doToday, noticed };
+  })();
 
   useEffect(() => {
     const isSunday = new Date().getDay() === 0;
@@ -8296,15 +8878,32 @@ Rules for every response:
   const weeklyNotice = sundayArchive[0]?.paragraph
     || patterns?.observations?.[0]?.msg
     || (momentum?.completionRate >= 0.72 ? "Consistency is trending up this week." : "Execution has been mixed this week.");
+  const coachProvenance = buildProvenanceText({
+    inputs: [
+      goalPriority ? "your current goal priority" : null,
+      recentEntries.length ? "recent workout logs" : null,
+      recentCountableStatuses.length ? "adherence trend" : null,
+      latestCheckinEntry ? "latest recovery check-in" : null,
+    ],
+    limitation: latestCheckinEntry ? "" : "Recovery input is limited right now.",
+  });
+  const formatCoachResponseSource = (source = "") => {
+    const normalized = String(source || "").toLowerCase();
+    if (normalized === "deterministic") return "Coach engine";
+    if (normalized === "deterministic-fallback") return "Coach engine fallback";
+    if (normalized === "llm-stream") return "AI draft from app context";
+    return normalized ? normalized.replace(/_/g, " ") : "";
+  };
 
   return (
     <div className="fi" style={{ display:"grid", gap:"0.75rem" }}>
       <div className="card card-strong card-hero" style={{ borderColor:C.blue+"38" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>COACH SNAPSHOT</div>
+        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55, marginBottom:"0.35rem" }}>{coachProvenance}</div>
         <div className="coach-copy" style={{ fontSize:"0.62rem", lineHeight:1.7 }}>
-          <div><span style={{ color:"#94a3b8" }}>Watching:</span> {coachDecision.watch}</div>
-          <div><span style={{ color:"#94a3b8" }}>Do today:</span> {coachDecision.stance}</div>
-          <div><span style={{ color:"#94a3b8" }}>Noticed this week:</span> {weeklyNotice}</div>
+          <div><span style={{ color:"#94a3b8" }}>Watching:</span> {coachSnapshot.watch}</div>
+          <div><span style={{ color:"#94a3b8" }}>Do today:</span> {coachSnapshot.doToday}</div>
+          <div><span style={{ color:"#94a3b8" }}>Noticed this week:</span> {coachSnapshot.noticed || weeklyNotice}</div>
         </div>
       </div>
 
@@ -8358,7 +8957,10 @@ Rules for every response:
                       {m.text || "Coach update ready."}
                     </div>
                     <div style={{ marginTop:"0.25rem", display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.4rem" }}>
-                      <div style={{ fontSize:"0.48rem", color:"#64748b" }}>{m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</div>
+                      <div style={{ display:"grid", gap:"0.08rem" }}>
+                        <div style={{ fontSize:"0.48rem", color:"#64748b" }}>{m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</div>
+                        {m.source && <div style={{ fontSize:"0.44rem", color:"#8fa5c8" }}>Source: {formatCoachResponseSource(m.source)}</div>}
+                      </div>
                       <div style={{ display:"flex", alignItems:"center", gap:"0.25rem" }}>
                         <span style={{ fontSize:"0.46rem", color:"#8fa5c8" }}>Was this helpful?</span>
                         <button className="btn" onClick={()=>setMessages(prev => prev.map((x, i) => i === idx ? { ...x, helpful: true } : x))} style={{ fontSize:"0.46rem", padding:"0.12rem 0.3rem", borderColor:m.helpful===true?C.green+"35":"#2a3f5f", color:m.helpful===true?C.green:"#8fa5c8" }}>👍</button>

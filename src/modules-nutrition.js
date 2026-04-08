@@ -80,12 +80,16 @@ export const applyGoalNutritionTargets = (targets, dayType, goalContext) => {
 };
 
 export const mapWorkoutToNutritionDayType = (todayWorkout, environmentMode) => {
-  if (todayWorkout?.type === "long") return "longRun";
-  if (todayWorkout?.type === "hard") return "hardRun";
-  if (todayWorkout?.type === "easy") return environmentMode.includes("travel") ? "travelRun" : "easyRun";
-  if (todayWorkout?.type === "otf") return "otf";
-  if (todayWorkout?.type === "strength") return "strength";
-  if (todayWorkout?.type === "rest") return environmentMode.includes("travel") ? "travelRest" : "rest";
+  const explicitDayType = String(todayWorkout?.nutri || "").trim();
+  if (explicitDayType && NUTRITION[explicitDayType]) return explicitDayType;
+  const workoutType = String(todayWorkout?.type || "").toLowerCase();
+  const runType = String(todayWorkout?.run?.t || "").toLowerCase();
+  if (workoutType === "long" || workoutType === "long-run" || /long/.test(runType)) return "longRun";
+  if (workoutType === "hard" || workoutType === "hard-run" || /tempo|interval/.test(runType)) return "hardRun";
+  if (workoutType === "easy" || workoutType === "easy-run" || /easy/.test(runType)) return environmentMode.includes("travel") ? "travelRun" : "easyRun";
+  if (workoutType === "otf" || workoutType === "conditioning") return "otf";
+  if (workoutType === "strength" || workoutType === "strength+prehab") return "strength";
+  if (workoutType === "recovery" || workoutType === "rest") return environmentMode.includes("travel") ? "travelRest" : "rest";
   return "easyRun";
 };
 
@@ -198,15 +202,31 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
     phaseMode,
     goalContext,
     travelMode,
+    workoutType: todayWorkout?.type || "",
+    workoutLabel: todayWorkout?.label || todayWorkout?.type || "session",
   };
 };
 
-export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext, nutritionLayer, momentum, favorites, travelMode, learningLayer }) => {
+export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext, nutritionLayer, momentum, favorites, travelMode, learningLayer, timeOfDay, loggedIntake }) => {
   const city = (location || "Austin").trim() || "Austin";
   const key = `${city.toLowerCase()}_${dayType}`;
   const favoriteRestaurants = favorites?.restaurants || [];
   const favoriteSafeMeals = favorites?.safeMeals || [];
   const groceryPrefs = favorites?.groceries || [];
+  const workoutType = String(nutritionLayer?.workoutType || "").toLowerCase();
+  const workoutLabel = String(nutritionLayer?.workoutLabel || dayType || "session");
+  const primaryCategory = goalContext?.primary?.category || "general_fitness";
+  const timeBucket = String(timeOfDay || "").toLowerCase() || "afternoon";
+  const intakeStatus = String(loggedIntake?.status || "").toLowerCase();
+  const intakeIssue = String(loggedIntake?.issue || "").toLowerCase();
+  const intakeNote = String(loggedIntake?.note || "").toLowerCase();
+  const hydrationOz = Number(loggedIntake?.hydrationOz || 0);
+  const missedProteinSignal = /protein|shake|missed meal|skipped|underate|under ate|not enough/.test(intakeIssue) || /protein|skip|missed|under/.test(intakeNote);
+  const hungerSignal = intakeIssue === "hunger" || /hungry|ravenous/.test(intakeNote);
+  const offTrackSignal = intakeStatus === "off_track";
+  const hardSession = ["hardRun", "longRun", "travelRun", "otf"].includes(dayType) || /hard|long|tempo|interval/.test(workoutType);
+  const strengthSession = dayType === "strength" || /strength/.test(workoutType);
+  const recoverySession = ["rest", "travelRest"].includes(dayType) || /rest|recovery/.test(workoutType);
 
   const quickOptions = [
     { name: `Chipotle (${city})`, meal: "Double chicken rice bowl + fajita veg + pico", type: "restaurant", macroFit: "high_protein_high_carb" },
@@ -234,10 +254,130 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
   const recommendations = [...favoriteSafeMeals.map(m => ({ name: m.name || "Saved safe meal", meal: m.meal || m.name, type: "saved", macroFit: "known" })), ...quickOptions]
     .slice(0, 8);
 
+  const mealStructure = (() => {
+    const breakfastBase = hardSession
+      ? "Oats + banana + whey or Greek yogurt"
+      : strengthSession
+      ? "Eggs or Greek yogurt + oats or toast"
+      : recoverySession
+      ? "Eggs or yogurt + fruit + lighter starch"
+      : "Protein breakfast + fruit + steady carbs";
+    const lunchBase = hardSession
+      ? "Rice bowl with lean protein + extra carbs + produce"
+      : strengthSession
+      ? "Protein bowl with rice/potatoes + vegetables"
+      : recoverySession
+      ? "Protein-heavy plate + vegetables + moderate carbs"
+      : "Balanced bowl with protein, carbs, and produce";
+    const dinnerBase = hardSession
+      ? "Recovery dinner: lean protein + rice/potatoes + vegetables"
+      : strengthSession
+      ? "Lift-day dinner: protein + carbs + produce"
+      : recoverySession
+      ? "Lean protein + vegetables + controlled carbs"
+      : "Protein-forward dinner + produce";
+    const snackBase = hardSession
+      ? "Banana + shake or yogurt"
+      : strengthSession
+      ? "Protein shake or Greek yogurt + fruit"
+      : "Fruit + protein snack";
+
+    const mealByTime = timeBucket === "morning"
+      ? {
+          breakfast: hardSession ? `Pre-session breakfast: ${breakfastBase}` : `Start with ${breakfastBase}`,
+          lunch: hardSession ? "Recovery lunch: lean protein + rice + produce" : lunchBase,
+          dinner: dinnerBase,
+          snack: snackBase,
+        }
+      : timeBucket === "evening"
+      ? {
+          breakfast: recoverySession ? breakfastBase : "Protein breakfast + fruit; save bigger carbs for later",
+          lunch: hardSession || strengthSession ? `Pre-session lunch: ${lunchBase}` : lunchBase,
+          dinner: hardSession || strengthSession ? `Post-session dinner: ${dinnerBase}` : dinnerBase,
+          snack: snackBase,
+        }
+      : {
+          breakfast: breakfastBase,
+          lunch: hardSession || strengthSession ? `Pre-session lunch: ${lunchBase}` : lunchBase,
+          dinner: dinnerBase,
+          snack: snackBase,
+        };
+
+    if (primaryCategory === "body_comp") {
+      mealByTime.breakfast = `${mealByTime.breakfast}; keep fats controlled and protein high`;
+      mealByTime.dinner = `${mealByTime.dinner}; plate vegetables first`;
+    } else if (primaryCategory === "strength") {
+      mealByTime.lunch = `${mealByTime.lunch}; keep an extra carb serving ready`;
+      mealByTime.snack = "Add a shake or yogurt if protein is lagging";
+    } else if (primaryCategory === "running") {
+      mealByTime.breakfast = `${mealByTime.breakfast}; do not miss carbs before quality work`;
+    }
+
+    if (missedProteinSignal || offTrackSignal) {
+      mealByTime.snack = "Reset snack: protein shake + fruit within the next hour";
+      mealByTime.dinner = `${mealByTime.dinner}; make this your protein catch-up meal`;
+    } else if (hungerSignal) {
+      mealByTime.snack = "Add a higher-volume snack: Greek yogurt, fruit, and granola";
+    }
+
+    return mealByTime;
+  })();
+
+  const dailyRecommendations = (() => {
+    const lines = [];
+    if (hardSession) lines.push(`Center carbs around ${workoutLabel} so output stays high.`);
+    else if (strengthSession) lines.push(`Keep protein evenly spaced today so ${workoutLabel} is supported.`);
+    else if (recoverySession) lines.push("Keep meals simple and protein-forward; recovery is the job today.");
+    else lines.push("Use balanced meals and avoid random snacking so energy stays steady.");
+
+    if (timeBucket === "morning") lines.push("Front-load breakfast because your useful training window is early.");
+    else if (timeBucket === "evening") lines.push("Save the larger carb hit for later because training demand is later in the day.");
+    else lines.push("Keep lunch as the anchor meal so the rest of the day is easier to control.");
+
+    if (offTrackSignal || missedProteinSignal) lines.push("Use the next meal to reset protein instead of trying to make up the whole day at once.");
+    else if (hungerSignal) lines.push("Add volume from fruit/yogurt before reaching for convenience snacks.");
+
+    if (hydrationOz > 0 && hydrationOz < 40) lines.push("Hydration is still low, so pair the next meal with a large water refill.");
+    return lines.slice(0, 3);
+  })();
+
+  const whyToday = (() => {
+    const goalLine = primaryCategory === "body_comp"
+      ? "fat-loss progress"
+      : primaryCategory === "strength"
+      ? "strength progress"
+      : primaryCategory === "running"
+      ? "running quality"
+      : "consistent training";
+    const intakeLine = offTrackSignal
+      ? "Today already drifted off plan, so the next recommendation is designed to reset instead of chase perfection."
+      : missedProteinSignal
+      ? "Logged intake suggests protein fell short, so the next meals bias catch-up protein."
+      : hungerSignal
+      ? "Hunger signals are elevated, so volume and meal timing are pushed up to protect adherence."
+      : "No major intake issue is logged, so recommendations stay aligned with training demand.";
+    return `${workoutLabel} sets the training demand, ${goalLine} sets the bias, ${timeBucket} shapes meal timing, and ${intakeLine}`;
+  })();
+
+  const groceryHooks = {
+    active: true,
+    focus: hardSession ? "carb_restock" : strengthSession ? "protein_restock" : recoverySession ? "simple_recovery" : "balanced_defaults",
+    priorityItems: hardSession
+      ? ["rice", "oats", "fruit", "lean protein"]
+      : strengthSession
+      ? ["Greek yogurt", "eggs", "lean protein", "rice/potatoes"]
+      : ["lean protein", "fruit", "bagged salad", "easy staples"],
+    carryForwardMeals: [mealStructure.breakfast, mealStructure.lunch].filter(Boolean),
+  };
+
   return {
     key,
     city,
     recommendations,
+    mealStructure,
+    dailyRecommendations,
+    whyToday,
+    groceryHooks,
     travelBreakfast,
     defaultMealStructure,
     constraints,
