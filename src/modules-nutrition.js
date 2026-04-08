@@ -93,7 +93,7 @@ export const mapWorkoutToNutritionDayType = (todayWorkout, environmentMode) => {
   return "easyRun";
 };
 
-const clonePlainValue = (value) => {
+const clonePlainValueNutrition = (value) => {
   if (value == null) return value;
   try {
     return JSON.parse(JSON.stringify(value));
@@ -144,8 +144,8 @@ const mapDeviationKindToLegacyStatus = (deviationKind = "", fallbackStatus = "")
 };
 
 export const normalizeActualNutritionLog = ({ dateKey = "", feedback = {}, planReference = null } = {}) => {
-  const raw = clonePlainValue(feedback || {});
-  const nested = clonePlainValue(raw?.actualNutrition || raw?.actualNutritionLog || null);
+  const raw = clonePlainValueNutrition(feedback || {});
+  const nested = clonePlainValueNutrition(raw?.actualNutrition || raw?.actualNutritionLog || null);
   const status = String(
     nested?.quickStatus
     || raw?.status
@@ -233,7 +233,7 @@ export const normalizeActualNutritionLog = ({ dateKey = "", feedback = {}, planR
       takenNames,
       count: takenNames.length,
     },
-    planReference: clonePlainValue(raw?.planReference || nested?.planReference || planReference || null),
+    planReference: clonePlainValueNutrition(raw?.planReference || nested?.planReference || planReference || null),
     loggedAt: hasAnySignal ? (Number(nested?.loggedAt || raw?.ts || Date.now()) || Date.now()) : null,
     legacy: {
       status,

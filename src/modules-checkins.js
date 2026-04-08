@@ -34,7 +34,7 @@ export const resolveEffectiveStatus = (checkin, dateKey) => {
   return "not_logged_expired";
 };
 
-const clonePlainValue = (value) => {
+const clonePlainValueCheckins = (value) => {
   if (value == null) return value;
   try {
     return JSON.parse(JSON.stringify(value));
@@ -83,22 +83,22 @@ export const buildPlannedDayRecord = (planDay = null) => {
     id: planDay?.id || `plan_day_${planDay.dateKey}`,
     dateKey: planDay.dateKey,
     source: "daily_decision_engine",
-    week: clonePlainValue(planDay?.week || {}),
-    base: clonePlainValue({
+    week: clonePlainValueCheckins(planDay?.week || {}),
+    base: clonePlainValueCheckins({
       training: planDay?.base?.training || null,
       nutrition: planDay?.base?.nutrition || null,
       recovery: planDay?.base?.recovery || null,
       supplements: planDay?.base?.supplements || null,
     }),
-    resolved: clonePlainValue({
+    resolved: clonePlainValueCheckins({
       training: planDay?.resolved?.training || null,
       nutrition: planDay?.resolved?.nutrition || null,
       recovery: planDay?.resolved?.recovery || null,
       supplements: planDay?.resolved?.supplements || null,
     }),
-    decision: clonePlainValue(planDay?.decision || {}),
-    provenance: clonePlainValue(planDay?.provenance || {}),
-    flags: clonePlainValue(planDay?.flags || {}),
+    decision: clonePlainValueCheckins(planDay?.decision || {}),
+    provenance: clonePlainValueCheckins(planDay?.provenance || {}),
+    flags: clonePlainValueCheckins(planDay?.flags || {}),
   };
 };
 
