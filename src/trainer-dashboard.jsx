@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildPlanWeek, buildRollingHorizonWeeks, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal, generateTodayPlan, deriveCanonicalGoalProfileState, buildCanonicalPlanDay } from "./modules-planning.js";
-import { createAuthStorageModule } from "./modules-auth-storage.js";
+import { createAuthStorageModule, buildStorageStatus, classifyStorageError, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
 import { getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, normalizeActualNutritionLog, normalizeActualNutritionLogCollection, compareNutritionPrescriptionToActual, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket } from "./modules-nutrition.js";
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, isWithinGracePeriod, resolveEffectiveStatus, resolveActualStatus, buildPlannedDayRecord, comparePlannedDayToActual } from "./modules-checkins.js";
 import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, withConfidenceTone, deterministicCoachPacket, applyCoachActionMutation, acceptCoachActionProposal } from "./modules-coach-engine.js";
@@ -3434,7 +3434,7 @@ export default function TrainerDashboard() {
   const [nutritionFavorites, setNutritionFavorites] = useState({ restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] });
   const [nutritionFeedback, setNutritionFeedback] = useState({});
   const [analyzing, setAnalyzing] = useState(false);
-  const [storageStatus, setStorageStatus] = useState({ mode: "syncing", label: "SYNCING" });
+  const [storageStatus, setStorageStatus] = useState(() => buildStorageStatus({ mode: "syncing", label: "SYNCING", reason: STORAGE_STATUS_REASONS.unknown, detail: "Cloud sync is initializing." }));
   const [lastSaved, setLastSaved] = useState(null);
   const [dismissedTriggers, setDismissedTriggers] = useState([]);
   const [authSession, setAuthSession] = useState(null);
@@ -4115,7 +4115,7 @@ export default function TrainerDashboard() {
       try {
         skipNextGoalsPersistRef.current = true;
         await (sbLoadRef.current?.() || Promise.resolve());
-        setStorageStatus({ mode: "cloud", label: "SYNCED" });
+        setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
         logDiagRef.current?.("realtime.resync.ok", reason);
       } catch (e) {
         skipNextGoalsPersistRef.current = false;
@@ -4362,9 +4362,13 @@ export default function TrainerDashboard() {
   useEffect(() => {
     console.log("[supabase] resolved URL:", SB_URL || "(missing)");
     if (SB_CONFIG_ERROR) {
-      const isMissingConfig = /Missing Supabase (URL|anon key)/i.test(SB_CONFIG_ERROR || "");
-      setAuthError(isMissingConfig ? "" : `Supabase setup error: ${SB_CONFIG_ERROR}`);
-      setStorageStatus({ mode: "local", label: "CONFIG ERROR" });
+      setAuthError(`Cloud sync provider unavailable: ${SB_CONFIG_ERROR}`);
+      setStorageStatus(buildStorageStatus({
+        mode: "local",
+        label: "PROVIDER ERROR",
+        reason: STORAGE_STATUS_REASONS.providerUnavailable,
+        detail: "Cloud sync provider is unavailable or misconfigured.",
+      }));
       setAuthInitializing(false);
       setLoading(false);
       return;
@@ -4397,15 +4401,17 @@ export default function TrainerDashboard() {
       setLoading(true);
       try {
         await sbLoad();
-        setStorageStatus({ mode: "cloud", label: "SYNCED" });
+        setAuthError("");
+        setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
       } catch(e) {
         logDiag("Cloud load failed:", e.message);
+        const nextStatus = classifyStorageError(e);
         if (e?.message === "AUTH_REQUIRED") {
           setAuthError("Session expired. Please sign in again.");
           setAuthSession(null);
           authStorage.saveAuthSession(null);
-        } else if (e?.message !== "AUTH_TRANSIENT") {
-          setAuthError("Cloud sync issue. Continuing in local mode.");
+        } else {
+          setAuthError("");
         }
         const cache = localLoad();
         if (cache) {
@@ -4415,7 +4421,7 @@ export default function TrainerDashboard() {
             logDiag("local cache import fallback failed", cacheErr?.message || "unknown");
           }
         }
-        setStorageStatus({ mode: "local", label: "LOCAL MODE" });
+        setStorageStatus(nextStatus);
       }
       setLoading(false);
     })();
@@ -4635,7 +4641,7 @@ export default function TrainerDashboard() {
       await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
       if (changedDateKey) await syncSessionLogShadowRow(changedDateKey, changedLog || null);
       setLastSaved(new Date().toLocaleTimeString());
-    } catch(e) { logDiag("saveLogs fallback", e.message); setStorageStatus({ mode: "local", label: "LOCAL MODE" }); }
+    } catch(e) { logDiag("saveLogs fallback", e.message); setStorageStatus(classifyStorageError(e)); }
     analyzePlan(nextLogs);
   };
 
@@ -4648,7 +4654,7 @@ export default function TrainerDashboard() {
     try {
       await persistAll(logs, arr, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
       setLastSaved(new Date().toLocaleTimeString());
-    } catch(e) { logDiag("saveBodyweights fallback", e.message); setStorageStatus({ mode: "local", label: "LOCAL MODE" }); }
+    } catch(e) { logDiag("saveBodyweights fallback", e.message); setStorageStatus(classifyStorageError(e)); }
   };
 
   const savePlanState = async (newOvr, newNotes, newAlerts) => {
@@ -5115,11 +5121,16 @@ Keep it plain and specific.`;
       // Push restored data to Supabase immediately
       await persistAll(newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization, newCoachActions, newCoachPlanAdjustments, newGoals, newDailyCheckins, newWeeklyCheckins, newNutritionFavorites, newNutritionFeedback, newPlannedDayRecords);
       setLastSaved("restored + synced");
-      setStorageStatus({ mode: "cloud", label: "SYNCED" });
+      setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
       return true;
     } catch(e) {
       logDiag("import failed", e.message);
-      setStorageStatus({ mode: "local", label: "RESTORE FAILED" });
+      setStorageStatus(buildStorageStatus({
+        mode: "local",
+        label: "RESTORE FAILED",
+        reason: STORAGE_STATUS_REASONS.dataIncompatible,
+        detail: "The restore payload could not be applied safely.",
+      }));
       return false;
     }
   };
@@ -7853,6 +7864,22 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     salvageLayer.active ? salvageLayer.compressedPlan.success : null,
     validationLayer?.coachNudge || null,
   ].filter(Boolean);
+  const storageBannerCopy = (() => {
+    const reason = storageStatus?.reason || "";
+    if (reason === STORAGE_STATUS_REASONS.transient) {
+      return storageStatus?.detail || "Cloud sync failed temporarily. Using local data safely for now.";
+    }
+    if (reason === STORAGE_STATUS_REASONS.dataIncompatible) {
+      return storageStatus?.detail || "Cloud data could not be read safely. Using local data instead.";
+    }
+    if (reason === STORAGE_STATUS_REASONS.providerUnavailable) {
+      return storageStatus?.detail || "Cloud sync provider is unavailable or misconfigured.";
+    }
+    if (reason === STORAGE_STATUS_REASONS.notSignedIn || reason === STORAGE_STATUS_REASONS.signedOut) {
+      return storageStatus?.detail || "You are not signed in, so the app is using local data only.";
+    }
+    return storageStatus?.detail || "Cloud sync unavailable right now. Using local data safely.";
+  })();
 
   return (
     <div className="fi">
@@ -7868,7 +7895,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       )}
       {!loading && !authError && storageStatus?.mode === "local" && (
         <div className="card card-soft" style={{ marginBottom:"0.7rem", borderColor:"#2a3b56", fontSize:"0.56rem", color:"#8fa5c8" }}>
-          Cloud sync unavailable right now. Using local data safely.
+          {storageBannerCopy}
         </div>
       )}
       {garminApiStaleError && (

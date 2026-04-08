@@ -3,6 +3,73 @@ export const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
 export const AUTH_CACHE_KEY = "trainer_auth_session_v1";
 export const AUTH_REQUIRED = "AUTH_REQUIRED";
 export const AUTH_TRANSIENT = "AUTH_TRANSIENT";
+export const AUTH_PROVIDER_UNAVAILABLE = "AUTH_PROVIDER_UNAVAILABLE";
+export const AUTH_DATA_INCOMPATIBLE = "AUTH_DATA_INCOMPATIBLE";
+
+export const STORAGE_STATUS_REASONS = {
+  notSignedIn: "not_signed_in",
+  signedOut: "signed_out",
+  authRequired: "auth_required",
+  transient: "sync_temporarily_failed",
+  providerUnavailable: "provider_unavailable",
+  dataIncompatible: "data_incompatible",
+  synced: "synced",
+  unknown: "unknown",
+};
+
+export const buildStorageStatus = ({
+  mode = "local",
+  label = "LOCAL MODE",
+  reason = STORAGE_STATUS_REASONS.unknown,
+  detail = "",
+} = {}) => ({
+  mode,
+  label,
+  reason,
+  detail,
+});
+
+export const classifyStorageError = (error) => {
+  const message = String(error?.message || error || "");
+  if (message === AUTH_REQUIRED) {
+    return buildStorageStatus({
+      mode: "local",
+      label: "SIGN IN REQUIRED",
+      reason: STORAGE_STATUS_REASONS.authRequired,
+      detail: "Your session expired or is no longer valid. Sign in again to resume cloud sync.",
+    });
+  }
+  if (message === AUTH_TRANSIENT) {
+    return buildStorageStatus({
+      mode: "local",
+      label: "SYNC RETRYING",
+      reason: STORAGE_STATUS_REASONS.transient,
+      detail: "Cloud sync failed temporarily. Local changes are still being kept safely.",
+    });
+  }
+  if (message === AUTH_PROVIDER_UNAVAILABLE || /Missing Supabase|Malformed Supabase|anon key|Supabase URL/i.test(message)) {
+    return buildStorageStatus({
+      mode: "local",
+      label: "PROVIDER ERROR",
+      reason: STORAGE_STATUS_REASONS.providerUnavailable,
+      detail: "Cloud sync provider is unavailable or misconfigured.",
+    });
+  }
+  if (message === AUTH_DATA_INCOMPATIBLE || /data payload invalid|Cannot read properties|Unexpected token|JSON/i.test(message)) {
+    return buildStorageStatus({
+      mode: "local",
+      label: "DATA ERROR",
+      reason: STORAGE_STATUS_REASONS.dataIncompatible,
+      detail: "Cloud data could not be read safely, so the app is using local data.",
+    });
+  }
+  return buildStorageStatus({
+    mode: "local",
+    label: "LOCAL MODE",
+    reason: STORAGE_STATUS_REASONS.transient,
+    detail: "Cloud sync failed and the app safely fell back to local data.",
+  });
+};
 
 export const decodeJwtPayload = (token) => {
   try {
@@ -78,7 +145,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     try { localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(session || null)); } catch {}
   };
   const authRequest = async (path, options = {}) => {
-    if (SB_CONFIG_ERROR) throw new Error(SB_CONFIG_ERROR);
+    if (SB_CONFIG_ERROR) throw new Error(AUTH_PROVIDER_UNAVAILABLE);
     const res = await safeFetchWithTimeout(`${SB_URL}/auth/v1/${path}`, {
       ...options,
       headers: { "Content-Type": "application/json", "apikey": SB_KEY, ...(options.headers || {}) }
@@ -138,7 +205,13 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       setAuthSession(session);
       saveAuthSession(session);
       logDiag("auth.signin.success", session.user.id);
-    } catch (e) { setAuthError("Sign in failed. Check email/password."); }
+    } catch (e) {
+      if (e?.message === AUTH_PROVIDER_UNAVAILABLE) {
+        setAuthError("Cloud auth provider is unavailable or misconfigured.");
+        return;
+      }
+      setAuthError("Sign in failed. Check email/password.");
+    }
   };
 
   const handleSignUp = async ({ authEmail, authPassword, setAuthError, setAuthSession }) => {
@@ -152,7 +225,13 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       } else {
         setAuthError("Account created. Confirm email, then sign in.");
       }
-    } catch (e) { setAuthError("Sign up failed."); }
+    } catch (e) {
+      if (e?.message === AUTH_PROVIDER_UNAVAILABLE) {
+        setAuthError("Cloud auth provider is unavailable or misconfigured.");
+        return;
+      }
+      setAuthError("Sign up failed.");
+    }
   };
 
   const handleSignOut = async ({ authSession, setAuthSession, setStorageStatus }) => {
@@ -163,7 +242,12 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     } catch {}
     setAuthSession(null);
     saveAuthSession(null);
-    setStorageStatus({ mode: "local", label: "SIGNED OUT" });
+    setStorageStatus(buildStorageStatus({
+      mode: "local",
+      label: "SIGNED OUT",
+      reason: STORAGE_STATUS_REASONS.signedOut,
+      detail: "You are signed out, so cloud sync is paused until you sign back in.",
+    }));
   };
 
   const withFreshSession = async ({ authSession, setAuthSession, reason }) => {
@@ -177,7 +261,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   };
 
   const authFetchWithRetry = async ({ path, method = "GET", body, authSession, setAuthSession, reason = "rest_call" }) => {
-    if (SB_CONFIG_ERROR) throw new Error(SB_CONFIG_ERROR);
+    if (SB_CONFIG_ERROR) throw new Error(AUTH_PROVIDER_UNAVAILABLE);
     const { ensured, validSession } = await withFreshSession({ authSession, setAuthSession, reason });
     if (!validSession?.user?.id || !validSession?.access_token) {
       if (ensured?.status === "transient") throw new Error(AUTH_TRANSIENT);
@@ -434,20 +518,26 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     const rows = await res.json();
     if (rows && rows.length > 0 && rows[0].data) {
       const d = rows[0].data;
-      if (d.logs) setters.setLogs(d.logs);
-      if (d.bw) setters.setBodyweights(d.bw);
-      if (d.paceOverrides) setters.setPaceOverrides(d.paceOverrides);
-      if (d.weekNotes) setters.setWeekNotes(d.weekNotes);
-      if (d.planAlerts) setters.setPlanAlerts(d.planAlerts);
-      if (d.personalization) setters.setPersonalization(mergePersonalization(DEFAULT_PERSONALIZATION, d.personalization));
-      if (d.goals) setters.setGoals(d.goals);
-      if (d.coachActions) setters.setCoachActions(d.coachActions);
-      if (d.coachPlanAdjustments) setters.setCoachPlanAdjustments(d.coachPlanAdjustments);
-      if (d.dailyCheckins) setters.setDailyCheckins(d.dailyCheckins);
-      if (d.plannedDayRecords) setters.setPlannedDayRecords(d.plannedDayRecords);
-      if (d.weeklyCheckins) setters.setWeeklyCheckins(d.weeklyCheckins);
-      if (d.nutritionFavorites) setters.setNutritionFavorites(d.nutritionFavorites);
-      if (d.nutritionFeedback) setters.setNutritionFeedback(d.nutritionFeedback);
+      if (!d || typeof d !== "object" || Array.isArray(d)) throw new Error(AUTH_DATA_INCOMPATIBLE);
+      try {
+        if (d.logs) setters.setLogs(d.logs);
+        if (d.bw) setters.setBodyweights(d.bw);
+        if (d.paceOverrides) setters.setPaceOverrides(d.paceOverrides);
+        if (d.weekNotes) setters.setWeekNotes(d.weekNotes);
+        if (d.planAlerts) setters.setPlanAlerts(d.planAlerts);
+        if (d.personalization) setters.setPersonalization(mergePersonalization(DEFAULT_PERSONALIZATION, d.personalization));
+        if (d.goals) setters.setGoals(d.goals);
+        if (d.coachActions) setters.setCoachActions(d.coachActions);
+        if (d.coachPlanAdjustments) setters.setCoachPlanAdjustments(d.coachPlanAdjustments);
+        if (d.dailyCheckins) setters.setDailyCheckins(d.dailyCheckins);
+        if (d.plannedDayRecords) setters.setPlannedDayRecords(d.plannedDayRecords);
+        if (d.weeklyCheckins) setters.setWeeklyCheckins(d.weeklyCheckins);
+        if (d.nutritionFavorites) setters.setNutritionFavorites(d.nutritionFavorites);
+        if (d.nutritionFeedback) setters.setNutritionFeedback(d.nutritionFeedback);
+      } catch (e) {
+        logDiag("cloud.load.data_incompatible", e?.message || "unknown");
+        throw new Error(AUTH_DATA_INCOMPATIBLE);
+      }
     } else {
       const cache = localLoad();
       if (cache?.v) {
@@ -466,7 +556,12 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   }) => {
     localSave(payload);
     if (!authSession?.user?.id) {
-      setStorageStatus({ mode: "local", label: "LOCAL MODE" });
+      setStorageStatus(buildStorageStatus({
+        mode: "local",
+        label: "NOT SIGNED IN",
+        reason: STORAGE_STATUS_REASONS.notSignedIn,
+        detail: "You are using local data because no signed-in cloud session is active.",
+      }));
       return;
     }
     try {
@@ -481,19 +576,18 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       } catch (e) {
         logDiag("coach memory sync failed", e?.message || "unknown");
       }
-      setStorageStatus({ mode: "cloud", label: "SYNCED" });
+      setStorageStatus(buildStorageStatus({
+        mode: "cloud",
+        label: "SYNCED",
+        reason: STORAGE_STATUS_REASONS.synced,
+        detail: "Cloud sync is working normally.",
+      }));
     } catch (e) {
-      if (e?.message === AUTH_REQUIRED) {
-        setStorageStatus({ mode: "local", label: "AUTH REQUIRED" });
-        return;
-      }
       if (e?.message === AUTH_TRANSIENT) {
         logDiag("cloud.save.transient", "falling back to local while preserving session");
-        setStorageStatus({ mode: "local", label: "LOCAL MODE" });
-        return;
       }
       logDiag("Cloud save failed, local fallback active:", e.message);
-      setStorageStatus({ mode: "local", label: "LOCAL MODE" });
+      setStorageStatus(classifyStorageError(e));
     }
   };
 
