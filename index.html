@@ -2175,7 +2175,7 @@ const mapWorkoutToNutritionDayType = (todayWorkout, environmentMode) => {
   return "easyRun";
 };
 
-const clonePlainValue = (value) => {
+const clonePlainValueNutrition = (value) => {
   if (value == null) return value;
   try {
     return JSON.parse(JSON.stringify(value));
@@ -2226,8 +2226,8 @@ const mapDeviationKindToLegacyStatus = (deviationKind = "", fallbackStatus = "")
 };
 
 const normalizeActualNutritionLog = ({ dateKey = "", feedback = {}, planReference = null } = {}) => {
-  const raw = clonePlainValue(feedback || {});
-  const nested = clonePlainValue(_optionalChain([raw, 'optionalAccess', _383 => _383.actualNutrition]) || _optionalChain([raw, 'optionalAccess', _384 => _384.actualNutritionLog]) || null);
+  const raw = clonePlainValueNutrition(feedback || {});
+  const nested = clonePlainValueNutrition(_optionalChain([raw, 'optionalAccess', _383 => _383.actualNutrition]) || _optionalChain([raw, 'optionalAccess', _384 => _384.actualNutritionLog]) || null);
   const status = String(
     _optionalChain([nested, 'optionalAccess', _385 => _385.quickStatus])
     || _optionalChain([raw, 'optionalAccess', _386 => _386.status])
@@ -2315,7 +2315,7 @@ const normalizeActualNutritionLog = ({ dateKey = "", feedback = {}, planReferenc
       takenNames,
       count: takenNames.length,
     },
-    planReference: clonePlainValue(_optionalChain([raw, 'optionalAccess', _412 => _412.planReference]) || _optionalChain([nested, 'optionalAccess', _413 => _413.planReference]) || planReference || null),
+    planReference: clonePlainValueNutrition(_optionalChain([raw, 'optionalAccess', _412 => _412.planReference]) || _optionalChain([nested, 'optionalAccess', _413 => _413.planReference]) || planReference || null),
     loggedAt: hasAnySignal ? (Number(_optionalChain([nested, 'optionalAccess', _414 => _414.loggedAt]) || _optionalChain([raw, 'optionalAccess', _415 => _415.ts]) || Date.now()) || Date.now()) : null,
     legacy: {
       status,
@@ -2771,7 +2771,7 @@ const resolveEffectiveStatus = (checkin, dateKey) => {
   return "not_logged_expired";
 };
 
-const clonePlainValue = (value) => {
+const clonePlainValueCheckins = (value) => {
   if (value == null) return value;
   try {
     return JSON.parse(JSON.stringify(value));
@@ -2820,22 +2820,22 @@ const buildPlannedDayRecord = (planDay = null) => {
     id: _optionalChain([planDay, 'optionalAccess', _491 => _491.id]) || `plan_day_${planDay.dateKey}`,
     dateKey: planDay.dateKey,
     source: "daily_decision_engine",
-    week: clonePlainValue(_optionalChain([planDay, 'optionalAccess', _492 => _492.week]) || {}),
-    base: clonePlainValue({
+    week: clonePlainValueCheckins(_optionalChain([planDay, 'optionalAccess', _492 => _492.week]) || {}),
+    base: clonePlainValueCheckins({
       training: _optionalChain([planDay, 'optionalAccess', _493 => _493.base, 'optionalAccess', _494 => _494.training]) || null,
       nutrition: _optionalChain([planDay, 'optionalAccess', _495 => _495.base, 'optionalAccess', _496 => _496.nutrition]) || null,
       recovery: _optionalChain([planDay, 'optionalAccess', _497 => _497.base, 'optionalAccess', _498 => _498.recovery]) || null,
       supplements: _optionalChain([planDay, 'optionalAccess', _499 => _499.base, 'optionalAccess', _500 => _500.supplements]) || null,
     }),
-    resolved: clonePlainValue({
+    resolved: clonePlainValueCheckins({
       training: _optionalChain([planDay, 'optionalAccess', _501 => _501.resolved, 'optionalAccess', _502 => _502.training]) || null,
       nutrition: _optionalChain([planDay, 'optionalAccess', _503 => _503.resolved, 'optionalAccess', _504 => _504.nutrition]) || null,
       recovery: _optionalChain([planDay, 'optionalAccess', _505 => _505.resolved, 'optionalAccess', _506 => _506.recovery]) || null,
       supplements: _optionalChain([planDay, 'optionalAccess', _507 => _507.resolved, 'optionalAccess', _508 => _508.supplements]) || null,
     }),
-    decision: clonePlainValue(_optionalChain([planDay, 'optionalAccess', _509 => _509.decision]) || {}),
-    provenance: clonePlainValue(_optionalChain([planDay, 'optionalAccess', _510 => _510.provenance]) || {}),
-    flags: clonePlainValue(_optionalChain([planDay, 'optionalAccess', _511 => _511.flags]) || {}),
+    decision: clonePlainValueCheckins(_optionalChain([planDay, 'optionalAccess', _509 => _509.decision]) || {}),
+    provenance: clonePlainValueCheckins(_optionalChain([planDay, 'optionalAccess', _510 => _510.provenance]) || {}),
+    flags: clonePlainValueCheckins(_optionalChain([planDay, 'optionalAccess', _511 => _511.flags]) || {}),
   };
 };
 
@@ -3654,7 +3654,7 @@ const AI_PACKET_INTENTS = {
   planAnalysis: "plan_analysis",
 };
 
-const clonePlainValue = (value) => {
+const clonePlainValueAiState = (value) => {
   if (value == null) return value;
   try {
     return JSON.parse(JSON.stringify(value));
@@ -3676,7 +3676,7 @@ const sortEntriesByDate = (collection = {}) => Object.entries(collection || {})
 
 const compactTrainingShape = (training = null) => {
   if (!training) return null;
-  return clonePlainValue({
+  return clonePlainValueAiState({
     label: _optionalChain([training, 'optionalAccess', _660 => _660.label]) || "",
     type: _optionalChain([training, 'optionalAccess', _661 => _661.type]) || "",
     run: _optionalChain([training, 'optionalAccess', _662 => _662.run]) || null,
@@ -3693,7 +3693,7 @@ const compactTrainingShape = (training = null) => {
 };
 
 const compactSessionsByDay = (sessionsByDay = {}) => {
-  return clonePlainValue(
+  return clonePlainValueAiState(
     Object.fromEntries(
       Object.entries(sessionsByDay || {}).map(([dayKey, session]) => [
         dayKey,
@@ -3705,7 +3705,7 @@ const compactSessionsByDay = (sessionsByDay = {}) => {
 
 const compactPlanDay = (planDay = null) => {
   if (!planDay) return null;
-  return clonePlainValue({
+  return clonePlainValueAiState({
     id: _optionalChain([planDay, 'optionalAccess', _672 => _672.id]) || "",
     dateKey: _optionalChain([planDay, 'optionalAccess', _673 => _673.dateKey]) || "",
     dayOfWeek: _nullishCoalesce(_optionalChain([planDay, 'optionalAccess', _674 => _674.dayOfWeek]), () => ( null)),
@@ -3742,7 +3742,7 @@ const compactPlanDay = (planDay = null) => {
 
 const compactPlanWeek = (planWeek = null) => {
   if (!planWeek) return null;
-  return clonePlainValue({
+  return clonePlainValueAiState({
     id: _optionalChain([planWeek, 'optionalAccess', _716 => _716.id]) || "",
     weekNumber: _optionalChain([planWeek, 'optionalAccess', _717 => _717.weekNumber]) || null,
     absoluteWeek: _optionalChain([planWeek, 'optionalAccess', _718 => _718.absoluteWeek]) || null,
@@ -3767,7 +3767,7 @@ const buildRecentSessions = (logs = {}, limit = 7) => sortEntriesByDate(logs)
     miles: Number(_optionalChain([log, 'optionalAccess', _734 => _734.miles]) || 0) || null,
     pace: sanitizeText(_optionalChain([log, 'optionalAccess', _735 => _735.pace]) || "", 24),
     note: sanitizeText(_optionalChain([log, 'optionalAccess', _736 => _736.notes]) || "", 140),
-    comparison: clonePlainValue(_optionalChain([log, 'optionalAccess', _737 => _737.comparison]) || null),
+    comparison: clonePlainValueAiState(_optionalChain([log, 'optionalAccess', _737 => _737.comparison]) || null),
   }));
 
 const buildRecentCheckins = (dailyCheckins = {}, limit = 7) => sortEntriesByDate(dailyCheckins)
@@ -3777,7 +3777,7 @@ const buildRecentCheckins = (dailyCheckins = {}, limit = 7) => sortEntriesByDate
     status: sanitizeText(_optionalChain([checkin, 'optionalAccess', _738 => _738.status]) || "", 40),
     sessionFeel: sanitizeText(_optionalChain([checkin, 'optionalAccess', _739 => _739.sessionFeel]) || "", 40),
     blocker: sanitizeText(_optionalChain([checkin, 'optionalAccess', _740 => _740.blocker]) || "", 40),
-    readiness: clonePlainValue(_optionalChain([checkin, 'optionalAccess', _741 => _741.readiness]) || {}),
+    readiness: clonePlainValueAiState(_optionalChain([checkin, 'optionalAccess', _741 => _741.readiness]) || {}),
   }));
 
 const buildRecentNutritionLogs = (nutritionActualLogs = {}, limit = 7) => sortEntriesByDate(nutritionActualLogs)
@@ -3789,8 +3789,8 @@ const buildRecentNutritionLogs = (nutritionActualLogs = {}, limit = 7) => sortEn
     deviationKind: sanitizeText(_optionalChain([log, 'optionalAccess', _744 => _744.deviationKind]) || "", 40),
     issue: sanitizeText(_optionalChain([log, 'optionalAccess', _745 => _745.issue]) || "", 60),
     note: sanitizeText(_optionalChain([log, 'optionalAccess', _746 => _746.note]) || "", 120),
-    hydration: clonePlainValue(_optionalChain([log, 'optionalAccess', _747 => _747.hydration]) || null),
-    supplements: clonePlainValue(_optionalChain([log, 'optionalAccess', _748 => _748.supplements]) || null),
+    hydration: clonePlainValueAiState(_optionalChain([log, 'optionalAccess', _747 => _747.hydration]) || null),
+    supplements: clonePlainValueAiState(_optionalChain([log, 'optionalAccess', _748 => _748.supplements]) || null),
   }));
 
 const buildRecentBodyweights = (bodyweights = [], limit = 6) => (Array.isArray(bodyweights) ? bodyweights : [])
@@ -3852,8 +3852,8 @@ const buildAiStatePacket = ({
   const compactDay = compactPlanDay(planDay);
   const compactWeek = compactPlanWeek(planWeek || _optionalChain([planDay, 'optionalAccess', _764 => _764.week, 'optionalAccess', _765 => _765.planWeek]) || null);
   const goalsSnapshot = buildGoalsSnapshot(goals);
-  const readinessSummary = clonePlainValue(readiness || _optionalChain([planDay, 'optionalAccess', _766 => _766.resolved, 'optionalAccess', _767 => _767.recovery]) || null);
-  const nutritionSummary = clonePlainValue(nutritionComparison || _optionalChain([planDay, 'optionalAccess', _768 => _768.resolved, 'optionalAccess', _769 => _769.nutrition, 'optionalAccess', _770 => _770.comparison]) || null);
+  const readinessSummary = clonePlainValueAiState(readiness || _optionalChain([planDay, 'optionalAccess', _766 => _766.resolved, 'optionalAccess', _767 => _767.recovery]) || null);
+  const nutritionSummary = clonePlainValueAiState(nutritionComparison || _optionalChain([planDay, 'optionalAccess', _768 => _768.resolved, 'optionalAccess', _769 => _769.nutrition, 'optionalAccess', _770 => _770.comparison]) || null);
   const availablePacePhases = Array.from(new Set([
     ...Object.keys(paceOverrides || {}),
     _optionalChain([compactWeek, 'optionalAccess', _771 => _771.phase]) || "",
@@ -3870,12 +3870,12 @@ const buildAiStatePacket = ({
       input: sanitizeText(input, 280),
     },
     canonical: {
-      goalState: clonePlainValue({
+      goalState: clonePlainValueAiState({
         primaryGoal: _optionalChain([canonicalGoalState, 'optionalAccess', _778 => _778.primaryGoal]) || "",
         deadline: _optionalChain([canonicalGoalState, 'optionalAccess', _779 => _779.deadline]) || "",
         planStartDate: _optionalChain([canonicalGoalState, 'optionalAccess', _780 => _780.planStartDate]) || "",
       }),
-      userProfile: clonePlainValue({
+      userProfile: clonePlainValueAiState({
         name: _optionalChain([canonicalUserProfile, 'optionalAccess', _781 => _781.name]) || _optionalChain([canonicalUserProfile, 'optionalAccess', _782 => _782.profile, 'optionalAccess', _783 => _783.name]) || "",
         fitnessLevel: _optionalChain([canonicalUserProfile, 'optionalAccess', _784 => _784.fitnessLevel]) || _optionalChain([canonicalUserProfile, 'optionalAccess', _785 => _785.profile, 'optionalAccess', _786 => _786.fitnessLevel]) || "",
         equipmentAccess: _optionalChain([canonicalUserProfile, 'optionalAccess', _787 => _787.equipmentAccess]) || _optionalChain([canonicalUserProfile, 'optionalAccess', _788 => _788.environment, 'optionalAccess', _789 => _789.equipment]) || [],
@@ -3883,7 +3883,7 @@ const buildAiStatePacket = ({
         preferences: _optionalChain([canonicalUserProfile, 'optionalAccess', _792 => _792.preferences]) || {},
       }),
       goals: goalsSnapshot,
-      weeklyIntent: clonePlainValue(_optionalChain([compactWeek, 'optionalAccess', _793 => _793.weeklyIntent]) || _optionalChain([compactDay, 'optionalAccess', _794 => _794.week, 'optionalAccess', _795 => _795.weeklyIntent]) || null),
+      weeklyIntent: clonePlainValueAiState(_optionalChain([compactWeek, 'optionalAccess', _793 => _793.weeklyIntent]) || _optionalChain([compactDay, 'optionalAccess', _794 => _794.week, 'optionalAccess', _795 => _795.weeklyIntent]) || null),
       planWeek: compactWeek,
       planDay: compactDay,
     },
@@ -3894,42 +3894,42 @@ const buildAiStatePacket = ({
       recentBodyweights: buildRecentBodyweights(bodyweights, 6),
     },
     summaries: {
-      readiness: clonePlainValue(readinessSummary),
-      adherence: clonePlainValue({
+      readiness: clonePlainValueAiState(readinessSummary),
+      adherence: clonePlainValueAiState({
         momentumState: _optionalChain([momentum, 'optionalAccess', _796 => _796.momentumState]) || "",
         completionRate: Number(_optionalChain([momentum, 'optionalAccess', _797 => _797.completionRate]) || 0) || 0,
         score: Number(_optionalChain([momentum, 'optionalAccess', _798 => _798.score]) || 0) || 0,
         inconsistencyRisk: _optionalChain([momentum, 'optionalAccess', _799 => _799.inconsistencyRisk]) || "",
         logGapDays: Number(_optionalChain([momentum, 'optionalAccess', _800 => _800.logGapDays]) || 0) || 0,
       }),
-      progression: clonePlainValue({
+      progression: clonePlainValueAiState({
         strengthFocus: _optionalChain([strengthLayer, 'optionalAccess', _801 => _801.focus]) || "",
         planFocus: _optionalChain([strengthLayer, 'optionalAccess', _802 => _802.planFocus]) || "",
         adjustmentBias: _optionalChain([optimizationLayer, 'optionalAccess', _803 => _803.adjustmentBias]) || "",
         experimentationReady: Boolean(_optionalChain([optimizationLayer, 'optionalAccess', _804 => _804.experimentation, 'optionalAccess', _805 => _805.canExperiment])),
         pendingExperiment: _optionalChain([optimizationLayer, 'optionalAccess', _806 => _806.experimentation, 'optionalAccess', _807 => _807.pendingExperiment]) || "",
       }),
-      nutrition: clonePlainValue({
+      nutrition: clonePlainValueAiState({
         comparison: nutritionSummary,
       }),
-      arbitration: clonePlainValue({
+      arbitration: clonePlainValueAiState({
         primary: _optionalChain([arbitration, 'optionalAccess', _808 => _808.primary]) || null,
         todayLine: _optionalChain([arbitration, 'optionalAccess', _809 => _809.todayLine]) || "",
       }),
-      expectations: clonePlainValue({
+      expectations: clonePlainValueAiState({
         coachLine: _optionalChain([expectations, 'optionalAccess', _810 => _810.coachLine]) || "",
         rationale: _optionalChain([expectations, 'optionalAccess', _811 => _811.rationale]) || "",
       }),
-      failureMode: clonePlainValue({
+      failureMode: clonePlainValueAiState({
         mode: _optionalChain([failureMode, 'optionalAccess', _812 => _812.mode]) || "normal",
         isLowEngagement: Boolean(_optionalChain([failureMode, 'optionalAccess', _813 => _813.isLowEngagement])),
         isReEntry: Boolean(_optionalChain([failureMode, 'optionalAccess', _814 => _814.isReEntry])),
       }),
-      provenance: clonePlainValue({
+      provenance: clonePlainValueAiState({
         summary: _optionalChain([compactDay, 'optionalAccess', _815 => _815.provenance, 'optionalAccess', _816 => _816.summary]) || "",
         keyDrivers: _optionalChain([compactDay, 'optionalAccess', _817 => _817.provenance, 'optionalAccess', _818 => _818.keyDrivers]) || [],
       }),
-      memory: clonePlainValue({
+      memory: clonePlainValueAiState({
         insights: (memoryInsights || []).slice(0, 4),
         coachMemory: coachMemoryContext ? {
           preferredMotivationStyle: _optionalChain([coachMemoryContext, 'optionalAccess', _819 => _819.preferredMotivationStyle]) || "",
@@ -3939,9 +3939,9 @@ const buildAiStatePacket = ({
       }),
     },
     planningContext: {
-      paceOverrides: clonePlainValue(paceOverrides || {}),
-      weekNotes: clonePlainValue(weekNotes || {}),
-      alerts: clonePlainValue((planAlerts || []).slice(0, 6)),
+      paceOverrides: clonePlainValueAiState(paceOverrides || {}),
+      weekNotes: clonePlainValueAiState(weekNotes || {}),
+      alerts: clonePlainValueAiState((planAlerts || []).slice(0, 6)),
       availablePacePhases,
     },
     boundaries: {

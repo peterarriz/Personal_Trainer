@@ -5,7 +5,7 @@ export const AI_PACKET_INTENTS = {
   planAnalysis: "plan_analysis",
 };
 
-const clonePlainValue = (value) => {
+const clonePlainValueAiState = (value) => {
   if (value == null) return value;
   try {
     return JSON.parse(JSON.stringify(value));
@@ -27,7 +27,7 @@ const sortEntriesByDate = (collection = {}) => Object.entries(collection || {})
 
 const compactTrainingShape = (training = null) => {
   if (!training) return null;
-  return clonePlainValue({
+  return clonePlainValueAiState({
     label: training?.label || "",
     type: training?.type || "",
     run: training?.run || null,
@@ -44,7 +44,7 @@ const compactTrainingShape = (training = null) => {
 };
 
 const compactSessionsByDay = (sessionsByDay = {}) => {
-  return clonePlainValue(
+  return clonePlainValueAiState(
     Object.fromEntries(
       Object.entries(sessionsByDay || {}).map(([dayKey, session]) => [
         dayKey,
@@ -56,7 +56,7 @@ const compactSessionsByDay = (sessionsByDay = {}) => {
 
 const compactPlanDay = (planDay = null) => {
   if (!planDay) return null;
-  return clonePlainValue({
+  return clonePlainValueAiState({
     id: planDay?.id || "",
     dateKey: planDay?.dateKey || "",
     dayOfWeek: planDay?.dayOfWeek ?? null,
@@ -93,7 +93,7 @@ const compactPlanDay = (planDay = null) => {
 
 const compactPlanWeek = (planWeek = null) => {
   if (!planWeek) return null;
-  return clonePlainValue({
+  return clonePlainValueAiState({
     id: planWeek?.id || "",
     weekNumber: planWeek?.weekNumber || null,
     absoluteWeek: planWeek?.absoluteWeek || null,
@@ -118,7 +118,7 @@ const buildRecentSessions = (logs = {}, limit = 7) => sortEntriesByDate(logs)
     miles: Number(log?.miles || 0) || null,
     pace: sanitizeText(log?.pace || "", 24),
     note: sanitizeText(log?.notes || "", 140),
-    comparison: clonePlainValue(log?.comparison || null),
+    comparison: clonePlainValueAiState(log?.comparison || null),
   }));
 
 const buildRecentCheckins = (dailyCheckins = {}, limit = 7) => sortEntriesByDate(dailyCheckins)
@@ -128,7 +128,7 @@ const buildRecentCheckins = (dailyCheckins = {}, limit = 7) => sortEntriesByDate
     status: sanitizeText(checkin?.status || "", 40),
     sessionFeel: sanitizeText(checkin?.sessionFeel || "", 40),
     blocker: sanitizeText(checkin?.blocker || "", 40),
-    readiness: clonePlainValue(checkin?.readiness || {}),
+    readiness: clonePlainValueAiState(checkin?.readiness || {}),
   }));
 
 const buildRecentNutritionLogs = (nutritionActualLogs = {}, limit = 7) => sortEntriesByDate(nutritionActualLogs)
@@ -140,8 +140,8 @@ const buildRecentNutritionLogs = (nutritionActualLogs = {}, limit = 7) => sortEn
     deviationKind: sanitizeText(log?.deviationKind || "", 40),
     issue: sanitizeText(log?.issue || "", 60),
     note: sanitizeText(log?.note || "", 120),
-    hydration: clonePlainValue(log?.hydration || null),
-    supplements: clonePlainValue(log?.supplements || null),
+    hydration: clonePlainValueAiState(log?.hydration || null),
+    supplements: clonePlainValueAiState(log?.supplements || null),
   }));
 
 const buildRecentBodyweights = (bodyweights = [], limit = 6) => (Array.isArray(bodyweights) ? bodyweights : [])
@@ -203,8 +203,8 @@ export const buildAiStatePacket = ({
   const compactDay = compactPlanDay(planDay);
   const compactWeek = compactPlanWeek(planWeek || planDay?.week?.planWeek || null);
   const goalsSnapshot = buildGoalsSnapshot(goals);
-  const readinessSummary = clonePlainValue(readiness || planDay?.resolved?.recovery || null);
-  const nutritionSummary = clonePlainValue(nutritionComparison || planDay?.resolved?.nutrition?.comparison || null);
+  const readinessSummary = clonePlainValueAiState(readiness || planDay?.resolved?.recovery || null);
+  const nutritionSummary = clonePlainValueAiState(nutritionComparison || planDay?.resolved?.nutrition?.comparison || null);
   const availablePacePhases = Array.from(new Set([
     ...Object.keys(paceOverrides || {}),
     compactWeek?.phase || "",
@@ -221,12 +221,12 @@ export const buildAiStatePacket = ({
       input: sanitizeText(input, 280),
     },
     canonical: {
-      goalState: clonePlainValue({
+      goalState: clonePlainValueAiState({
         primaryGoal: canonicalGoalState?.primaryGoal || "",
         deadline: canonicalGoalState?.deadline || "",
         planStartDate: canonicalGoalState?.planStartDate || "",
       }),
-      userProfile: clonePlainValue({
+      userProfile: clonePlainValueAiState({
         name: canonicalUserProfile?.name || canonicalUserProfile?.profile?.name || "",
         fitnessLevel: canonicalUserProfile?.fitnessLevel || canonicalUserProfile?.profile?.fitnessLevel || "",
         equipmentAccess: canonicalUserProfile?.equipmentAccess || canonicalUserProfile?.environment?.equipment || [],
@@ -234,7 +234,7 @@ export const buildAiStatePacket = ({
         preferences: canonicalUserProfile?.preferences || {},
       }),
       goals: goalsSnapshot,
-      weeklyIntent: clonePlainValue(compactWeek?.weeklyIntent || compactDay?.week?.weeklyIntent || null),
+      weeklyIntent: clonePlainValueAiState(compactWeek?.weeklyIntent || compactDay?.week?.weeklyIntent || null),
       planWeek: compactWeek,
       planDay: compactDay,
     },
@@ -245,42 +245,42 @@ export const buildAiStatePacket = ({
       recentBodyweights: buildRecentBodyweights(bodyweights, 6),
     },
     summaries: {
-      readiness: clonePlainValue(readinessSummary),
-      adherence: clonePlainValue({
+      readiness: clonePlainValueAiState(readinessSummary),
+      adherence: clonePlainValueAiState({
         momentumState: momentum?.momentumState || "",
         completionRate: Number(momentum?.completionRate || 0) || 0,
         score: Number(momentum?.score || 0) || 0,
         inconsistencyRisk: momentum?.inconsistencyRisk || "",
         logGapDays: Number(momentum?.logGapDays || 0) || 0,
       }),
-      progression: clonePlainValue({
+      progression: clonePlainValueAiState({
         strengthFocus: strengthLayer?.focus || "",
         planFocus: strengthLayer?.planFocus || "",
         adjustmentBias: optimizationLayer?.adjustmentBias || "",
         experimentationReady: Boolean(optimizationLayer?.experimentation?.canExperiment),
         pendingExperiment: optimizationLayer?.experimentation?.pendingExperiment || "",
       }),
-      nutrition: clonePlainValue({
+      nutrition: clonePlainValueAiState({
         comparison: nutritionSummary,
       }),
-      arbitration: clonePlainValue({
+      arbitration: clonePlainValueAiState({
         primary: arbitration?.primary || null,
         todayLine: arbitration?.todayLine || "",
       }),
-      expectations: clonePlainValue({
+      expectations: clonePlainValueAiState({
         coachLine: expectations?.coachLine || "",
         rationale: expectations?.rationale || "",
       }),
-      failureMode: clonePlainValue({
+      failureMode: clonePlainValueAiState({
         mode: failureMode?.mode || "normal",
         isLowEngagement: Boolean(failureMode?.isLowEngagement),
         isReEntry: Boolean(failureMode?.isReEntry),
       }),
-      provenance: clonePlainValue({
+      provenance: clonePlainValueAiState({
         summary: compactDay?.provenance?.summary || "",
         keyDrivers: compactDay?.provenance?.keyDrivers || [],
       }),
-      memory: clonePlainValue({
+      memory: clonePlainValueAiState({
         insights: (memoryInsights || []).slice(0, 4),
         coachMemory: coachMemoryContext ? {
           preferredMotivationStyle: coachMemoryContext?.preferredMotivationStyle || "",
@@ -290,9 +290,9 @@ export const buildAiStatePacket = ({
       }),
     },
     planningContext: {
-      paceOverrides: clonePlainValue(paceOverrides || {}),
-      weekNotes: clonePlainValue(weekNotes || {}),
-      alerts: clonePlainValue((planAlerts || []).slice(0, 6)),
+      paceOverrides: clonePlainValueAiState(paceOverrides || {}),
+      weekNotes: clonePlainValueAiState(weekNotes || {}),
+      alerts: clonePlainValueAiState((planAlerts || []).slice(0, 6)),
       availablePacePhases,
     },
     boundaries: {
