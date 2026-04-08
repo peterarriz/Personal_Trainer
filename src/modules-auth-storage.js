@@ -301,7 +301,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     const sessionLogRow = {
       user_id: userId,
       date: safeDateKey,
-      completion_status: entry?.checkin?.status ? String(entry.checkin.status) : null,
+      completion_status: entry?.actualSession?.status ? String(entry.actualSession.status) : (entry?.checkin?.status ? String(entry.checkin.status) : null),
       feel_rating: toFiniteInteger(entry?.feel ?? entry?.checkin?.feelRating),
       note: entry?.notes ? String(entry.notes) : null,
       distance_mi: toFiniteNumber(entry?.miles),
@@ -444,6 +444,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       if (d.coachActions) setters.setCoachActions(d.coachActions);
       if (d.coachPlanAdjustments) setters.setCoachPlanAdjustments(d.coachPlanAdjustments);
       if (d.dailyCheckins) setters.setDailyCheckins(d.dailyCheckins);
+      if (d.plannedDayRecords) setters.setPlannedDayRecords(d.plannedDayRecords);
       if (d.weeklyCheckins) setters.setWeeklyCheckins(d.weeklyCheckins);
       if (d.nutritionFavorites) setters.setNutritionFavorites(d.nutritionFavorites);
       if (d.nutritionFeedback) setters.setNutritionFeedback(d.nutritionFeedback);
@@ -452,7 +453,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       if (cache?.v) {
         await sbSave({ payload: cache, authSession: sessionUsed || normalized, setAuthSession });
       } else {
-        await persistAll({}, [], {}, {}, [], DEFAULT_PERSONALIZATION, [], { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} }, DEFAULT_MULTI_GOALS, {}, {}, { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] }, {});
+        await persistAll({}, [], {}, {}, [], DEFAULT_PERSONALIZATION, [], { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} }, DEFAULT_MULTI_GOALS, {}, {}, { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] }, {}, {});
       }
     }
   };

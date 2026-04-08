@@ -93,7 +93,212 @@ export const mapWorkoutToNutritionDayType = (todayWorkout, environmentMode) => {
   return "easyRun";
 };
 
-export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer, failureMode }) => {
+const clonePlainValue = (value) => {
+  if (value == null) return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+};
+
+const normalizeSupplementTakenMap = (supplementTaken = {}) => {
+  if (Array.isArray(supplementTaken)) {
+    return supplementTaken.reduce((acc, item) => {
+      const key = String(item || "").trim();
+      if (key) acc[key] = true;
+      return acc;
+    }, {});
+  }
+  if (supplementTaken && typeof supplementTaken === "object") {
+    return Object.entries(supplementTaken).reduce((acc, [key, value]) => {
+      if (String(key || "").trim()) acc[key] = Boolean(value);
+      return acc;
+    }, {});
+  }
+  if (typeof supplementTaken === "string" && supplementTaken.trim()) {
+    return { [supplementTaken.trim()]: true };
+  }
+  return {};
+};
+
+const inferNutritionDeviationKind = ({ status = "", issue = "", note = "" } = {}) => {
+  const statusText = String(status || "").toLowerCase();
+  const issueText = String(issue || "").toLowerCase();
+  const noteText = String(note || "").toLowerCase();
+  if (issueText === "hunger" || /under.?fuel|under ate|underate|missed meal|skipped meal|not enough|hungry|ravenous/.test(noteText)) return "under_fueled";
+  if (issueText === "overate" || /over.?ate|binge|overindulg|dessert|alcohol|takeout spiral/.test(noteText)) return "over_indulged";
+  if (["travel", "convenience"].includes(issueText) || /travel|airport|hotel|convenien|ate out|schedule/.test(noteText)) return "deviated";
+  if (statusText === "on_track") return "followed";
+  if (statusText === "decent") return "partial";
+  if (statusText === "off_track") return "deviated";
+  return "unknown";
+};
+
+const mapDeviationKindToLegacyStatus = (deviationKind = "", fallbackStatus = "") => {
+  if (fallbackStatus) return fallbackStatus;
+  if (deviationKind === "followed") return "on_track";
+  if (deviationKind === "partial") return "decent";
+  if (["under_fueled", "over_indulged", "deviated"].includes(deviationKind)) return "off_track";
+  return "";
+};
+
+export const normalizeActualNutritionLog = ({ dateKey = "", feedback = {}, planReference = null } = {}) => {
+  const raw = clonePlainValue(feedback || {});
+  const nested = clonePlainValue(raw?.actualNutrition || raw?.actualNutritionLog || null);
+  const status = String(
+    nested?.quickStatus
+    || raw?.status
+    || nested?.status
+    || ""
+  ).toLowerCase();
+  const issue = String(raw?.issue || nested?.issue || nested?.friction || "").toLowerCase();
+  const note = String(raw?.note || nested?.note || "").trim();
+  const supplementTakenMap = normalizeSupplementTakenMap(
+    raw?.supplementTaken
+    || nested?.supplements?.takenMap
+    || nested?.supplements?.taken
+    || nested?.supplementTaken
+    || {}
+  );
+  const hydrationOz = Number(
+    nested?.hydration?.oz
+    ?? raw?.hydrationOz
+    ?? nested?.hydrationOz
+    ?? 0
+  ) || 0;
+  const hydrationTargetOz = Number(
+    nested?.hydration?.targetOz
+    ?? raw?.hydrationTargetOz
+    ?? nested?.hydrationTargetOz
+    ?? 0
+  ) || 0;
+  const deviationKind = String(
+    raw?.deviationKind
+    || nested?.deviationKind
+    || inferNutritionDeviationKind({ status, issue, note })
+  );
+  const quickStatus = mapDeviationKindToLegacyStatus(deviationKind, status);
+  const hydrationPct = hydrationTargetOz > 0
+    ? Math.max(0, Math.min(100, Math.round((hydrationOz / hydrationTargetOz) * 100)))
+    : null;
+  const takenNames = Object.entries(supplementTakenMap)
+    .filter(([, taken]) => Boolean(taken))
+    .map(([name]) => name);
+  const hasAnySignal = Boolean(
+    status
+    || issue
+    || note
+    || deviationKind !== "unknown"
+    || hydrationOz > 0
+    || hydrationTargetOz > 0
+    || takenNames.length > 0
+  );
+  const followedPlan = deviationKind === "followed"
+    ? true
+    : ["under_fueled", "over_indulged", "deviated"].includes(deviationKind)
+    ? false
+    : null;
+  const adherence = deviationKind === "followed"
+    ? "high"
+    : deviationKind === "partial"
+    ? "partial"
+    : ["under_fueled", "over_indulged", "deviated"].includes(deviationKind)
+    ? "low"
+    : "unknown";
+
+  return {
+    id: dateKey ? `actual_nutrition_${dateKey}` : `actual_nutrition_${Date.now()}`,
+    model: "actual_nutrition_log_v1",
+    dateKey,
+    status: quickStatus,
+    quickStatus,
+    adherence,
+    followedPlan,
+    deviationKind,
+    issue,
+    note,
+    hydrationOz,
+    hydrationTargetOz,
+    supplementTaken: supplementTakenMap,
+    friction: issue || "",
+    hydration: {
+      oz: hydrationOz,
+      targetOz: hydrationTargetOz,
+      pct: hydrationPct,
+      nudgedAt: raw?.hydrationNudgedAt || nested?.hydration?.nudgedAt || null,
+    },
+    supplements: {
+      takenMap: supplementTakenMap,
+      takenNames,
+      count: takenNames.length,
+    },
+    planReference: clonePlainValue(raw?.planReference || nested?.planReference || planReference || null),
+    loggedAt: hasAnySignal ? (Number(nested?.loggedAt || raw?.ts || Date.now()) || Date.now()) : null,
+    legacy: {
+      status,
+      issue,
+      note,
+    },
+  };
+};
+
+export const normalizeActualNutritionLogCollection = (nutritionFeedback = {}) => (
+  Object.fromEntries(
+    Object.entries(nutritionFeedback || {}).map(([dateKey, feedback]) => [
+      dateKey,
+      normalizeActualNutritionLog({ dateKey, feedback }),
+    ])
+  )
+);
+
+export const compareNutritionPrescriptionToActual = ({ nutritionPrescription = null, actualNutritionLog = null } = {}) => {
+  const actual = actualNutritionLog ? normalizeActualNutritionLog({ dateKey: actualNutritionLog?.dateKey || "", feedback: actualNutritionLog }) : null;
+  const hasActual = Boolean(actual?.loggedAt);
+  const dayType = String(nutritionPrescription?.dayType || "").toLowerCase();
+  const hardDay = ["hardrun", "longrun", "travelrun", "otf"].includes(dayType);
+  const hydrationPct = Number(actual?.hydration?.pct || 0);
+  const deviationKind = actual?.deviationKind || "unknown";
+  const matters = !hasActual
+    ? "unknown"
+    : deviationKind === "followed"
+    ? "low"
+    : deviationKind === "partial"
+    ? (hardDay ? "medium" : "low")
+    : deviationKind === "under_fueled"
+    ? (hardDay || hydrationPct < 60 ? "high" : "medium")
+    : deviationKind === "over_indulged"
+    ? "medium"
+    : "medium";
+  const summary = !nutritionPrescription
+    ? "Nutrition prescription unavailable."
+    : !hasActual
+    ? "Actual nutrition has not been logged yet."
+    : deviationKind === "followed"
+    ? "Nutrition broadly matched the prescribed day."
+    : deviationKind === "partial"
+    ? "Nutrition was mostly on plan, with some drift."
+    : deviationKind === "under_fueled"
+    ? "Nutrition came in under plan and may have limited recovery or performance."
+    : deviationKind === "over_indulged"
+    ? "Nutrition overshot the intended plan."
+    : "Nutrition deviated from the intended plan.";
+
+  return {
+    hasPrescription: Boolean(nutritionPrescription),
+    hasActual,
+    dayType: nutritionPrescription?.dayType || "",
+    adherence: actual?.adherence || "unknown",
+    followedPlan: actual?.followedPlan ?? null,
+    deviationKind,
+    hydrationPct: actual?.hydration?.pct ?? null,
+    matters,
+    summary,
+    confidence: actual ? "high" : "low",
+  };
+};
+
+export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, nutritionActualLogs, coachPlanAdjustments, salvageLayer, failureMode }) => {
   const todayKey = new Date().toISOString().split("T")[0];
   const schedule = personalization?.environmentConfig?.schedule || [];
   const isScheduledTravelDate = schedule.some(s => s?.mode === "Travel" && s?.startDate && s?.endDate && todayKey >= s.startDate && todayKey <= s.endDate);
@@ -144,9 +349,9 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
 
   const recentBW = (bodyweights || []).slice(-10).map(x => Number(x.w)).filter(Boolean);
   const bwTrend = recentBW.length >= 2 ? recentBW[recentBW.length - 1] - recentBW[0] : 0;
-  const recentFeedback = Object.values(nutritionFeedback || {}).slice(-10);
-  const hungerHits = recentFeedback.filter(f => f.issue === "hunger").length;
-  const offTrackHits = recentFeedback.filter(f => f.status === "off_track").length;
+  const recentFeedback = Object.values(nutritionActualLogs || normalizeActualNutritionLogCollection(nutritionFeedback || {})).slice(-10);
+  const hungerHits = recentFeedback.filter(f => f.deviationKind === "under_fueled" || f.issue === "hunger").length;
+  const offTrackHits = recentFeedback.filter(f => f.adherence === "low" || f.quickStatus === "off_track").length;
 
   if (goalContext.primary?.category === "body_comp") {
     if (bwTrend < -2.2 || hungerHits >= 2 || momentum.inconsistencyRisk === "high") {

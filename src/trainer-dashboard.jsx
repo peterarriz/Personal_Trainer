@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildRollingHorizonWeeks, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
+import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildPlanWeek, buildRollingHorizonWeeks, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal, generateTodayPlan, deriveCanonicalGoalProfileState, buildCanonicalPlanDay } from "./modules-planning.js";
 import { createAuthStorageModule } from "./modules-auth-storage.js";
-import { getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket } from "./modules-nutrition.js";
-import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, isWithinGracePeriod, resolveEffectiveStatus } from "./modules-checkins.js";
-import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, withConfidenceTone, deterministicCoachPacket, applyCoachActionMutation } from "./modules-coach-engine.js";
+import { getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, normalizeActualNutritionLog, normalizeActualNutritionLogCollection, compareNutritionPrescriptionToActual, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket } from "./modules-nutrition.js";
+import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, isWithinGracePeriod, resolveEffectiveStatus, resolveActualStatus, buildPlannedDayRecord, comparePlannedDayToActual } from "./modules-checkins.js";
+import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, withConfidenceTone, deterministicCoachPacket, applyCoachActionMutation, acceptCoachActionProposal } from "./modules-coach-engine.js";
+import { AI_PACKET_INTENTS, buildAiStatePacket, parseAiJsonObjectFromText, acceptAiPlanAnalysisProposal, buildCoachAiSystemPrompt, buildPlanAnalysisAiSystemPrompt } from "./modules-ai-state.js";
 import { buildWorkoutAdjustmentCoachNote, buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildNutritionCoachBrief, buildCoachChatSystemPrompt, buildPlanAnalysisSystemPrompt, buildTodayWhyNowSentence, buildMacroShiftLine, buildEasierSessionsObservation, buildSkippedQualityDecision, buildLoadSpikeInlineWarning, buildWeeklyConsistencyAnchor, buildStreakSignalResponse, buildBadWeekTriageResponse, buildDiscomfortProtocolResponse, buildCompressedSessionPrescription, buildMinimumEffectiveTravelSession } from "./prompts/coach-text.js";
 import { SettingsIcon } from "./icons.js";
 
@@ -261,8 +262,10 @@ const deriveProgressiveOverloadAdjustments = ({ logs = {}, todayWorkout = {}, ch
   const isCut = phaseMode === "cut";
   const isBuild = phaseMode === "build";
   const injuryActive = (personalization?.injuryPainState?.level || "none") !== "none";
-  const daysToGoal = personalization?.goalState?.deadline
-    ? Math.max(0, Math.ceil((new Date(personalization.goalState.deadline).getTime() - Date.now()) / 86400000))
+  const activeTimedGoal = getActiveTimeBoundGoal(goals);
+  const deadlineDate = activeTimedGoal?.targetDate || personalization?.goalState?.deadline || "";
+  const daysToGoal = deadlineDate
+    ? Math.max(0, Math.ceil((new Date(deadlineDate).getTime() - Date.now()) / 86400000))
     : null;
   const goalWeights = parseLiftGoalWeights(goals);
   const prior = personalization?.strengthProgression || {};
@@ -687,7 +690,8 @@ const deriveProgressiveOverloadAdjustmentsV2 = ({ logs = {}, performance = [], p
         : null
       : null;
     const projectedDate = weeksToGoal !== null ? toDateKey(Date.now() + (weeksToGoal * 7 * 86400000)) : "";
-    const deadlineDate = String(personalization?.goalState?.deadline || "").trim();
+    const activeTimedGoal = getActiveTimeBoundGoal(goals);
+    const deadlineDate = String(activeTimedGoal?.targetDate || personalization?.goalState?.deadline || "").trim();
     const deadlineConflict = Boolean(projectedDate && deadlineDate && projectedDate > deadlineDate);
     const trackingKey = liftKey || exerciseKey;
     nextTracking[trackingKey] = {
@@ -1218,6 +1222,297 @@ const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().spl
     userVisibleLine,
     inputDriven,
     factors: state === "progression" ? progressReasons : protectReasons,
+    adjustedWorkout,
+  };
+};
+
+const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString().split("T")[0], checkin = {}, promptSignal = null, workout = null, logs = {}, dailyCheckins = {}, personalization = {}, momentum = {}, userProfile = {} }) => {
+  const promptState = String(promptSignal?.state || "").toLowerCase();
+  const promptLabel = String(promptSignal?.label || "").trim();
+  const baseWorkout = { ...(workout || {}), run: workout?.run ? { ...workout.run } : workout?.run };
+  if (!Object.keys(baseWorkout).length) return null;
+
+  const demandLoad = (demand = "") => demand === "high" ? 2 : demand === "moderate" ? 1 : 0;
+  const isNegativeRecovery = (candidate = {}) => {
+    const sleep = toReadinessNumber(candidate?.readiness?.sleep);
+    const stress = toReadinessNumber(candidate?.readiness?.stress);
+    const soreness = toReadinessNumber(candidate?.readiness?.soreness);
+    const feel = String(candidate?.sessionFeel || "").toLowerCase();
+    return feel === "harder_than_expected" || (sleep > 0 && sleep <= 2) || stress >= 4 || soreness >= 4;
+  };
+  const isPositiveRecovery = (candidate = {}) => {
+    const sleep = toReadinessNumber(candidate?.readiness?.sleep);
+    const stress = toReadinessNumber(candidate?.readiness?.stress);
+    const soreness = toReadinessNumber(candidate?.readiness?.soreness);
+    const feel = String(candidate?.sessionFeel || "").toLowerCase();
+    return feel === "easier_than_expected" || (sleep >= 4 && stress > 0 && stress <= 2 && soreness > 0 && soreness <= 2);
+  };
+
+  const todayTs = new Date(`${todayKey}T12:00:00`).getTime();
+  const targetDays = Math.max(2, Number(userProfile?.days_per_week || 3) || 3);
+  const allDates = Array.from(new Set([...(Object.keys(logs || {})), ...(Object.keys(dailyCheckins || {}))]))
+    .filter(Boolean)
+    .sort((a, b) => b.localeCompare(a));
+  const recentRows = allDates
+    .map((dateKey) => {
+      const t = new Date(`${dateKey}T12:00:00`).getTime();
+      const daysBack = Math.max(0, Math.round(((todayTs - t) / 86400000) * 10) / 10);
+      const log = logs?.[dateKey] || {};
+      const mergedCheckin = { ...(log?.checkin || {}), ...(dailyCheckins?.[dateKey] || {}) };
+      return {
+        date: dateKey,
+        daysBack,
+        log,
+        checkin: mergedCheckin,
+        status: resolveEffectiveStatus(mergedCheckin, dateKey),
+        demand: classifySessionDemand({ type: log?.type, label: log?.label, run: log?.run || { t: log?.type } }),
+      };
+    })
+    .filter((row) => row.daysBack > 0 && row.daysBack <= 10);
+  const recent7 = recentRows.filter((row) => row.daysBack <= 7);
+  const recentCountableRows = recent7.filter((row) => row.status !== "not_logged" && row.status !== "not_logged_grace");
+  const completedRows = recentCountableRows.filter((row) => READINESS_SUCCESS_STATUSES.has(row.status));
+  const skippedRows = recent7.filter((row) => row.status === "skipped" || row.status === "not_logged_expired");
+  const modifiedRows = recent7.filter((row) => row.status === "completed_modified" || row.status === "partial_completed");
+  const highDemand72h = recentRows.filter((row) => row.daysBack <= 3 && row.demand === "high" && READINESS_SUCCESS_STATUSES.has(row.status));
+  const highDemand7d = recent7.filter((row) => row.demand === "high" && READINESS_SUCCESS_STATUSES.has(row.status));
+  const trainingLoad72h = recentRows
+    .filter((row) => row.daysBack <= 3 && READINESS_SUCCESS_STATUSES.has(row.status))
+    .reduce((sum, row) => sum + demandLoad(row.demand), 0);
+  const trainingLoad7d = recent7
+    .filter((row) => READINESS_SUCCESS_STATUSES.has(row.status))
+    .reduce((sum, row) => sum + demandLoad(row.demand), 0);
+  const recentSupportiveRows = recentRows.slice(0, 3).filter((row) => isPositiveRecovery(row.checkin));
+  const recentStrainedRows = recentRows.slice(0, 3).filter((row) => isNegativeRecovery(row.checkin));
+  const latestRecoveryRow = recentRows.find((row) => hasReadinessInputs(row.checkin)) || null;
+  const hasTodayRecoveryInput = hasReadinessInputs(checkin);
+  const activeCheckin = hasTodayRecoveryInput ? checkin : (latestRecoveryRow?.checkin || {});
+  const sleep = toReadinessNumber(activeCheckin?.readiness?.sleep);
+  const stress = toReadinessNumber(activeCheckin?.readiness?.stress);
+  const soreness = toReadinessNumber(activeCheckin?.readiness?.soreness);
+  const feel = String(activeCheckin?.sessionFeel || "").toLowerCase();
+  const inputDriven = hasTodayRecoveryInput || Boolean(promptState);
+  const completionRatio = completedRows.length / Math.max(1, targetDays);
+  const adherenceRatio = recentCountableRows.length ? (completedRows.length / recentCountableRows.length) : 0;
+  const consistencyRatio = Math.min(1.25, completionRatio);
+  const lowScheduleConsistency = completionRatio < 0.6 || adherenceRatio < 0.6 || skippedRows.length >= 2;
+  const veryLowScheduleConsistency = completionRatio < 0.4 || adherenceRatio < 0.5 || skippedRows.length >= 3;
+  const severeNegativeCheckin = (sleep > 0 && sleep <= 1) || stress >= 5 || soreness >= 5;
+  const strongNegativeCheckin = promptState === "recover" || feel === "harder_than_expected" || (sleep > 0 && sleep <= 2) || stress >= 4 || soreness >= 4;
+  const strongPositiveCheckin = promptState === "push" || feel === "easier_than_expected" || (sleep >= 4 && stress > 0 && stress <= 2 && soreness > 0 && soreness <= 2 && feel !== "harder_than_expected");
+  const injuryNeedsProtection = String(personalization?.injuryPainState?.level || "none") !== "none";
+  const explicitDeviceBias = String(baseWorkout?.readinessBias || "").toLowerCase();
+  const planBias = explicitDeviceBias
+    || (baseWorkout?.type === "rest" && /recovery mode/i.test(String(baseWorkout?.label || "")) ? "recover" : "")
+    || (baseWorkout?.minDay ? "reduce" : "");
+
+  let protectScore = 0;
+  let progressScore = 0;
+  const protectReasons = [];
+  const progressReasons = [];
+
+  if (planBias === "recover") {
+    protectScore += 4;
+    protectReasons.push(explicitDeviceBias === "recover" ? "device readiness is already low" : "the current plan is already in recovery mode");
+  } else if (planBias === "reduce") {
+    protectScore += 2;
+    protectReasons.push(explicitDeviceBias === "reduce" ? "device readiness is already cautious" : "the current plan is already reduced");
+  }
+  if (injuryNeedsProtection) {
+    protectScore += 2;
+    protectReasons.push("injury status still needs protection");
+  }
+  if (promptState === "recover") {
+    protectScore += 3;
+    protectReasons.push("you flagged low readiness");
+  }
+  if (severeNegativeCheckin) {
+    protectScore += 4;
+    protectReasons.push("the latest recovery check-in is clearly strained");
+  } else if (strongNegativeCheckin) {
+    protectScore += 3;
+    protectReasons.push("the latest recovery check-in is strained");
+  } else if (recentStrainedRows.length >= 2) {
+    protectScore += 2;
+    protectReasons.push("recent recovery signals have been trending heavy");
+  }
+  if (trainingLoad72h >= 3 || highDemand72h.length >= 2) {
+    protectScore += 2;
+    protectReasons.push("recent intensity stacked up");
+  } else if (highDemand72h.length === 1 && (strongNegativeCheckin || recentStrainedRows.length >= 1)) {
+    protectScore += 1;
+    protectReasons.push("a recent hard session still needs to be absorbed");
+  }
+  if (veryLowScheduleConsistency) {
+    protectScore += 2;
+    protectReasons.push("schedule consistency has broken down recently");
+  } else if (lowScheduleConsistency) {
+    protectScore += 1;
+    protectReasons.push("recent schedule consistency is uneven");
+  }
+  if (modifiedRows.length >= 2) {
+    protectScore += 1;
+    protectReasons.push("recent sessions have needed modification");
+  }
+  if ((momentum?.logGapDays || 0) >= 4) {
+    protectScore += 1;
+    protectReasons.push("recent logging gaps suggest rhythm is off");
+  }
+
+  if (promptState === "push") {
+    progressScore += 2;
+    progressReasons.push("you flagged high readiness");
+  }
+  if (strongPositiveCheckin) {
+    progressScore += 3;
+    progressReasons.push("the latest recovery check-in is supportive");
+  } else if (recentSupportiveRows.length >= 2) {
+    progressScore += 1;
+    progressReasons.push("recent recovery inputs have stayed steady");
+  }
+  if (adherenceRatio >= 0.8 && skippedRows.length === 0) {
+    progressScore += 2;
+    progressReasons.push("recent workout completion has been reliable");
+  } else if (completionRatio >= 0.85 && skippedRows.length <= 1) {
+    progressScore += 1;
+    progressReasons.push("recent schedule consistency has been solid");
+  }
+  if (trainingLoad72h <= 2 && highDemand7d.length <= 2) {
+    progressScore += 1;
+    progressReasons.push("recent intensity is under control");
+  }
+  if (momentum?.momentumState === "building momentum" || (momentum?.score || 0) >= 70) {
+    progressScore += 1;
+    progressReasons.push("training momentum is building");
+  }
+
+  let state = "steady";
+  if (planBias === "recover" || protectScore >= 7 || (strongNegativeCheckin && (trainingLoad72h >= 2 || recentStrainedRows.length >= 2 || injuryNeedsProtection))) {
+    state = "recovery";
+  } else if (protectScore >= 4 || strongNegativeCheckin || veryLowScheduleConsistency) {
+    state = "reduced_load";
+  } else if (progressScore >= 5 && protectScore <= 1 && highDemand72h.length === 0 && adherenceRatio >= 0.75) {
+    state = "progression";
+  }
+
+  const adjustedWorkout = { ...baseWorkout, run: baseWorkout?.run ? { ...baseWorkout.run } : baseWorkout?.run };
+  const baseDemand = classifySessionDemand(baseWorkout);
+  const factors = state === "progression"
+    ? progressReasons
+    : state === "steady"
+    ? (protectReasons.length ? protectReasons : progressReasons)
+    : protectReasons;
+  const reasonText = joinHumanList(factors.slice(0, 3));
+  const baseExplanation = String(baseWorkout?.explanation || "").trim();
+  const appendEnvironmentNote = (note = "") => {
+    adjustedWorkout.environmentNote = [baseWorkout?.environmentNote, note].filter(Boolean).join(" ").trim();
+  };
+
+  let badge = "Steady";
+  let coachLine = "";
+  let recoveryLine = "";
+  let userVisibleLine = "";
+
+  if (state === "recovery") {
+    badge = "Recovery focus";
+    if (adjustedWorkout?.run) {
+      adjustedWorkout.run.t = "Recovery Aerobic";
+      adjustedWorkout.run.d = baseDemand === "high" ? "20-30 min easy aerobic" : "15-25 min walk or easy spin";
+    }
+    adjustedWorkout.type = adjustedWorkout?.run ? "recovery" : "rest";
+    adjustedWorkout.label = appendWorkoutQualifier(baseWorkout?.label, "Recovery focus");
+    adjustedWorkout.minDay = true;
+    adjustedWorkout.nutri = "rest";
+    adjustedWorkout.success = "Keep effort easy, do the mobility work, and finish fresher than you started.";
+    adjustedWorkout.recoveryRecommendation = "Walk or easy spin + 8-10 min mobility.";
+    adjustedWorkout.intensityGuidance = "recovery only";
+    adjustedWorkout.optionalSecondary = "8-10 min mobility reset";
+    if (adjustedWorkout?.strSess) adjustedWorkout.strengthDuration = "12-15 min mobility + activation";
+    appendEnvironmentNote("Recovery focus today: walking, easy aerobic work, and mobility only.");
+    coachLine = "Recovery focus today: remove intensity, keep movement easy, and protect the next 48 hours.";
+    recoveryLine = "Recovery recommendation: walk or easy spin, then 8-10 minutes of mobility.";
+    userVisibleLine = "Recent completion, recovery input, and intensity stacking all point to recovery work today.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is recovery focus based on ${reasonText || "strained recovery and recent load"}. Today's call is easy movement, mobility, and no hard effort.`;
+  } else if (state === "reduced_load") {
+    badge = "Reduced-load";
+    if (adjustedWorkout?.run) {
+      adjustedWorkout.run.t = baseDemand === "high" ? "Easy Aerobic" : (adjustedWorkout.run.t || "Controlled Aerobic");
+      adjustedWorkout.run.d = baseDemand === "high" ? "20-30 min easy aerobic" : scaleSessionDescriptor(adjustedWorkout.run.d || "", "20-30 min controlled");
+      if (["hard-run", "long-run"].includes(baseWorkout?.type || "")) adjustedWorkout.type = "easy-run";
+    }
+    adjustedWorkout.label = appendWorkoutQualifier(baseWorkout?.label, "Reduced-load");
+    adjustedWorkout.minDay = true;
+    adjustedWorkout.nutri = adjustedWorkout?.run ? "easyRun" : (baseWorkout?.nutri || "strength");
+    adjustedWorkout.success = "Keep intensity capped, finish the first useful block, and stop there.";
+    adjustedWorkout.recoveryRecommendation = "Finish with 5-8 min mobility and keep the rest of the day easy.";
+    adjustedWorkout.intensityGuidance = "controlled";
+    adjustedWorkout.optionalSecondary = "5-8 min mobility or tissue work";
+    if (adjustedWorkout?.strSess) adjustedWorkout.strengthDuration = "15-25 min";
+    appendEnvironmentNote("Reduced-load today: cap intensity, shorten the session, and use mobility as the finish.");
+    coachLine = "Reduced-load today: keep the session, lower the strain, and finish before fatigue starts to drift.";
+    recoveryLine = "Recovery recommendation: cap intensity, finish with mobility, and skip extra volume.";
+    userVisibleLine = "Your recovery signals or recent consistency trimmed today's load.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is reduced-load based on ${reasonText || "recent strain and consistency signals"}. Keep the stimulus, but lower the intensity and total load.`;
+  } else if (state === "progression") {
+    badge = "Progression-ready";
+    if (adjustedWorkout?.run && /easy/i.test(String(adjustedWorkout?.run?.t || ""))) adjustedWorkout.run.t = "Easy + strides";
+    adjustedWorkout.label = appendWorkoutQualifier(baseWorkout?.label, "Progression-ready");
+    adjustedWorkout.success = "Keep the planned session and add only one controlled progression if it stays smooth.";
+    adjustedWorkout.recoveryRecommendation = "Keep your normal fueling and recovery; no extra hero volume after the session.";
+    adjustedWorkout.intensityGuidance = "planned plus one small progression";
+    adjustedWorkout.extendedFinisher = adjustedWorkout?.extendedFinisher || (adjustedWorkout?.run ? "Optional: 4 x 20s strides if the session stays smooth." : "Optional: add one final quality set if form stays crisp.");
+    appendEnvironmentNote("Progression-ready today: one small progression is available if execution stays controlled.");
+    coachLine = "Progression is available today: keep the plan intact and add only one small progression if it stays smooth.";
+    recoveryLine = "Recovery recommendation: normal fueling, normal mobility, and no extra bonus work after the progression.";
+    userVisibleLine = "Supportive recovery and reliable recent completion allow a small progression today.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "supportive recovery and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
+  } else {
+    adjustedWorkout.recoveryRecommendation = "Normal recovery: finish the session, refuel, and do your usual mobility.";
+    adjustedWorkout.intensityGuidance = "planned";
+    appendEnvironmentNote("Readiness is steady today: run the planned session with clean control.");
+    coachLine = "Readiness is steady today: execute the planned session cleanly and keep the effort controlled.";
+    recoveryLine = "Recovery recommendation: follow your normal fueling and mobility routine after the session.";
+    userVisibleLine = "Recent completion, recovery, and load support the planned session.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness looks steady based on ${reasonText || "recent completion, recovery, and training load"}. Run the planned session as written and keep recovery normal.`;
+  }
+
+  adjustedWorkout.readinessState = state;
+  adjustedWorkout.readinessStateLabel = badge;
+  adjustedWorkout.readinessInputs = {
+    completedCount: completedRows.length,
+    countableCount: recentCountableRows.length,
+    skippedCount: skippedRows.length,
+    modifiedCount: modifiedRows.length,
+    consistencyRatio: Number(consistencyRatio.toFixed(2)),
+    adherenceRatio: Number(adherenceRatio.toFixed(2)),
+    hardSessions72h: highDemand72h.length,
+    hardSessions7d: highDemand7d.length,
+    trainingLoad72h,
+    trainingLoad7d,
+    recentSupportiveCount: recentSupportiveRows.length,
+    recentStrainedCount: recentStrainedRows.length,
+    sleep,
+    stress,
+    soreness,
+    feel,
+    targetDays,
+    latestRecoveryDate: latestRecoveryRow?.date || "",
+    hasTodayRecoveryInput,
+    hasRecoveryHistory: Boolean(latestRecoveryRow),
+    promptState,
+  };
+
+  return {
+    state,
+    stateLabel: badge,
+    source: promptLabel || (hasTodayRecoveryInput ? "today's check-in" : latestRecoveryRow?.date ? `recovery inputs from ${latestRecoveryRow.date}` : planBias ? "device recovery signals" : "recent training pattern"),
+    badge,
+    coachLine,
+    recoveryLine,
+    userVisibleLine,
+    inputDriven,
+    factors,
+    metrics: adjustedWorkout.readinessInputs,
     adjustedWorkout,
   };
 };
@@ -2112,6 +2407,7 @@ const getMomentumEngineState = ({ logs, bodyweights, personalization }) => {
 
 const buildProactiveTriggers = ({ momentum, personalization, goals, learning, nutritionFeedback, longTermMemory }) => {
   const triggers = [];
+  const actualNutritionLogs = Object.values(normalizeActualNutritionLogCollection(nutritionFeedback || {}));
   const dropFast = (longTermMemory || []).some(m => m.key === "drops_after_3_4_days" && m.confidence === "high");
   if (momentum.momentumState === "drifting") triggers.push({ id:"drift", msg:"Drift detected — want a simplified version of this week?", actionLabel:"Simplify week", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 12 }, priority:85 });
   if (momentum.momentumState === "falling off") triggers.push({ id:"reset", msg:"Momentum has dipped — want a compressed reset week to make execution easier?", actionLabel:"Activate reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:95 });
@@ -2122,9 +2418,9 @@ const buildProactiveTriggers = ({ momentum, personalization, goals, learning, nu
   if (learning?.stats?.timeBlockers >= 2) triggers.push({ id:"time_friction", msg:"Time blockers keep repeating — cap sessions and reduce density?", actionLabel:"Reduce density", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 15 }, priority:84 });
   if (learning?.stats?.harder >= 3) triggers.push({ id:"too_hard", msg:"Sessions are repeatedly harder than expected — lower aggressiveness?", actionLabel:"Lower aggressiveness", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 10 }, priority:80 });
   if ((learning?.stats?.equipBlockers || 0) + (learning?.stats?.travelBlockers || 0) >= 2) triggers.push({ id:"env_fast", msg:"Gym access pattern changed — switch environment assumptions faster?", actionLabel:"Use no-equipment mode", actionType:"SWITCH_ENV_MODE", payload:{ mode:"no equipment" }, priority:74 });
-  const recentNutri = Object.values(nutritionFeedback || {}).slice(-7);
-  if (recentNutri.filter(n => n.status === "off_track").length >= 2) triggers.push({ id:"nutri_simplify", msg:"Nutrition has been off-track — simplify meal structure for 3 days?", actionLabel:"Apply meal defaults", actionType:"SIMPLIFY_MEALS_THIS_WEEK", payload:{ days: 3 }, priority:82 });
-  if (recentNutri.filter(n => n.issue === "travel" || n.issue === "convenience").length >= 2) triggers.push({ id:"nutri_travel", msg:"Travel/convenience is derailing nutrition — switch to travel nutrition mode?", actionLabel:"Enable travel nutrition", actionType:"SWITCH_TRAVEL_NUTRITION_MODE", payload:{ enabled:true }, priority:79 });
+  const recentNutri = actualNutritionLogs.slice(-7);
+  if (recentNutri.filter(n => n.adherence === "low").length >= 2) triggers.push({ id:"nutri_simplify", msg:"Nutrition has been off-track — simplify meal structure for 3 days?", actionLabel:"Apply meal defaults", actionType:"SIMPLIFY_MEALS_THIS_WEEK", payload:{ days: 3 }, priority:82 });
+  if (recentNutri.filter(n => n.issue === "travel" || n.issue === "convenience" || n.deviationKind === "deviated").length >= 2) triggers.push({ id:"nutri_travel", msg:"Travel/convenience is derailing nutrition — switch to travel nutrition mode?", actionLabel:"Enable travel nutrition", actionType:"SWITCH_TRAVEL_NUTRITION_MODE", payload:{ enabled:true }, priority:79 });
   if ((momentum.momentumState === "drifting" || momentum.momentumState === "falling off") && learning?.stats?.skipped >= 2) triggers.push({ id:"salvage_mode", msg:"You’ve missed 2+ sessions — switch to a 3-day salvage plan?", actionLabel:"Activate salvage", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:92 });
   const confidenceBoost = learning?.adaptation?.active ? 6 : -4;
   return triggers
@@ -2173,9 +2469,14 @@ const generateDailyCoachBrief = ({ momentum, todayWorkout, arbitration, injurySt
 
 const generateWeeklyCoachReview = ({ momentum, arbitration, signals, personalization, patterns, learning, nutritionFeedback, expectations, recalibration }) => ({
   ...(() => {
-    const recentNutri = Object.values(nutritionFeedback || {}).slice(-7);
-    const offTrack = recentNutri.filter(n => n.status === "off_track").length;
-    const nutritionLearned = offTrack >= 2 ? "Nutrition consistency dropped; simplify meals and defaults." : null;
+    const recentNutri = Object.values(normalizeActualNutritionLogCollection(nutritionFeedback || {})).slice(-7);
+    const offTrack = recentNutri.filter(n => n.adherence === "low").length;
+    const underFueled = recentNutri.filter(n => n.deviationKind === "under_fueled").length;
+    const nutritionLearned = underFueled >= 2
+      ? "Nutrition came in under plan multiple times; protect fueling on key days."
+      : offTrack >= 2
+      ? "Nutrition consistency dropped; simplify meals and defaults."
+      : null;
     return {
   wentWell: momentum.score >= 60 ? "You kept core training momentum." : "You still kept some training touchpoints alive.",
   drifted: momentum.momentumState === "drifting" || momentum.momentumState === "falling off" ? "Execution drifted on consistency and logging rhythm." : "Drift was limited.",
@@ -2307,7 +2608,7 @@ const deriveLongTermMemoryLayer = ({ logs, dailyCheckins, weeklyCheckins, nutrit
   const entries = Object.entries(logs || {}).sort((a,b)=>a[0].localeCompare(b[0]));
   const checkins = Object.entries(dailyCheckins || {}).sort((a,b)=>a[0].localeCompare(b[0]));
   const weekly = Object.values(weeklyCheckins || {});
-  const nutrition = Object.values(nutritionFeedback || {});
+  const nutrition = Object.values(normalizeActualNutritionLogCollection(nutritionFeedback || {}));
   const last28Logs = entries.slice(-28).map(([,l])=>l || {});
   const last28Checkins = checkins.slice(-28).map(([,c])=>c || {});
 
@@ -2325,7 +2626,7 @@ const deriveLongTermMemoryLayer = ({ logs, dailyCheckins, weeklyCheckins, nutrit
     makeMemory("drops_after_3_4_days","behavior","often loses momentum after 3-4 hard days", Math.max(0, last28Logs.length - 4 >= 0 ? last28Checkins.filter(c => c.status === "skipped").length : 0)),
     makeMemory("fatigue_sensitive","performance","fatigue rises quickly when load stacks too fast", weekly.filter(w => Number(w.energy || 3) <= 2 || Number(w.stress || 3) >= 4).length),
     makeMemory("home_better_than_travel","environment","home setup yields higher completion than travel weeks", entries.filter(([,l]) => l.location !== "hotel").length >= 6 ? entries.filter(([,l]) => l.location === "hotel").length : 0),
-    makeMemory("nutrition_simple_meals","nutrition","adherence is better with simpler repeatable meals", nutrition.filter(n => n.status === "off_track" && ["convenience","travel"].includes(n.issue)).length >= 2 ? 3 : nutrition.filter(n => n.status === "decent" || n.status === "on_track").length),
+    makeMemory("nutrition_simple_meals","nutrition","adherence is better with simpler repeatable meals", nutrition.filter(n => n.adherence === "low" && ["convenience","travel"].includes(n.issue)).length >= 2 ? 3 : nutrition.filter(n => ["partial", "high"].includes(n.adherence)).length),
     makeMemory("validation_simplify_positive","validation","simplifying weeks tends to improve adherence/momentum", (validationLayer?.recentResolved || []).filter(r => r.strategy === "simplify_density" && r.impact === "positive").length),
     makeMemory("validation_aggressive_negative","validation","aggressive progress blocks can reduce consistency", (validationLayer?.recentResolved || []).filter(r => r.strategy === "aggressive_progression" && r.impact === "negative").length),
   ].filter(Boolean);
@@ -2605,9 +2906,9 @@ const derivePersonalOptimizationLayer = ({ logs, dailyCheckins, nutritionFeedbac
   const avgMinutes = durations.length ? Math.round(durations.reduce((s, n) => s + n, 0) / durations.length) : 35;
   const optimalSessionLength = avgMinutes <= 35 ? "25-40 min" : avgMinutes <= 50 ? "35-50 min" : "45-60 min";
 
-  const recentNutrition = Object.values(nutritionFeedback || {}).slice(-21);
-  const hunger = recentNutrition.filter(n => n.issue === "hunger").length;
-  const offTrack = recentNutrition.filter(n => n.status === "off_track").length;
+  const recentNutrition = Object.values(normalizeActualNutritionLogCollection(nutritionFeedback || {})).slice(-21);
+  const hunger = recentNutrition.filter(n => n.deviationKind === "under_fueled" || n.issue === "hunger").length;
+  const offTrack = recentNutrition.filter(n => n.adherence === "low").length;
   const optimalDeficitRange = hunger >= 2 || offTrack >= 4 ? "minimal deficit (0-150 kcal)" : "moderate deficit (120-250 kcal)";
 
   const modifications = last42Checkins.filter(c => c.status === "completed_modified").length;
@@ -2796,6 +3097,320 @@ const deriveFailureModeHardening = ({ logs, dailyCheckins, bodyweights, coachPla
 };
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
+const cloneStructuredValue = (value) => {
+  if (value == null) return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+};
+
+const PRESCRIBED_DAY_HISTORY_VERSION = 1;
+const PRESCRIBED_DAY_DURABILITY = {
+  durable: "durable",
+  legacyBackfill: "legacy_backfill",
+  fallbackDerived: "fallback_derived",
+};
+
+const stripPlannedRecordMetadata = (record = null) => {
+  if (!record) return null;
+  const next = cloneStructuredValue(record);
+  if (!next) return null;
+  delete next.capturedAt;
+  delete next.updatedAt;
+  return next;
+};
+
+const getStableCaptureAtForDate = (dateKey = "") => {
+  const parsed = new Date(`${dateKey}T12:00:00`).getTime();
+  return Number.isNaN(parsed) ? Date.now() : parsed;
+};
+
+const isPrescribedDayHistoryEntry = (entry = null) => Boolean(
+  entry
+  && typeof entry === "object"
+  && Array.isArray(entry.revisions)
+  && Number(entry.historyVersion || 0) >= 1
+);
+
+const getCurrentPrescribedDayRevision = (entry = null) => {
+  if (!entry) return null;
+  if (!isPrescribedDayHistoryEntry(entry)) {
+    return entry?.dateKey ? {
+      revisionId: entry?.revisionId || `${entry.dateKey}_rev_1`,
+      revisionNumber: Number(entry?.revisionNumber || 1),
+      capturedAt: entry?.capturedAt || entry?.updatedAt || null,
+      durability: entry?.durability || (entry?.source === "legacy_schedule_helper" ? PRESCRIBED_DAY_DURABILITY.fallbackDerived : PRESCRIBED_DAY_DURABILITY.durable),
+      sourceType: entry?.source || "legacy_single_snapshot",
+      reason: entry?.reason || "legacy_single_snapshot",
+      record: entry,
+    } : null;
+  }
+  const revisions = Array.isArray(entry.revisions) ? entry.revisions : [];
+  if (!revisions.length) return null;
+  const matched = revisions.find((revision) => revision?.revisionId === entry.currentRevisionId);
+  return matched || revisions[revisions.length - 1] || null;
+};
+
+const getCurrentPrescribedDayRecord = (entry = null) => {
+  const revision = getCurrentPrescribedDayRevision(entry);
+  return revision?.record || null;
+};
+
+const buildPrescribedDayRevision = ({
+  plannedDayRecord = null,
+  revisionNumber = 1,
+  capturedAt = Date.now(),
+  sourceType = "plan_day_engine",
+  durability = PRESCRIBED_DAY_DURABILITY.durable,
+  reason = "daily_decision_capture",
+} = {}) => {
+  if (!plannedDayRecord?.dateKey) return null;
+  return {
+    revisionId: `${plannedDayRecord.dateKey}_rev_${revisionNumber}_${capturedAt}`,
+    revisionNumber,
+    capturedAt,
+    sourceType,
+    durability,
+    reason,
+    record: {
+      ...cloneStructuredValue(plannedDayRecord),
+      capturedAt,
+      updatedAt: capturedAt,
+    },
+  };
+};
+
+const createPrescribedDayHistoryEntry = ({
+  plannedDayRecord = null,
+  capturedAt = Date.now(),
+  sourceType = "plan_day_engine",
+  durability = PRESCRIBED_DAY_DURABILITY.durable,
+  reason = "daily_decision_capture",
+} = {}) => {
+  if (!plannedDayRecord?.dateKey) return null;
+  const revision = buildPrescribedDayRevision({
+    plannedDayRecord,
+    revisionNumber: 1,
+    capturedAt,
+    sourceType,
+    durability,
+    reason,
+  });
+  if (!revision) return null;
+  return {
+    model: "prescribed_day_history",
+    historyVersion: PRESCRIBED_DAY_HISTORY_VERSION,
+    dateKey: plannedDayRecord.dateKey,
+    firstCapturedAt: capturedAt,
+    lastCapturedAt: capturedAt,
+    currentRevisionId: revision.revisionId,
+    revisions: [revision],
+  };
+};
+
+const normalizePrescribedDayHistoryEntry = (dateKey = "", entry = null) => {
+  if (!dateKey || !entry) return null;
+  if (isPrescribedDayHistoryEntry(entry)) {
+    const revisions = (entry.revisions || [])
+      .map((revision, idx) => {
+        const record = revision?.record || null;
+        if (!record?.dateKey) return null;
+        return {
+          revisionId: revision?.revisionId || `${record.dateKey}_rev_${idx + 1}_${revision?.capturedAt || entry?.lastCapturedAt || Date.now()}`,
+          revisionNumber: Number(revision?.revisionNumber || (idx + 1)),
+          capturedAt: revision?.capturedAt || entry?.lastCapturedAt || Date.now(),
+          sourceType: revision?.sourceType || record?.source || "plan_day_engine",
+          durability: revision?.durability || record?.durability || (record?.source === "legacy_schedule_helper" ? PRESCRIBED_DAY_DURABILITY.fallbackDerived : PRESCRIBED_DAY_DURABILITY.durable),
+          reason: revision?.reason || "history_normalized",
+          record: {
+            ...cloneStructuredValue(record),
+            capturedAt: record?.capturedAt || revision?.capturedAt || entry?.lastCapturedAt || Date.now(),
+            updatedAt: record?.updatedAt || revision?.capturedAt || entry?.lastCapturedAt || Date.now(),
+          },
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => Number(a.revisionNumber || 0) - Number(b.revisionNumber || 0));
+    if (!revisions.length) return null;
+    const currentRevision = revisions.find((revision) => revision.revisionId === entry.currentRevisionId) || revisions[revisions.length - 1];
+    return {
+      model: "prescribed_day_history",
+      historyVersion: PRESCRIBED_DAY_HISTORY_VERSION,
+      dateKey,
+      firstCapturedAt: entry?.firstCapturedAt || revisions[0]?.capturedAt || Date.now(),
+      lastCapturedAt: entry?.lastCapturedAt || currentRevision?.capturedAt || Date.now(),
+      currentRevisionId: currentRevision?.revisionId || revisions[revisions.length - 1]?.revisionId,
+      revisions,
+    };
+  }
+  const capturedAt = entry?.capturedAt || entry?.updatedAt || Date.now();
+  return createPrescribedDayHistoryEntry({
+    plannedDayRecord: { ...cloneStructuredValue(entry), dateKey: entry?.dateKey || dateKey },
+    capturedAt,
+    sourceType: entry?.source || "legacy_single_snapshot",
+    durability: entry?.durability || (entry?.source === "legacy_schedule_helper" ? PRESCRIBED_DAY_DURABILITY.fallbackDerived : PRESCRIBED_DAY_DURABILITY.durable),
+    reason: "legacy_single_snapshot_normalized",
+  });
+};
+
+const upsertPrescribedDayHistoryEntry = ({
+  dateKey = "",
+  existingEntry = null,
+  plannedDayRecord = null,
+  capturedAt = Date.now(),
+  sourceType = "plan_day_engine",
+  durability = PRESCRIBED_DAY_DURABILITY.durable,
+  reason = "daily_decision_capture",
+} = {}) => {
+  if (!dateKey || !plannedDayRecord?.dateKey) return { nextEntry: normalizePrescribedDayHistoryEntry(dateKey, existingEntry), changed: false };
+  const normalizedExisting = normalizePrescribedDayHistoryEntry(dateKey, existingEntry);
+  if (!normalizedExisting) {
+    return {
+      nextEntry: createPrescribedDayHistoryEntry({ plannedDayRecord, capturedAt, sourceType, durability, reason }),
+      changed: true,
+    };
+  }
+  const currentRecord = getCurrentPrescribedDayRecord(normalizedExisting);
+  const currentComparable = JSON.stringify(stripPlannedRecordMetadata(currentRecord) || null);
+  const nextComparable = JSON.stringify(stripPlannedRecordMetadata(plannedDayRecord) || null);
+  if (currentComparable === nextComparable) {
+    return {
+      nextEntry: normalizedExisting,
+      changed: !isPrescribedDayHistoryEntry(existingEntry),
+    };
+  }
+  const nextRevisionNumber = Number(normalizedExisting?.revisions?.[normalizedExisting.revisions.length - 1]?.revisionNumber || 0) + 1;
+  const nextRevision = buildPrescribedDayRevision({
+    plannedDayRecord,
+    revisionNumber: nextRevisionNumber,
+    capturedAt,
+    sourceType,
+    durability,
+    reason,
+  });
+  const nextRevisions = [...(normalizedExisting.revisions || []), nextRevision].slice(-16);
+  return {
+    nextEntry: {
+      ...normalizedExisting,
+      lastCapturedAt: capturedAt,
+      currentRevisionId: nextRevision.revisionId,
+      revisions: nextRevisions,
+    },
+    changed: true,
+  };
+};
+
+const buildPlanReference = (plannedDayEntry = null) => {
+  const revision = getCurrentPrescribedDayRevision(plannedDayEntry);
+  const plannedDayRecord = revision?.record || getCurrentPrescribedDayRecord(plannedDayEntry);
+  if (!plannedDayRecord?.dateKey) return null;
+  return {
+    planDayId: plannedDayRecord.id || `plan_day_${plannedDayRecord.dateKey}`,
+    dateKey: plannedDayRecord.dateKey,
+    source: plannedDayRecord.source || revision?.sourceType || "planned_day_record",
+    capturedAt: revision?.capturedAt || plannedDayRecord.capturedAt || null,
+    updatedAt: plannedDayRecord.updatedAt || revision?.capturedAt || null,
+    decisionMode: plannedDayRecord?.decision?.mode || "",
+    modifiedFromBase: Boolean(plannedDayRecord?.decision?.modifiedFromBase),
+    revisionId: revision?.revisionId || "",
+    revisionNumber: Number(revision?.revisionNumber || 1),
+    durability: revision?.durability || plannedDayRecord?.durability || PRESCRIBED_DAY_DURABILITY.durable,
+  };
+};
+
+const buildLegacyPlanSnapshot = (plannedDayEntry = null) => {
+  const plannedDayRecord = getCurrentPrescribedDayRecord(plannedDayEntry) || plannedDayEntry;
+  if (!plannedDayRecord?.dateKey) return null;
+  return {
+    dateKey: plannedDayRecord.dateKey,
+    baseLabel: plannedDayRecord?.base?.training?.label || "",
+    resolvedLabel: plannedDayRecord?.resolved?.training?.label || "",
+    mode: plannedDayRecord?.decision?.mode || "",
+    modeLabel: plannedDayRecord?.decision?.modeLabel || "",
+    modifiedFromBase: Boolean(plannedDayRecord?.decision?.modifiedFromBase),
+  };
+};
+
+const buildLegacyPlannedDayRecordFromSnapshot = ({ dateKey = "", snapshot = null } = {}) => {
+  if (!dateKey || !snapshot) return null;
+  const baseLabel = String(snapshot?.baseLabel || snapshot?.resolvedLabel || "Planned session").trim();
+  const resolvedLabel = String(snapshot?.resolvedLabel || snapshot?.baseLabel || baseLabel).trim();
+  return {
+    id: `legacy_snapshot_${dateKey}`,
+    dateKey,
+    source: "legacy_log_snapshot",
+    week: {},
+    base: {
+      training: baseLabel ? { label: baseLabel, type: "planned_session" } : null,
+      nutrition: null,
+      recovery: null,
+      supplements: null,
+    },
+    resolved: {
+      training: resolvedLabel ? { label: resolvedLabel, type: snapshot?.modifiedFromBase ? "modified_session" : "planned_session" } : null,
+      nutrition: null,
+      recovery: null,
+      supplements: null,
+    },
+    decision: {
+      mode: String(snapshot?.mode || "legacy_snapshot"),
+      modeLabel: String(snapshot?.modeLabel || ""),
+      modifiedFromBase: Boolean(snapshot?.modifiedFromBase),
+    },
+    durability: PRESCRIBED_DAY_DURABILITY.legacyBackfill,
+    provenance: {
+      keyDrivers: [],
+      adjustments: [],
+      summary: "Recovered from legacy prescribed snapshot.",
+    },
+    flags: {
+      isModified: Boolean(snapshot?.modifiedFromBase),
+    },
+  };
+};
+
+const buildLegacyPlannedDayRecordFromWorkout = ({ dateKey = "", weekNumber = 0, workout = null } = {}) => {
+  if (!dateKey || !workout) return null;
+  return {
+    id: `legacy_schedule_${dateKey}`,
+    dateKey,
+    source: "legacy_schedule_helper",
+    week: {
+      number: weekNumber,
+      phase: workout?.week?.phase || workout?.phase || "",
+    },
+    base: {
+      training: cloneStructuredValue(workout),
+      nutrition: workout?.nutri ? { dayType: workout.nutri } : null,
+      recovery: null,
+      supplements: null,
+    },
+    resolved: {
+      training: cloneStructuredValue(workout),
+      nutrition: workout?.nutri ? { dayType: workout.nutri } : null,
+      recovery: null,
+      supplements: null,
+    },
+    decision: {
+      mode: "static_schedule",
+      modeLabel: "Static schedule fallback",
+      modifiedFromBase: false,
+    },
+    durability: PRESCRIBED_DAY_DURABILITY.fallbackDerived,
+    provenance: {
+      keyDrivers: [],
+      adjustments: [],
+      summary: "Recovered from legacy week-template fallback.",
+    },
+    flags: {
+      isModified: false,
+      restDay: workout?.type === "rest",
+    },
+  };
+};
+
 export default function TrainerDashboard() {
   const [tab, setTab] = useState(() => {
     if (typeof window === "undefined") return 0;
@@ -2814,6 +3429,7 @@ export default function TrainerDashboard() {
   const [coachActions, setCoachActions] = useState([]);
   const [coachPlanAdjustments, setCoachPlanAdjustments] = useState({ dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} });
   const [dailyCheckins, setDailyCheckins] = useState({});
+  const [plannedDayRecords, setPlannedDayRecords] = useState({});
   const [weeklyCheckins, setWeeklyCheckins] = useState({});
   const [nutritionFavorites, setNutritionFavorites] = useState({ restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] });
   const [nutritionFeedback, setNutritionFeedback] = useState({});
@@ -2841,16 +3457,32 @@ export default function TrainerDashboard() {
   const [showAppleHealthFirstLaunch, setShowAppleHealthFirstLaunch] = useState(false);
   const DEBUG_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
   const logDiag = (...args) => { if (DEBUG_MODE) console.log("[trainer-debug]", ...args); };
-  const goalsModel = useMemo(() => normalizeGoals(goals), [goals]);
-  const goalBuckets = useMemo(() => getGoalBuckets(goalsModel), [goalsModel]);
-  const activeTimeBoundGoal = useMemo(() => getActiveTimeBoundGoal(goalsModel), [goalsModel]);
+  const nutritionActualLogs = useMemo(
+    () => normalizeActualNutritionLogCollection(nutritionFeedback || {}),
+    [nutritionFeedback]
+  );
+  const canonicalGoalProfile = useMemo(
+    () => deriveCanonicalGoalProfileState({ goals, personalization }),
+    [goals, personalization]
+  );
+  const goalsModel = canonicalGoalProfile.goals;
+  const goalBuckets = canonicalGoalProfile.goalBuckets;
+  const activeTimeBoundGoal = canonicalGoalProfile.activeTimeBoundGoal;
+  const canonicalUserProfile = canonicalGoalProfile.userProfile;
+  const canonicalGoalState = canonicalGoalProfile.goalState;
 
   const today = new Date();
-  const currentWeek = getCurrentWeek(personalization?.goalState?.planStartDate || "");
+  const currentWeek = getCurrentWeek(canonicalGoalState?.planStartDate || "");
   const dayOfWeek = getDayOfWeek();
   const baseTodayWorkout = getTodayWorkout(currentWeek, dayOfWeek);
   const baseWeek = WEEKS[(currentWeek - 1) % WEEKS.length] || WEEKS[0];
   const todayKey = new Date().toISOString().split("T")[0];
+  const getWeekForDateKey = (dateKey) => {
+    const anchor = canonicalGoalState?.planStartDate ? new Date(`${canonicalGoalState.planStartDate}T12:00:00`) : PROFILE.startDate;
+    const dateObj = new Date(`${dateKey}T12:00:00`);
+    const diffWeeks = Math.ceil((dateObj - anchor) / (1000 * 60 * 60 * 24 * 7));
+    return Math.max(1, diffWeeks);
+  };
   const dismissedTriggerStorageKey = `dismissed_triggers_${todayKey}`;
   const dayOverride = coachPlanAdjustments.dayOverrides?.[todayKey];
   const nutritionOverride = coachPlanAdjustments.nutritionOverrides?.[todayKey];
@@ -2863,20 +3495,107 @@ export default function TrainerDashboard() {
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
   const planComposer = composeGoalNativePlan({ goals: goalsModel, personalization, momentum, learningLayer, currentWeek, baseWeek });
+  const currentWeeklyCheckin = weeklyCheckins?.[String(currentWeek)] || {};
+  const currentPlanWeek = useMemo(() => {
+    const weekStart = new Date(`${todayKey}T12:00:00`);
+    const weekStartDay = weekStart.getDay();
+    const mondayShift = weekStartDay === 0 ? -6 : 1 - weekStartDay;
+    weekStart.setDate(weekStart.getDate() + mondayShift);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    return buildPlanWeek({
+      weekNumber: currentWeek,
+      template: baseWeek,
+      referenceTemplate: baseWeek,
+      label: `${baseWeek?.phase || "BASE"} - Week ${currentWeek}`,
+      specificity: "high",
+      kind: "plan",
+      startDate: weekStart.toISOString().split("T")[0],
+      endDate: weekEnd.toISOString().split("T")[0],
+      goals: goalsModel,
+      architecture: planComposer?.architecture || "hybrid_performance",
+      blockIntent: planComposer?.blockIntent || null,
+      split: planComposer?.split || null,
+      sessionsByDay: planComposer?.dayTemplates || null,
+      momentum,
+      learningLayer,
+      weeklyCheckin: currentWeeklyCheckin,
+      coachPlanAdjustments,
+      failureMode,
+      environmentSelection,
+      constraints: planComposer?.constraints || [],
+    });
+  }, [
+    todayKey,
+    currentWeek,
+    baseWeek,
+    goalsModel,
+    planComposer,
+    momentum,
+    learningLayer,
+    currentWeeklyCheckin,
+    coachPlanAdjustments,
+    failureMode,
+    environmentSelection,
+  ]);
+  const currentPlanSession = currentPlanWeek?.sessionsByDay?.[dayOfWeek] || planComposer?.dayTemplates?.[dayOfWeek] || null;
   const todayPlan = generateTodayPlan(
-    personalization.userGoalProfile || {},
+    canonicalUserProfile,
     { logs, todayKey },
     {
       fatigueScore: personalization.trainingState?.fatigueScore ?? 2,
       trend: personalization.trainingState?.trend || "stable",
       momentum: momentum.momentumState,
       injuryLevel: personalization.injuryPainState?.level || "none",
+    },
+    {
+      weeklyIntent: currentPlanWeek?.weeklyIntent || null,
+      planWeek: currentPlanWeek,
+      plannedSession: currentPlanSession,
     }
   );
-  const rollingHorizon = buildRollingHorizonWeeks({ currentWeek, horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS, goals: goalsModel, weekTemplates: WEEKS });
+  const rollingHorizonBase = buildRollingHorizonWeeks({
+    currentWeek,
+    horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS,
+    goals: goalsModel,
+    weekTemplates: WEEKS,
+    architecture: planComposer?.architecture || "hybrid_performance",
+    blockIntent: planComposer?.blockIntent || null,
+    split: planComposer?.split || null,
+    sessionsByDay: planComposer?.dayTemplates || null,
+    referenceTemplate: baseWeek,
+    momentum,
+    learningLayer,
+    weeklyCheckins,
+    coachPlanAdjustments,
+    failureMode,
+    environmentSelection,
+    constraints: planComposer?.constraints || [],
+  });
+  const rollingHorizon = useMemo(
+    () => (rollingHorizonBase || []).map((row) => (
+      row?.kind === "plan" && row?.absoluteWeek === currentWeek && currentPlanWeek
+        ? { ...row, planWeek: currentPlanWeek, weekLabel: currentPlanWeek.label, template: currentPlanWeek.template || row.template }
+        : row
+    )),
+    [rollingHorizonBase, currentWeek, currentPlanWeek]
+  );
   const horizonAnchor = getHorizonAnchor(goalsModel, DEFAULT_PLANNING_HORIZON_WEEKS);
-  const hasStructuredProfile = Boolean(personalization.userGoalProfile?.primary_goal);
-  const goalNativeBase = planComposer?.dayTemplates?.[dayOfWeek] ? { ...baseTodayWorkout, ...planComposer.dayTemplates[dayOfWeek], week: baseWeek, zones: baseTodayWorkout?.zones } : baseTodayWorkout;
+  const hasStructuredProfile = Boolean(canonicalUserProfile?.primary_goal);
+  const goalNativeBase = currentPlanSession
+    ? {
+        ...baseTodayWorkout,
+        ...currentPlanSession,
+        week: {
+          ...baseWeek,
+          planWeekId: currentPlanWeek?.id || "",
+          status: currentPlanWeek?.status || "planned",
+          adjusted: Boolean(currentPlanWeek?.adjusted),
+          weeklyIntent: currentPlanWeek?.weeklyIntent || null,
+        },
+        zones: baseTodayWorkout?.zones,
+      }
+    : baseTodayWorkout;
   const goalNativeWorkout = hasStructuredProfile
     ? todayPlan.type === "recovery"
       ? { ...goalNativeBase, type: "rest", label: todayPlan.label, nutri: "rest", run: null, strSess: null, todayPlan }
@@ -2936,10 +3655,22 @@ export default function TrainerDashboard() {
     todayWorkoutHardened.environmentNote = `${todayWorkoutHardened.environmentNote ? `${todayWorkoutHardened.environmentNote} ` : ""}Today steps: ${todaySummary.steps}. Keep rest day movement easy.`;
   }
   const savedTodayCheckin = dailyCheckins?.[todayKey] || logs?.[todayKey]?.checkin || {};
+  const savedTodayStatus = resolveEffectiveStatus(savedTodayCheckin, todayKey);
   const savedReadinessPromptSignal = coachPlanAdjustments?.extra?.readinessSignals?.[todayKey] || null;
-  const sharedReadinessInfluence = deriveTodayReadinessInfluence({ checkin: savedTodayCheckin, promptSignal: savedReadinessPromptSignal, workout: todayWorkoutHardened });
+  const sharedReadinessInfluence = deriveDeterministicReadinessState({
+    todayKey,
+    checkin: savedTodayCheckin,
+    promptSignal: savedReadinessPromptSignal,
+    workout: todayWorkoutHardened,
+    logs,
+    dailyCheckins,
+    personalization,
+    momentum,
+    userProfile: canonicalUserProfile,
+  });
   const effectiveTodayWorkout = sharedReadinessInfluence?.adjustedWorkout || todayWorkoutHardened;
-  const nutritionLayer = deriveAdaptiveNutrition({ todayWorkout: effectiveTodayWorkout, goals: goalsModel, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, coachPlanAdjustments, salvageLayer, failureMode });
+  const nutritionLayer = deriveAdaptiveNutrition({ todayWorkout: effectiveTodayWorkout, goals: goalsModel, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, nutritionActualLogs, coachPlanAdjustments, salvageLayer, failureMode });
+  const todayActualNutritionLog = nutritionActualLogs?.[todayKey] || null;
   const realWorldNutrition = deriveRealWorldNutritionEngine({
     location: personalization?.localFoodContext?.city || personalization?.localFoodContext?.locationLabel || (personalization?.connectedDevices?.location?.status === "granted" ? "Nearby area" : ""),
     dayType: nutritionLayer.dayType,
@@ -2950,8 +3681,190 @@ export default function TrainerDashboard() {
     travelMode: personalization.travelState.isTravelWeek || (personalization.travelState.environmentMode || "").includes("travel"),
     learningLayer,
     timeOfDay: today.getHours() < 12 ? "morning" : today.getHours() < 18 ? "afternoon" : "evening",
-    loggedIntake: nutritionFeedback?.[todayKey]
+    loggedIntake: todayActualNutritionLog
   });
+  const nutritionComparison = compareNutritionPrescriptionToActual({
+    nutritionPrescription: nutritionLayer,
+    actualNutritionLog: todayActualNutritionLog,
+  });
+  const planDay = useMemo(() => buildCanonicalPlanDay({
+    dateKey: todayKey,
+    dayOfWeek,
+    currentWeek,
+    baseWeek,
+    basePlannedDay: goalNativeWorkout,
+    resolvedDay: effectiveTodayWorkout,
+    todayPlan,
+    readiness: sharedReadinessInfluence,
+    nutrition: {
+      prescription: nutritionLayer,
+      reality: realWorldNutrition,
+      actual: todayActualNutritionLog,
+      comparison: nutritionComparison,
+    },
+    adjustments: {
+      dayOverride,
+      nutritionOverride,
+      environmentSelection,
+      injuryRule,
+      failureMode,
+      garminReadiness,
+      deviceSyncAudit,
+    },
+    context: {
+      architecture: planComposer?.architecture || "",
+      blockIntent: planComposer?.blockIntent || null,
+      weeklyIntent: currentPlanWeek?.weeklyIntent || null,
+      planWeek: currentPlanWeek,
+      supplementPlan: nutritionFavorites?.supplementStack || [],
+    },
+    logging: {
+      dailyCheckin: savedTodayCheckin,
+      sessionLog: logs?.[todayKey] || null,
+      nutritionLog: todayActualNutritionLog,
+      supplementLog: todayActualNutritionLog?.supplements?.takenMap || null,
+      sessionStatus: savedTodayStatus,
+    },
+  }), [
+    todayKey,
+    dayOfWeek,
+    currentWeek,
+    baseWeek,
+    goalNativeWorkout,
+    effectiveTodayWorkout,
+    todayPlan,
+    sharedReadinessInfluence,
+    nutritionLayer,
+    todayActualNutritionLog,
+    realWorldNutrition,
+    nutritionComparison,
+    dayOverride,
+    nutritionOverride,
+    environmentSelection,
+    injuryRule,
+    failureMode,
+    garminReadiness,
+    deviceSyncAudit,
+    planComposer,
+    currentPlanWeek,
+    nutritionFavorites,
+    savedTodayCheckin,
+    logs,
+    nutritionFeedback,
+    nutritionActualLogs,
+    savedTodayStatus,
+  ]);
+  const todayPlannedDayRecord = useMemo(() => buildPlannedDayRecord(planDay), [planDay]);
+  const runtimeDebugSnapshot = useMemo(() => {
+    const weekIntent = currentPlanWeek?.weeklyIntent || {};
+    const readiness = planDay?.resolved?.recovery || {};
+    const nutritionActual = planDay?.resolved?.nutrition?.actual || null;
+    const nutritionComparisonSummary = planDay?.resolved?.nutrition?.comparison || {};
+    const latestAcceptedCoachAction = (coachActions || []).find((action) => action?.acceptedBy);
+    const latestAiPlanAlert = (planAlerts || []).find((alert) => alert?.source === "ai_proposal_accepted");
+    const latestPlanRevision = plannedDayRecords?.[todayKey]?.revisions?.slice?.(-1)?.[0] || null;
+    const plannedHistory = plannedDayRecords?.[todayKey] || null;
+    const loggingState = planDay?.resolved?.logging || {};
+    return {
+      generatedAt: new Date().toISOString(),
+      storage: {
+        mode: storageStatus?.mode || "unknown",
+        label: storageStatus?.label || "UNKNOWN",
+        authError: authError || "",
+      },
+      planDay: {
+        dateKey: planDay?.dateKey || todayKey,
+        label: planDay?.resolved?.training?.label || planDay?.base?.training?.label || "No day loaded",
+        type: planDay?.resolved?.training?.type || "unknown",
+        decisionMode: planDay?.decision?.mode || "unknown",
+        confidence: planDay?.decision?.confidence || "unknown",
+        modifiedFromBase: Boolean(planDay?.decision?.modifiedFromBase || planDay?.flags?.isModified),
+        provenanceSummary: planDay?.provenance?.summary || "",
+        keyDrivers: Array.isArray(planDay?.provenance?.keyDrivers) ? planDay.provenance.keyDrivers.slice(0, 5) : [],
+      },
+      planWeek: {
+        id: currentPlanWeek?.id || "",
+        weekNumber: currentPlanWeek?.weekNumber || currentWeek,
+        label: currentPlanWeek?.label || "",
+        phase: currentPlanWeek?.phase || baseWeek?.phase || "",
+        status: currentPlanWeek?.status || "planned",
+        adjusted: Boolean(currentPlanWeek?.adjusted),
+        focus: weekIntent?.focus || "",
+        aggressionLevel: weekIntent?.aggressionLevel || "",
+        recoveryBias: weekIntent?.recoveryBias || "",
+        volumeBias: weekIntent?.volumeBias || "",
+        performanceBias: weekIntent?.performanceBias || "",
+        nutritionEmphasis: weekIntent?.nutritionEmphasis || "",
+        constraints: Array.isArray(currentPlanWeek?.constraints) ? currentPlanWeek.constraints.slice(0, 5) : [],
+      },
+      readiness: {
+        state: readiness?.state || "unknown",
+        stateLabel: readiness?.stateLabel || "",
+        source: readiness?.source || "",
+        inputDriven: Boolean(readiness?.inputDriven),
+        userVisibleLine: readiness?.userVisibleLine || readiness?.recoveryLine || "",
+        factors: Array.isArray(readiness?.factors) ? readiness.factors.slice(0, 5) : [],
+      },
+      nutrition: {
+        dayType: planDay?.resolved?.nutrition?.dayType || planDay?.resolved?.nutrition?.prescription?.dayType || "",
+        actualLogged: Boolean(nutritionActual),
+        compliance: nutritionActual?.compliance || "",
+        deviationKind: nutritionActual?.deviationKind || nutritionComparisonSummary?.deviationKind || "",
+        comparisonStatus: nutritionComparisonSummary?.status || "",
+        comparisonImpact: nutritionComparisonSummary?.impact || "",
+        comparisonSummary: nutritionComparisonSummary?.summary || "",
+      },
+      logging: {
+        checkinStatus: loggingState?.dailyCheckin?.status || "",
+        sessionStatus: loggingState?.status || "",
+        hasCheckin: Boolean(loggingState?.hasCheckin),
+        hasSessionLog: Boolean(loggingState?.hasSessionLog),
+        hasNutritionLog: Boolean(loggingState?.hasNutritionLog),
+      },
+      prescribedHistory: {
+        durability: latestPlanRevision?.durability || "none",
+        sourceType: latestPlanRevision?.sourceType || "",
+        revisionNumber: latestPlanRevision?.revisionNumber || 0,
+        revisionCount: Array.isArray(plannedHistory?.revisions) ? plannedHistory.revisions.length : 0,
+        currentRevisionId: plannedHistory?.currentRevisionId || "",
+      },
+      ai: {
+        analyzing,
+        latestAcceptedPlanProposal: latestAiPlanAlert
+          ? {
+              id: latestAiPlanAlert.id || "",
+              type: latestAiPlanAlert.type || "",
+              message: latestAiPlanAlert.msg || "",
+              acceptedBy: latestAiPlanAlert.acceptedBy || "",
+              packetIntent: latestAiPlanAlert.packetIntent || "",
+              packetVersion: latestAiPlanAlert.packetVersion || "",
+            }
+          : null,
+        latestAcceptedCoachAction: latestAcceptedCoachAction
+          ? {
+              type: latestAcceptedCoachAction.type || "",
+              source: latestAcceptedCoachAction.source || "",
+              proposalSource: latestAcceptedCoachAction.proposalSource || "",
+              acceptedBy: latestAcceptedCoachAction.acceptedBy || "",
+              acceptancePolicy: latestAcceptedCoachAction.acceptancePolicy || "",
+              reason: latestAcceptedCoachAction.reason || latestAcceptedCoachAction.rationale || "",
+            }
+          : null,
+      },
+    };
+  }, [
+    currentPlanWeek,
+    currentWeek,
+    baseWeek,
+    planDay,
+    coachActions,
+    planAlerts,
+    plannedDayRecords,
+    todayKey,
+    storageStatus,
+    authError,
+    analyzing,
+  ]);
   const dailyBrief = generateDailyCoachBrief({ momentum, todayWorkout: effectiveTodayWorkout, arbitration, injuryState: personalization.injuryPainState, patterns, learning: learningLayer, salvage: salvageLayer });
   const dailyStory = buildUnifiedDailyStory({ todayWorkout: effectiveTodayWorkout, dailyBrief, progress: progressEngine, arbitration, expectations, salvage: salvageLayer, momentum });
   const weeklyReview = generateWeeklyCoachReview({ momentum, arbitration, signals: computeAdaptiveSignals({ logs, bodyweights, personalization }), personalization, patterns, learning: learningLayer, nutritionFeedback, expectations, recalibration });
@@ -2984,6 +3897,14 @@ export default function TrainerDashboard() {
   useEffect(() => {
     try { sessionStorage.setItem(dismissedTriggerStorageKey, JSON.stringify(dismissedTriggers || [])); } catch {}
   }, [dismissedTriggerStorageKey, dismissedTriggers]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    window.__trainerRuntime = runtimeDebugSnapshot;
+    return () => {
+      if (window.__trainerRuntime === runtimeDebugSnapshot) delete window.__trainerRuntime;
+    };
+  }, [runtimeDebugSnapshot]);
 
   const dismissTriggerForToday = (id) => {
     if (!id) return;
@@ -3150,9 +4071,9 @@ export default function TrainerDashboard() {
     await authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
   };
 
-  const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionFeedback = nutritionFeedback) => {
+  const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionFeedback = nutritionFeedback, newPlannedDayRecords = plannedDayRecords) => {
     const normalizedGoalPayload = normalizeGoals(newGoals || []);
-    const payload = { logs: newLogs, bw: newBW, paceOverrides: newOvr, weekNotes: newNotes, planAlerts: newAlerts, personalization: newPersonalization, goals: normalizedGoalPayload, coachActions: newCoachActions, coachPlanAdjustments: newCoachPlanAdjustments, dailyCheckins: newDailyCheckins, weeklyCheckins: newWeeklyCheckins, nutritionFavorites: newNutritionFavorites, nutritionFeedback: newNutritionFeedback, v: 6, ts: Date.now() };
+    const payload = { logs: newLogs, bw: newBW, paceOverrides: newOvr, weekNotes: newNotes, planAlerts: newAlerts, personalization: newPersonalization, goals: normalizedGoalPayload, coachActions: newCoachActions, coachPlanAdjustments: newCoachPlanAdjustments, dailyCheckins: newDailyCheckins, plannedDayRecords: newPlannedDayRecords, weeklyCheckins: newWeeklyCheckins, nutritionFavorites: newNutritionFavorites, nutritionFeedback: newNutritionFeedback, v: 6, ts: Date.now() };
     if (authSession?.user?.id) markLocalMutation();
     await authStorage.persistAll({ payload, authSession, setStorageStatus, setAuthSession });
   };
@@ -3172,6 +4093,7 @@ export default function TrainerDashboard() {
         setCoachActions,
         setCoachPlanAdjustments,
         setDailyCheckins,
+        setPlannedDayRecords,
         setWeeklyCheckins,
         setNutritionFavorites,
         setNutritionFeedback,
@@ -3202,6 +4124,112 @@ export default function TrainerDashboard() {
     }, 250);
   };
 
+  const getPlannedDayHistoryForDate = (dateKey, logEntry = null) => {
+    if (!dateKey) return null;
+    const existingEntry = normalizePrescribedDayHistoryEntry(dateKey, plannedDayRecords?.[dateKey] || null);
+    if (existingEntry) return existingEntry;
+    if (dateKey === todayKey && todayPlannedDayRecord) {
+      return createPrescribedDayHistoryEntry({
+        plannedDayRecord: todayPlannedDayRecord,
+        capturedAt: getStableCaptureAtForDate(dateKey),
+        sourceType: "plan_day_engine",
+        durability: PRESCRIBED_DAY_DURABILITY.durable,
+        reason: "today_plan_capture",
+      });
+    }
+    const legacySnapshot = buildLegacyPlannedDayRecordFromSnapshot({ dateKey, snapshot: logEntry?.prescribedPlanSnapshot || null });
+    if (legacySnapshot) {
+      return createPrescribedDayHistoryEntry({
+        plannedDayRecord: legacySnapshot,
+        capturedAt: logEntry?.ts || getStableCaptureAtForDate(dateKey),
+        sourceType: "legacy_log_snapshot",
+        durability: PRESCRIBED_DAY_DURABILITY.legacyBackfill,
+        reason: "legacy_snapshot_backfill",
+      });
+    }
+    const hasHistoricalNeed = Boolean(
+      logEntry
+      || dailyCheckins?.[dateKey]
+      || nutritionFeedback?.[dateKey]
+    );
+    if (!hasHistoricalNeed) return null;
+    const dateObj = new Date(`${dateKey}T12:00:00`);
+    if (Number.isNaN(dateObj.getTime())) return null;
+    const week = getWeekForDateKey(dateKey);
+    const workout = getTodayWorkout(week, dateObj.getDay());
+    const fallbackRecord = buildLegacyPlannedDayRecordFromWorkout({ dateKey, weekNumber: week, workout });
+    if (!fallbackRecord) return null;
+    return createPrescribedDayHistoryEntry({
+      plannedDayRecord: fallbackRecord,
+      capturedAt: getStableCaptureAtForDate(dateKey),
+      sourceType: "legacy_schedule_helper",
+      durability: PRESCRIBED_DAY_DURABILITY.fallbackDerived,
+      reason: "schedule_backfill",
+    });
+  };
+
+  const getPlannedDayRecordForDate = (dateKey, logEntry = null) => getCurrentPrescribedDayRecord(
+    getPlannedDayHistoryForDate(dateKey, logEntry)
+  );
+
+  const decorateLogEntryWithPlanContext = ({ dateKey, entry = null, dailyCheckin = {} } = {}) => {
+    if (!dateKey || !entry) return entry;
+    const plannedDayHistory = getPlannedDayHistoryForDate(dateKey, entry);
+    const plannedDayRecord = getCurrentPrescribedDayRecord(plannedDayHistory);
+    const shouldIgnoreDailyOutcome = !entry?.actualSession?.status && !entry?.checkin?.status && (
+      Number(entry?.miles || 0) > 0
+      || Number(entry?.runTime || 0) > 0
+      || (Array.isArray(entry?.strengthPerformance) && entry.strengthPerformance.length > 0)
+      || Boolean(String(entry?.type || "").trim())
+    );
+    const comparisonDailyCheckin = shouldIgnoreDailyOutcome
+      ? { ...(dailyCheckin || {}), status: "not_logged" }
+      : dailyCheckin;
+    const comparison = comparePlannedDayToActual({
+      plannedDayRecord,
+      actualLog: entry,
+      dailyCheckin: comparisonDailyCheckin,
+      dateKey,
+    });
+    const legacyStatus = comparison.completionKind === "as_prescribed"
+      ? "completed_as_planned"
+      : comparison.completionKind === "modified" || comparison.completionKind === "custom_session"
+      ? "completed_modified"
+      : comparison.completionKind === "skipped"
+      ? "skipped"
+      : (entry?.checkin?.status || "");
+    const actualStatus = legacyStatus || comparison.status;
+    const sessionType = String(entry?.actualSession?.sessionType || entry?.type || "").trim();
+    const sessionLabel = String(entry?.actualSession?.sessionLabel || entry?.type || entry?.label || sessionType || "Session").trim();
+    return {
+      ...entry,
+      planDayId: entry?.planDayId || plannedDayRecord?.id || "",
+      planReference: buildPlanReference(plannedDayHistory || plannedDayRecord) || entry?.planReference || null,
+      prescribedPlanSnapshot: entry?.prescribedPlanSnapshot || buildLegacyPlanSnapshot(plannedDayHistory || plannedDayRecord),
+      actualSession: {
+        ...(entry?.actualSession || {}),
+        status: actualStatus,
+        completionKind: comparison.completionKind,
+        sessionType,
+        sessionLabel,
+        customSession: Boolean(comparison.customSession),
+        modifiedFromPlan: comparison.differenceKind !== "none" && comparison.differenceKind !== "pending" && comparison.differenceKind !== "unknown",
+        loggedAt: entry?.actualSession?.loggedAt || entry?.editedAt || entry?.ts || Date.now(),
+      },
+      comparison,
+      checkin: {
+        ...(entry?.checkin || {}),
+        ...(legacyStatus ? { status: legacyStatus } : {}),
+        ...(dailyCheckin?.sessionFeel ? { sessionFeel: dailyCheckin.sessionFeel } : {}),
+        ...(dailyCheckin?.blocker ? { blocker: dailyCheckin.blocker } : {}),
+        ...(dailyCheckin?.note ? { note: dailyCheckin.note } : {}),
+        ...(entry?.feel ? { feelRating: String(entry.feel) } : {}),
+        ts: Date.now(),
+      },
+      ts: Date.now(),
+    };
+  };
+
   const buildRealtimeLogEntry = (row = {}, existing = {}) => {
     const dateKey = String(row?.date || existing?.date || "").split("T")[0];
     const exercises = Array.isArray(row?.exercises) ? row.exercises : (existing?.strengthPerformance || []);
@@ -3210,7 +4238,7 @@ export default function TrainerDashboard() {
       || exercises?.[0]?.exercise
       || (Number(row?.distance_mi || 0) > 0 ? "Run" : "")
       || "Logged session";
-    const completionStatus = row?.completion_status || existing?.checkin?.status || "";
+    const completionStatus = row?.completion_status || existing?.actualSession?.status || existing?.checkin?.status || "";
     return {
       ...existing,
       date: dateKey,
@@ -3221,6 +4249,13 @@ export default function TrainerDashboard() {
       notes: row?.note ?? existing?.notes ?? "",
       strengthPerformance: exercises,
       healthMetrics: row?.avg_hr ? { ...(existing?.healthMetrics || {}), avgHr: Number(row.avg_hr) } : (existing?.healthMetrics || null),
+      actualSession: {
+        ...(existing?.actualSession || {}),
+        ...(completionStatus ? { status: completionStatus } : {}),
+        sessionType: existing?.actualSession?.sessionType || inferredType,
+        sessionLabel: existing?.actualSession?.sessionLabel || inferredType,
+        loggedAt: existing?.actualSession?.loggedAt || Date.now(),
+      },
       checkin: {
         ...(existing?.checkin || {}),
         ...(completionStatus ? { status: completionStatus } : {}),
@@ -3230,6 +4265,78 @@ export default function TrainerDashboard() {
       syncedFromRealtime: true,
     };
   };
+
+  useEffect(() => {
+    if (loading) return;
+    const relevantDateKeys = Array.from(new Set([
+      todayKey,
+      ...Object.keys(logs || {}),
+      ...Object.keys(dailyCheckins || {}),
+      ...Object.keys(nutritionFeedback || {}),
+      ...Object.keys(plannedDayRecords || {}),
+    ].filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    let changed = false;
+    const nextPlannedDayRecords = { ...(plannedDayRecords || {}) };
+
+    relevantDateKeys.forEach((dateKey) => {
+      const existingEntry = nextPlannedDayRecords?.[dateKey] || null;
+      const normalizedExisting = normalizePrescribedDayHistoryEntry(dateKey, existingEntry);
+      const hadExisting = Boolean(existingEntry);
+      if (normalizedExisting && JSON.stringify(normalizedExisting) !== JSON.stringify(existingEntry || null)) {
+        nextPlannedDayRecords[dateKey] = normalizedExisting;
+        changed = true;
+      }
+      if (dateKey === todayKey && todayPlannedDayRecord) {
+        const currentHistoryEntry = nextPlannedDayRecords?.[dateKey] || normalizedExisting;
+        const { nextEntry, changed: revisionChanged } = upsertPrescribedDayHistoryEntry({
+          dateKey,
+          existingEntry: currentHistoryEntry,
+          plannedDayRecord: todayPlannedDayRecord,
+          capturedAt: currentHistoryEntry ? Date.now() : getStableCaptureAtForDate(dateKey),
+          sourceType: "plan_day_engine",
+          durability: PRESCRIBED_DAY_DURABILITY.durable,
+          reason: currentHistoryEntry
+            ? (todayPlannedDayRecord?.decision?.modifiedFromBase ? "same_day_adjustment" : "daily_decision_refresh")
+            : "daily_decision_capture",
+        });
+        if (nextEntry && JSON.stringify(nextEntry) !== JSON.stringify(nextPlannedDayRecords?.[dateKey] || null)) {
+          nextPlannedDayRecords[dateKey] = nextEntry;
+          changed = true;
+        } else if (revisionChanged && !hadExisting) {
+          changed = true;
+        }
+        return;
+      }
+      if (nextPlannedDayRecords?.[dateKey]) return;
+      const backfilledEntry = getPlannedDayHistoryForDate(dateKey, logs?.[dateKey] || null);
+      if (backfilledEntry) {
+        nextPlannedDayRecords[dateKey] = backfilledEntry;
+        changed = true;
+      }
+    });
+
+    if (!changed) return;
+    setPlannedDayRecords(nextPlannedDayRecords);
+    persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback, nextPlannedDayRecords);
+  }, [
+    loading,
+    todayKey,
+    todayPlannedDayRecord,
+    plannedDayRecords,
+    logs,
+    dailyCheckins,
+    nutritionFeedback,
+    bodyweights,
+    paceOverrides,
+    weekNotes,
+    planAlerts,
+    personalization,
+    coachActions,
+    coachPlanAdjustments,
+    goals,
+    weeklyCheckins,
+    nutritionFavorites,
+  ]);
 
   const syncSessionLogShadowRow = async (dateKey, entry = null) => {
     if (!authSession?.user?.id || !dateKey) return;
@@ -3497,18 +4604,26 @@ export default function TrainerDashboard() {
   }, [loading, currentWeek, personalization?.coachMemory?.lastSundayPushWeek]);
 
   const saveLogs = async (newLogs, options = {}) => {
-    setLogs(newLogs);
-    const derivedBase = derivePersonalization(newLogs, bodyweights, personalization);
-    const m = getMomentumEngineState({ logs: newLogs, bodyweights, personalization: derivedBase });
-    let derived = mergePersonalization(derivedBase, { profile: { ...derivedBase.profile, inconsistencyRisk: m.inconsistencyRisk, currentMomentumState: m.momentumState, likelyAdherencePattern: m.likelyAdherencePattern } });
     const changedDateKey = String(options?.changedDateKey || "").trim();
-    const changedLog = changedDateKey ? newLogs?.[changedDateKey] : null;
+    const nextLogs = { ...(newLogs || {}) };
+    if (changedDateKey && nextLogs?.[changedDateKey]) {
+      nextLogs[changedDateKey] = decorateLogEntryWithPlanContext({
+        dateKey: changedDateKey,
+        entry: nextLogs[changedDateKey],
+        dailyCheckin: dailyCheckins?.[changedDateKey] || {},
+      });
+    }
+    setLogs(nextLogs);
+    const derivedBase = derivePersonalization(nextLogs, bodyweights, personalization);
+    const m = getMomentumEngineState({ logs: nextLogs, bodyweights, personalization: derivedBase });
+    let derived = mergePersonalization(derivedBase, { profile: { ...derivedBase.profile, inconsistencyRisk: m.inconsistencyRisk, currentMomentumState: m.momentumState, likelyAdherencePattern: m.likelyAdherencePattern } });
+    const changedLog = changedDateKey ? nextLogs?.[changedDateKey] : null;
     if (changedDateKey) await syncExercisePerformanceRows(changedDateKey, changedLog?.strengthPerformance || []);
     if (changedDateKey && (changedLog?.strengthPerformance || []).length > 0) {
-      const currentPhase = getPhaseForDateKey(changedDateKey, personalization?.goalState?.planStartDate || "");
+      const currentPhase = getPhaseForDateKey(changedDateKey, canonicalGoalState?.planStartDate || "");
       derived = await applyStrengthProgressionForLog({
         dateKey: changedDateKey,
-        nextLogs: newLogs,
+        nextLogs,
         linkedLog: changedLog,
         basePersonalization: derived,
         currentPhase,
@@ -3517,11 +4632,11 @@ export default function TrainerDashboard() {
     }
     setPersonalization(derived);
     try {
-      await persistAll(newLogs, bodyweights, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+      await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
       if (changedDateKey) await syncSessionLogShadowRow(changedDateKey, changedLog || null);
       setLastSaved(new Date().toLocaleTimeString());
     } catch(e) { logDiag("saveLogs fallback", e.message); setStorageStatus({ mode: "local", label: "LOCAL MODE" }); }
-    analyzePlan(newLogs);
+    analyzePlan(nextLogs);
   };
 
   const saveBodyweights = async (arr) => {
@@ -3640,11 +4755,29 @@ Keep it plain and specific.`;
 
   const saveDailyCheckin = async (dateKey, checkin) => {
     const merged = { ...DEFAULT_DAILY_CHECKIN, ...(checkin || {}) };
-    const nextDaily = { ...dailyCheckins, [dateKey]: { ...merged, ts: Date.now() } };
+    const plannedDayHistory = getPlannedDayHistoryForDate(dateKey, logs?.[dateKey] || null);
+    const plannedDayRecord = getCurrentPrescribedDayRecord(plannedDayHistory);
+    const nextDailyEntry = {
+      ...merged,
+      planReference: buildPlanReference(plannedDayHistory || plannedDayRecord),
+      actualRecovery: {
+        status: merged.status || "not_logged",
+        sessionFeel: merged.sessionFeel || "",
+        blocker: merged.blocker || "",
+        note: merged.note || "",
+        bodyweight: merged.bodyweight || "",
+        readiness: cloneStructuredValue(merged.readiness || {}),
+        loggedAt: Date.now(),
+      },
+      ts: Date.now(),
+    };
+    const nextDaily = { ...dailyCheckins, [dateKey]: nextDailyEntry };
     const feelMap = { easier_than_expected: "4", about_right: "3", harder_than_expected: "2" };
-    const baseLog = logs[dateKey] || {
+    const plannedTraining = plannedDayRecord?.resolved?.training || todayWorkout || {};
+    const existingLog = logs[dateKey] || null;
+    const baseLog = existingLog || {
       date: dateKey,
-      type: todayWorkout?.label || todayWorkout?.type || "Planned Session",
+      type: plannedTraining?.label || plannedTraining?.type || "Planned Session",
       location: personalization.travelState.environmentMode === "travel" ? "hotel" : "home",
       miles: "",
       pace: "",
@@ -3656,30 +4789,46 @@ Keep it plain and specific.`;
       dateKey,
       log: baseLog,
     });
-    const linkedLog = {
-      ...baseLog,
-      miles: matchedGarminRun?.distanceMiles ? String(Number(matchedGarminRun.distanceMiles).toFixed(2)) : (baseLog?.miles || ""),
-      pace: matchedGarminRun?.pace ? String(matchedGarminRun.pace) : (baseLog?.pace || ""),
-      runTime: matchedGarminRun?.durationMin ? String(Math.round(Number(matchedGarminRun.durationMin))) : (baseLog?.runTime || ""),
-      feel: baseLog.feel || feelMap[merged.sessionFeel] || "3",
-      notes: merged.note ? (baseLog.notes ? `${baseLog.notes} | ${merged.note}` : merged.note) : baseLog.notes,
-      strengthPerformance: Array.isArray(merged?.strengthPerformance) ? merged.strengthPerformance : baseLog?.strengthPerformance || [],
-      healthMetrics: (() => {
-        const workout = matchedGarminRun
-          ? { avgHr: matchedGarminRun?.avgHr, maxHr: matchedGarminRun?.maxHr, calories: matchedGarminRun?.calories, paceSeconds: matchedGarminRun?.paceSeconds, source: "garmin" }
-          : (personalization?.connectedDevices?.appleHealth?.workouts?.[dateKey] || {});
-        const isRun = /run/.test(String(baseLog?.type || todayWorkout?.type || "").toLowerCase());
-        if (!isRun) return baseLog?.healthMetrics || null;
-        return deriveRunHealthMetrics({ workout, log: baseLog });
-      })(),
-      checkin: merged,
-      ts: Date.now()
-    };
-    const nextLogs = { ...logs, [dateKey]: linkedLog };
+    const hasStrengthPerformance = Array.isArray(merged?.strengthPerformance) && merged.strengthPerformance.length > 0;
+    const actualOutcomeLogged = Boolean(merged?.status && merged.status !== "not_logged");
+    const shouldMaterializeLog = Boolean(existingLog || actualOutcomeLogged || hasStrengthPerformance);
+    let linkedLog = existingLog;
+    let nextLogs = logs;
+    if (shouldMaterializeLog) {
+      linkedLog = decorateLogEntryWithPlanContext({
+        dateKey,
+        entry: {
+          ...baseLog,
+          miles: matchedGarminRun?.distanceMiles ? String(Number(matchedGarminRun.distanceMiles).toFixed(2)) : (baseLog?.miles || ""),
+          pace: matchedGarminRun?.pace ? String(matchedGarminRun.pace) : (baseLog?.pace || ""),
+          runTime: matchedGarminRun?.durationMin ? String(Math.round(Number(matchedGarminRun.durationMin))) : (baseLog?.runTime || ""),
+          feel: baseLog.feel || feelMap[merged.sessionFeel] || "3",
+          notes: merged.note ? (baseLog.notes ? `${baseLog.notes} | ${merged.note}` : merged.note) : baseLog.notes,
+          strengthPerformance: hasStrengthPerformance ? merged.strengthPerformance : (baseLog?.strengthPerformance || []),
+          healthMetrics: (() => {
+            const workout = matchedGarminRun
+              ? { avgHr: matchedGarminRun?.avgHr, maxHr: matchedGarminRun?.maxHr, calories: matchedGarminRun?.calories, paceSeconds: matchedGarminRun?.paceSeconds, source: "garmin" }
+              : (personalization?.connectedDevices?.appleHealth?.workouts?.[dateKey] || {});
+            const isRun = /run/.test(String(baseLog?.type || plannedTraining?.type || "").toLowerCase());
+            if (!isRun) return baseLog?.healthMetrics || null;
+            return deriveRunHealthMetrics({ workout, log: baseLog });
+          })(),
+          actualSession: {
+            ...(baseLog?.actualSession || {}),
+            ...(actualOutcomeLogged ? { status: merged.status } : {}),
+            sessionType: baseLog?.actualSession?.sessionType || baseLog?.type || plannedTraining?.label || "Logged session",
+            sessionLabel: baseLog?.actualSession?.sessionLabel || baseLog?.type || plannedTraining?.label || "Logged session",
+          },
+          ts: Date.now(),
+        },
+        dailyCheckin: nextDailyEntry,
+      });
+      nextLogs = { ...logs, [dateKey]: linkedLog };
+    }
     let nextPersonalization = personalization;
-    const isStrengthDay = ["run+strength", "strength+prehab"].includes(todayWorkout?.type || "") || (linkedLog.strengthPerformance || []).length > 0;
-    if (isStrengthDay && (linkedLog.strengthPerformance || []).length > 0) {
-      const currentPhase = todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
+    const isStrengthDay = ["run+strength", "strength+prehab"].includes(plannedTraining?.type || "") || (linkedLog?.strengthPerformance || []).length > 0;
+    if (isStrengthDay && (linkedLog?.strengthPerformance || []).length > 0) {
+      const currentPhase = plannedTraining?.week?.phase || todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
       nextPersonalization = await applyStrengthProgressionForLog({
         dateKey,
         nextLogs,
@@ -3767,7 +4916,7 @@ Keep it plain and specific.`;
     setLogs(nextLogs);
     setPersonalization(nextPersonalization);
     await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, nextDaily, weeklyCheckins, nutritionFavorites, nutritionFeedback);
-    await syncSessionLogShadowRow(dateKey, linkedLog);
+    if (linkedLog) await syncSessionLogShadowRow(dateKey, linkedLog);
   };
 
   const saveWeeklyCheckin = async (weekNum, checkin) => {
@@ -3784,7 +4933,36 @@ Keep it plain and specific.`;
   };
 
   const saveNutritionFeedback = async (dateKey, feedback) => {
-    const nextFeedback = { ...nutritionFeedback, [dateKey]: { ...(feedback || {}), ts: Date.now() } };
+    const plannedDayHistory = getPlannedDayHistoryForDate(dateKey, logs?.[dateKey] || null);
+    const plannedDayRecord = getCurrentPrescribedDayRecord(plannedDayHistory);
+    const planReference = buildPlanReference(plannedDayHistory || plannedDayRecord);
+    const actualNutrition = normalizeActualNutritionLog({
+      dateKey,
+      feedback: {
+        ...(nutritionFeedback?.[dateKey] || {}),
+        ...(feedback || {}),
+        planReference,
+      },
+      planReference,
+    });
+    const nextFeedback = {
+      ...nutritionFeedback,
+      [dateKey]: {
+        ...(nutritionFeedback?.[dateKey] || {}),
+        ...(feedback || {}),
+        status: actualNutrition.quickStatus || feedback?.status || "",
+        issue: actualNutrition.issue || feedback?.issue || "",
+        note: actualNutrition.note || feedback?.note || "",
+        deviationKind: actualNutrition.deviationKind || feedback?.deviationKind || "",
+        hydrationOz: Number(actualNutrition.hydrationOz || 0),
+        hydrationTargetOz: Number(actualNutrition.hydrationTargetOz || 0),
+        supplementTaken: actualNutrition.supplements?.takenMap || {},
+        planReference,
+        actualNutrition,
+        actualNutritionLog: actualNutrition,
+        ts: Date.now(),
+      }
+    };
     setNutritionFeedback(nextFeedback);
     await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nextFeedback);
   };
@@ -3899,7 +5077,7 @@ Keep it plain and specific.`;
   };
 
   const exportData = () => {
-    const payload = { logs, bw: bodyweights, paceOverrides, weekNotes, planAlerts, personalization, goals, coachActions, coachPlanAdjustments, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback, v: 6, ts: Date.now() };
+    const payload = { logs, bw: bodyweights, paceOverrides, weekNotes, planAlerts, personalization, goals, coachActions, coachPlanAdjustments, dailyCheckins, plannedDayRecords, weeklyCheckins, nutritionFavorites, nutritionFeedback, v: 6, ts: Date.now() };
     return btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
   };
 
@@ -3916,6 +5094,7 @@ Keep it plain and specific.`;
       const newCoachActions = payload.coachActions || [];
       const newCoachPlanAdjustments = payload.coachPlanAdjustments || { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} };
       const newDailyCheckins = payload.dailyCheckins || {};
+      const newPlannedDayRecords = payload.plannedDayRecords || {};
       const newWeeklyCheckins = payload.weeklyCheckins || {};
       const newNutritionFavorites = payload.nutritionFavorites || { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] };
       const newNutritionFeedback = payload.nutritionFeedback || {};
@@ -3929,11 +5108,12 @@ Keep it plain and specific.`;
       setCoachActions(newCoachActions);
       setCoachPlanAdjustments(newCoachPlanAdjustments);
       setDailyCheckins(newDailyCheckins);
+      setPlannedDayRecords(newPlannedDayRecords);
       setWeeklyCheckins(newWeeklyCheckins);
       setNutritionFavorites(newNutritionFavorites);
       setNutritionFeedback(newNutritionFeedback);
       // Push restored data to Supabase immediately
-      await persistAll(newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization, newCoachActions, newCoachPlanAdjustments, newGoals, newDailyCheckins, newWeeklyCheckins, newNutritionFavorites, newNutritionFeedback);
+      await persistAll(newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization, newCoachActions, newCoachPlanAdjustments, newGoals, newDailyCheckins, newWeeklyCheckins, newNutritionFavorites, newNutritionFeedback, newPlannedDayRecords);
       setLastSaved("restored + synced");
       setStorageStatus({ mode: "cloud", label: "SYNCED" });
       return true;
@@ -3953,6 +5133,7 @@ Keep it plain and specific.`;
       archivedAt: new Date().toISOString(),
       planArcLabel,
       goalsSnapshot: goalsModel,
+      prescribedDayHistory: cloneStructuredValue(plannedDayRecords || {}),
       logEntries: Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0])).map(([date, entry]) => ({ date, ...entry })),
     };
     const undoSnapshot = {
@@ -3963,6 +5144,7 @@ Keep it plain and specific.`;
       planAlerts,
       goals: goalsModel,
       dailyCheckins,
+      plannedDayRecords,
       weeklyCheckins,
       nutritionFavorites,
       nutritionFeedback,
@@ -3982,6 +5164,7 @@ Keep it plain and specific.`;
     const clearedWeekNotes = {};
     const resetAlerts = [{ id:`fresh_${Date.now()}`, type:"info", msg:`New plan started ${todayIso}.`, ts: Date.now() }];
     const resetDaily = {};
+    const resetPlannedDayRecords = {};
     const resetWeekly = {};
     setLogs(clearedLogs);
     setBodyweights(clearedBodyweights);
@@ -3989,10 +5172,11 @@ Keep it plain and specific.`;
     setWeekNotes(clearedWeekNotes);
     setPlanAlerts(resetAlerts);
     setDailyCheckins(resetDaily);
+    setPlannedDayRecords(resetPlannedDayRecords);
     setWeeklyCheckins(resetWeekly);
     setPersonalization(nextPersonalization);
     setStartFreshConfirmOpen(false);
-    await persistAll(clearedLogs, clearedBodyweights, clearedPaceOverrides, clearedWeekNotes, resetAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goalsModel, resetDaily, resetWeekly, nutritionFavorites, nutritionFeedback);
+    await persistAll(clearedLogs, clearedBodyweights, clearedPaceOverrides, clearedWeekNotes, resetAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goalsModel, resetDaily, resetWeekly, nutritionFavorites, nutritionFeedback, resetPlannedDayRecords);
   };
 
   const undoStartFresh = async () => {
@@ -4007,13 +5191,14 @@ Keep it plain and specific.`;
     setPlanAlerts(snap.planAlerts || []);
     setGoals(normalizeGoals(snap.goals || goalsModel));
     setDailyCheckins(snap.dailyCheckins || {});
+    setPlannedDayRecords(snap.plannedDayRecords || {});
     setWeeklyCheckins(snap.weeklyCheckins || {});
     setNutritionFavorites(snap.nutritionFavorites || nutritionFavorites);
     setNutritionFeedback(snap.nutritionFeedback || nutritionFeedback);
     setCoachActions(snap.coachActions || coachActions);
     setCoachPlanAdjustments(snap.coachPlanAdjustments || coachPlanAdjustments);
     setPersonalization(restoredPersonalization);
-    await persistAll(snap.logs || {}, snap.bodyweights || [], snap.paceOverrides || {}, snap.weekNotes || {}, snap.planAlerts || [], restoredPersonalization, snap.coachActions || coachActions, snap.coachPlanAdjustments || coachPlanAdjustments, normalizeGoals(snap.goals || goalsModel), snap.dailyCheckins || {}, snap.weeklyCheckins || {}, snap.nutritionFavorites || nutritionFavorites, snap.nutritionFeedback || nutritionFeedback);
+    await persistAll(snap.logs || {}, snap.bodyweights || [], snap.paceOverrides || {}, snap.weekNotes || {}, snap.planAlerts || [], restoredPersonalization, snap.coachActions || coachActions, snap.coachPlanAdjustments || coachPlanAdjustments, normalizeGoals(snap.goals || goalsModel), snap.dailyCheckins || {}, snap.weeklyCheckins || {}, snap.nutritionFavorites || nutritionFavorites, snap.nutritionFeedback || nutritionFeedback, snap.plannedDayRecords || {});
   };
 
   const undoBanner = (() => {
@@ -4062,26 +5247,54 @@ Keep it plain and specific.`;
   const analyzePlan = async (newLogs) => {
     setAnalyzing(true);
     try {
-      const logEntries = Object.entries(newLogs)
-        .sort((a,b) => a[0].localeCompare(b[0]))
-        .slice(-14) // last 14 sessions
-        .map(([date, l]) => `${date}: ${l.type} | ${l.miles||"?"}mi | pace:${l.pace||"?"} | feel:${l.feel||"?"}/5${l.notes ? " | "+l.notes : ""}`);
+      const analysisPacket = buildAiStatePacket({
+        intent: AI_PACKET_INTENTS.planAnalysis,
+        input: "Analyze recent prescribed-vs-actual training and propose plan adjustments.",
+        dateKey: todayKey,
+        currentWeek,
+        canonicalGoalState,
+        canonicalUserProfile,
+        goals: goalsModel,
+        planDay,
+        planWeek: currentPlanWeek,
+        logs: newLogs,
+        dailyCheckins,
+        nutritionActualLogs,
+        bodyweights,
+        momentum,
+        expectations,
+        strengthLayer,
+        optimizationLayer,
+        failureMode,
+        readiness: sharedReadinessInfluence,
+        nutritionComparison,
+        arbitration,
+        memoryInsights,
+        weekNotes,
+        paceOverrides,
+        planAlerts,
+      });
+      const systemPrompt = buildPlanAnalysisAiSystemPrompt({ statePacket: analysisPacket });
 
-      const currentWeekData = WEEKS[(currentWeek - 1) % WEEKS.length];
-      const currentZones = getZones(currentWeekData?.phase || "BASE");
-      const systemPrompt = buildPlanAnalysisSystemPrompt({ currentWeek, currentWeekData, currentZones, logEntries, paceOverrides, weekNotes });
-
-      const text = await callAnthropic({ system: systemPrompt, user: "Analyze my training logs and return plan adjustments.", maxTokens: 800 });
+      const text = await callAnthropic({ system: systemPrompt, user: "Analyze the typed AI state packet and return a JSON proposal only.", maxTokens: 800 });
       if (!text) {
         setAnalyzing(false);
         return;
       }
 
-      // Strip any markdown fences if present
-      const cleaned = text.replace(/```json|```/g, "").trim();
-      const result = JSON.parse(cleaned);
+      const proposal = parseAiJsonObjectFromText(text);
+      if (!proposal) {
+        logDiag("Plan analysis degraded: invalid JSON proposal");
+        setAnalyzing(false);
+        return;
+      }
+      const acceptance = acceptAiPlanAnalysisProposal({ proposal, statePacket: analysisPacket });
+      if (acceptance.rejected.length > 0) {
+        logDiag("AI plan proposal rejected parts:", acceptance.rejected.join("; "));
+      }
+      const result = acceptance.accepted;
 
-      if (result.noChange) {
+      if (result.noChange || !acceptance.hasChanges) {
         setAnalyzing(false);
         return;
       }
@@ -4150,7 +5363,7 @@ Keep it plain and specific.`;
   );
 
 
-  const activeTargetDate = activeTimeBoundGoal?.targetDate || personalization?.goalState?.deadline || null;
+  const activeTargetDate = activeTimeBoundGoal?.targetDate || canonicalGoalState?.deadline || null;
   const daysToRace = activeTargetDate ? Math.max(0, Math.ceil((new Date(activeTargetDate) - today) / (1000*60*60*24))) : null;
   const activePhase = (rollingHorizon || []).find(h => h.absoluteWeek === currentWeek)?.template?.phase || todayWorkoutHardened?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
   const currentPhaseWeekLabel = (rollingHorizon || []).find(h => h.absoluteWeek === currentWeek)?.weekLabel || `${activePhase} · Week ${currentWeek}`;
@@ -4547,31 +5760,31 @@ Keep it plain and specific.`;
         {/* ══════════════════════════════════════════════════════════
             TODAY
         ══════════════════════════════════════════════════════════ */}
-        {tab === 0 && <TodayTab todayWorkout={todayWorkoutHardened} plannedWorkout={goalNativeWorkout} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} goals={goalsModel} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} loading={loading} storageStatus={storageStatus} authError={authError} />}
+        {tab === 0 && <TodayTab planDay={planDay} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} goals={goalsModel} userProfile={canonicalUserProfile} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} loading={loading} storageStatus={storageStatus} authError={authError} />}
 
         {/* ══════════════════════════════════════════════════════════
             PROGRAM
         ══════════════════════════════════════════════════════════ */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goalsModel} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} goalBuckets={goalBuckets} activeTimeBoundGoal={activeTimeBoundGoal} deviceSyncAudit={deviceSyncAudit} todayWorkout={effectiveTodayWorkout} />
+            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goalsModel} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} goalBuckets={goalBuckets} activeTimeBoundGoal={activeTimeBoundGoal} deviceSyncAudit={deviceSyncAudit} todayWorkout={planDay?.resolved?.training} />
           </ProgramTabErrorBoundary>
         )}
 
         {/* ══════════════════════════════════════════════════════════
             LOG
         ══════════════════════════════════════════════════════════ */}
-        {tab === 2 && <LogTab logs={logs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} currentWeek={currentWeek} todayWorkout={todayWorkout} planArchives={personalization?.planArchives || []} planStartDate={personalization?.goalState?.planStartDate || ""} />}
+        {tab === 2 && <LogTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} />}
 
         {/* ══════════════════════════════════════════════════════════
             NUTRITION
         ══════════════════════════════════════════════════════════ */}
-        {tab === 3 && <NutritionTab todayWorkout={effectiveTodayWorkout} currentWeek={currentWeek} logs={logs} personalization={personalization} goals={goalsModel} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} nutritionFeedback={nutritionFeedback} saveNutritionFeedback={saveNutritionFeedback} />}
+        {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} goals={goalsModel} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} nutritionFeedback={nutritionFeedback} saveNutritionFeedback={saveNutritionFeedback} />}
 
         {/* ══════════════════════════════════════════════════════════
             COACH
         ══════════════════════════════════════════════════════════ */}
-        {tab === 4 && <CoachTab logs={logs} currentWeek={currentWeek} todayWorkout={effectiveTodayWorkout} bodyweights={bodyweights} personalization={personalization} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={nutritionLayer} realWorldNutrition={realWorldNutrition} nutritionFeedback={nutritionFeedback} goals={goalsModel} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} goalState={canonicalGoalState} userProfile={canonicalUserProfile} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFeedback={nutritionFeedback} goals={goalsModel} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
           setCoachPlanAdjustments(nextCoachPlanAdjustments);
@@ -4584,12 +5797,14 @@ Keep it plain and specific.`;
           const clearedLogs = {};
           const clearedBodyweights = [];
           const clearedDaily = {};
+          const clearedPlannedDayRecords = {};
           const clearedWeekly = {};
           const clearedGoals = normalizeGoals(DEFAULT_MULTI_GOALS);
           const resetPersonalization = mergePersonalization(DEFAULT_PERSONALIZATION, { profile: { ...DEFAULT_PERSONALIZATION.profile, onboardingComplete: false } });
           setLogs(clearedLogs);
           setBodyweights(clearedBodyweights);
           setDailyCheckins(clearedDaily);
+          setPlannedDayRecords(clearedPlannedDayRecords);
           setWeeklyCheckins(clearedWeekly);
           setGoals(clearedGoals);
           setPersonalization(resetPersonalization);
@@ -4597,7 +5812,7 @@ Keep it plain and specific.`;
           setCoachPlanAdjustments({ dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} });
           setNutritionFavorites({ restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] });
           setNutritionFeedback({});
-          await persistAll(clearedLogs, clearedBodyweights, {}, {}, [], resetPersonalization, [], { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} }, clearedGoals, clearedDaily, clearedWeekly, { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] }, {});
+          await persistAll(clearedLogs, clearedBodyweights, {}, {}, [], resetPersonalization, [], { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} }, clearedGoals, clearedDaily, clearedWeekly, { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] }, {}, clearedPlannedDayRecords);
         }} onPersist={async (nextPersonalization) => {
           setPersonalization(nextPersonalization);
           await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
@@ -4628,9 +5843,92 @@ Keep it plain and specific.`;
             </div>
           </div>
         )}
+        {DEBUG_MODE && <RuntimeInspector snapshot={runtimeDebugSnapshot} />}
       </div>
       )}
     </div>
+  );
+}
+
+function RuntimeInspector({ snapshot }) {
+  const copySnapshot = async () => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+      }
+    } catch {}
+  };
+  const line = (label, value, tone = "var(--muted)") => (
+    <div style={{ fontSize:"0.52rem", color:tone, lineHeight:1.6 }}>
+      <span style={{ color:"var(--text)" }}>{label}:</span> {value || "none"}
+    </div>
+  );
+  const compactList = (items) => (Array.isArray(items) && items.length ? items.join(" • ") : "none");
+  return (
+    <details style={{ position:"fixed", right:14, bottom:14, width:"min(420px, calc(100vw - 28px))", zIndex:70 }}>
+      <summary className="btn" style={{ width:"100%", justifyContent:"space-between", background:"rgba(5,10,18,0.92)", borderColor:"rgba(0,194,255,0.35)", color:"var(--text)", fontSize:"0.56rem" }}>
+        Runtime Inspector
+        <span style={{ color:"var(--muted)", fontSize:"0.5rem" }}>{snapshot?.storage?.label || "UNKNOWN"}</span>
+      </summary>
+      <div className="card card-soft" style={{ marginTop:"0.35rem", background:"rgba(4,9,18,0.96)", borderColor:"rgba(0,194,255,0.2)", backdropFilter:"blur(12px)", maxHeight:"70vh", overflowY:"auto" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.45rem", gap:"0.45rem" }}>
+          <div style={{ fontSize:"0.48rem", color:"var(--muted)" }}>Canonical runtime snapshot</div>
+          <button className="btn" onClick={copySnapshot} style={{ fontSize:"0.48rem", padding:"0.24rem 0.5rem", minHeight:0 }}>Copy JSON</button>
+        </div>
+        <div style={{ display:"grid", gap:"0.6rem" }}>
+          <div>
+            <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>PlanDay</div>
+            {line("Date", snapshot?.planDay?.dateKey)}
+            {line("Session", snapshot?.planDay?.label)}
+            {line("Decision", `${snapshot?.planDay?.decisionMode || "unknown"} / ${snapshot?.planDay?.confidence || "unknown"}`)}
+            {line("Modified", snapshot?.planDay?.modifiedFromBase ? "yes" : "no", snapshot?.planDay?.modifiedFromBase ? C.amber : "var(--muted)")}
+            {line("Why", snapshot?.planDay?.provenanceSummary)}
+            {line("Drivers", compactList(snapshot?.planDay?.keyDrivers))}
+          </div>
+          <div>
+            <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>PlanWeek</div>
+            {line("Week", `${snapshot?.planWeek?.weekNumber || "?"} • ${snapshot?.planWeek?.label || snapshot?.planWeek?.phase || "unlabeled"}`)}
+            {line("Focus", snapshot?.planWeek?.focus)}
+            {line("Biases", [snapshot?.planWeek?.aggressionLevel, snapshot?.planWeek?.recoveryBias, snapshot?.planWeek?.volumeBias, snapshot?.planWeek?.performanceBias].filter(Boolean).join(" • "))}
+            {line("Nutrition", snapshot?.planWeek?.nutritionEmphasis)}
+            {line("Constraints", compactList(snapshot?.planWeek?.constraints))}
+            {line("Status", `${snapshot?.planWeek?.status || "planned"}${snapshot?.planWeek?.adjusted ? " • adjusted" : ""}`)}
+          </div>
+          <div>
+            <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>Readiness</div>
+            {line("State", snapshot?.readiness?.stateLabel || snapshot?.readiness?.state)}
+            {line("Source", `${snapshot?.readiness?.source || "unknown"}${snapshot?.readiness?.inputDriven ? " • input-driven" : ""}`)}
+            {line("Summary", snapshot?.readiness?.userVisibleLine)}
+            {line("Factors", compactList(snapshot?.readiness?.factors))}
+          </div>
+          <div>
+            <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>Nutrition</div>
+            {line("Day type", snapshot?.nutrition?.dayType)}
+            {line("Actual logged", snapshot?.nutrition?.actualLogged ? "yes" : "no", snapshot?.nutrition?.actualLogged ? C.green : "var(--muted)")}
+            {line("Compliance", snapshot?.nutrition?.compliance)}
+            {line("Deviation", snapshot?.nutrition?.deviationKind)}
+            {line("Comparison", `${snapshot?.nutrition?.comparisonStatus || "unknown"}${snapshot?.nutrition?.comparisonImpact ? ` • ${snapshot.nutrition.comparisonImpact}` : ""}`)}
+            {line("Summary", snapshot?.nutrition?.comparisonSummary)}
+          </div>
+          <div>
+            <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>Logging And History</div>
+            {line("Session status", snapshot?.logging?.sessionStatus)}
+            {line("Check-in", `${snapshot?.logging?.checkinStatus || "none"}${snapshot?.logging?.hasCheckin ? " • saved" : ""}`)}
+            {line("Nutrition log", snapshot?.logging?.hasNutritionLog ? "saved" : "missing")}
+            {line("Plan history", `rev ${snapshot?.prescribedHistory?.revisionNumber || 0} of ${snapshot?.prescribedHistory?.revisionCount || 0}`)}
+            {line("Snapshot source", `${snapshot?.prescribedHistory?.sourceType || "none"}${snapshot?.prescribedHistory?.durability ? ` • ${snapshot.prescribedHistory.durability}` : ""}`)}
+          </div>
+          <div>
+            <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>AI Boundary</div>
+            {line("Analyzing", snapshot?.ai?.analyzing ? "yes" : "no", snapshot?.ai?.analyzing ? C.amber : "var(--muted)")}
+            {line("Plan proposal", snapshot?.ai?.latestAcceptedPlanProposal ? `${snapshot.ai.latestAcceptedPlanProposal.type || "accepted"} • ${snapshot.ai.latestAcceptedPlanProposal.acceptedBy || "gate"}` : "none accepted")}
+            {line("Plan packet", snapshot?.ai?.latestAcceptedPlanProposal ? `${snapshot.ai.latestAcceptedPlanProposal.packetIntent || "unknown"} • ${snapshot.ai.latestAcceptedPlanProposal.packetVersion || ""}` : "none")}
+            {line("Coach action", snapshot?.ai?.latestAcceptedCoachAction ? `${snapshot.ai.latestAcceptedCoachAction.type || "accepted"} • ${snapshot.ai.latestAcceptedCoachAction.acceptedBy || "gate"}` : "none accepted")}
+            {line("Coach source", snapshot?.ai?.latestAcceptedCoachAction ? `${snapshot.ai.latestAcceptedCoachAction.proposalSource || "unknown"} • ${snapshot.ai.latestAcceptedCoachAction.acceptancePolicy || "unknown"}` : "none")}
+          </div>
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -6159,18 +7457,24 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
 }
 
 // ── TODAY TAB ─────────────────────────────────────────────────────────────────
-function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, loading, storageStatus, authError }) {
+function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, userProfile, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, loading, storageStatus, authError }) {
+  const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
+  const planDayRecovery = planDay?.resolved?.recovery || null;
+  const planDayLogging = planDay?.resolved?.logging || null;
+  const planDayWeek = planDay?.week || null;
+  const currentPlanWeek = planDayWeek?.planWeek || null;
+  const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon : [];
   const zones = todayWorkout?.zones;
   const todayKey = new Date().toISOString().split("T")[0];
   const todayLog = logs[todayKey];
-  const dayColor = todayWorkout ? (dayColors[todayWorkout.type] || C.green) : C.slate;
+  const savedPlanDayCheckin = planDayLogging?.dailyCheckin || dailyCheckins?.[todayKey] || todayLog?.checkin || {};
   const [injuryArea, setInjuryArea] = useState(personalization.injuryPainState.area || "Achilles");
   const defaultCheckin = {
     ...DEFAULT_DAILY_CHECKIN,
-    ...(dailyCheckins?.[todayKey] || todayLog?.checkin || {}),
+    ...(savedPlanDayCheckin || {}),
     readiness: {
       ...(DEFAULT_DAILY_CHECKIN.readiness || {}),
-      ...((dailyCheckins?.[todayKey] || todayLog?.checkin || {}).readiness || {}),
+      ...((savedPlanDayCheckin || {}).readiness || {}),
     },
   };
   const [checkin, setCheckin] = useState(defaultCheckin);
@@ -6259,7 +7563,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
     .replace(/^execute\s*/i, "")
     .split(".")[0];
   const conciseSuccess = (dailyStory?.success || "Complete the session and log it.").split(".")[0];
-  const phase = WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
+  const phase = planDayWeek?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
   const datedLogs = Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0]));
   const todayDate = new Date();
   todayDate.setHours(0, 0, 0, 0);
@@ -6337,16 +7641,39 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
   const injuryLevel = personalization.injuryPainState.level;
   const injuryBadge = injuryLevel === "none" ? null : injuryLevel === "mild_tightness" ? { label: "Mild", color: C.blue } : injuryLevel === "moderate_pain" ? { label: "Moderate", color: C.amber } : { label: "Pain/Stop", color: C.red };
   const readinessPromptSignal = coachPlanAdjustments?.extra?.readinessSignals?.[todayKey] || null;
-  const readinessInfluence = deriveTodayReadinessInfluence({ checkin, promptSignal: readinessPromptSignal, workout: activeWorkout });
-  const displayWorkout = readinessInfluence?.adjustedWorkout || activeWorkout;
-  const todayUsesDeviceRecovery = /garmin readiness|device signals/i.test(`${todayWorkout?.label || ""} ${todayWorkout?.explanation || ""}`);
-  const todayReadinessLogged = Boolean(readinessInfluence || Number(checkin?.readiness?.sleep || 0) > 0 || Number(checkin?.readiness?.stress || 0) > 0 || Number(checkin?.readiness?.soreness || 0) > 0);
-  const todayProvenance = buildProvenanceText({
+  const readinessInfluence = planDayRecovery || deriveDeterministicReadinessState({
+    todayKey,
+    checkin,
+    promptSignal: readinessPromptSignal,
+    workout: activeWorkout,
+    logs,
+    dailyCheckins,
+    personalization,
+    momentum,
+    userProfile: userProfile || {},
+  });
+  const readinessMetrics = readinessInfluence?.metrics || {};
+  const displayWorkout = planDay
+    ? (sessionVariant === "standard" ? todayWorkout : activeWorkout)
+    : (readinessInfluence?.adjustedWorkout || activeWorkout);
+  const readinessState = readinessInfluence?.state || displayWorkout?.readinessState || "steady";
+  const readinessTone = ["recovery", "reduced_load"].includes(readinessState) ? C.amber : readinessState === "progression" ? C.green : "#cbd5e1";
+  const cardColor = dayColors[displayWorkout?.type] || (["recovery", "reduced_load"].includes(readinessState) ? C.amber : C.green);
+  const todayUsesDeviceRecovery = Boolean(planDay?.flags?.deviceModified) || /garmin readiness|device signals/i.test(`${todayWorkout?.label || ""} ${todayWorkout?.explanation || ""}`);
+  const todayProvenance = planDay?.provenance?.summary || buildProvenanceText({
     inputs: [
       "your active goals",
       historicalLogs.length ? "recent training momentum" : "today's planned session",
       environmentSelection?.mode ? `today's ${String(environmentSelection.mode || "training").toLowerCase()} setup` : "today's setup",
-      todayReadinessLogged ? "saved readiness input" : todayUsesDeviceRecovery ? "device recovery signals" : null,
+      readinessMetrics?.countableCount ? "recent workout completion" : null,
+      readinessMetrics?.hardSessions7d ? "recent intensity load" : null,
+      readinessMetrics?.hasTodayRecoveryInput
+        ? "today's readiness check-in"
+        : readinessMetrics?.hasRecoveryHistory
+        ? "recent recovery check-ins"
+        : todayUsesDeviceRecovery
+        ? "device recovery signals"
+        : null,
     ],
     limitation: !historicalLogs.length ? "Recent training history is still limited." : "",
   });
@@ -6355,9 +7682,16 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
   const strExercises = STRENGTH[strSess]?.[strTrack] || [];
   const hasStrength = displayWorkout?.type === "run+strength" || displayWorkout?.type === "strength+prehab";
   const hasPrehab = displayWorkout?.type === "strength+prehab";
-  const runColor = displayWorkout?.run?.t === "Intervals" ? C.amber : displayWorkout?.run?.t === "Long" ? C.red : displayWorkout?.run?.t === "Tempo" ? C.amber : readinessInfluence?.state === "recover" ? C.blue : C.green;
+  const runColor = displayWorkout?.run?.t === "Intervals" ? C.amber : displayWorkout?.run?.t === "Long" ? C.red : displayWorkout?.run?.t === "Tempo" ? C.amber : readinessTone;
   const runPace = displayWorkout?.run ? (displayWorkout.run.t === "Intervals" ? zones?.int : displayWorkout.run.t === "Long" ? zones?.long : displayWorkout.run.t === "Tempo" ? zones?.tempo : zones?.easy) : null;
-  const tomorrowWorkout = getTodayWorkout(currentWeek, (getDayOfWeek() + 1) % 7);
+  const tomorrowDate = new Date(`${todayKey}T12:00:00`);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowDayOfWeek = tomorrowDate.getDay();
+  const tomorrowWeek = new Date().getDay() === 0 ? currentWeek + 1 : currentWeek;
+  const tomorrowPlanWeek = tomorrowWeek === currentWeek
+    ? currentPlanWeek
+    : safeRollingHorizon.find((row) => row?.kind === "plan" && row?.absoluteWeek === tomorrowWeek)?.planWeek || null;
+  const tomorrowWorkout = tomorrowPlanWeek?.sessionsByDay?.[tomorrowDayOfWeek] || getTodayWorkout(tomorrowWeek, tomorrowDayOfWeek);
   const tomorrowHasSession = !!tomorrowWorkout?.label && tomorrowWorkout?.type !== "rest";
   const activeStrengthAdjustments = normalizePendingStrengthAdjustments(personalization?.strengthProgression?.pendingByDate?.[todayKey]);
   const activeStrengthAdjustment = activeStrengthAdjustments[0] || null;
@@ -6377,7 +7711,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
   const advancedVolumeFinisher = fitnessLevel === "advanced" && currentWeek >= 2 ? "Optional finisher: +1 aerobic cooldown set or +1 accessory set." : "";
   const developingVolumeGuardrail = fitnessLevel === "developing" && !consistent21 ? "Volume guardrail: hold current volume until 3 consistent weeks complete." : "";
 
-  useEffect(() => { setCheckin(defaultCheckin); }, [todayKey, dailyCheckins?.[todayKey], todayLog?.checkin?.ts]);
+  useEffect(() => { setCheckin(defaultCheckin); }, [todayKey, savedPlanDayCheckin?.ts]);
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem(`dismissed_coach_adjustments_${todayKey}`);
@@ -6546,16 +7880,21 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
       <div style={{ marginBottom:"0.85rem", display:"grid", gap:"0.2rem" }}>
         <div style={{ fontSize:"0.56rem", color:"#64748b", letterSpacing:"0.14em" }}>TODAY</div>
         <div style={{ fontFamily:"’Inter’,sans-serif", fontSize:"1.45rem", color:"#f8fafc", fontWeight:600, lineHeight:1.15 }}>{displayWorkout?.label || "Rest Day"}</div>
-        {todayWorkout?.explanation && (
+        {displayWorkout?.explanation && (
           <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.6, marginTop:"0.15rem" }}>
-            {todayWorkout.explanation}
+            {displayWorkout.explanation}
           </div>
         )}
         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{todayProvenance}</div>
         <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.55 }}>{readinessInfluence?.coachLine || conciseFocus}</div>
+        {displayWorkout?.intensityGuidance && (
+          <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.55 }}>
+            Intensity today: {displayWorkout.intensityGuidance}.
+          </div>
+        )}
         {readinessInfluence && (
-          <div style={{ fontSize:"0.54rem", color:readinessInfluence.state === "recover" ? C.amber : C.green, lineHeight:1.55 }}>
-            Influenced by your input: {readinessInfluence.userVisibleLine}
+          <div style={{ fontSize:"0.54rem", color:readinessTone, lineHeight:1.55 }}>
+            Readiness engine: {readinessInfluence.userVisibleLine}
           </div>
         )}
       </div>
@@ -6563,11 +7902,11 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
       {/* ── Expandable Workout Card ── */}
       <div
         onClick={toggleCard}
-        style={{ marginBottom:"0.5rem", background:"#0f172a", border:`1px solid ${dayColor}18`, borderRadius:12, padding:"1rem 1.1rem", cursor:"pointer", transition:"border-color 0.15s", userSelect:"none" }}
+        style={{ marginBottom:"0.5rem", background:"#0f172a", border:`1px solid ${cardColor}18`, borderRadius:12, padding:"1rem 1.1rem", cursor:"pointer", transition:"border-color 0.15s", userSelect:"none" }}
       >
         {/* Card header row: badges + chevron */}
         <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.55rem", flexWrap:"wrap" }}>
-          <span style={{ fontSize:"0.48rem", color:dayColor, background:dayColor+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500, letterSpacing:"0.04em" }}>
+          <span style={{ fontSize:"0.48rem", color:cardColor, background:cardColor+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500, letterSpacing:"0.04em" }}>
             {displayWorkout?.type?.replace(/[+-]/g," + ").toUpperCase() || "REST"}
           </span>
           <span onClick={e=>{ e.stopPropagation(); setEnvDraft({ equipment: environmentSelection?.equipment || "dumbbells", time: environmentSelection?.time || "30", scope: "today" }); setShowEnvEditor(true); }} style={{ fontSize:"0.48rem", color:"#94a3b8", background:"#1e293b", padding:"0.15rem 0.45rem", borderRadius:6, cursor:"pointer" }}>
@@ -6583,9 +7922,9 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
               {displayWorkout.modifierBadge}
             </span>
           )}
-          {(displayWorkout?.variantBadge || readinessInfluence?.badge) && (
+          {(displayWorkout?.variantBadge || readinessInfluence?.stateLabel || readinessInfluence?.badge) && (
             <span style={{ fontSize:"0.48rem", color:C.green, background:C.green+"15", padding:"0.15rem 0.45rem", borderRadius:6 }}>
-              {displayWorkout?.variantBadge || readinessInfluence?.badge}
+              {displayWorkout?.variantBadge || readinessInfluence?.stateLabel || readinessInfluence?.badge}
             </span>
           )}
           <span style={{ marginLeft:"auto", fontSize:"0.65rem", color:"#475569", transform: cardExpanded ? "rotate(180deg)" : "rotate(0deg)", transition:"transform 0.2s" }}>▾</span>
@@ -6640,7 +7979,7 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
                   {displayWorkout.run.t} — {displayWorkout.run.d} at {runPace}/mi
                 </div>
                 {displayWorkout?.environmentNote && <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" }}>{displayWorkout.environmentNote}</div>}
-                {readinessInfluence?.recoveryLine && <div style={{ fontSize:"0.54rem", color:readinessInfluence.state === "recover" ? C.amber : C.green, marginTop:"0.2rem" }}>{readinessInfluence.recoveryLine}</div>}
+                {readinessInfluence?.recoveryLine && <div style={{ fontSize:"0.54rem", color:readinessTone, marginTop:"0.2rem" }}>{readinessInfluence.recoveryLine}</div>}
               </div>
             )}
 
@@ -6693,6 +8032,12 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {displayWorkout?.recoveryRecommendation && !readinessInfluence?.recoveryLine && (
+              <div style={{ marginTop:"0.55rem", fontSize:"0.54rem", color:readinessTone }}>
+                Recovery recommendation: {displayWorkout.recoveryRecommendation}
               </div>
             )}
 
@@ -7106,7 +8451,9 @@ class ProgramTabErrorBoundary extends React.Component {
   }
 }
 
-function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, goalBuckets, activeTimeBoundGoal, deviceSyncAudit, todayWorkout }) {
+function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, goalBuckets, activeTimeBoundGoal, deviceSyncAudit, todayWorkout: legacyTodayWorkout }) {
+  const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
+  const planDayWeek = planDay?.week || null;
   const [openWeek, setOpenWeek] = useState(currentWeek);
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
   const [miniWeekly, setMiniWeekly] = useState(weeklyDraft);
@@ -7121,20 +8468,42 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
   const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon : [];
+  const fallbackReferenceTemplate = currentPlanWeek?.template || planDayWeek?.planWeek?.template || WEEKS[Math.max(0, Math.min(currentWeek - 1, WEEKS.length - 1))] || WEEKS[0];
   const fallbackProgramWeeks = useMemo(() => {
     return Array.from({ length: 4 }).map((_, idx) => {
       const absoluteWeek = currentWeek + idx;
       const template = WEEKS[Math.max(0, Math.min(absoluteWeek - 1, WEEKS.length - 1))] || WEEKS[0];
+      const planWeek = buildPlanWeek({
+        weekNumber: absoluteWeek,
+        template,
+        referenceTemplate: fallbackReferenceTemplate,
+        label: `${template?.phase || "BASE"} · Week ${absoluteWeek}`,
+        specificity: idx <= 1 ? "high" : idx <= 5 ? "medium" : "directional",
+        kind: "plan",
+        goals,
+        architecture: planComposer?.architecture || "hybrid_performance",
+        blockIntent: planComposer?.blockIntent || null,
+        split: planComposer?.split || null,
+        sessionsByDay: planComposer?.dayTemplates || null,
+        momentum,
+        learningLayer,
+        weeklyCheckin: weeklyCheckins?.[String(absoluteWeek)] || {},
+        failureMode: absoluteWeek === currentWeek ? failureMode : {},
+        environmentSelection: absoluteWeek === currentWeek ? environmentSelection : null,
+        constraints: planComposer?.constraints || [],
+      });
       return {
         kind: "plan",
         slot: idx + 1,
         absoluteWeek,
+        planWeek,
         template,
-        weekLabel: `${template?.phase || "BASE"} · Week ${absoluteWeek}`,
+        weekLabel: planWeek?.label || `${template?.phase || "BASE"} · Week ${absoluteWeek}`,
       };
     });
-  }, [currentWeek]);
+  }, [currentPlanWeek, currentWeek, fallbackReferenceTemplate, goals, planComposer, momentum, learningLayer, weeklyCheckins, failureMode, environmentSelection]);
   const displayHorizon = safeRollingHorizon.length > 0 ? safeRollingHorizon : fallbackProgramWeeks;
+  const currentWeekModel = currentPlanWeek || planDayWeek?.planWeek || (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek)?.planWeek || null;
   const runningGoalActive = Boolean(
     activeTimeBoundGoal?.category === "running" ||
     (goals || []).some((goal) => goal?.active && goal?.category === "running")
@@ -7153,6 +8522,8 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
   const adjustedWeekMap = {};
   if (runningGoalActive) {
     (displayHorizon || []).forEach((h) => {
+      const hasCanonicalSessions = Object.values(h?.planWeek?.sessionsByDay || {}).some(Boolean);
+      if (hasCanonicalSessions) return;
       const w = h?.template;
       if (h?.slot >= 1 && w?.mon && w?.thu && w?.fri && w?.sat) {
         const baseAdaptive = buildAdaptiveWeek(w, signals, personalization, memoryInsights);
@@ -7178,9 +8549,26 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
     else if (todayWorkout?.type !== "rest") next.push(liveTodaySession);
     return next.sort((a, b) => (dayOrder[a?.day] || 99) - (dayOrder[b?.day] || 99));
   };
-  const getProgramWeekSessions = (absoluteWeek, weekTemplate = null) => {
+  const mapSessionsByDayToProgramWeekSessions = (sessionsByDay = {}) => ([1, 2, 3, 4, 5, 6, 0]
+    .map((dayKey) => {
+      const session = sessionsByDay?.[dayKey];
+      if (!session || session.type === "rest") return null;
+      return {
+        day: dayLabels[dayKey],
+        title: session?.label || String(session?.type || "Session").replaceAll("-", " "),
+        detail: session?.run?.d || session?.strengthDose || session?.strengthDuration || session?.success || session?.nutri || "Planned session",
+        icon: session?.run ? (RUN_TYPE_ICON[session?.run?.t] || RUN_TYPE_ICON[session?.type] || "easy_run") : null,
+      };
+    })
+    .filter(Boolean));
+  const getProgramWeekSessions = (absoluteWeek, weekRow = null) => {
+    const planWeekForRow = weekRow?.planWeek || (absoluteWeek === currentWeek ? currentWeekModel : null);
+    const planWeekSessions = mapSessionsByDayToProgramWeekSessions(planWeekForRow?.sessionsByDay || {});
+    if (planWeekSessions.length > 0) {
+      return overlayLiveTodaySession(planWeekSessions, absoluteWeek);
+    }
     if (runningGoalActive) {
-      const adaptive = adjustedWeekMap[absoluteWeek] || { adjusted: weekTemplate || {}, changed: [] };
+      const adaptive = adjustedWeekMap[absoluteWeek] || { adjusted: weekRow?.template || {}, changed: [] };
       const adjusted = adaptive?.adjusted || {};
       return overlayLiveTodaySession([
         { day: "Mon", title: adjusted?.mon?.t || "Easy", detail: adjusted?.mon?.d || "30 min", icon: RUN_TYPE_ICON[adjusted?.mon?.t] || "easy_run" },
@@ -7190,34 +8578,30 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
       ], absoluteWeek);
     }
     const dayTemplates = planComposer?.dayTemplates || {};
-    return overlayLiveTodaySession([1, 2, 3, 4, 5, 6, 0]
-      .map((dayKey) => {
-        const session = dayTemplates?.[dayKey];
-        if (!session || session.type === "rest") return null;
-        return {
-          day: dayLabels[dayKey],
-          title: session?.label || String(session?.type || "Session").replaceAll("-", " "),
-          detail: session?.run?.d || session?.strengthDose || session?.nutri || "Planned session",
-          icon: null,
-        };
-      })
-      .filter(Boolean), absoluteWeek);
+    return overlayLiveTodaySession(mapSessionsByDayToProgramWeekSessions(dayTemplates), absoluteWeek);
   };
   const phaseNarrative = buildNamedPhaseArc({ rollingHorizon: displayHorizon, goals });
   const primaryCategory = goals.find(g => g.active)?.category || "running";
   const phaseLabels = PHASE_ARC_LABELS[primaryCategory] || PHASE_ARC_LABELS.running;
-  const currentTemplate = (displayHorizon || []).find(h => h.absoluteWeek === currentWeek)?.template || {};
-  const currentPhase = currentTemplate.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
+  const currentTemplate = currentWeekModel?.template || (displayHorizon || []).find(h => h.absoluteWeek === currentWeek)?.template || {};
+  const currentPhase = planDayWeek?.phase || currentWeekModel?.phase || currentTemplate.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
+  const currentWeeklyIntent = planDayWeek?.weeklyIntent || currentWeekModel?.weeklyIntent || (currentWeekModel ? {
+    focus: currentWeekModel.focus,
+    aggressionLevel: currentWeekModel.aggressionLevel,
+    recoveryBias: currentWeekModel.recoveryBias,
+    volumePct: currentWeekModel?.weeklyIntent?.volumePct,
+    nutritionEmphasis: currentWeekModel.nutritionEmphasis,
+  } : null);
   const currentPhaseMeta = phaseLabels[currentPhase] || { name: currentPhase, objective: "Execute core plan priorities." };
   const nextPhaseBlock = phaseNarrative.find(b => b.startWeek > currentWeek);
   const dayOfWeek = new Date().getDay();
   const daysLeftInWeek = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
   const daysToShift = nextPhaseBlock ? Math.max(1, ((nextPhaseBlock.startWeek - currentWeek - 1) * 7) + daysLeftInWeek) : null;
-  const phaseShortMeaning = primaryCategory === "body_comp"
+  const phaseShortMeaning = currentWeeklyIntent?.focus || (primaryCategory === "body_comp"
     ? "Deficit week"
     : primaryCategory === "strength"
     ? "Strength progression"
-    : "Endurance progression";
+    : "Endurance progression");
   const phaseBanner = `${String(currentPhaseMeta?.name || currentPhase).replace(" Phase", "")} · ${phaseShortMeaning} · ${daysToShift ? `transitions in ${daysToShift} days.` : "current block active."}`;
   const strengthProgress = deriveStrengthProgressTracker({ logs, goals, strengthLayer });
   const strengthGoalTracking = personalization?.strengthProgression?.tracking || {};
@@ -7254,11 +8638,12 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
       "recent completion trend",
       environmentSelection?.mode ? `your ${String(environmentSelection.mode || "training").toLowerCase()} environment` : "your training environment",
       hasWeeklyCheckinInput ? "this week's check-in" : null,
+      currentWeeklyIntent?.focus ? "this week's explicit intent" : null,
       showingLiveTodayInProgram ? "today's live adjustment" : null,
     ],
     limitation: hasWeeklyCheckinInput ? "" : "Weekly check-in input is limited.",
   });
-  const plannedSessionsThisWeek = getProgramWeekSessions(currentWeek, currentTemplate).length;
+  const plannedSessionsThisWeek = getProgramWeekSessions(currentWeek, (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek) || null).length;
   const currentWeekStart = new Date();
   currentWeekStart.setHours(0, 0, 0, 0);
   const currentWeekDay = currentWeekStart.getDay();
@@ -7391,9 +8776,27 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
           </div>
         )}
         <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.7 }}>Current block: <span style={{ color:C.blue }}>{String(planComposer?.architecture || "balanced").replaceAll("_"," ")}</span></div>
+        {currentWeekModel && (
+          <div style={{ marginTop:"0.2rem", display:"grid", gap:"0.15rem" }}>
+            <div style={{ fontSize:"0.58rem", color:"#dbe7f6" }}>Week focus: <span style={{ color:C.green }}>{currentWeeklyIntent?.focus || currentWeekModel?.label || "Current week"}</span></div>
+            <div style={{ fontSize:"0.56rem", color:"#94a3b8" }}>
+              Week posture: {String(currentWeeklyIntent?.aggressionLevel || currentWeekModel?.status || "planned").replaceAll("_"," ")}
+              {currentWeekModel?.adjusted ? " · adjusted" : " · planned"}
+              {currentWeeklyIntent?.volumePct ? ` · volume ${currentWeeklyIntent.volumePct}%` : ""}
+            </div>
+            <div style={{ fontSize:"0.56rem", color:"#94a3b8" }}>
+              Recovery bias: {String(currentWeeklyIntent?.recoveryBias || "moderate").replaceAll("_"," ")} · Nutrition emphasis: {currentWeeklyIntent?.nutritionEmphasis || "balanced support"}
+            </div>
+            {Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0 && (
+              <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.6 }}>
+                Constraints: {currentWeekModel.constraints.slice(0, 3).join(" · ")}
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55, marginTop:"0.2rem" }}>{programProvenance}</div>
         <div style={{ fontSize:"0.58rem", color:"#cbd5e1", marginTop:"0.25rem", lineHeight:1.7 }}>
-          {planComposer?.blockIntent?.narrative || arbitration.allocationNarrative}
+          {currentWeekModel?.summary || planComposer?.blockIntent?.narrative || arbitration.allocationNarrative}
         </div>
         <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.2rem" }}>Prioritized: {planComposer?.blockIntent?.prioritized || arbitration.goalAllocation.primary}</div>
         <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.15rem" }}>Maintained: {(planComposer?.blockIntent?.maintained || arbitration.goalAllocation.maintained || []).join(" · ")}</div>
@@ -7583,7 +8986,13 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
             );
           }
           const adaptive = adjustedWeekMap[h.absoluteWeek] || { adjusted: w, changed: [] };
-          const weekSessions = getProgramWeekSessions(h.absoluteWeek, w);
+          const weekSessions = getProgramWeekSessions(h.absoluteWeek, h);
+          const weekIntent = h?.planWeek?.weeklyIntent || (h?.planWeek ? {
+            focus: h.planWeek.focus,
+            aggressionLevel: h.planWeek.aggressionLevel,
+            recoveryBias: h.planWeek.recoveryBias,
+            nutritionEmphasis: h.planWeek.nutritionEmphasis,
+          } : null);
           const showingLiveToday = Boolean(h.absoluteWeek === currentWeek && weekSessions.some((session) => session?.live));
           const isCurrent = h.absoluteWeek === currentWeek;
           const isExpanded = openWeek === h.absoluteWeek;
@@ -7603,6 +9012,8 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
                 <div>
                   <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.15rem", color:boxTone, letterSpacing:"0.06em" }}>{h.weekLabel || `${w.phase} · Week ${h.absoluteWeek}`}</div>
                   <div style={{ fontSize:"0.56rem", color:"#64748b" }}>{isExpanded ? "Expanded" : isCurrent ? "Current week" : "Preview"}</div>
+                  {weekIntent?.focus && <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.1rem" }}>{weekIntent.focus}</div>}
+                  {weekIntent?.aggressionLevel && <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.08rem" }}>Posture: {String(weekIntent.aggressionLevel).replaceAll("_"," ")}{h?.planWeek?.adjusted ? " · adjusted" : ""}</div>}
                   {showingLiveToday && <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Today reflects your current daily adjustment.</div>}
                 </div>
                 <button className="btn" onClick={()=>setOpenWeek(openWeek===h.absoluteWeek?null:h.absoluteWeek)} style={{ fontSize:"0.52rem" }}>{isExpanded?"Hide":"View"}</button>
@@ -7655,7 +9066,10 @@ function PlanTab({ currentWeek, logs, bodyweights, personalization, goals, setGo
 }
 
 // ── LOG TAB (POLISHED) ──────────────────────────────────────────────────────
-function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout, planArchives = [], planStartDate = "" }) {
+function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "" }) {
+  const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
+  const plannedWorkout = planDay?.base?.training || legacyTodayWorkout;
+  const todayPlannedDayRecord = useMemo(() => buildPlannedDayRecord(planDay), [planDay]);
   const FEEL_LABELS = {
     "1": { title: "Rough", tip: "Rest, eat, sleep. Tomorrow is a new session." },
     "2": { title: "Tired", tip: "Manageable. Log it and move on." },
@@ -7665,18 +9079,29 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
   };
   const today = new Date().toISOString().split("T")[0];
   const [quick, setQuick] = useState({ status:"", feel:"3", note:"", bodyweight:"" });
-  const [detailed, setDetailed] = useState({ date:today, type: todayWorkout?.label||"", miles:"", pace:"", runTime:"", reps:"", weight:"", notes:"", feel:"3", location:"home" });
+  const [detailed, setDetailed] = useState({ date:today, type: todayWorkout?.label || plannedWorkout?.label || "", miles:"", pace:"", runTime:"", reps:"", weight:"", notes:"", feel:"3", location:"home" });
   const [saved, setSaved] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
   const [feelTooltip, setFeelTooltip] = useState("");
   const [detailedOpen, setDetailedOpen] = useState(false);
   const [pendingDeleteDate, setPendingDeleteDate] = useState("");
+  const [selectedReviewDate, setSelectedReviewDate] = useState(today);
   const feelTooltipTimerRef = useRef(null);
 
   const history = Object.entries(logs || {})
     .filter(([date]) => date <= today)
     .sort((a,b)=>b[0].localeCompare(a[0]));
   const recent14 = history.slice(0,14);
+  const reviewDateKeys = useMemo(
+    () => Array.from(new Set([
+      ...Object.keys(logs || {}),
+      ...Object.keys(dailyCheckins || {}),
+      ...Object.keys(plannedDayRecords || {}),
+      ...Object.keys(nutritionActualLogs || {}),
+      today,
+    ])).filter((dateKey) => dateKey && dateKey <= today).sort((a, b) => b.localeCompare(a)),
+    [logs, dailyCheckins, plannedDayRecords, nutritionActualLogs, today]
+  );
   const toDateKey = (d) => new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split("T")[0];
   const getWeekForDateKey = (dateKey) => {
     const anchor = planStartDate ? new Date(`${planStartDate}T12:00:00`) : PROFILE.startDate;
@@ -7684,15 +9109,129 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
     const diffWeeks = Math.ceil((dateObj - anchor) / (1000 * 60 * 60 * 24 * 7));
     return Math.max(1, diffWeeks);
   };
+  const getPlannedHistoryForDate = (dateKey, entry = null) => {
+    if (!dateKey) return null;
+    const existingEntry = normalizePrescribedDayHistoryEntry(dateKey, plannedDayRecords?.[dateKey] || null);
+    if (existingEntry) return existingEntry;
+    if (dateKey === today && todayPlannedDayRecord) {
+      return createPrescribedDayHistoryEntry({
+        plannedDayRecord: todayPlannedDayRecord,
+        capturedAt: getStableCaptureAtForDate(dateKey),
+        sourceType: "plan_day_engine",
+        durability: PRESCRIBED_DAY_DURABILITY.durable,
+        reason: "today_plan_capture",
+      });
+    }
+    const legacySnapshotRecord = buildLegacyPlannedDayRecordFromSnapshot({ dateKey, snapshot: entry?.prescribedPlanSnapshot || null });
+    if (legacySnapshotRecord) {
+      return createPrescribedDayHistoryEntry({
+        plannedDayRecord: legacySnapshotRecord,
+        capturedAt: entry?.ts || getStableCaptureAtForDate(dateKey),
+        sourceType: "legacy_log_snapshot",
+        durability: PRESCRIBED_DAY_DURABILITY.legacyBackfill,
+        reason: "legacy_snapshot_backfill",
+      });
+    }
+    const dateObj = new Date(`${dateKey}T12:00:00`);
+    if (Number.isNaN(dateObj.getTime())) return null;
+    const week = getWeekForDateKey(dateKey);
+    const workout = getTodayWorkout(week, dateObj.getDay());
+    const fallbackRecord = buildLegacyPlannedDayRecordFromWorkout({ dateKey, weekNumber: week, workout });
+    if (!fallbackRecord) return null;
+    return createPrescribedDayHistoryEntry({
+      plannedDayRecord: fallbackRecord,
+      capturedAt: getStableCaptureAtForDate(dateKey),
+      sourceType: "legacy_schedule_helper",
+      durability: PRESCRIBED_DAY_DURABILITY.fallbackDerived,
+      reason: "schedule_backfill",
+    });
+  };
+  const getPlannedRecordForDate = (dateKey, entry = null) => getCurrentPrescribedDayRecord(
+    getPlannedHistoryForDate(dateKey, entry)
+  );
+  const getPlanComparison = (dateKey, entry = null) => {
+    if (entry?.comparison?.completionKind) return entry.comparison;
+    return comparePlannedDayToActual({
+      plannedDayRecord: getPlannedRecordForDate(dateKey, entry),
+      actualLog: entry || {},
+      dailyCheckin: dailyCheckins?.[dateKey] || {},
+      dateKey,
+    });
+  };
   const classifyStatus = (dateKey, entry) => {
-    const ageHours = (Date.now() - new Date(`${dateKey}T12:00:00`).getTime()) / (1000 * 60 * 60);
-    const raw = resolveEffectiveStatus(entry?.checkin, dateKey);
-    if (["completed_as_planned", "completed_modified"].includes(raw)) return raw;
-    if (raw === "skipped") return "skipped";
-    if (raw === "not_logged_grace" || raw === "not_logged") return ageHours > 48 ? "not_logged_over_48h" : "not_logged_under_48h";
-    if (!entry) return ageHours > 48 ? "not_logged_over_48h" : "not_logged_under_48h";
+    const comparison = getPlanComparison(dateKey, entry);
+    if (comparison.completionKind === "as_prescribed") return "completed_as_planned";
+    if (comparison.completionKind === "modified") return "completed_modified";
+    if (comparison.completionKind === "custom_session") return "custom_session";
+    if (comparison.completionKind === "skipped") return "skipped";
+    if (comparison.differenceKind === "not_logged_over_48h") return "not_logged_over_48h";
+    if (comparison.differenceKind === "pending") return "not_logged_under_48h";
+    if (!comparison.expectedSession) return "recovery_day";
     return "not_logged_under_48h";
   };
+  const formatReviewTimestamp = (value) => {
+    if (!value) return "unknown";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "unknown" : date.toLocaleString();
+  };
+  const buildSessionSummary = (training = null) => {
+    if (!training) return { label: "No prescribed session", detail: "", type: "" };
+    return {
+      label: sanitizeDisplayText(training?.label || training?.run?.t || training?.type || "Session"),
+      detail: sanitizeDisplayText(training?.run?.d || training?.strengthDose || training?.strengthDuration || training?.fallback || training?.success || ""),
+      type: sanitizeDisplayText(String(training?.type || "").replaceAll("-", " ")),
+    };
+  };
+  const getNutritionPrescriptionForRecord = (record = null) => record?.resolved?.nutrition?.prescription || record?.resolved?.nutrition || record?.base?.nutrition || null;
+  const buildNutritionActualSummary = (actualNutrition = null) => {
+    if (!actualNutrition?.loggedAt) {
+      return { label: "Not logged", detail: "Actual nutrition has not been logged.", status: "missing" };
+    }
+    return {
+      label: sanitizeDisplayText(actualNutrition?.quickStatus || actualNutrition?.adherence || "logged"),
+      detail: sanitizeDisplayText(actualNutrition?.note || actualNutrition?.issue || actualNutrition?.deviationKind || "Nutrition log saved."),
+      status: actualNutrition?.deviationKind || "",
+    };
+  };
+  const buildSelectedDayReview = (dateKey = "") => {
+    if (!dateKey) return null;
+    const actualLog = logs?.[dateKey] || {};
+    const plannedHistory = getPlannedHistoryForDate(dateKey, actualLog);
+    const revisions = Array.isArray(plannedHistory?.revisions) ? plannedHistory.revisions : [];
+    const currentRevision = getCurrentPrescribedDayRevision(plannedHistory);
+    const originalRevision = revisions[0] || currentRevision || null;
+    const currentRecord = currentRevision?.record || null;
+    const originalRecord = originalRevision?.record || null;
+    const actualCheckin = dailyCheckins?.[dateKey] || actualLog?.checkin || {};
+    const actualNutrition = nutritionActualLogs?.[dateKey] || normalizeActualNutritionLog({ dateKey, feedback: {} });
+    const comparison = getPlanComparison(dateKey, actualLog);
+    const nutritionComparison = compareNutritionPrescriptionToActual({
+      nutritionPrescription: getNutritionPrescriptionForRecord(currentRecord),
+      actualNutritionLog: actualNutrition,
+    });
+    return {
+      dateKey,
+      plannedHistory,
+      revisions,
+      currentRevision,
+      originalRevision,
+      originalRecord,
+      currentRecord,
+      actualLog,
+      actualCheckin,
+      actualNutrition,
+      comparison,
+      nutritionComparison,
+    };
+  };
+  const selectedDayReview = useMemo(
+    () => buildSelectedDayReview(selectedReviewDate),
+    [selectedReviewDate, logs, dailyCheckins, plannedDayRecords, nutritionActualLogs, todayPlannedDayRecord]
+  );
+  useEffect(() => {
+    if (!reviewDateKeys.length) return;
+    if (!reviewDateKeys.includes(selectedReviewDate)) setSelectedReviewDate(reviewDateKeys[0]);
+  }, [reviewDateKeys, selectedReviewDate]);
   const buildConsistencyWindow = (daysBackStart, daysBackEnd) => {
     const todayBase = new Date();
     todayBase.setHours(0, 0, 0, 0);
@@ -7700,23 +9239,20 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
     start.setDate(start.getDate() - daysBackStart);
     const end = new Date(todayBase);
     end.setDate(end.getDate() - daysBackEnd);
-    const prescribedDateKeys = [];
+    const counts = { completed: 0, modified: 0, custom: 0, skipped: 0, notLoggedOver48h: 0 };
     for (const cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
       const dateKey = toDateKey(cursor);
-      const week = getWeekForDateKey(dateKey);
-      const planned = getTodayWorkout(week, cursor.getDay());
-      if (planned && planned.type !== "rest") prescribedDateKeys.push(dateKey);
-    }
-    const counts = { completed: 0, modified: 0, skipped: 0, notLoggedOver48h: 0 };
-    prescribedDateKeys.forEach((dateKey) => {
+      const comparison = getPlanComparison(dateKey, logs?.[dateKey]);
+      if (!comparison?.hasPlannedDay || !comparison?.expectedSession) continue;
       const status = classifyStatus(dateKey, logs?.[dateKey]);
       if (status === "completed_as_planned") counts.completed += 1;
       else if (status === "completed_modified") counts.modified += 1;
+      else if (status === "custom_session") counts.custom += 1;
       else if (status === "skipped") counts.skipped += 1;
       else if (status === "not_logged_over_48h") counts.notLoggedOver48h += 1;
-    });
+    }
     const numerator = counts.completed + counts.modified;
-    const denominator = numerator + counts.skipped + counts.notLoggedOver48h;
+    const denominator = numerator + counts.custom + counts.skipped + counts.notLoggedOver48h;
     const pct = denominator > 0 ? Math.round((numerator / denominator) * 100) : null;
     return { ...counts, numerator, denominator, pct };
   };
@@ -7731,9 +9267,9 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
     ? "down"
     : "flat";
   const consistencyTrendArrow = consistencyTrend === "up" ? "↑" : consistencyTrend === "down" ? "↓" : "→";
-  const lifetimeLoggedCount = history.filter(([, l]) => {
-    const s = l?.checkin?.status;
-    return ["completed_as_planned", "completed_modified", "skipped", "partial_completed"].includes(s) || Number(l?.miles || 0) > 0 || String(l?.type || "").length > 0;
+  const lifetimeLoggedCount = history.filter(([dateKey, l]) => {
+    const status = resolveActualStatus({ dateKey, dailyCheckin: dailyCheckins?.[dateKey] || {}, logEntry: l || {} });
+    return ["completed_as_planned", "completed_modified", "skipped", "partial_completed"].includes(status) || Number(l?.miles || 0) > 0 || String(l?.type || "").length > 0;
   }).length;
   const consistencyLabel = consistencyCurrent.denominator > 0 ? `${consistencyCurrent.numerator} of ${consistencyCurrent.denominator} sessions` : "0 of 0 sessions";
   const avgFeel = recent14.length ? (recent14.reduce((s,[,l]) => s + Number(l.feel || 3), 0) / recent14.length).toFixed(1) : "-";
@@ -7756,9 +9292,10 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
     : "Execution is the current limiter. Simplified week is active.";
   const cleanHistorySessionName = (value = "") => sanitizeDisplayText(String(value || "Session").replace(/\s*\([^)]*\)/g, "").replace(/\s{2,}/g, " ").trim() || "Session");
   const openHistoryEntry = (date, log = {}) => {
+    setSelectedReviewDate(date);
     setDetailed({
       date,
-      type: cleanHistorySessionName(log?.type || todayWorkout?.label || "Session"),
+      type: cleanHistorySessionName(log?.type || todayWorkout?.label || plannedWorkout?.label || "Session"),
       miles: log?.miles ?? "",
       pace: log?.pace ?? "",
       runTime: log?.runTime ?? "",
@@ -7801,9 +9338,18 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
     // one-tap completion path
     const entry = {
       date: today,
-      type: cleanHistorySessionName(todayWorkout?.label || "Prescribed workout"),
+      type: cleanHistorySessionName(todayWorkout?.label || plannedWorkout?.label || "Prescribed workout"),
       notes: "Marked prescribed workout complete.",
       feel: "3",
+      planDayId: planDay?.id || "",
+      prescribedPlanSnapshot: planDay ? {
+        dateKey: planDay?.dateKey || today,
+        baseLabel: planDay?.base?.training?.label || "",
+        resolvedLabel: planDay?.resolved?.training?.label || "",
+        mode: planDay?.decision?.mode || "",
+        modeLabel: planDay?.decision?.modeLabel || "",
+        modifiedFromBase: Boolean(planDay?.decision?.modifiedFromBase),
+      } : null,
       ts: Date.now(),
       checkin: { status: "completed_as_planned", sessionFeel: "about_right", note: "", ts: Date.now() }
     };
@@ -7819,7 +9365,7 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
     const nextEntry = {
       ...existing,
       ...detailed,
-      type: cleanHistorySessionName(detailed.type || existing.type || todayWorkout?.label || "Session"),
+      type: cleanHistorySessionName(detailed.type || existing.type || todayWorkout?.label || plannedWorkout?.label || "Session"),
       pushups: detailed.reps || existing.pushups || "",
       reps: detailed.reps || existing.reps || "",
       editedAt: Date.now(),
@@ -7904,6 +9450,137 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
         <div style={{ marginTop:"0.2rem", fontSize:"0.55rem", color:"#64748b" }}>What changed: plan intensity and nutrition guidance adapt directly from this logging pattern.</div>
       </div>
 
+      <div className="card card-soft" style={{ marginBottom:"0.8rem", borderColor:C.blue+"30" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.5rem", marginBottom:"0.4rem", flexWrap:"wrap" }}>
+          <div>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.12rem" }}>DAY REVIEW</div>
+            <div style={{ fontSize:"0.54rem", color:"#94a3b8" }}>Inspect prescription revisions against actual outcome for one day.</div>
+          </div>
+          <select value={selectedReviewDate} onChange={(e)=>setSelectedReviewDate(e.target.value)} style={{ fontSize:"0.54rem", minWidth:150 }}>
+            {(reviewDateKeys || []).slice(0, 60).map((dateKey) => (
+              <option key={dateKey} value={dateKey}>{dateKey}</option>
+            ))}
+          </select>
+        </div>
+        {selectedDayReview && (
+          <div style={{ display:"grid", gap:"0.55rem" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
+              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PLAN VS ACTUAL</div>
+                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.12rem" }}>{sanitizeDisplayText(selectedDayReview?.comparison?.summary || "Comparison unavailable.")}</div>
+                <div style={{ fontSize:"0.52rem", color:"#94a3b8", marginTop:"0.18rem" }}>
+                  {sanitizeDisplayText(String(selectedDayReview?.comparison?.completionKind || "unknown").replaceAll("_", " "))} · {sanitizeDisplayText(String(selectedDayReview?.comparison?.differenceKind || "unknown").replaceAll("_", " "))}
+                </div>
+              </div>
+              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PRESCRIBED HISTORY</div>
+                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.12rem" }}>
+                  Rev {selectedDayReview?.currentRevision?.revisionNumber || 0} of {selectedDayReview?.revisions?.length || 0}
+                </div>
+                <div style={{ fontSize:"0.52rem", color:"#94a3b8", marginTop:"0.18rem" }}>
+                  {sanitizeDisplayText(selectedDayReview?.currentRevision?.sourceType || "unknown")} · {sanitizeDisplayText(selectedDayReview?.currentRevision?.durability || "unknown")}
+                </div>
+              </div>
+              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>NUTRITION OUTCOME</div>
+                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.12rem" }}>{sanitizeDisplayText(selectedDayReview?.nutritionComparison?.summary || "Nutrition comparison unavailable.")}</div>
+                <div style={{ fontSize:"0.52rem", color:"#94a3b8", marginTop:"0.18rem" }}>
+                  {sanitizeDisplayText(selectedDayReview?.actualNutrition?.adherence || "unknown")} · {sanitizeDisplayText(selectedDayReview?.actualNutrition?.deviationKind || "unknown")}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.45rem" }}>
+              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.5rem" }}>
+                <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>ORIGINAL PRESCRIPTION</div>
+                {(() => {
+                  const summary = buildSessionSummary(selectedDayReview?.originalRecord?.resolved?.training || selectedDayReview?.originalRecord?.base?.training || null);
+                  return (
+                    <>
+                      <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{summary.label}</div>
+                      <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
+                      <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem" }}>
+                        {selectedDayReview?.originalRevision ? `${formatReviewTimestamp(selectedDayReview.originalRevision.capturedAt)} · ${sanitizeDisplayText(selectedDayReview.originalRevision.reason || "initial_capture")}` : "No original revision available."}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.5rem" }}>
+                <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>LATEST PRESCRIPTION</div>
+                {(() => {
+                  const summary = buildSessionSummary(selectedDayReview?.currentRecord?.resolved?.training || selectedDayReview?.currentRecord?.base?.training || null);
+                  return (
+                    <>
+                      <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{summary.label}</div>
+                      <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
+                      <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem" }}>
+                        {selectedDayReview?.currentRevision ? `${formatReviewTimestamp(selectedDayReview.currentRevision.capturedAt)} · ${sanitizeDisplayText(selectedDayReview.currentRevision.reason || "latest_revision")}` : "No current revision available."}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.5rem" }}>
+                <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>ACTUAL OUTCOME</div>
+                <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{sanitizeDisplayText(cleanHistorySessionName(selectedDayReview?.actualLog?.type || selectedDayReview?.comparison?.actualSession?.label || "No workout log"))}</div>
+                <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>
+                  {sanitizeDisplayText(selectedDayReview?.actualLog?.notes || selectedDayReview?.comparison?.actualSession?.detail || selectedDayReview?.comparison?.status || "No session detail logged.")}
+                </div>
+                <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem" }}>
+                  Check-in: {sanitizeDisplayText(selectedDayReview?.actualCheckin?.status || "none")} · Feel {sanitizeDisplayText(String(selectedDayReview?.actualLog?.feel || selectedDayReview?.actualCheckin?.feel || "—"))}
+                </div>
+              </div>
+            </div>
+
+            <details style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.5rem" }} open={selectedDayReview?.revisions?.length > 1}>
+              <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>
+                Revision timeline ({selectedDayReview?.revisions?.length || 0})
+              </summary>
+              <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.3rem" }}>
+                {(selectedDayReview?.revisions || []).map((revision) => {
+                  const summary = buildSessionSummary(revision?.record?.resolved?.training || revision?.record?.base?.training || null);
+                  return (
+                    <div key={revision?.revisionId || `${selectedDayReview?.dateKey}_${revision?.revisionNumber}`} style={{ border:"1px solid #182335", borderRadius:8, background:"rgba(8,12,20,0.65)", padding:"0.38rem 0.42rem" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", flexWrap:"wrap" }}>
+                        <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>Rev {revision?.revisionNumber || 0}: {summary.label}</div>
+                        <div style={{ fontSize:"0.48rem", color:"#64748b" }}>{formatReviewTimestamp(revision?.capturedAt)}</div>
+                      </div>
+                      <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.08rem" }}>{summary.detail || summary.type || "No session detail saved."}</div>
+                      <div style={{ fontSize:"0.49rem", color:"#94a3b8", marginTop:"0.12rem" }}>
+                        Reason: {sanitizeDisplayText(revision?.reason || "unknown")} · Source: {sanitizeDisplayText(revision?.sourceType || "unknown")} · Durability: {sanitizeDisplayText(revision?.durability || "unknown")}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.45rem" }}>
+              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
+                <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.18rem" }}>ACTUAL CHECK-IN</div>
+                <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>{sanitizeDisplayText(selectedDayReview?.actualCheckin?.status || "No check-in saved")}</div>
+                <div style={{ fontSize:"0.51rem", color:"#8fa5c8", marginTop:"0.12rem" }}>
+                  {sanitizeDisplayText(selectedDayReview?.actualCheckin?.note || selectedDayReview?.actualCheckin?.blocker || selectedDayReview?.actualCheckin?.sessionFeel || "No additional context saved.")}
+                </div>
+              </div>
+              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
+                <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.18rem" }}>ACTUAL NUTRITION</div>
+                {(() => {
+                  const nutritionSummary = buildNutritionActualSummary(selectedDayReview?.actualNutrition);
+                  return (
+                    <>
+                      <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>{sanitizeDisplayText(nutritionSummary.label)}</div>
+                      <div style={{ fontSize:"0.51rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{sanitizeDisplayText(nutritionSummary.detail)}</div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="card" style={{ marginBottom:"0.8rem" }}>
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>HISTORY</div>
         <div style={{ display:"grid", gridTemplateColumns:"95px 1fr 90px auto", gap:"0.5rem", padding:"0 8px 0.28rem", fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>
@@ -7917,11 +9594,17 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
             const displayName = cleanHistorySessionName(log?.type || "Session");
             const feelDisplay = String(log?.feel || "").trim() ? `Feel ${log.feel}` : "—";
             const showEditedBadge = Boolean(log?.retroEdited || (log?.editedAt && date < today));
+            const comparison = getPlanComparison(date, log);
+            const comparisonTone = comparison?.severity === "material" ? C.amber : comparison?.severity === "minor" ? C.blue : "#64748b";
+            const selected = selectedReviewDate === date;
             return (
-              <div key={date} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.5rem", alignItems:"center", background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"6px 8px" }}>
+              <div key={date} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.5rem", alignItems:"center", background:"#0f172a", border:`1px solid ${selected ? C.blue+"55" : "#1e293b"}`, borderRadius:8, padding:"6px 8px" }}>
                 <button
                   className="btn"
-                  onClick={()=>openHistoryEntry(date, log)}
+                  onClick={()=>{
+                    setSelectedReviewDate(date);
+                    openHistoryEntry(date, log);
+                  }}
                   style={{
                     display:"grid",
                     gridTemplateColumns:"95px 1fr 90px",
@@ -7935,9 +9618,16 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
                   }}
                 >
                   <div style={{ fontSize:"0.55rem", color:"#64748b" }}>{new Date(date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
-                  <div style={{ display:"flex", alignItems:"center", gap:"0.35rem", minWidth:0 }}>
-                    <div style={{ fontSize:"0.58rem", color:"#e2e8f0", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{displayName}</div>
-                    {showEditedBadge && <span style={{ fontSize:"0.45rem", color:C.amber, border:`1px solid ${C.amber}35`, borderRadius:999, padding:"0.05rem 0.35rem", flexShrink:0 }}>Edited</span>}
+                  <div style={{ display:"grid", gap:"0.08rem", minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:"0.35rem", minWidth:0 }}>
+                      <div style={{ fontSize:"0.58rem", color:"#e2e8f0", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{displayName}</div>
+                      {showEditedBadge && <span style={{ fontSize:"0.45rem", color:C.amber, border:`1px solid ${C.amber}35`, borderRadius:999, padding:"0.05rem 0.35rem", flexShrink:0 }}>Edited</span>}
+                    </div>
+                    {comparison?.summary && (
+                      <div style={{ fontSize:"0.48rem", color:comparisonTone, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                        {comparison.summary}
+                      </div>
+                    )}
                   </div>
                   <div style={{ fontSize:"0.55rem", color:feelDisplay === "—" ? "#64748b" : C.blue }}>{feelDisplay}</div>
                 </button>
@@ -7968,8 +9658,39 @@ function LogTab({ logs, saveLogs, bodyweights, saveBodyweights, currentWeek, tod
             <div key={arc.id || arc.archivedAt} style={{ border:"1px solid #20314a", borderRadius:8, background:"#0f172a", padding:"0.45rem 0.5rem" }}>
               <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>{arc.planArcLabel || "Previous plan arc"}</div>
               <div style={{ fontSize:"0.5rem", color:"#7f94b3", marginTop:"0.1rem" }}>Archived {arc.archivedAt ? new Date(arc.archivedAt).toLocaleString() : "unknown"}</div>
+              {Object.keys(arc?.prescribedDayHistory || {}).length > 0 && (
+                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.1rem" }}>
+                  {Object.keys(arc.prescribedDayHistory || {}).length} prescribed-day snapshots archived.
+                </div>
+              )}
               <div style={{ marginTop:"0.2rem", display:"grid", gap:"0.18rem" }}>
-                {(arc.logEntries || []).slice(0, 80).map((entry, idx) => (
+                {(() => {
+                  const archivedHistory = arc?.prescribedDayHistory || {};
+                  const logPreview = (arc.logEntries || []).slice(0, 80).map((entry, idx) => {
+                    const historyEntry = normalizePrescribedDayHistoryEntry(entry?.date || "", archivedHistory?.[entry?.date] || null);
+                    const plannedRecord = getCurrentPrescribedDayRecord(historyEntry) || buildLegacyPlannedDayRecordFromSnapshot({ dateKey: entry?.date || "", snapshot: entry?.prescribedPlanSnapshot || null });
+                    const plannedLabel = plannedRecord?.resolved?.training?.label || plannedRecord?.base?.training?.label || "";
+                    const revisionCount = Array.isArray(historyEntry?.revisions) ? historyEntry.revisions.length : 0;
+                    return (
+                      <div key={`${arc.id || "arc"}_history_${entry.date || idx}`} style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>
+                        â€¢ {entry.date}: {plannedLabel ? `planned ${sanitizeDisplayText(plannedLabel)} â†’ ` : ""}{sanitizeDisplayText(entry.type || "Session")}{entry.notes ? ` â€” ${sanitizeDisplayText(entry.notes)}` : ""}{revisionCount > 1 ? ` (${revisionCount} revisions)` : ""}
+                      </div>
+                    );
+                  });
+                  if (logPreview.length > 0) return logPreview;
+                  return Object.entries(archivedHistory || {}).slice(0, 40).map(([dateKey, historyEntry]) => {
+                    const normalized = normalizePrescribedDayHistoryEntry(dateKey, historyEntry);
+                    const plannedRecord = getCurrentPrescribedDayRecord(normalized);
+                    const plannedLabel = plannedRecord?.resolved?.training?.label || plannedRecord?.base?.training?.label || "Planned session";
+                    const revisionCount = Array.isArray(normalized?.revisions) ? normalized.revisions.length : 0;
+                    return (
+                      <div key={`${arc.id || "arc"}_history_${dateKey}`} style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>
+                        â€¢ {dateKey}: planned {sanitizeDisplayText(plannedLabel)}{revisionCount > 1 ? ` (${revisionCount} revisions)` : ""}
+                      </div>
+                    );
+                  });
+                })()}
+                {false && (arc.logEntries || []).slice(0, 80).map((entry, idx) => (
                   <div key={`${arc.id || "arc"}_${entry.date || idx}`} style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>
                     • {entry.date}: {sanitizeDisplayText(entry.type || "Session")} {entry.notes ? `— ${sanitizeDisplayText(entry.notes)}` : ""}
                   </div>
@@ -8036,13 +9757,17 @@ const buildLocationAwareOrderSuggestion = ({ nearby = [] }) => {
 };
 
 // ── NUTRITION TAB (REDESIGNED) ──────────────────────────────────────────────
-function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer, realWorldNutrition, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
+function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, logs, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
+  const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
+  const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
+  const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
+  const planDayWeek = planDay?.week || null;
   const localFoodContext = personalization?.localFoodContext || { city: "Chicago", groceryOptions: ["Trader Joe's"] };
   const savedLocation = personalization?.connectedDevices?.location || {};
   const resolvedLocationLabel = localFoodContext.city || localFoodContext.locationLabel || (savedLocation?.status === "granted" ? "Nearby area" : "Chicago");
   const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || "Trader Joe's");
   const favorites = nutritionFavorites || { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] };
-  const [nutritionCheck, setNutritionCheck] = useState({ status: "on_track", issue: "", note: "" });
+  const [nutritionCheck, setNutritionCheck] = useState({ status: "on_track", deviationKind: "followed", issue: "", note: "" });
   const [lastKey, setLastKey] = useState("");
   const [showNutritionWhy, setShowNutritionWhy] = useState(false);
   const [openMealKey, setOpenMealKey] = useState("");
@@ -8078,7 +9803,7 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
   const nutritionUnavailable = !nutritionLayer || !realWorldNutrition;
   const resolvedTargets = nutritionLayer?.targets || { cal: 2500, p: 190, c: 240, f: 70 };
   const phaseMode = (nutritionLayer?.phaseMode || "maintain").toUpperCase();
-  const currentPhase = WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
+  const currentPhase = planDayWeek?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
   const todayDate = new Date();
   todayDate.setHours(0, 0, 0, 0);
   const yesterday = new Date(todayDate);
@@ -8143,7 +9868,7 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
       d.setDate(d.getDate() - idx);
       return d.toISOString().split("T")[0];
     });
-    const onPlan = days.filter((k) => ["on_track", "decent"].includes(nutritionFeedback?.[k]?.status)).length;
+    const onPlan = days.filter((k) => ["high", "partial"].includes(nutritionActualLogs?.[k]?.adherence || "")).length;
     return `${onPlan} of 7 days on plan`;
   })();
   const defaultSupplements = [
@@ -8226,24 +9951,34 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
   });
 
   const todayKey = new Date().toISOString().split("T")[0];
-  const feedbackToday = nutritionFeedback?.[todayKey];
+  const legacyNutritionActual = nutritionFeedback?.[todayKey];
+  const actualNutritionToday = planDay?.resolved?.nutrition?.actual || nutritionActualLogs?.[todayKey] || normalizeActualNutritionLog({ dateKey: todayKey, feedback: legacyNutritionActual || {} });
+  const nutritionComparison = planDay?.resolved?.nutrition?.comparison || compareNutritionPrescriptionToActual({
+    nutritionPrescription: nutritionLayer,
+    actualNutritionLog: actualNutritionToday,
+  });
   const nutritionGoalName = goalContext?.primary?.name || "current goal";
   const nutritionProvenance = buildProvenanceText({
     inputs: [
       "today's training demand",
       `your ${nutritionGoalName}`,
       "time of day",
-      feedbackToday ? "your logged nutrition today" : null,
+      actualNutritionToday?.loggedAt ? "your logged nutrition today" : null,
     ],
-    limitation: feedbackToday ? "" : "Today's intake log is limited.",
+    limitation: actualNutritionToday?.loggedAt ? "" : "Today's intake log is limited.",
   });
   useEffect(() => {
-    if (!feedbackToday) return;
-    setNutritionCheck(feedbackToday);
-    setHydrationOz(Number(feedbackToday?.hydrationOz || 0));
-    setHydrationNudgedAt(feedbackToday?.hydrationNudgedAt || null);
-    setSupplementTaken(feedbackToday?.supplementTaken || {});
-  }, [feedbackToday?.ts]);
+    if (!actualNutritionToday?.loggedAt) return;
+    setNutritionCheck({
+      status: actualNutritionToday?.quickStatus || "on_track",
+      deviationKind: actualNutritionToday?.deviationKind || "followed",
+      issue: actualNutritionToday?.issue || "",
+      note: actualNutritionToday?.note || "",
+    });
+    setHydrationOz(Number(actualNutritionToday?.hydration?.oz || 0));
+    setHydrationNudgedAt(actualNutritionToday?.hydration?.nudgedAt || null);
+    setSupplementTaken(actualNutritionToday?.supplements?.takenMap || {});
+  }, [actualNutritionToday?.loggedAt]);
   useEffect(() => {
     const hour = new Date().getHours();
     if (hour < 15 || hydrationPct >= 50 || hydrationNudgedAt || showHydrationNudge) return;
@@ -8293,6 +10028,15 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
         <div style={{ background:"#0f172a", border:"1px solid #243752", borderRadius:8, padding:"0.38rem 0.42rem", marginBottom:"0.35rem" }}>
           <div style={{ fontSize:"0.5rem", letterSpacing:"0.08em", color:"#8fa5c8", marginBottom:"0.16rem" }}>WHY THIS TODAY</div>
           <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.6 }}>{whyThisToday}</div>
+        </div>
+        <div style={{ background:"#0f172a", border:"1px solid #243752", borderRadius:8, padding:"0.38rem 0.42rem", marginBottom:"0.35rem" }}>
+          <div style={{ fontSize:"0.5rem", letterSpacing:"0.08em", color:"#8fa5c8", marginBottom:"0.16rem" }}>PLAN VS ACTUAL</div>
+          <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.6 }}>{nutritionComparison?.summary || "Actual nutrition has not been logged yet."}</div>
+          {nutritionComparison?.hasActual && (
+            <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#8fa5c8" }}>
+              Adherence: {nutritionComparison?.adherence || "unknown"} · Difference: {String(nutritionComparison?.deviationKind || "unknown").replaceAll("_"," ")} · Impact: {nutritionComparison?.matters || "unknown"}
+            </div>
+          )}
         </div>
         {dailyRecommendations.length > 0 && (
           <div style={{ display:"grid", gap:"0.22rem", marginBottom:"0.35rem" }}>
@@ -8452,6 +10196,23 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
               style={{ fontSize:"0.72rem", borderColor:nutritionCheck.status===k?C.blue:"#1e293b", color:nutritionCheck.status===k?C.blue:"#64748b", background:nutritionCheck.status===k?`${C.blue}12`:"transparent" }}>{lab}</button>
           ))}
         </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.3rem", marginBottom:"0.35rem" }}>
+          {[["followed","followed"],["under_fueled","under"],["over_indulged","over"],["deviated","deviated"]].map(([k,lab]) => (
+            <button key={k} className="btn" onClick={()=>setNutritionCheck(prev=>({
+              ...prev,
+              deviationKind: k,
+              status: k === "followed" ? "on_track" : k === "deviated" ? "decent" : "off_track",
+              issue: k === "followed" ? "" : k === "under_fueled" ? "hunger" : k === "over_indulged" ? "overate" : prev.issue,
+            }))}
+              style={{ fontSize:"0.6rem", borderColor:nutritionCheck.deviationKind===k?C.green:"#1e293b", color:nutritionCheck.deviationKind===k?C.green:"#64748b", background:nutritionCheck.deviationKind===k?`${C.green}12`:"transparent" }}>{lab}</button>
+          ))}
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.3rem", marginBottom:"0.35rem" }}>
+          {[["","none"],["hunger","hunger"],["convenience","convenience"],["travel","travel"]].map(([k,lab]) => (
+            <button key={lab} className="btn" onClick={()=>setNutritionCheck(prev=>({ ...prev, issue:k }))}
+              style={{ fontSize:"0.58rem", borderColor:(nutritionCheck.issue||"")===k?C.amber:"#1e293b", color:(nutritionCheck.issue||"")===k?C.amber:"#64748b", background:(nutritionCheck.issue||"")===k?`${C.amber}12`:"transparent" }}>{lab}</button>
+          ))}
+        </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
           <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck(prev=>({ ...prev, note:e.target.value }))} placeholder="Quick note (optional)" />
           <button className="btn btn-primary" onClick={()=>saveNutritionFeedback(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt })} style={{ fontSize:"0.55rem" }}>SAVE</button>
@@ -8463,7 +10224,76 @@ function NutritionTab({ todayWorkout, currentWeek, logs, personalization, goals,
 }
 
 // ── COACH TAB (REDESIGNED) ──────────────────────────────────────────────────
-function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalization, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer, realWorldNutrition, nutritionFeedback, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
+function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, goalState, userProfile, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFeedback, goals = [], setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
+  const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
+  const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
+  const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
+  const planDayWeek = planDay?.week || null;
+  const canonicalCoachRecovery = planDay?.resolved?.recovery || null;
+  const todayKey = new Date().toISOString().split("T")[0];
+  const nutritionActual = planDay?.resolved?.nutrition?.actual || nutritionActualLogs?.[todayKey] || normalizeActualNutritionLog({ dateKey: todayKey, feedback: nutritionFeedback?.[todayKey] || {} });
+  const nutritionComparison = planDay?.resolved?.nutrition?.comparison || compareNutritionPrescriptionToActual({
+    nutritionPrescription: nutritionLayer,
+    actualNutritionLog: nutritionActual,
+  });
+  const coachAiStatePacket = useMemo(() => buildAiStatePacket({
+    intent: AI_PACKET_INTENTS.coachChat,
+    input: "",
+    dateKey: todayKey,
+    currentWeek,
+    canonicalGoalState: goalState,
+    canonicalUserProfile: userProfile,
+    goals,
+    planDay,
+    planWeek: planDayWeek?.planWeek || null,
+    logs,
+    dailyCheckins,
+    nutritionActualLogs,
+    bodyweights,
+    momentum,
+    expectations,
+    strengthLayer,
+    optimizationLayer,
+    failureMode,
+    readiness: canonicalCoachRecovery,
+    nutritionComparison,
+    arbitration,
+    memoryInsights,
+    coachMemoryContext: compoundingCoachMemory,
+    weekNotes,
+    planAlerts,
+  }), [
+    todayKey,
+    currentWeek,
+    goalState,
+    userProfile,
+    goals,
+    planDay,
+    planDayWeek,
+    logs,
+    dailyCheckins,
+    nutritionActualLogs,
+    bodyweights,
+    momentum,
+    expectations,
+    strengthLayer,
+    optimizationLayer,
+    failureMode,
+    canonicalCoachRecovery,
+    nutritionComparison,
+    arbitration,
+    memoryInsights,
+    compoundingCoachMemory,
+    weekNotes,
+    planAlerts,
+  ]);
+  const coachAiSystemPrompt = useMemo(
+    () => buildCoachAiSystemPrompt({ statePacket: coachAiStatePacket }),
+    [coachAiStatePacket]
+  );
+  const coachPhase = planDayWeek?.phase || todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
+  const coachWeekFocus = planDayWeek?.weeklyIntent?.focus || planDayWeek?.planWeek?.weeklyIntent?.focus || "";
+  const coachWeekSummary = planDayWeek?.summary || planDayWeek?.planWeek?.summary || "";
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -8492,7 +10322,7 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   }, [feedbackLog]);
 
   useEffect(() => {
-    const packet = deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
+    const packet = deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
     setMessages([{
       role:"assistant",
       text: packet?.coachBrief || packet?.recommendations?.[0] || packet?.notices?.[0] || "Coach ready.",
@@ -8505,9 +10335,30 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
   const applyCoachAction = (action, runtime) => applyCoachActionMutation({ action, runtime, currentWeek, todayWorkout, mergePersonalization, buildInjuryRuleResult });
 
   const commitAction = async (action) => {
+    const acceptedProposal = acceptCoachActionProposal({ action, proposalSource: action?.proposalSource || action?.source || "coach_surface" });
+    if (!acceptedProposal?.accepted) {
+      setMessages((prev) => [...prev, {
+        role: "assistant",
+        text: "That suggestion was rejected by the deterministic acceptance gate, so no plan state changed.",
+        source: "deterministic",
+        ts: Date.now(),
+        helpful: null,
+      }].slice(-20));
+      return;
+    }
+    const acceptedAction = acceptedProposal.accepted;
     const runtime = { adjustments: coachPlanAdjustments, weekNotes, planAlerts, personalization };
-    const mutation = applyCoachAction(action, runtime);
-    const nextActions = [{ ...action, id:`coach_act_${Date.now()}`, ts: Date.now(), source: "coach_confirmed", reason: action.reason || action.rationale || action.payload?.reason || "coach-confirmed" }, ...coachActions].slice(0, 60);
+    const mutation = applyCoachAction(acceptedAction, runtime);
+    const nextActions = [{
+      ...acceptedAction,
+      id:`coach_act_${Date.now()}`,
+      ts: Date.now(),
+      source: "coach_confirmed",
+      proposalSource: acceptedAction.proposalSource || "coach_surface",
+      acceptedBy: acceptedAction.acceptedBy || "deterministic_gate",
+      acceptancePolicy: acceptedAction.acceptancePolicy || "acceptance_only",
+      reason: acceptedAction.rationale || acceptedAction.payload?.reason || "coach-confirmed",
+    }, ...coachActions].slice(0, 60);
     setCoachActions(nextActions);
     setCoachPlanAdjustments(mutation.adjustments);
     setWeekNotes(mutation.weekNotes);
@@ -8518,10 +10369,9 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
 
   const getSessionContextPrompt = () => {
     const activeGoals = (arbitration?.priorityStack?.ordered || []).filter(Boolean);
-    const primaryGoal = activeGoals[0] || personalization?.goalState?.primaryGoal || "Consistency";
+    const primaryGoal = activeGoals[0] || goalState?.primaryGoal || "Consistency";
     const secondaryGoals = activeGoals.slice(1, 4).join(", ") || "None listed";
-    const phase = todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
-    const deadline = personalization?.goalState?.deadline || "";
+    const deadline = goalState?.deadline || "";
     const daysRemaining = deadline ? Math.max(0, Math.ceil((new Date(deadline) - new Date()) / 86400000)) : "N/A";
     const todayDetails = todayWorkout?.run
       ? `${todayWorkout.run.t || "Run"} · ${todayWorkout.run.d || "target pending"}`
@@ -8550,7 +10400,8 @@ function CoachTab({ logs, currentWeek, todayWorkout, bodyweights, personalizatio
 
 Current user state:
 - Goals: ${primaryGoal} | ${secondaryGoals}
-- Phase: ${phase} · Week ${currentWeek}
+- Phase: ${coachPhase} · Week ${currentWeek}
+- Weekly intent: ${coachWeekFocus || coachWeekSummary || "Current week plan"}
 - Days to race/deadline: ${daysRemaining}
 - Today's prescription: ${todayWorkout?.label || "Session"} · ${todayDetails}
 - Achilles status: ${injury}
@@ -8586,22 +10437,22 @@ Rules for every response:
       "My Achilles feels tight": `${label}. Include today's session type (${todayWorkout?.type || "unknown"}) and injury history (${(compoundingCoachMemory?.injuryHistory || []).slice(0,2).join("; ") || "none"}).`,
       "I missed yesterday": `${label}. Yesterday was ${y?.type || "unknown"} on ${yKey}. Current week completion: ${completion14}/${total14}.`,
       "I'm traveling today": `${label}. Travel preset is active when needed. Today's prescription: ${todayWorkout?.label || "session"}.`,
-      "I feel amazing this week": `${label}. Last 3 sessions: ${last3 || "none"}. Current phase: ${todayWorkout?.week?.phase || "BASE"}.`,
+      "I feel amazing this week": `${label}. Last 3 sessions: ${last3 || "none"}. Current phase: ${coachPhase}.`,
       "I slept badly": `${label}. Today's session type: ${todayWorkout?.type || "unknown"}. Readiness context: energy ${personalization?.trainingState?.fatigueScore || "n/a"}.`,
-      "I want to push harder": `${label}. Phase ${todayWorkout?.week?.phase || "BASE"}, days to goal ${personalization?.goalState?.deadline ? Math.max(0, Math.ceil((new Date(personalization.goalState.deadline) - new Date()) / 86400000)) : "N/A"}, last feels ${(dated.slice(-5).map(([,l]) => l?.feel || 3).join(", ") || "none")}.`,
+      "I want to push harder": `${label}. Phase ${coachPhase}, days to goal ${goalState?.deadline ? Math.max(0, Math.ceil((new Date(goalState.deadline) - new Date()) / 86400000)) : "N/A"}, last feels ${(dated.slice(-5).map(([,l]) => l?.feel || 3).join(", ") || "none")}.`,
     };
     return map[label] || label;
   };
 
   const streamCoachResponse = async ({ userMsg, history }) => {
-    const deterministic = deterministicCoachPacket({ input: userMsg, todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
+    const deterministic = deterministicCoachPacket({ input: userMsg, todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
     if (coachMode === "deterministic" || !apiKey) return { text: deterministic?.coachBrief || deterministic?.recommendations?.[0] || deterministic?.notices?.[0] || "Coach update ready.", source: "deterministic" };
 
     const payload = {
       model: "claude-3-5-haiku-latest",
       max_tokens: 450,
       stream: true,
-      system: getSessionContextPrompt(),
+      system: coachAiSystemPrompt,
       messages: history,
     };
     let attempts = 0;
@@ -8702,8 +10553,20 @@ Rules for every response:
 
   const quickPrompts = ["My Achilles feels tight", "I missed yesterday", "I'm traveling today", "I feel amazing this week", "I slept badly", "I want to push harder"];
 
-  const todayKey = new Date().toISOString().split("T")[0];
   const sundayArchive = personalization?.coachMemory?.sundayReviews || [];
+  const readinessPromptSignal = coachPlanAdjustments?.extra?.readinessSignals?.[todayKey] || null;
+  const coachReadiness = canonicalCoachRecovery || deriveDeterministicReadinessState({
+    todayKey,
+    checkin: dailyCheckins?.[todayKey] || logs?.[todayKey]?.checkin || {},
+    promptSignal: readinessPromptSignal,
+    workout: todayWorkout,
+    logs,
+    dailyCheckins,
+    personalization,
+    momentum,
+    userProfile: userProfile || {},
+  });
+  const readinessMetrics = coachReadiness?.metrics || {};
   const env = resolveEnvironmentSelection({ personalization, todayKey, currentWeek });
   const dayTypeMap = { "long-run":"long", long:"long", "hard-run":"tempo", hard:"tempo", "easy-run":"easy", easy:"easy", "strength+prehab":"strength", strength:"strength", "run+strength":"hybrid", conditioning:"hybrid", otf:"hybrid", recovery:"recovery", rest:"recovery" };
   const dayType = dayTypeMap[todayWorkout?.type] || "hybrid";
@@ -8711,13 +10574,18 @@ Rules for every response:
   const adherenceTrend = momentum?.completionRate >= 0.72 ? "stable" : momentum?.completionRate >= 0.5 ? "mixed" : "slipping";
   const fatigueSignal = (personalization?.trainingState?.fatigueScore || 1) >= 4 || momentum?.fatigueNotes >= 2;
   const injuryFlag = personalization?.injuryPainState?.level || "none";
-  const recoveryAdjustedToday = todayWorkout?.type === "rest" || todayWorkout?.type === "recovery" || /recovery/i.test(String(todayWorkout?.label || ""));
-  const reducedLoadToday = Boolean(todayWorkout?.minDay);
-  const progressionReadyToday = /progression-ready/i.test(String(todayWorkout?.label || ""));
+  const recoveryAdjustedToday = coachReadiness?.state === "recovery" || todayWorkout?.type === "rest" || todayWorkout?.type === "recovery" || /recovery/i.test(String(todayWorkout?.label || ""));
+  const reducedLoadToday = coachReadiness?.state === "reduced_load" || Boolean(todayWorkout?.minDay);
+  const progressionReadyToday = coachReadiness?.state === "progression" || /progression-ready/i.test(String(todayWorkout?.label || ""));
   const goalPriority = arbitration?.priorityStack?.primary || "Consistency";
-  const recentLogCount = Object.keys(logs || {}).slice(-7).length;
-  const datedLogs = Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0]));
-  const recentEntries = datedLogs.slice(-7);
+  const recentEntries = Array.from(new Set([...(Object.keys(logs || {})), ...(Object.keys(dailyCheckins || {}))]))
+    .sort((a, b) => a.localeCompare(b))
+    .slice(-7)
+    .map((dateKey) => {
+      const log = logs?.[dateKey] || {};
+      return [dateKey, { ...log, checkin: { ...(log?.checkin || {}), ...(dailyCheckins?.[dateKey] || {}) } }];
+    });
+  const recentLogCount = recentEntries.length;
   const completedStatuses = new Set(["completed_as_planned", "completed_modified", "partial_completed"]);
   const recentSessionLabels = recentEntries
     .map(([, entry]) => entry?.type || entry?.label || "")
@@ -8729,9 +10597,13 @@ Rules for every response:
   const recentCompletedCount = recentCountableStatuses.filter((status) => completedStatuses.has(status)).length;
   const recentSkippedCount = recentCountableStatuses.filter((status) => status === "skipped").length;
   const recentModifiedCount = recentCountableStatuses.filter((status) => status === "completed_modified" || status === "partial_completed").length;
-  const recentAdherence = recentCountableStatuses.length ? (recentCompletedCount / recentCountableStatuses.length) : 0;
+  const recentAdherence = readinessMetrics.countableCount
+    ? (Number(readinessMetrics.completedCount || 0) / Math.max(1, Number(readinessMetrics.countableCount || 0)))
+    : recentCountableStatuses.length
+    ? (recentCompletedCount / recentCountableStatuses.length)
+    : 0;
   const latestCompletedEntry = [...recentEntries].reverse().find(([dateKey, entry]) => completedStatuses.has(resolveEffectiveStatus(entry?.checkin, dateKey)));
-  const latestCheckinEntry = [...recentEntries].reverse().find(([, entry]) => entry?.checkin);
+  const latestCheckinEntry = [...recentEntries].reverse().find(([, entry]) => hasReadinessInputs(entry?.checkin) || entry?.checkin?.status && entry?.checkin?.status !== "not_logged");
   const latestCheckin = latestCheckinEntry?.[1]?.checkin || {};
   const latestFeel = String(latestCheckin?.sessionFeel || latestCheckinEntry?.[1]?.feel || "").toLowerCase();
   const latestSleep = Number(latestCheckin?.readiness?.sleep || 0);
@@ -8741,6 +10613,8 @@ Rules for every response:
   const highRecoverySignal = latestSleep >= 4 && latestStress > 0 && latestStress <= 2 && latestSoreness > 0 && latestSoreness <= 2 && latestFeel !== "harder_than_expected";
   const latestCompletedLabel = latestCompletedEntry?.[1]?.type || latestCompletedEntry?.[1]?.label || "recent session";
   const todaySessionLabel = todayWorkout?.label || todayWorkout?.type || "today's session";
+  const readinessEvidence = joinHumanList((coachReadiness?.factors || []).slice(0, 2));
+  const veryLowConsistency = (Number(readinessMetrics.consistencyRatio || 0) > 0 && Number(readinessMetrics.consistencyRatio || 0) < 0.45) || recentSkippedCount >= 3;
   const feelDescriptor = latestFeel === "easier_than_expected"
     ? "easier than expected"
     : latestFeel === "harder_than_expected"
@@ -8750,12 +10624,12 @@ Rules for every response:
     : "not recently logged";
 
   const coachDecisionMode = (() => {
-    if (recoveryAdjustedToday) return "Protect";
+    if (coachReadiness?.state === "recovery" || recoveryAdjustedToday) return "Protect";
     if (injuryFlag !== "none" || fatigueSignal) return "Protect";
-    if (reducedLoadToday) return "Simplify";
+    if (coachReadiness?.state === "reduced_load" || reducedLoadToday) return veryLowConsistency ? "Rebuild" : "Simplify";
     if (weekState === "chaotic" || env.time === "20" || adherenceTrend === "slipping") return "Simplify";
-    if (momentum?.logGapDays >= 4 || recentLogCount <= 2) return "Rebuild";
-    if (progressionReadyToday && (momentum?.score || 0) >= 60 && weekState === "normal" && env.time !== "20") return "Push";
+    if (momentum?.logGapDays >= 4 || recentLogCount <= 2 || recentAdherence < 0.55) return "Rebuild";
+    if (coachReadiness?.state === "progression" || (progressionReadyToday && (momentum?.score || 0) >= 60 && weekState === "normal" && env.time !== "20")) return "Push";
     if ((momentum?.score || 0) >= 74 && weekState === "normal" && env.time !== "20") return "Push";
     return "Hold";
   })();
@@ -8764,7 +10638,7 @@ Rules for every response:
     const dayLabel = dayType === "tempo" ? "quality run" : dayType === "long" ? "long-run" : dayType === "easy" ? "easy run" : dayType === "strength" ? "strength" : dayType === "recovery" ? "recovery" : "hybrid";
     if (coachDecisionMode === "Protect") return {
       stance: `Do the condensed ${dayLabel} version today and keep intensity controlled.`,
-      why: `Recovery signals are elevated, so we protect consistency while keeping ${goalPriority} on track.`,
+      why: `Recovery signals are elevated${readinessEvidence ? ` because ${readinessEvidence}` : ""}, so we protect consistency while keeping ${goalPriority} on track.`,
       watch: "I am watching pain and session feel after this workout.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 10, reason: "protect_mode" } }, primary: true },
@@ -8773,7 +10647,9 @@ Rules for every response:
     };
     if (coachDecisionMode === "Simplify") return {
       stance: `Keep this simple: complete the short ${dayLabel} version.`,
-      why: `Time and adherence say simplify now, then rebuild consistency.`,
+      why: coachReadiness?.state === "reduced_load"
+        ? `Readiness says control the day${readinessEvidence ? ` because ${readinessEvidence}` : ""}.`
+        : `Time and adherence say simplify now, then rebuild consistency.`,
       watch: "I am watching completion rate over the next 3 days.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 12, reason: "simplify_mode" } }, primary: true },
@@ -8782,7 +10658,7 @@ Rules for every response:
     };
     if (coachDecisionMode === "Rebuild") return {
       stance: `Take the short version of the ${dayLabel} session and rebuild rhythm first.`,
-      why: `Recent execution dipped, so we rebuild frequency before adding load.`,
+      why: `Recent execution dipped, so we rebuild frequency before adding load${readinessEvidence ? ` while respecting ${readinessEvidence}` : ""}.`,
       watch: "I am watching whether you can stack 2-3 clean sessions.",
       options: [
         { label: "Do condensed version", action: { type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 15, reason: "rebuild_mode" } }, primary: true },
@@ -8791,7 +10667,7 @@ Rules for every response:
     };
     if (coachDecisionMode === "Push") return {
       stance: `Keep the full ${dayLabel} session and add one small progression.`,
-      why: `Stability is strong enough to push while still protecting recovery.`,
+      why: `Stability is strong enough to push while still protecting recovery${readinessEvidence ? ` because ${readinessEvidence}` : ""}.`,
       watch: "I am watching session quality and next-day fatigue.",
       options: [
         { label: "Keep full session", action: null, primary: true },
@@ -8800,7 +10676,7 @@ Rules for every response:
     };
     return {
       stance: `Keep the full ${dayLabel} session as written.`,
-      why: `Current signals support staying steady and executing cleanly.`,
+      why: `Current signals support staying steady and executing cleanly${readinessEvidence ? ` because ${readinessEvidence}` : ""}.`,
       watch: "I am watching consistency and workout quality this week.",
       options: [
         { label: "Keep full session", action: null, primary: true },
@@ -8813,7 +10689,9 @@ Rules for every response:
     const adherenceLine = recentCountableStatuses.length
       ? `${recentCompletedCount}/${recentCountableStatuses.length} recent logged sessions were completed`
       : "recent adherence data is limited";
-    const recoveryLine = lowRecoverySignal
+    const recoveryLine = coachReadiness?.recoveryLine
+      ? coachReadiness.recoveryLine.replace(/^Recovery recommendation:\s*/i, "").trim()
+      : lowRecoverySignal
       ? `latest recovery check-in is strained (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
       : highRecoverySignal
       ? `latest recovery check-in is supportive (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
@@ -8826,15 +10704,15 @@ Rules for every response:
     if (coachDecisionMode === "Protect") {
       watching = `Watching recovery after ${latestCompletedLabel}: ${recoveryLine}.`;
       doToday = `Do the shortest controlled version of ${todaySessionLabel}; stop the moment pain or session feel worsens.`;
-      noticed = recentModifiedCount > 0
+      noticed = coachReadiness?.userVisibleLine || (recentModifiedCount > 0
         ? `You kept training alive with ${recentModifiedCount} modified session${recentModifiedCount > 1 ? "s" : ""}, but recovery is the limiter right now.`
-        : `Recent work (${recentNames}) stacked stress faster than recovery caught up.`;
+        : `Recent work (${recentNames}) stacked stress faster than recovery caught up.`);
     } else if (coachDecisionMode === "Simplify") {
       watching = `Watching whether the next 72 hours turn ${adherenceLine} into a cleaner rhythm.`;
       doToday = `Strip ${todaySessionLabel} down to the first meaningful block and log it immediately when finished.`;
-      noticed = recentSkippedCount > 0
+      noticed = coachReadiness?.userVisibleLine || (recentSkippedCount > 0
         ? `You skipped ${recentSkippedCount} recent session${recentSkippedCount > 1 ? "s" : ""}; simplicity is more useful than adding load.`
-        : `Execution has been mixed, so reducing friction matters more than perfect programming this week.`;
+        : `Execution has been mixed, so reducing friction matters more than perfect programming this week.`);
     } else if (coachDecisionMode === "Rebuild") {
       watching = `Watching whether you can stack the next 2 sessions after ${recentNames}.`;
       doToday = `Treat ${todaySessionLabel} as a rebuild rep: show up, finish the first block, and bank momentum.`;
@@ -8842,13 +10720,13 @@ Rules for every response:
     } else if (coachDecisionMode === "Push") {
       watching = `Watching whether today's quality stays smooth and tomorrow's recovery still looks normal after ${latestCompletedLabel}.`;
       doToday = `Keep the full ${todaySessionLabel} and add one small progression only if the first half feels controlled.`;
-      noticed = `You are coming in off ${adherenceLine}, and the last session felt ${feelDescriptor}.`;
+      noticed = coachReadiness?.userVisibleLine || `You are coming in off ${adherenceLine}, and the last session felt ${feelDescriptor}.`;
     } else {
       watching = `Watching for stable recovery and clean execution across ${recentNames}.`;
       doToday = `Run ${todaySessionLabel} as written and keep the effort boringly consistent.`;
-      noticed = lowRecoverySignal
+      noticed = coachReadiness?.userVisibleLine || (lowRecoverySignal
         ? `You are still carrying some recovery drag, but not enough to force a full pullback.`
-        : `This week looks steady: ${adherenceLine}, with no strong signal to either push or cut back.`;
+        : `This week looks steady: ${adherenceLine}, with no strong signal to either push or cut back.`);
     }
 
     return { watch: watching, doToday, noticed };
@@ -8883,6 +10761,7 @@ Rules for every response:
       goalPriority ? "your current goal priority" : null,
       recentEntries.length ? "recent workout logs" : null,
       recentCountableStatuses.length ? "adherence trend" : null,
+      readinessMetrics?.hardSessions7d ? "recent intensity load" : null,
       latestCheckinEntry ? "latest recovery check-in" : null,
     ],
     limitation: latestCheckinEntry ? "" : "Recovery input is limited right now.",
