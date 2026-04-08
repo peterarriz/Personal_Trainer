@@ -9081,6 +9081,205 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         )
       )
 
+      /* ── ACTIONS ── */
+      , React.createElement('div', { style: { fontSize:"0.5rem", color:"#475569", letterSpacing:"0.14em", marginBottom:"0.55rem", marginTop:"0.3rem" },}, "ACTIONS")
+
+      /* Session modify buttons */
+      , React.createElement('div', { style: { marginBottom:"0.65rem", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" },}
+        , React.createElement('button', { className: "btn", onClick: ()=>setSessionVariant(v=>v === "short" ? "standard" : "short"), style: { fontSize:"0.5rem", color: sessionVariant === "short" ? "#0f172a" : C.green, background: sessionVariant === "short" ? C.green : "transparent", borderColor:C.green+"30", fontWeight: sessionVariant === "short" ? 600 : 400 },}, sessionVariant === "short" ? "✓ Shortened to 20 min" : "Shorten to 20 min")
+        , React.createElement('button', { className: "btn", onClick: ()=>setSessionVariant(v=>v === "extended" ? "standard" : "extended"), style: { fontSize:"0.5rem", color: sessionVariant === "extended" ? "#0f172a" : C.amber, background: sessionVariant === "extended" ? C.amber : "transparent", borderColor:C.amber+"35", fontWeight: sessionVariant === "extended" ? 600 : 400 },}, sessionVariant === "extended" ? "✓ Extended (+15 min)" : "Extend session (+15 min)")
+        , React.createElement('button', { className: "btn", onClick: async ()=>{
+          if (tomorrowHasSession) { setShiftChoiceOpen(true); return; }
+          const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
+          setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
+        }, style: { fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"30" },}, "Move to tomorrow"  )
+        , React.createElement('button', { className: "btn", onClick: ()=>setSessionVariant("standard"), style: { fontSize:"0.5rem", color:"#64748b", borderColor:"#334155", opacity: sessionVariant === "standard" ? 0.35 : 1 }, disabled: sessionVariant === "standard",}, "Reset to default"  )
+      )
+      , sessionVariant !== "standard" && (
+        React.createElement('div', { style: { marginTop:"-0.4rem", marginBottom:"0.65rem", fontSize:"0.5rem", color: sessionVariant === "short" ? C.green : C.amber, paddingLeft:"0.15rem" },}, "Session modified: "
+            , sessionVariant === "short" ? "shortened to ~20 min" : "extended by ~15 min", ". Tap card above to see updated plan."
+        )
+      )
+      , shiftChoiceOpen && (
+        React.createElement('div', { className: "card card-soft" , style: { marginTop:"-0.3rem", marginBottom:"0.65rem", borderColor:"#314560", display:"grid", gap:"0.35rem" },}
+          , React.createElement('div', { style: { fontSize:"0.54rem", color:"#cbd5e1" },}, "Tomorrow already has a session. How should this move work?"         )
+          , React.createElement('div', { style: { display:"flex", gap:"0.35rem", flexWrap:"wrap" },}
+            , React.createElement('button', { className: "btn", onClick: async ()=>{
+              const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
+              setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
+              setShiftChoiceOpen(false);
+            }, style: { fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" },}, "Replace tomorrow session"  )
+            , React.createElement('button', { className: "btn", onClick: async ()=>{
+              const undo = await shiftTodayWorkout({ daysForward: 1, mode: "add_second" });
+              setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
+              setShiftChoiceOpen(false);
+            }, style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" },}, "Add as second session"   )
+            , React.createElement('button', { className: "btn", onClick: ()=>setShiftChoiceOpen(false), style: { fontSize:"0.52rem" },}, "Cancel")
+          )
+        )
+      )
+      , shiftUndo && (
+        React.createElement('div', { className: "card card-soft" , style: { marginTop:"-0.3rem", marginBottom:"0.65rem", borderColor:C.amber+"35", display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center" },}
+          , React.createElement('div', { style: { fontSize:"0.54rem", color:"#dbe7f6" },}, "Session moved. Undo available for 60s."     )
+          , React.createElement('button', { className: "btn", onClick: async ()=>{ await restoreShiftTodayWorkout(shiftUndo); setShiftUndo(null); }, style: { fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" },}, "Undo")
+        )
+      )
+
+      /* Proactive nudge */
+      , primaryTrigger && (
+        React.createElement('div', { style: { marginBottom:"0.65rem", display:"grid", gap:"0.3rem" },}
+          , React.createElement('div', { style: { fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 },}, primaryTrigger.msg)
+          , React.createElement('div', { style: { display:"flex", gap:"0.35rem", alignItems:"center" },}
+            , React.createElement('button', {
+              className: "btn",
+              onClick: () => isTravelModeSuggestion ? toggleTravelModeForToday() : onApplyTrigger(primaryTrigger),
+              style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" },}
+
+              , isTravelModeSuggestion ? (isTodayTravelOverride ? "Exit travel mode" : "Switch travel mode") : (primaryTrigger.actionLabel || "Apply")
+            )
+            , React.createElement('button', { className: "btn", onClick: ()=>onDismissTrigger(primaryTrigger.id), style: { fontSize:"0.52rem" },}, "Dismiss")
+          )
+        )
+      )
+
+      /* Injury panel (shown when injury badge tapped) */
+      , showInjuryPanel && (
+        React.createElement('div', { className: "card card-soft" , style: { marginBottom:"0.75rem" },}
+          , React.createElement('div', { style: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.35rem" },}
+            , React.createElement('div', { className: "sect-title", style: { color:C.amber },}, "INJURY STATUS" )
+            , React.createElement('button', { onClick: ()=>setShowInjuryPanel(false), style: { background:"none", border:"none", color:"#64748b", cursor:"pointer", fontSize:"0.7rem" },}, "×")
+          )
+          , React.createElement('select', { value: injuryArea, onChange: e=>setInjuryArea(e.target.value), style: { fontSize:"0.56rem", marginBottom:"0.35rem" },}
+            , AFFECTED_AREAS.map(a => React.createElement('option', { key: a, value: a,}, a))
+          )
+          , React.createElement('div', { style: { display:"flex", gap:"0.3rem", flexWrap:"wrap" },}
+            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("none", injuryArea), style: { color:C.green, borderColor:C.green+"35" },}, "Clear")
+            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("mild_tightness", injuryArea), style: { color:C.blue, borderColor:C.blue+"35" },}, "Mild")
+            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("moderate_pain", injuryArea), style: { color:C.amber, borderColor:C.amber+"35" },}, "Moderate")
+            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("sharp_pain_stop", injuryArea), style: { color:C.red, borderColor:C.red+"35" },}, "Sharp/Stop")
+          )
+          , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" },}, injuryLevel.replaceAll("_"," "), " · "  , injuryRule.why)
+        )
+      )
+
+      /* Quick check-in */
+      , React.createElement('div', { className: "card card-soft" , style: { marginBottom:"0.75rem" },}
+        , React.createElement('div', { className: "sect-title", style: { color:C.green, marginBottom:"0.45rem" },}, "QUICK CHECK-IN" )
+        , garminConnected && garminReadinessScore !== null && (
+          React.createElement('div', { style: { fontSize:"0.53rem", color:"#8fa5c8", marginBottom:"0.35rem" },}, "Garmin readiness "
+              , garminReadinessScore, "/100 is primary today. Sliders are optional confirmation."
+          )
+        )
+        , React.createElement('div', { style: { display:"grid", gap:"0.35rem" },}
+          , React.createElement('div', { style: { display:"flex", gap:"0.35rem", flexWrap:"wrap" },}
+            , CHECKIN_STATUS_OPTIONS.map(opt => (
+              React.createElement('button', { key: opt.key, className: "btn", onClick: ()=>setCheckin(c=>({ ...c, status: opt.key })), style: { fontSize:"0.52rem", color:checkin.status===opt.key?C.green:"#64748b", borderColor:checkin.status===opt.key?C.green+"40":"#1e293b" },}, opt.label)
+            ))
+          )
+          , React.createElement('div', { style: { display:"flex", gap:"0.35rem", flexWrap:"wrap" },}
+            , CHECKIN_FEEL_OPTIONS.map(opt => (
+              React.createElement('button', { key: opt.key, className: "btn", onClick: ()=>setCheckin(c=>({ ...c, sessionFeel: opt.key })), style: { fontSize:"0.52rem", color:checkin.sessionFeel===opt.key?C.blue:"#64748b", borderColor:checkin.sessionFeel===opt.key?C.blue+"40":"#1e293b" },}, opt.label)
+            ))
+          )
+          , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"1fr 120px auto", gap:"0.35rem" },}
+            , React.createElement('input', { value: checkin.note || "", onChange: e=>setCheckin(c=>({ ...c, note: e.target.value })), placeholder: "Optional note" ,} )
+            , React.createElement('input', { type: "number", step: "0.1", value: checkin.bodyweight || "", onChange: e=>setCheckin(c=>({ ...c, bodyweight: e.target.value })), placeholder: "BW",} )
+            , React.createElement('button', { className: "btn btn-primary" , disabled: checkin.status === "not_logged", onClick: async ()=>{
+              if (checkin.status === "not_logged") return;
+              try {
+                setTodayDataError("");
+                const parsed = parseMicroCheckin(checkin.note || "");
+                const basePayload = parsed ? { ...checkin, ...parsed } : { ...checkin };
+                const strengthPerformance = hasStrength
+                  ? Object.values(strengthInputs || {})
+                      .map((row) => ({
+                        ...row,
+                        weightUsed: _optionalChain([row, 'optionalAccess', _1596 => _1596.bodyweightOnly]) || _optionalChain([row, 'optionalAccess', _1597 => _1597.bandTension]) ? null : toFiniteNumber(_nullishCoalesce(_optionalChain([row, 'optionalAccess', _1598 => _1598.weightUsed]), () => ( _optionalChain([row, 'optionalAccess', _1599 => _1599.actualWeight]))), null),
+                        actualWeight: _optionalChain([row, 'optionalAccess', _1600 => _1600.bodyweightOnly]) || _optionalChain([row, 'optionalAccess', _1601 => _1601.bandTension]) ? null : toFiniteNumber(_nullishCoalesce(_optionalChain([row, 'optionalAccess', _1602 => _1602.actualWeight]), () => ( _optionalChain([row, 'optionalAccess', _1603 => _1603.weightUsed]))), null),
+                        repsCompleted: Number(_optionalChain([row, 'optionalAccess', _1604 => _1604.repsCompleted]) || _optionalChain([row, 'optionalAccess', _1605 => _1605.actualReps]) || 0),
+                        actualReps: Number(_optionalChain([row, 'optionalAccess', _1606 => _1606.actualReps]) || _optionalChain([row, 'optionalAccess', _1607 => _1607.repsCompleted]) || 0),
+                        actualSets: Number(_optionalChain([row, 'optionalAccess', _1608 => _1608.actualSets]) || _optionalChain([row, 'optionalAccess', _1609 => _1609.prescribedSets]) || 0),
+                        prescribedWeight: _optionalChain([row, 'optionalAccess', _1610 => _1610.bodyweightOnly]) || _optionalChain([row, 'optionalAccess', _1611 => _1611.bandTension]) ? null : toFiniteNumber(_nullishCoalesce(_optionalChain([row, 'optionalAccess', _1612 => _1612.prescribedWeight]), () => ( _optionalChain([row, 'optionalAccess', _1613 => _1613.weightUsed]))), null),
+                      }))
+                      .filter((row) => row.exercise && Number(row.actualReps || 0) > 0 && Number(row.actualSets || 0) > 0 && (row.bodyweightOnly || row.bandTension || row.actualWeight !== null))
+                      .map((row) => {
+                        const denominator = Math.max(1, Number(row.prescribedSets || 1) * Number(row.prescribedReps || 1));
+                        return {
+                          ...row,
+                          completionRatio: Number((((Number(row.actualReps || 0) * Number(row.actualSets || 0)) / denominator)).toFixed(2)),
+                          sessionFeelScore: mapSessionFeelToScore(_optionalChain([basePayload, 'optionalAccess', _1614 => _1614.sessionFeel]) || "about_right"),
+                          feelThisSession: mapSessionFeelToScore(_optionalChain([basePayload, 'optionalAccess', _1615 => _1615.sessionFeel]) || "about_right"),
+                        };
+                      })
+                  : [];
+                const payload = { ...basePayload, strengthPerformance };
+                await saveDailyCheckin(todayKey, payload);
+                setCheckinAck(readinessUpdate.readinessFilled ? "Saved. Readiness captured for quiet coach adjustment." : "Saved.");
+                const daysToRaceNow = Math.max(0, Math.ceil((new Date("2026-07-19T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24)));
+                const skipDecision = (payload.status === "skipped" && todayIsQuality)
+                  ? buildSkippedQualityDecision({
+                      skippedSessionType: _optionalChain([todayWorkout, 'optionalAccess', _1616 => _1616.run, 'optionalAccess', _1617 => _1617.t]) || _optionalChain([todayWorkout, 'optionalAccess', _1618 => _1618.label]) || _optionalChain([todayWorkout, 'optionalAccess', _1619 => _1619.type]) || "quality session",
+                      dayOfWeek: todayDay,
+                      remainingSessions: remainingQualitySessions,
+                      daysToRace: daysToRaceNow,
+                      weekType: phase,
+                      tomorrowSessionType: _optionalChain([tomorrowWorkout, 'optionalAccess', _1620 => _1620.run, 'optionalAccess', _1621 => _1621.t]) || _optionalChain([tomorrowWorkout, 'optionalAccess', _1622 => _1622.label]) || _optionalChain([tomorrowWorkout, 'optionalAccess', _1623 => _1623.type]) || "",
+                    })
+                  : null;
+                setPostSaveInsight(skipDecision || buildCheckinReadSummary({
+                  checkin: payload,
+                  todayWorkout,
+                  environmentSelection,
+                  momentum,
+                  recentWorkoutCount: completed7,
+                }));
+                if (checkin.bodyweight && !Number.isNaN(parseFloat(checkin.bodyweight))) {
+                  const entry = { date: todayKey, w: parseFloat(checkin.bodyweight) };
+                  const nextBW = [...bodyweights.filter(b => b.date !== todayKey), entry].sort((a,b) => a.date.localeCompare(b.date));
+                  await saveBodyweights(nextBW);
+                }
+              } catch (e) {
+                setTodayDataError("Could not save check-in right now. Your screen is still usable; try again in a moment.");
+              }
+            }, style: { fontSize:"0.55rem", opacity: checkin.status === "not_logged" ? 0.4 : 1 },}, "SAVE")
+          )
+          , checkinAck && React.createElement('div', { style: { fontSize:"0.54rem", color:C.green },}, checkinAck)
+          , hasStrength && (
+            React.createElement('div', { style: { display:"grid", gap:"0.3rem", marginTop:"0.2rem", borderTop:"1px solid #1e293b", paddingTop:"0.35rem" },}
+              , React.createElement('div', { style: { fontSize:"0.52rem", color:"#8fa5c8" },}, "Strength performance (for automatic load adjustment)"     )
+              , strExercises.slice(0, 6).map((ex) => {
+                const key = normalizeExerciseKey(_optionalChain([ex, 'optionalAccess', _1624 => _1624.ex]) || "");
+                const row = _optionalChain([strengthInputs, 'optionalAccess', _1625 => _1625[key]]) || {};
+                const mode = _optionalChain([row, 'optionalAccess', _1626 => _1626.mode]) || inferExerciseMode(_optionalChain([ex, 'optionalAccess', _1627 => _1627.ex]) || "");
+                return (
+                  React.createElement('div', { key: key, style: { display:"grid", gridTemplateColumns:"1fr 78px 62px 74px", gap:"0.3rem", alignItems:"center" },}
+                    , React.createElement('div', { style: { fontSize:"0.5rem", color:"#cbd5e1", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" },}, ex.ex)
+                    , mode === "band" ? (
+                      React.createElement('select', { value: row.bandTension || "", onChange: e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], bandTension: e.target.value } })),}
+                        , React.createElement('option', { value: "",}, "Band")
+                        , BAND_TENSION_LEVELS.map((level) => React.createElement('option', { key: level, value: level,}, level))
+                      )
+                    ) : mode === "bodyweight" ? (
+                      React.createElement('div', { style: { fontSize:"0.5rem", color:"#8fa5c8", textAlign:"center" },}, "BW")
+                    ) : (
+                      React.createElement('input', { type: "number", step: "2.5", placeholder: "lb", value: row.weightUsed || "", onChange: e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], weightUsed: e.target.value, actualWeight: e.target.value } })),} )
+                    )
+                    , React.createElement('input', { type: "number", placeholder: "sets", value: row.actualSets || "", onChange: e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], actualSets: e.target.value } })),} )
+                    , React.createElement('input', { type: "number", placeholder: "reps", value: row.repsCompleted || "", onChange: e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], repsCompleted: e.target.value, actualReps: e.target.value } })),} )
+                  )
+                );
+              })
+            )
+          )
+          , todayDataError && React.createElement('div', { style: { fontSize:"0.54rem", color:C.amber },}, todayDataError)
+          , postSaveInsight && React.createElement('div', { style: { fontSize:"0.54rem", color:C.amber, whiteSpace:"pre-wrap", lineHeight:1.6 },}, postSaveInsight)
+        )
+      )
+
+      /* ── CONTEXT ── */
+      , React.createElement('div', { style: { fontSize:"0.5rem", color:"#475569", letterSpacing:"0.14em", marginBottom:"0.55rem", marginTop:"0.3rem" },}, "CONTEXT")
+
+      /* Coach adjustments */
       , primaryAdjustment && (
         React.createElement('div', { style: { marginBottom:"0.65rem", padding:"0.15rem 0.05rem 0.1rem 0.15rem" },}
           , React.createElement('div', { style: { display:"grid", gap:"0.25rem" },}
@@ -9145,205 +9344,18 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         )
       )
 
-      /* Tomorrow preview */
-      , React.createElement('div', { style: { fontSize:"0.54rem", color:"#475569", marginBottom:"0.85rem", paddingLeft:"0.15rem" },}, "Tomorrow: "
-         , _optionalChain([tomorrowWorkout, 'optionalAccess', _1596 => _1596.label]) || "Rest", _optionalChain([tomorrowWorkout, 'optionalAccess', _1597 => _1597.run]) ? ` — ${tomorrowWorkout.run.d}` : ""
-      )
-
-      /* Coach context (replaces "More context" dropdown) */
+      /* Coach context */
       , contextLines.length > 0 && (
-        React.createElement('div', { style: { marginBottom:"0.75rem", padding:"0.55rem 0.7rem", background:"#0d1117", borderRadius:8, display:"grid", gap:"0.25rem" },}
+        React.createElement('div', { style: { marginBottom:"0.65rem", padding:"0.55rem 0.7rem", background:"#0d1117", borderRadius:8, display:"grid", gap:"0.25rem" },}
           , contextLines.map((line, i) => (
             React.createElement('div', { key: i, style: { fontSize:"0.54rem", color: i === 0 ? C.amber : i === 1 ? C.green : C.blue },}, line)
           ))
         )
       )
 
-      /* Proactive nudge */
-      , primaryTrigger && (
-        React.createElement('div', { style: { marginBottom:"0.75rem", display:"grid", gap:"0.3rem" },}
-          , React.createElement('div', { style: { fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 },}, primaryTrigger.msg)
-          , React.createElement('div', { style: { display:"flex", gap:"0.35rem", alignItems:"center" },}
-            , React.createElement('button', {
-              className: "btn",
-              onClick: () => isTravelModeSuggestion ? toggleTravelModeForToday() : onApplyTrigger(primaryTrigger),
-              style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" },}
-
-              , isTravelModeSuggestion ? (isTodayTravelOverride ? "Exit travel mode" : "Switch travel mode") : (primaryTrigger.actionLabel || "Apply nudge")
-            )
-            , React.createElement('button', { className: "btn", onClick: ()=>onDismissTrigger(primaryTrigger.id), style: { fontSize:"0.52rem" },}, "Dismiss")
-          )
-        )
-      )
-
-      /* Quick adjust row */
-      , React.createElement('div', { style: { marginBottom:"0.85rem", display:"grid", gridTemplateColumns:"1fr auto auto", alignItems:"center", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" },}
-        , React.createElement('div', { style: { fontSize:"0.55rem", color:"#7f92aa" },}, "Quick adjust" )
-        , React.createElement('button', { className: "btn", onClick: ()=>setSessionVariant(v=>v === "short" ? "standard" : "short"), style: { fontSize:"0.5rem", color:C.green, borderColor:C.green+"30" },}, sessionVariant === "short" ? "Restore full session" : "20-min version")
-        , React.createElement('button', { className: "btn", onClick: ()=>setSessionVariant(v=>v === "extended" ? "standard" : "extended"), style: { fontSize:"0.5rem", color:C.amber, borderColor:C.amber+"35" },}, sessionVariant === "extended" ? "Restore standard session" : "I have more time")
-        , React.createElement('button', { className: "btn", onClick: async ()=>{
-          if (tomorrowHasSession) { setShiftChoiceOpen(true); return; }
-          const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
-          setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
-        }, style: { fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"30" },}, "Move to tomorrow"  )
-      )
-      , shiftChoiceOpen && (
-        React.createElement('div', { className: "card card-soft" , style: { marginTop:"-0.5rem", marginBottom:"0.85rem", borderColor:"#314560", display:"grid", gap:"0.35rem" },}
-          , React.createElement('div', { style: { fontSize:"0.54rem", color:"#cbd5e1" },}, "Tomorrow already has a session. How should this move work?"         )
-          , React.createElement('div', { style: { display:"flex", gap:"0.35rem", flexWrap:"wrap" },}
-            , React.createElement('button', { className: "btn", onClick: async ()=>{
-              const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
-              setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
-              setShiftChoiceOpen(false);
-            }, style: { fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" },}, "Replace tomorrow session"  )
-            , React.createElement('button', { className: "btn", onClick: async ()=>{
-              const undo = await shiftTodayWorkout({ daysForward: 1, mode: "add_second" });
-              setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
-              setShiftChoiceOpen(false);
-            }, style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" },}, "Add as second session"   )
-            , React.createElement('button', { className: "btn", onClick: ()=>setShiftChoiceOpen(false), style: { fontSize:"0.52rem" },}, "Cancel")
-          )
-        )
-      )
-      , shiftUndo && (
-        React.createElement('div', { className: "card card-soft" , style: { marginTop:"-0.45rem", marginBottom:"0.85rem", borderColor:C.amber+"35", display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center" },}
-          , React.createElement('div', { style: { fontSize:"0.54rem", color:"#dbe7f6" },}, "Session moved. Undo available for 60s."     )
-          , React.createElement('button', { className: "btn", onClick: async ()=>{ await restoreShiftTodayWorkout(shiftUndo); setShiftUndo(null); }, style: { fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" },}, "Undo")
-        )
-      )
-
-      /* Injury panel (shown when injury badge tapped) */
-      , showInjuryPanel && (
-        React.createElement('div', { className: "card card-soft" , style: { marginBottom:"0.75rem" },}
-          , React.createElement('div', { style: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.35rem" },}
-            , React.createElement('div', { className: "sect-title", style: { color:C.amber },}, "INJURY STATUS" )
-            , React.createElement('button', { onClick: ()=>setShowInjuryPanel(false), style: { background:"none", border:"none", color:"#64748b", cursor:"pointer", fontSize:"0.7rem" },}, "×")
-          )
-          , React.createElement('select', { value: injuryArea, onChange: e=>setInjuryArea(e.target.value), style: { fontSize:"0.56rem", marginBottom:"0.35rem" },}
-            , AFFECTED_AREAS.map(a => React.createElement('option', { key: a, value: a,}, a))
-          )
-          , React.createElement('div', { style: { display:"flex", gap:"0.3rem", flexWrap:"wrap" },}
-            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("none", injuryArea), style: { color:C.green, borderColor:C.green+"35" },}, "Clear")
-            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("mild_tightness", injuryArea), style: { color:C.blue, borderColor:C.blue+"35" },}, "Mild")
-            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("moderate_pain", injuryArea), style: { color:C.amber, borderColor:C.amber+"35" },}, "Moderate")
-            , React.createElement('button', { className: "btn", onClick: ()=>setInjuryState("sharp_pain_stop", injuryArea), style: { color:C.red, borderColor:C.red+"35" },}, "Sharp/Stop")
-          )
-          , React.createElement('div', { style: { marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" },}, injuryLevel.replaceAll("_"," "), " · "  , injuryRule.why)
-        )
-      )
-
-      /* Quick check-in */
-      , React.createElement('div', { className: "card card-soft" , style: { marginBottom:"0.75rem" },}
-        , React.createElement('div', { className: "sect-title", style: { color:C.green, marginBottom:"0.45rem" },}, "QUICK CHECK-IN" )
-        , garminConnected && garminReadinessScore !== null && (
-          React.createElement('div', { style: { fontSize:"0.53rem", color:"#8fa5c8", marginBottom:"0.35rem" },}, "Garmin readiness "
-              , garminReadinessScore, "/100 is primary today. Sliders are optional confirmation."
-          )
-        )
-        , React.createElement('div', { style: { display:"grid", gap:"0.35rem" },}
-          , React.createElement('div', { style: { display:"flex", gap:"0.35rem", flexWrap:"wrap" },}
-            , CHECKIN_STATUS_OPTIONS.map(opt => (
-              React.createElement('button', { key: opt.key, className: "btn", onClick: ()=>setCheckin(c=>({ ...c, status: opt.key })), style: { fontSize:"0.52rem", color:checkin.status===opt.key?C.green:"#64748b", borderColor:checkin.status===opt.key?C.green+"40":"#1e293b" },}, opt.label)
-            ))
-          )
-          , React.createElement('div', { style: { display:"flex", gap:"0.35rem", flexWrap:"wrap" },}
-            , CHECKIN_FEEL_OPTIONS.map(opt => (
-              React.createElement('button', { key: opt.key, className: "btn", onClick: ()=>setCheckin(c=>({ ...c, sessionFeel: opt.key })), style: { fontSize:"0.52rem", color:checkin.sessionFeel===opt.key?C.blue:"#64748b", borderColor:checkin.sessionFeel===opt.key?C.blue+"40":"#1e293b" },}, opt.label)
-            ))
-          )
-          , React.createElement('div', { style: { display:"grid", gridTemplateColumns:"1fr 120px auto", gap:"0.35rem" },}
-            , React.createElement('input', { value: checkin.note || "", onChange: e=>setCheckin(c=>({ ...c, note: e.target.value })), placeholder: "Optional note" ,} )
-            , React.createElement('input', { type: "number", step: "0.1", value: checkin.bodyweight || "", onChange: e=>setCheckin(c=>({ ...c, bodyweight: e.target.value })), placeholder: "BW",} )
-            , React.createElement('button', { className: "btn btn-primary" , disabled: checkin.status === "not_logged", onClick: async ()=>{
-              if (checkin.status === "not_logged") return;
-              try {
-                setTodayDataError("");
-                const parsed = parseMicroCheckin(checkin.note || "");
-                const basePayload = parsed ? { ...checkin, ...parsed } : { ...checkin };
-                const strengthPerformance = hasStrength
-                  ? Object.values(strengthInputs || {})
-                      .map((row) => ({
-                        ...row,
-                        weightUsed: _optionalChain([row, 'optionalAccess', _1598 => _1598.bodyweightOnly]) || _optionalChain([row, 'optionalAccess', _1599 => _1599.bandTension]) ? null : toFiniteNumber(_nullishCoalesce(_optionalChain([row, 'optionalAccess', _1600 => _1600.weightUsed]), () => ( _optionalChain([row, 'optionalAccess', _1601 => _1601.actualWeight]))), null),
-                        actualWeight: _optionalChain([row, 'optionalAccess', _1602 => _1602.bodyweightOnly]) || _optionalChain([row, 'optionalAccess', _1603 => _1603.bandTension]) ? null : toFiniteNumber(_nullishCoalesce(_optionalChain([row, 'optionalAccess', _1604 => _1604.actualWeight]), () => ( _optionalChain([row, 'optionalAccess', _1605 => _1605.weightUsed]))), null),
-                        repsCompleted: Number(_optionalChain([row, 'optionalAccess', _1606 => _1606.repsCompleted]) || _optionalChain([row, 'optionalAccess', _1607 => _1607.actualReps]) || 0),
-                        actualReps: Number(_optionalChain([row, 'optionalAccess', _1608 => _1608.actualReps]) || _optionalChain([row, 'optionalAccess', _1609 => _1609.repsCompleted]) || 0),
-                        actualSets: Number(_optionalChain([row, 'optionalAccess', _1610 => _1610.actualSets]) || _optionalChain([row, 'optionalAccess', _1611 => _1611.prescribedSets]) || 0),
-                        prescribedWeight: _optionalChain([row, 'optionalAccess', _1612 => _1612.bodyweightOnly]) || _optionalChain([row, 'optionalAccess', _1613 => _1613.bandTension]) ? null : toFiniteNumber(_nullishCoalesce(_optionalChain([row, 'optionalAccess', _1614 => _1614.prescribedWeight]), () => ( _optionalChain([row, 'optionalAccess', _1615 => _1615.weightUsed]))), null),
-                      }))
-                      .filter((row) => row.exercise && Number(row.actualReps || 0) > 0 && Number(row.actualSets || 0) > 0 && (row.bodyweightOnly || row.bandTension || row.actualWeight !== null))
-                      .map((row) => {
-                        const denominator = Math.max(1, Number(row.prescribedSets || 1) * Number(row.prescribedReps || 1));
-                        return {
-                          ...row,
-                          completionRatio: Number((((Number(row.actualReps || 0) * Number(row.actualSets || 0)) / denominator)).toFixed(2)),
-                          sessionFeelScore: mapSessionFeelToScore(_optionalChain([basePayload, 'optionalAccess', _1616 => _1616.sessionFeel]) || "about_right"),
-                          feelThisSession: mapSessionFeelToScore(_optionalChain([basePayload, 'optionalAccess', _1617 => _1617.sessionFeel]) || "about_right"),
-                        };
-                      })
-                  : [];
-                const payload = { ...basePayload, strengthPerformance };
-                await saveDailyCheckin(todayKey, payload);
-                setCheckinAck(readinessUpdate.readinessFilled ? "Saved. Readiness captured for quiet coach adjustment." : "Saved.");
-                const daysToRaceNow = Math.max(0, Math.ceil((new Date("2026-07-19T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24)));
-                const skipDecision = (payload.status === "skipped" && todayIsQuality)
-                  ? buildSkippedQualityDecision({
-                      skippedSessionType: _optionalChain([todayWorkout, 'optionalAccess', _1618 => _1618.run, 'optionalAccess', _1619 => _1619.t]) || _optionalChain([todayWorkout, 'optionalAccess', _1620 => _1620.label]) || _optionalChain([todayWorkout, 'optionalAccess', _1621 => _1621.type]) || "quality session",
-                      dayOfWeek: todayDay,
-                      remainingSessions: remainingQualitySessions,
-                      daysToRace: daysToRaceNow,
-                      weekType: phase,
-                      tomorrowSessionType: _optionalChain([tomorrowWorkout, 'optionalAccess', _1622 => _1622.run, 'optionalAccess', _1623 => _1623.t]) || _optionalChain([tomorrowWorkout, 'optionalAccess', _1624 => _1624.label]) || _optionalChain([tomorrowWorkout, 'optionalAccess', _1625 => _1625.type]) || "",
-                    })
-                  : null;
-                setPostSaveInsight(skipDecision || buildCheckinReadSummary({
-                  checkin: payload,
-                  todayWorkout,
-                  environmentSelection,
-                  momentum,
-                  recentWorkoutCount: completed7,
-                }));
-                if (checkin.bodyweight && !Number.isNaN(parseFloat(checkin.bodyweight))) {
-                  const entry = { date: todayKey, w: parseFloat(checkin.bodyweight) };
-                  const nextBW = [...bodyweights.filter(b => b.date !== todayKey), entry].sort((a,b) => a.date.localeCompare(b.date));
-                  await saveBodyweights(nextBW);
-                }
-              } catch (e) {
-                setTodayDataError("Could not save check-in right now. Your screen is still usable; try again in a moment.");
-              }
-            }, style: { fontSize:"0.55rem", opacity: checkin.status === "not_logged" ? 0.4 : 1 },}, "SAVE")
-          )
-          , checkinAck && React.createElement('div', { style: { fontSize:"0.54rem", color:C.green },}, checkinAck)
-          , hasStrength && (
-            React.createElement('div', { style: { display:"grid", gap:"0.3rem", marginTop:"0.2rem", borderTop:"1px solid #1e293b", paddingTop:"0.35rem" },}
-              , React.createElement('div', { style: { fontSize:"0.52rem", color:"#8fa5c8" },}, "Strength performance (for automatic load adjustment)"     )
-              , strExercises.slice(0, 6).map((ex) => {
-                const key = normalizeExerciseKey(_optionalChain([ex, 'optionalAccess', _1626 => _1626.ex]) || "");
-                const row = _optionalChain([strengthInputs, 'optionalAccess', _1627 => _1627[key]]) || {};
-                const mode = _optionalChain([row, 'optionalAccess', _1628 => _1628.mode]) || inferExerciseMode(_optionalChain([ex, 'optionalAccess', _1629 => _1629.ex]) || "");
-                return (
-                  React.createElement('div', { key: key, style: { display:"grid", gridTemplateColumns:"1fr 78px 62px 74px", gap:"0.3rem", alignItems:"center" },}
-                    , React.createElement('div', { style: { fontSize:"0.5rem", color:"#cbd5e1", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" },}, ex.ex)
-                    , mode === "band" ? (
-                      React.createElement('select', { value: row.bandTension || "", onChange: e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], bandTension: e.target.value } })),}
-                        , React.createElement('option', { value: "",}, "Band")
-                        , BAND_TENSION_LEVELS.map((level) => React.createElement('option', { key: level, value: level,}, level))
-                      )
-                    ) : mode === "bodyweight" ? (
-                      React.createElement('div', { style: { fontSize:"0.5rem", color:"#8fa5c8", textAlign:"center" },}, "BW")
-                    ) : (
-                      React.createElement('input', { type: "number", step: "2.5", placeholder: "lb", value: row.weightUsed || "", onChange: e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], weightUsed: e.target.value, actualWeight: e.target.value } })),} )
-                    )
-                    , React.createElement('input', { type: "number", placeholder: "sets", value: row.actualSets || "", onChange: e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], actualSets: e.target.value } })),} )
-                    , React.createElement('input', { type: "number", placeholder: "reps", value: row.repsCompleted || "", onChange: e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], repsCompleted: e.target.value, actualReps: e.target.value } })),} )
-                  )
-                );
-              })
-            )
-          )
-          , todayDataError && React.createElement('div', { style: { fontSize:"0.54rem", color:C.amber },}, todayDataError)
-          , postSaveInsight && React.createElement('div', { style: { fontSize:"0.54rem", color:C.amber, whiteSpace:"pre-wrap", lineHeight:1.6 },}, postSaveInsight)
-        )
+      /* Tomorrow preview */
+      , React.createElement('div', { style: { fontSize:"0.54rem", color:"#475569", marginBottom:"0.85rem", paddingLeft:"0.15rem" },}, "Tomorrow: "
+         , _optionalChain([tomorrowWorkout, 'optionalAccess', _1628 => _1628.label]) || "Rest", _optionalChain([tomorrowWorkout, 'optionalAccess', _1629 => _1629.run]) ? ` — ${tomorrowWorkout.run.d}` : ""
       )
 
       , activeCoachAdjustment && (
