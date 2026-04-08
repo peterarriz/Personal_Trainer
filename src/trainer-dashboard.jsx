@@ -6331,114 +6331,27 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         )}
       </div>
 
-      {primaryAdjustment && (
-        <div style={{ marginBottom:"0.65rem", padding:"0.15rem 0.05rem 0.1rem 0.15rem" }}>
-          <div style={{ display:"grid", gap:"0.25rem" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem" }}>
-              <button
-                className="btn"
-                onClick={() => openAdjustmentDetail(primaryAdjustment)}
-                style={{ border:"none", background:"none", padding:0, fontSize:"0.56rem", color:"#cbd5e1", textAlign:"left", justifyContent:"flex-start" }}
-              >
-                <span style={{ color:"#dbe7f6" }}>{primaryAdjustment.icon} {primaryAdjustment.summary}</span>
-              </button>
-              <button
-                className="btn"
-                onClick={() => dismissAdjustment(primaryAdjustment.id)}
-                style={{ border:"none", background:"none", padding:0, fontSize:"0.62rem", color:"#64748b", minWidth:18 }}
-                aria-label="Dismiss coach adjustment notification"
-              >
-                ×
-              </button>
-            </div>
-            {primaryAdjustment.reason && (
-              <div style={{ fontSize:"0.5rem", color:"#7f92aa", lineHeight:1.5, paddingLeft:"0.15rem" }}>
-                Why: {primaryAdjustment.reason}
-              </div>
-            )}
-            {secondaryAdjustments.length > 0 && (
-              <button
-                className="btn"
-                onClick={() => setShowMoreAdjustments(v => !v)}
-                style={{ border:"none", background:"none", padding:0, fontSize:"0.52rem", color:"#8fa5c8", justifyContent:"flex-start" }}
-              >
-                {showMoreAdjustments ? "Hide extra adjustments" : `+ ${secondaryAdjustments.length} more adjustments`}
-              </button>
-            )}
-            {showMoreAdjustments && secondaryAdjustments.map((card) => (
-              <div key={card.id} style={{ display:"grid", gap:"0.2rem", paddingLeft:"0.15rem" }}>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem" }}>
-                  <button
-                    className="btn"
-                    onClick={() => openAdjustmentDetail(card)}
-                    style={{ border:"none", background:"none", padding:0, fontSize:"0.54rem", color:"#9fb2d2", textAlign:"left", justifyContent:"flex-start" }}
-                  >
-                    {card.icon} {card.summary}
-                  </button>
-                  <button
-                    className="btn"
-                    onClick={() => dismissAdjustment(card.id)}
-                    style={{ border:"none", background:"none", padding:0, fontSize:"0.6rem", color:"#64748b" }}
-                    aria-label="Dismiss coach adjustment notification"
-                  >
-                    ×
-                  </button>
-                </div>
-                {card.reason && (
-                  <div style={{ fontSize:"0.48rem", color:"#7f92aa", lineHeight:1.5 }}>
-                    Why: {card.reason}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* ── ACTIONS ── */}
+      <div style={{ fontSize:"0.5rem", color:"#475569", letterSpacing:"0.14em", marginBottom:"0.55rem", marginTop:"0.3rem" }}>ACTIONS</div>
 
-      {/* Tomorrow preview */}
-      <div style={{ fontSize:"0.54rem", color:"#475569", marginBottom:"0.85rem", paddingLeft:"0.15rem" }}>
-        Tomorrow: {tomorrowWorkout?.label || "Rest"}{tomorrowWorkout?.run ? ` — ${tomorrowWorkout.run.d}` : ""}
-      </div>
-
-      {/* Coach context (replaces "More context" dropdown) */}
-      {contextLines.length > 0 && (
-        <div style={{ marginBottom:"0.75rem", padding:"0.55rem 0.7rem", background:"#0d1117", borderRadius:8, display:"grid", gap:"0.25rem" }}>
-          {contextLines.map((line, i) => (
-            <div key={i} style={{ fontSize:"0.54rem", color: i === 0 ? C.amber : i === 1 ? C.green : C.blue }}>{line}</div>
-          ))}
-        </div>
-      )}
-
-      {/* Proactive nudge */}
-      {primaryTrigger && (
-        <div style={{ marginBottom:"0.75rem", display:"grid", gap:"0.3rem" }}>
-          <div style={{ fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 }}>{primaryTrigger.msg}</div>
-          <div style={{ display:"flex", gap:"0.35rem", alignItems:"center" }}>
-            <button
-              className="btn"
-              onClick={() => isTravelModeSuggestion ? toggleTravelModeForToday() : onApplyTrigger(primaryTrigger)}
-              style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}
-            >
-              {isTravelModeSuggestion ? (isTodayTravelOverride ? "Exit travel mode" : "Switch travel mode") : (primaryTrigger.actionLabel || "Apply nudge")}
-            </button>
-            <button className="btn" onClick={()=>onDismissTrigger(primaryTrigger.id)} style={{ fontSize:"0.52rem" }}>Dismiss</button>
-          </div>
-        </div>
-      )}
-
-      {/* Quick adjust row */}
-      <div style={{ marginBottom:"0.85rem", display:"grid", gridTemplateColumns:"1fr auto auto", alignItems:"center", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" }}>
-        <div style={{ fontSize:"0.55rem", color:"#7f92aa" }}>Quick adjust</div>
-        <button className="btn" onClick={()=>setSessionVariant(v=>v === "short" ? "standard" : "short")} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"30" }}>{sessionVariant === "short" ? "Restore full session" : "20-min version"}</button>
-        <button className="btn" onClick={()=>setSessionVariant(v=>v === "extended" ? "standard" : "extended")} style={{ fontSize:"0.5rem", color:C.amber, borderColor:C.amber+"35" }}>{sessionVariant === "extended" ? "Restore standard session" : "I have more time"}</button>
+      {/* Session modify buttons */}
+      <div style={{ marginBottom:"0.65rem", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" }}>
+        <button className="btn" onClick={()=>setSessionVariant(v=>v === "short" ? "standard" : "short")} style={{ fontSize:"0.5rem", color: sessionVariant === "short" ? "#0f172a" : C.green, background: sessionVariant === "short" ? C.green : "transparent", borderColor:C.green+"30", fontWeight: sessionVariant === "short" ? 600 : 400 }}>{sessionVariant === "short" ? "✓ Shortened to 20 min" : "Shorten to 20 min"}</button>
+        <button className="btn" onClick={()=>setSessionVariant(v=>v === "extended" ? "standard" : "extended")} style={{ fontSize:"0.5rem", color: sessionVariant === "extended" ? "#0f172a" : C.amber, background: sessionVariant === "extended" ? C.amber : "transparent", borderColor:C.amber+"35", fontWeight: sessionVariant === "extended" ? 600 : 400 }}>{sessionVariant === "extended" ? "✓ Extended (+15 min)" : "Extend session (+15 min)"}</button>
         <button className="btn" onClick={async ()=>{
           if (tomorrowHasSession) { setShiftChoiceOpen(true); return; }
           const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
           setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
         }} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"30" }}>Move to tomorrow</button>
+        <button className="btn" onClick={()=>setSessionVariant("standard")} style={{ fontSize:"0.5rem", color:"#64748b", borderColor:"#334155", opacity: sessionVariant === "standard" ? 0.35 : 1 }} disabled={sessionVariant === "standard"}>Reset to default</button>
       </div>
+      {sessionVariant !== "standard" && (
+        <div style={{ marginTop:"-0.4rem", marginBottom:"0.65rem", fontSize:"0.5rem", color: sessionVariant === "short" ? C.green : C.amber, paddingLeft:"0.15rem" }}>
+          Session modified: {sessionVariant === "short" ? "shortened to ~20 min" : "extended by ~15 min"}. Tap card above to see updated plan.
+        </div>
+      )}
       {shiftChoiceOpen && (
-        <div className="card card-soft" style={{ marginTop:"-0.5rem", marginBottom:"0.85rem", borderColor:"#314560", display:"grid", gap:"0.35rem" }}>
+        <div className="card card-soft" style={{ marginTop:"-0.3rem", marginBottom:"0.65rem", borderColor:"#314560", display:"grid", gap:"0.35rem" }}>
           <div style={{ fontSize:"0.54rem", color:"#cbd5e1" }}>Tomorrow already has a session. How should this move work?</div>
           <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
             <button className="btn" onClick={async ()=>{
@@ -6456,9 +6369,26 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
         </div>
       )}
       {shiftUndo && (
-        <div className="card card-soft" style={{ marginTop:"-0.45rem", marginBottom:"0.85rem", borderColor:C.amber+"35", display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center" }}>
+        <div className="card card-soft" style={{ marginTop:"-0.3rem", marginBottom:"0.65rem", borderColor:C.amber+"35", display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center" }}>
           <div style={{ fontSize:"0.54rem", color:"#dbe7f6" }}>Session moved. Undo available for 60s.</div>
           <button className="btn" onClick={async ()=>{ await restoreShiftTodayWorkout(shiftUndo); setShiftUndo(null); }} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Undo</button>
+        </div>
+      )}
+
+      {/* Proactive nudge */}
+      {primaryTrigger && (
+        <div style={{ marginBottom:"0.65rem", display:"grid", gap:"0.3rem" }}>
+          <div style={{ fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 }}>{primaryTrigger.msg}</div>
+          <div style={{ display:"flex", gap:"0.35rem", alignItems:"center" }}>
+            <button
+              className="btn"
+              onClick={() => isTravelModeSuggestion ? toggleTravelModeForToday() : onApplyTrigger(primaryTrigger)}
+              style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"30" }}
+            >
+              {isTravelModeSuggestion ? (isTodayTravelOverride ? "Exit travel mode" : "Switch travel mode") : (primaryTrigger.actionLabel || "Apply")}
+            </button>
+            <button className="btn" onClick={()=>onDismissTrigger(primaryTrigger.id)} style={{ fontSize:"0.52rem" }}>Dismiss</button>
+          </div>
         </div>
       )}
 
@@ -6594,6 +6524,88 @@ function TodayTab({ todayWorkout, currentWeek, logs, bodyweights, planAlerts, se
           {todayDataError && <div style={{ fontSize:"0.54rem", color:C.amber }}>{todayDataError}</div>}
           {postSaveInsight && <div style={{ fontSize:"0.54rem", color:C.amber, whiteSpace:"pre-wrap", lineHeight:1.6 }}>{postSaveInsight}</div>}
         </div>
+      </div>
+
+      {/* ── CONTEXT ── */}
+      <div style={{ fontSize:"0.5rem", color:"#475569", letterSpacing:"0.14em", marginBottom:"0.55rem", marginTop:"0.3rem" }}>CONTEXT</div>
+
+      {/* Coach adjustments */}
+      {primaryAdjustment && (
+        <div style={{ marginBottom:"0.65rem", padding:"0.15rem 0.05rem 0.1rem 0.15rem" }}>
+          <div style={{ display:"grid", gap:"0.25rem" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem" }}>
+              <button
+                className="btn"
+                onClick={() => openAdjustmentDetail(primaryAdjustment)}
+                style={{ border:"none", background:"none", padding:0, fontSize:"0.56rem", color:"#cbd5e1", textAlign:"left", justifyContent:"flex-start" }}
+              >
+                <span style={{ color:"#dbe7f6" }}>{primaryAdjustment.icon} {primaryAdjustment.summary}</span>
+              </button>
+              <button
+                className="btn"
+                onClick={() => dismissAdjustment(primaryAdjustment.id)}
+                style={{ border:"none", background:"none", padding:0, fontSize:"0.62rem", color:"#64748b", minWidth:18 }}
+                aria-label="Dismiss coach adjustment notification"
+              >
+                ×
+              </button>
+            </div>
+            {primaryAdjustment.reason && (
+              <div style={{ fontSize:"0.5rem", color:"#7f92aa", lineHeight:1.5, paddingLeft:"0.15rem" }}>
+                Why: {primaryAdjustment.reason}
+              </div>
+            )}
+            {secondaryAdjustments.length > 0 && (
+              <button
+                className="btn"
+                onClick={() => setShowMoreAdjustments(v => !v)}
+                style={{ border:"none", background:"none", padding:0, fontSize:"0.52rem", color:"#8fa5c8", justifyContent:"flex-start" }}
+              >
+                {showMoreAdjustments ? "Hide extra adjustments" : `+ ${secondaryAdjustments.length} more adjustments`}
+              </button>
+            )}
+            {showMoreAdjustments && secondaryAdjustments.map((card) => (
+              <div key={card.id} style={{ display:"grid", gap:"0.2rem", paddingLeft:"0.15rem" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem" }}>
+                  <button
+                    className="btn"
+                    onClick={() => openAdjustmentDetail(card)}
+                    style={{ border:"none", background:"none", padding:0, fontSize:"0.54rem", color:"#9fb2d2", textAlign:"left", justifyContent:"flex-start" }}
+                  >
+                    {card.icon} {card.summary}
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => dismissAdjustment(card.id)}
+                    style={{ border:"none", background:"none", padding:0, fontSize:"0.6rem", color:"#64748b" }}
+                    aria-label="Dismiss coach adjustment notification"
+                  >
+                    ×
+                  </button>
+                </div>
+                {card.reason && (
+                  <div style={{ fontSize:"0.48rem", color:"#7f92aa", lineHeight:1.5 }}>
+                    Why: {card.reason}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Coach context */}
+      {contextLines.length > 0 && (
+        <div style={{ marginBottom:"0.65rem", padding:"0.55rem 0.7rem", background:"#0d1117", borderRadius:8, display:"grid", gap:"0.25rem" }}>
+          {contextLines.map((line, i) => (
+            <div key={i} style={{ fontSize:"0.54rem", color: i === 0 ? C.amber : i === 1 ? C.green : C.blue }}>{line}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Tomorrow preview */}
+      <div style={{ fontSize:"0.54rem", color:"#475569", marginBottom:"0.85rem", paddingLeft:"0.15rem" }}>
+        Tomorrow: {tomorrowWorkout?.label || "Rest"}{tomorrowWorkout?.run ? ` — ${tomorrowWorkout.run.d}` : ""}
       </div>
 
       {activeCoachAdjustment && (
