@@ -262,31 +262,7 @@ export const buildRollingHorizonWeeks = ({ currentWeek, horizonWeeks = DEFAULT_P
 
   const daysToDeadline = daysUntil(timeGoal.targetDate);
   if (daysToDeadline >= 0) {
-    const weeksToDeadline = Math.max(1, Math.ceil((daysToDeadline + 1) / 7));
-    const visiblePlanWeeks = Math.min(horizonWeeks, weeksToDeadline);
-    const rows = Array.from({ length: visiblePlanWeeks }).map((_, idx) => buildPlanWeek(idx));
-    if (visiblePlanWeeks < horizonWeeks) {
-      const recoveryStart = new Date(`${timeGoal.targetDate}T12:00:00`);
-      recoveryStart.setDate(recoveryStart.getDate() + 1);
-      const recoveryEnd = new Date(recoveryStart);
-      recoveryEnd.setDate(recoveryStart.getDate() + (RECOVERY_BLOCK_WEEKS * 7) - 1);
-      rows.push({
-        kind: "recovery",
-        slot: visiblePlanWeeks + 1,
-        absoluteWeek: currentWeek + visiblePlanWeeks,
-        weekLabel: "Recovery Block",
-        focus: "Post-race recovery, low intensity, mobility, and reflection.",
-        startDate: recoveryStart,
-        endDate: recoveryEnd,
-      });
-      rows.push({
-        kind: "next_goal_prompt",
-        slot: visiblePlanWeeks + 2,
-        absoluteWeek: currentWeek + visiblePlanWeeks + 1,
-        weekLabel: "Set Next Goal",
-        focus: "Choose the next time-bound objective while ongoing goals continue.",
-      });
-    }
+    const rows = Array.from({ length: horizonWeeks }).map((_, idx) => buildPlanWeek(idx));
     return labelPhaseWeeks(rows).map(row => ({ ...row, weekLabel: row.weekLabel || row.phaseLabel || `Week ${row.absoluteWeek}` }));
   }
 
