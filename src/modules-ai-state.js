@@ -15,7 +15,7 @@ const clonePlainValueAiState = (value) => {
 };
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
-const clampNumber = (value, min, max, fallback = min) => {
+const clampNumberAiState = (value, min, max, fallback = min) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(min, Math.min(max, numeric));
