@@ -9938,20 +9938,21 @@ const buildArchiveNutritionActualMap = (archive = null) => (
   "src/services/text-format-service.js": function(require, module, exports) {
 "use strict";Object.defineProperty(exports, "__esModule", {value: true});const MOJIBAKE_PATTERN = /(?:Ã.|Â|â€|â€™|â€œ|â€¢|â€“|â€”|â€¦|�)/;
 const COMMON_MOJIBAKE_REPLACEMENTS = [
-  ["Ã‚Â·", "·"],
-  ["Ã¢â‚¬Â¢", "•"],
-  ["Ã¢â‚¬â€", "—"],
-  ["Ã¢â‚¬â€œ", "–"],
-  ["Ã¢â‚¬Â¦", "…"],
-  ["Ã¢â‚¬â„¢", "’"],
-  ["Ã¢â‚¬Å“", "“"],
-  ["Ã¢â‚¬Â", "”"],
-  ["Ã¢â€ â€™", "→"],
-  ["Ã¢â€ â€˜", "↑"],
-  ["Ã¢â€ â€œ", "↓"],
-  ["Ãƒâ€”", "×"],
-  ["Ã‚Â°", "°"],
-  ["Â·", "·"],
+  ["Ãƒâ€šÃ‚Â·", "\u00b7"],
+  ["Ã¢â‚¬Â¢", "\u2022"],
+  ["Ã¢â‚¬â€", "\u2014"],
+  ["Ã¢â‚¬â€œ", "\u2013"],
+  ["Ã¢â‚¬Â¦", "\u2026"],
+  ["Ã¢â‚¬â„¢", "\u2019"],
+  ["Ã¢â‚¬Å“", "\u201c"],
+  ["Ã¢â‚¬Â", "\u201d"],
+  ["Ã¢â€ â€™", "\u2192"],
+  ["Ã¢â€ â€˜", "\u2191"],
+  ["Ã¢â€ â€œ", "\u2193"],
+  ["Ãƒâ€”", "\u00d7"],
+  ["Ã‚Â°", "\u00b0"],
+  ["Ã‚Â·", "\u00b7"],
+  ["Â·", "\u00b7"],
   ["Â", ""],
 ];
 
@@ -10000,9 +10001,9 @@ const decodeLatin1AsUtf8 = (value = "") => {
 }; exports.repairMojibakeText = repairMojibakeText;
 
  const DISPLAY_SEPARATORS = {
-  middot: " · ",
-  bullet: " • ",
-  emDash: " — ",
+  middot: " \u00b7 ",
+  bullet: " \u2022 ",
+  emDash: " \u2014 ",
 }; exports.DISPLAY_SEPARATORS = DISPLAY_SEPARATORS;
 
  const joinDisplayParts = (parts = [], separator = exports.DISPLAY_SEPARATORS.middot) => (
@@ -20432,7 +20433,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
           , React.createElement('input', { value: detailed.runTime, onChange: e=>setDetailed({ ...detailed, runTime:e.target.value }), placeholder: "Run time" ,} )
           , React.createElement('input', { value: detailed.reps, onChange: e=>setDetailed({ ...detailed, reps:e.target.value }), placeholder: "Reps",} )
           , React.createElement('input', { value: detailed.weight, onChange: e=>setDetailed({ ...detailed, weight:e.target.value }), placeholder: "Weight",} )
-          , React.createElement('select', { value: detailed.feel, onChange: e=>setDetailed({ ...detailed, feel:e.target.value }),}, [1,2,3,4,5].map(n=>React.createElement('option', { key: n, value: String(n),}, `${n} Ã‚Â· ${_optionalChain([FEEL_LABELS, 'access', _2297 => _2297[String(n)], 'optionalAccess', _2298 => _2298.title])}`)))
+          , React.createElement('select', { value: detailed.feel, onChange: e=>setDetailed({ ...detailed, feel:e.target.value }),}, [1,2,3,4,5].map(n=>React.createElement('option', { key: n, value: String(n),}, _textformatservicejs.joinDisplayParts.call(void 0, [String(n), _optionalChain([FEEL_LABELS, 'access', _2297 => _2297[String(n)], 'optionalAccess', _2298 => _2298.title])]))))
           , React.createElement('input', { style: { gridColumn:"1 / -1" }, value: detailed.notes, onChange: e=>setDetailed({ ...detailed, notes:e.target.value }), placeholder: "Notes",} )
           , React.createElement('button', { className: "btn btn-primary" , onClick: saveDetailed, style: { width:"fit-content", fontSize:"0.55rem" },}, "Save custom workout"  )
         )
@@ -20728,14 +20729,14 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const inferredSessionTime = _optionalChain([todayWorkout, 'optionalAccess', _2375 => _2375.sessionTime]) || _optionalChain([todayWorkout, 'optionalAccess', _2376 => _2376.scheduledTime]) || (nowHour < 12 ? "morning" : nowHour < 18 ? "afternoon" : "evening");
   const isTravelNoSession = Boolean(_optionalChain([nutritionLayer, 'optionalAccess', _2377 => _2377.travelMode]) && (recoveryDay || sessionKind === "rest"));
   const directiveSentence = isTravelNoSession
-    ? "Travel day with no session Ã¢â‚¬â€ keep it simple and hit your recovery anchors."
+    ? _textformatservicejs.joinDisplayParts.call(void 0, ["Travel day with no session", "keep it simple and hit your recovery anchors."])
     : hardDay
-    ? "Hard session today Ã¢â‚¬â€ lead with carbs, close with protein."
+    ? _textformatservicejs.joinDisplayParts.call(void 0, ["Hard session today", "lead with carbs, close with protein."])
     : strengthDay
-    ? "Strength session today Ã¢â‚¬â€ prioritize protein timing and steady carbs."
+    ? _textformatservicejs.joinDisplayParts.call(void 0, ["Strength session today", "prioritize protein timing and steady carbs."])
     : recoveryDay
-    ? "Recovery day Ã¢â‚¬â€ keep protein high and appetite decisions simple."
-    : "Steady day Ã¢â‚¬â€ balanced meals and consistency win.";
+    ? _textformatservicejs.joinDisplayParts.call(void 0, ["Recovery day", "keep protein high and appetite decisions simple."])
+    : _textformatservicejs.joinDisplayParts.call(void 0, ["Steady day", "balanced meals and consistency win."]);
   const locationPermissionGranted = Boolean(_optionalChain([localFoodContext, 'optionalAccess', _2378 => _2378.locationPermissionGranted]) || _optionalChain([savedLocation, 'optionalAccess', _2379 => _2379.status]) === "granted");
   const locationUnavailable = !locationPermissionGranted && ["denied", "unavailable"].includes(String(_optionalChain([localFoodContext, 'optionalAccess', _2380 => _2380.locationStatus]) || _optionalChain([savedLocation, 'optionalAccess', _2381 => _2381.status]) || "").toLowerCase());
   const showNearbySection = locationPermissionGranted;

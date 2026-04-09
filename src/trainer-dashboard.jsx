@@ -10089,7 +10089,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
           <input value={detailed.runTime} onChange={e=>setDetailed({ ...detailed, runTime:e.target.value })} placeholder="Run time" />
           <input value={detailed.reps} onChange={e=>setDetailed({ ...detailed, reps:e.target.value })} placeholder="Reps" />
           <input value={detailed.weight} onChange={e=>setDetailed({ ...detailed, weight:e.target.value })} placeholder="Weight" />
-          <select value={detailed.feel} onChange={e=>setDetailed({ ...detailed, feel:e.target.value })}>{[1,2,3,4,5].map(n=><option key={n} value={String(n)}>{`${n} Ã‚Â· ${FEEL_LABELS[String(n)]?.title}`}</option>)}</select>
+          <select value={detailed.feel} onChange={e=>setDetailed({ ...detailed, feel:e.target.value })}>{[1,2,3,4,5].map(n=><option key={n} value={String(n)}>{joinDisplayParts([String(n), FEEL_LABELS[String(n)]?.title])}</option>)}</select>
           <input style={{ gridColumn:"1 / -1" }} value={detailed.notes} onChange={e=>setDetailed({ ...detailed, notes:e.target.value })} placeholder="Notes" />
           <button className="btn btn-primary" onClick={saveDetailed} style={{ width:"fit-content", fontSize:"0.55rem" }}>Save custom workout</button>
         </div>
@@ -10385,14 +10385,14 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const inferredSessionTime = todayWorkout?.sessionTime || todayWorkout?.scheduledTime || (nowHour < 12 ? "morning" : nowHour < 18 ? "afternoon" : "evening");
   const isTravelNoSession = Boolean(nutritionLayer?.travelMode && (recoveryDay || sessionKind === "rest"));
   const directiveSentence = isTravelNoSession
-    ? "Travel day with no session Ã¢â‚¬â€ keep it simple and hit your recovery anchors."
+    ? joinDisplayParts(["Travel day with no session", "keep it simple and hit your recovery anchors."])
     : hardDay
-    ? "Hard session today Ã¢â‚¬â€ lead with carbs, close with protein."
+    ? joinDisplayParts(["Hard session today", "lead with carbs, close with protein."])
     : strengthDay
-    ? "Strength session today Ã¢â‚¬â€ prioritize protein timing and steady carbs."
+    ? joinDisplayParts(["Strength session today", "prioritize protein timing and steady carbs."])
     : recoveryDay
-    ? "Recovery day Ã¢â‚¬â€ keep protein high and appetite decisions simple."
-    : "Steady day Ã¢â‚¬â€ balanced meals and consistency win.";
+    ? joinDisplayParts(["Recovery day", "keep protein high and appetite decisions simple."])
+    : joinDisplayParts(["Steady day", "balanced meals and consistency win."]);
   const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
   const locationUnavailable = !locationPermissionGranted && ["denied", "unavailable"].includes(String(localFoodContext?.locationStatus || savedLocation?.status || "").toLowerCase());
   const showNearbySection = locationPermissionGranted;
