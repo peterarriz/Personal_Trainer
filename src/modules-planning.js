@@ -12,6 +12,7 @@ import {
   buildStructuredProvenance,
   PROVENANCE_ACTORS,
 } from "./services/provenance-service.js";
+import { dedupeStrings } from "./utils/collection-utils.js";
 
 export { deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
 

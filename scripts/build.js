@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * build.js — compiles src/trainer-dashboard.jsx → index.html
+ * build.js - bundles src/trainer-dashboard.jsx into index.html
  * Run: node scripts/build.js
- * Requires: npm install sucrase (one-time)
+ * Requires: npm install sucrase
  */
 
 const fs = require("fs");
@@ -14,50 +14,71 @@ const SRC = path.join(ROOT, "src", "trainer-dashboard.jsx");
 const OUT = path.join(ROOT, "index.html");
 const REACT = fs.readFileSync(path.join(__dirname, "react.min.js"), "utf8");
 const REACT_DOM = fs.readFileSync(path.join(__dirname, "react-dom.min.js"), "utf8");
-const SUPABASE_UMD = fs.readFileSync(path.join(ROOT, "node_modules", "@supabase", "supabase-js", "dist", "umd", "supabase.js"), "utf8");
+const SUPABASE_UMD = fs.readFileSync(
+  path.join(ROOT, "node_modules", "@supabase", "supabase-js", "dist", "umd", "supabase.js"),
+  "utf8"
+);
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || "";
+const LOCAL_IMPORT_RE = /^\s*import\s+.*?\s+from\s+['"](.+?)['"];?\s*$/gm;
 
 console.log("Building...");
 
-const inlineLocalImports = (sourceCode, sourceFile) => {
-  let code = sourceCode;
-  const dir = path.dirname(sourceFile);
-  let inlined = "";
-  const importRe = /^import\s+\{[^}]+\}\s+from\s+['"](.+?)['"];?\n/gm;
-  let match;
-  while ((match = importRe.exec(sourceCode)) !== null) {
-    const importPath = match[1];
-    if (!importPath.startsWith(".")) continue;
-    const full = path.resolve(dir, importPath);
-    const raw = fs.readFileSync(full, "utf8");
-    const nested = inlineLocalImports(raw, full);
-    const normalized = nested
-      .replace(/^import\s+.*$/gm, "")
-      .replace(/^export\s+const\s+/gm, "const ")
-      .replace(/^export\s+function\s+/gm, "function ")
-      .replace(/^export\s+\{[^}]+\};?\n/gm, "");
-    inlined += `\n// inlined: ${path.relative(ROOT, full)}\n${normalized}\n`;
+const toModuleId = (filePath) => path.relative(ROOT, filePath).replace(/\\/g, "/");
+
+const resolveLocalModule = (fromFile, request) => {
+  const candidate = path.resolve(path.dirname(fromFile), request);
+  const attempts = [candidate, `${candidate}.js`, `${candidate}.jsx`];
+  for (const fullPath of attempts) {
+    if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) return fullPath;
   }
-  code = code.replace(importRe, (line, p1) => (p1.startsWith(".") ? "" : line));
-  return inlined + code;
+  throw new Error(`Unable to resolve local module '${request}' from ${path.relative(ROOT, fromFile)}`);
 };
 
-let jsx = inlineLocalImports(fs.readFileSync(SRC, "utf8"), SRC);
+const collectModuleGraph = (entryFile) => {
+  const ordered = [];
+  const seen = new Set();
 
-// Remove React import — we use the inlined global
-jsx = jsx.replace(/^import\s+.*$/gm, "");
+  const visit = (filePath) => {
+    const normalized = path.resolve(filePath);
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
 
-const { code } = transform(jsx, {
-  transforms: ["jsx"],
-  jsxRuntime: "classic",
-  production: true,
+    const source = fs.readFileSync(normalized, "utf8");
+    let match;
+    while ((match = LOCAL_IMPORT_RE.exec(source)) !== null) {
+      const request = match[1];
+      if (!request.startsWith(".")) continue;
+      visit(resolveLocalModule(normalized, request));
+    }
+    LOCAL_IMPORT_RE.lastIndex = 0;
+
+    ordered.push(normalized);
+  };
+
+  visit(entryFile);
+  return ordered;
+};
+
+const moduleFiles = collectModuleGraph(SRC);
+const moduleEntries = moduleFiles.map((filePath) => {
+  const source = fs.readFileSync(filePath, "utf8");
+  const { code } = transform(source, {
+    transforms: ["jsx", "imports"],
+    jsxRuntime: "classic",
+    production: true,
+  });
+  return {
+    id: toModuleId(filePath),
+    code,
+  };
 });
 
-const js = code.replace(/^import\s+.*$/gm, "").replace(
-  "export default function TrainerDashboard",
-  "function TrainerDashboard"
-);
+const bundleModules = moduleEntries.map(({ id, code }) => (
+  `  ${JSON.stringify(id)}: function(require, module, exports) {\n${code}\n  }`
+)).join(",\n");
+
+const entryId = toModuleId(SRC);
 
 const html = `<!DOCTYPE html>
 <html lang="en">
@@ -86,24 +107,57 @@ const html = `<!DOCTYPE html>
   <script>
 window.__SUPABASE_URL = ${JSON.stringify(SUPABASE_URL)};
 window.__SUPABASE_ANON_KEY = ${JSON.stringify(SUPABASE_ANON_KEY)};
-const { useState, useEffect, useRef, useMemo } = React;
-const { createClient } = supabase;
 
-${js}
+const __externals = {
+  react: React,
+  "react-dom": ReactDOM,
+};
 
-    try {
-      const _c = document.getElementById('root');
-      const _r = ReactDOM.createRoot(_c);
-      _r.render(React.createElement(TrainerDashboard, null));
-    } catch(e) {
-      document.getElementById('root').innerHTML =
-        '<div style="padding:2rem;font-family:monospace;color:#f87171;font-size:0.7rem;background:#0a0a0f;min-height:100vh">' +
-        '<div style="margin-bottom:1rem;color:#e2e8f0">BUILD ERROR — screenshot and send to Claude:</div>' +
-        e.toString() + '<br/><br/>' + (e.stack||'').substring(0,500) + '</div>';
-    }
+const __modules = {
+${bundleModules}
+};
+
+const __cache = {};
+
+const __resolveModuleId = (fromId, request) => {
+  if (__externals[request]) return request;
+  if (!request.startsWith(".")) return request;
+  const parts = fromId.split("/");
+  parts.pop();
+  for (const token of request.split("/")) {
+    if (!token || token === ".") continue;
+    if (token === "..") parts.pop();
+    else parts.push(token);
+  }
+  return parts.join("/");
+};
+
+const __requireModule = (id) => {
+  if (__externals[id]) return __externals[id];
+  if (__cache[id]) return __cache[id].exports;
+  const factory = __modules[id];
+  if (!factory) throw new Error("Unknown module: " + id);
+  const module = { exports: {} };
+  __cache[id] = module;
+  const localRequire = (request) => __requireModule(__resolveModuleId(id, request));
+  factory(localRequire, module, module.exports);
+  return module.exports;
+};
+
+try {
+  const TrainerDashboard = __requireModule(${JSON.stringify(entryId)}).default;
+  const rootNode = document.getElementById("root");
+  const root = ReactDOM.createRoot(rootNode);
+  root.render(React.createElement(TrainerDashboard, null));
+} catch (e) {
+  document.getElementById("root").innerHTML =
+    '<div style="padding:2rem;font-family:monospace;color:#f87171;font-size:0.7rem;background:#0a0a0f;min-height:100vh">' +
+    '<div style="margin-bottom:1rem;color:#e2e8f0">BUILD ERROR - screenshot and send to Claude:</div>' +
+    e.toString() + '<br/><br/>' + (e.stack || '').substring(0, 1200) + '</div>';
+}
   </script>
 </body>
 </html>`;
 
 fs.writeFileSync(OUT, html);
-console.log(`✓ Built index.html — ${(html.length / 1024).toFixed(1)} KB`);
+console.log(`Built index.html - ${(html.length / 1024).toFixed(1)} KB`);
