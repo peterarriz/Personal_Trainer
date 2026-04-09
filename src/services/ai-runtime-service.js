@@ -5,6 +5,8 @@ import {
   acceptAiPlanAnalysisProposal,
   buildCoachAiSystemPrompt,
   buildPlanAnalysisAiSystemPrompt,
+  buildIntakeInterpretationAiSystemPrompt,
+  sanitizeIntakeInterpretationProposal,
 } from "../modules-ai-state.js";
 import { acceptCoachActionProposal, applyCoachActionMutation } from "../modules-coach-engine.js";
 import { buildProvenanceEvent, PROVENANCE_ACTORS } from "./provenance-service.js";
@@ -22,11 +24,6 @@ export const AI_RUNTIME_TODO_PATHS = [
     area: "deterministic_explanation_copy",
     location: "trainer-dashboard.jsx / strength alert explanation helpers",
     note: "Uses short-form copy generation outside the unified coordinator.",
-  },
-  {
-    area: "onboarding_intake",
-    location: "trainer-dashboard.jsx / OnboardingCoach and legacy onboarding fallbacks",
-    note: "Uses intake prompts outside typed packet boundaries.",
   },
   {
     area: "meal_generation_copy",
@@ -298,6 +295,123 @@ export const buildCoachChatRuntimeInput = ({
   });
   const systemPrompt = buildCoachAiSystemPrompt({ statePacket });
   return { statePacket, systemPrompt };
+};
+
+export const buildIntakeInterpretationRuntimeInput = ({
+  input = "Interpret the intake packet and return a proposal-only goal assessment.",
+  ...packetArgs
+} = {}) => {
+  const statePacket = buildAiStatePacket({
+    intent: AI_PACKET_INTENTS.intakeInterpretation,
+    input,
+    ...packetArgs,
+  });
+  const systemPrompt = buildIntakeInterpretationAiSystemPrompt({ statePacket });
+  return { statePacket, systemPrompt };
+};
+
+export const runIntakeInterpretationRuntime = async ({
+  apiKey = "",
+  safeFetchWithTimeout,
+  packetArgs = {},
+  model = DEFAULT_MODEL,
+} = {}) => {
+  const runtimeInput = buildIntakeInterpretationRuntimeInput(packetArgs);
+  const requestedAt = Date.now();
+  const response = await requestAiText({
+    apiKey,
+    safeFetchWithTimeout,
+    system: runtimeInput.systemPrompt,
+    user: "Interpret the typed intake packet and return a JSON proposal only.",
+    maxTokens: 500,
+    model,
+  });
+
+  if (!response.ok || !response.text) {
+    return {
+      ok: false,
+      status: "no_response",
+      statePacket: runtimeInput.statePacket,
+      systemPrompt: runtimeInput.systemPrompt,
+      proposal: null,
+      interpreted: null,
+      rawText: response.text || "",
+      error: response.error || "no_response",
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.fallback,
+        trigger: "intake_interpretation_runtime",
+        mutationType: "ai_runtime_failure",
+        revisionReason: "AI intake interpretation returned no response.",
+        sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeInterpretation],
+        confidence: "low",
+        timestamp: requestedAt,
+        details: {
+          error: response.error || "no_response",
+        },
+      }),
+      ui: {
+        message: "No AI intake interpretation response was returned.",
+      },
+    };
+  }
+
+  const proposal = parseAiJsonObjectFromText(response.text);
+  if (!proposal) {
+    return {
+      ok: false,
+      status: "invalid_json",
+      statePacket: runtimeInput.statePacket,
+      systemPrompt: runtimeInput.systemPrompt,
+      proposal: null,
+      interpreted: null,
+      rawText: response.text,
+      error: "invalid_json",
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.fallback,
+        trigger: "intake_interpretation_runtime",
+        mutationType: "ai_runtime_failure",
+        revisionReason: "AI returned invalid JSON for intake interpretation.",
+        sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeInterpretation],
+        confidence: "low",
+        timestamp: requestedAt,
+        details: {
+          error: "invalid_json",
+        },
+      }),
+      ui: {
+        message: "AI returned an invalid intake interpretation payload.",
+      },
+    };
+  }
+
+  const interpreted = sanitizeIntakeInterpretationProposal(proposal);
+
+  return {
+    ok: true,
+    status: "proposal_ready",
+    statePacket: runtimeInput.statePacket,
+    systemPrompt: runtimeInput.systemPrompt,
+    proposal,
+    interpreted,
+    rawText: response.text,
+    error: "",
+    provenance: buildProvenanceEvent({
+      actor: PROVENANCE_ACTORS.aiInterpretation,
+      trigger: "intake_interpretation_runtime",
+      mutationType: "ai_runtime_result",
+      revisionReason: "AI intake interpretation returned a proposal-only packet-scoped assessment.",
+      sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeInterpretation],
+      confidence: "medium",
+      timestamp: requestedAt,
+      details: {
+        metricCount: interpreted?.suggestedMetrics?.length || 0,
+        questionCount: interpreted?.missingClarifyingQuestions?.length || 0,
+      },
+    }),
+    ui: {
+      message: "AI intake interpretation returned a proposal-only assessment.",
+    },
+  };
 };
 
 export const runCoachChatRuntime = async ({

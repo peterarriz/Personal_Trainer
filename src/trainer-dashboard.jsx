@@ -9,8 +9,9 @@ import { SettingsIcon } from "./icons.js";
 import { assembleCanonicalPlanDay, resolvePlanDayStateInputs, resolvePlanDayTimeOfDay } from "./services/plan-day-service.js";
 import { assemblePlanWeekRuntime, resolveCurrentPlanWeekNumber, resolvePlanWeekNumberForDateKey, resolveProgramDisplayHorizon } from "./services/plan-week-service.js";
 import { buildDayReview, buildDayReviewComparison, classifyDayReviewStatus } from "./services/day-review-service.js";
-import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
+import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
 import { deriveCanonicalAthleteState, withLegacyGoalProfileCompatibility } from "./services/canonical-athlete-service.js";
+import { applyResolvedGoalsToGoalSlots, buildGoalStateFromResolvedGoals, resolveGoalTranslation } from "./services/goal-resolution-service.js";
 import {
   applyCanonicalRuntimeStateSetters,
   buildCanonicalRuntimeState,
@@ -2090,6 +2091,180 @@ const EXPERIENCE_LEVEL_OPTIONS = ["beginner", "intermediate", "advanced"];
 const EXPERIENCE_LEVEL_LABELS = { beginner: "Beginner", intermediate: "Intermediate", advanced: "Advanced" };
 const SESSION_LENGTH_OPTIONS = ["20", "30", "45", "60+"];
 const SESSION_LENGTH_LABELS = { "20": "20 min", "30": "30 min", "45": "45 min", "60+": "60+ min" };
+
+const parseTrainingDaysForIntakePacket = (value = "") => {
+  const text = String(value || "").trim();
+  if (!text) return 0;
+  const numeric = Number(text.replace(/[^\d.]/g, ""));
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(14, Math.round(numeric)));
+};
+
+const splitIntakeListText = (value = "") => String(value || "")
+  .split(/[,/]/)
+  .map((item) => item.trim())
+  .filter(Boolean)
+  .slice(0, 8);
+
+const hasMeaningfulConstraintText = (value = "") => {
+  const text = String(value || "").trim();
+  return Boolean(text && !/^(none|nothing current|none currently|nope|healthy)$/i.test(text));
+};
+
+const extractAppearanceConstraints = (...values) => values
+  .map((value) => String(value || "").trim())
+  .filter((value) => value && /(abs|lean|athletic|toned|look|appearance|physique|body comp|body composition|shirtless|defined)/i.test(value))
+  .slice(0, 3);
+
+const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } = {}) => {
+  const primaryGoalKey = String(answers.primary_goal || "").trim();
+  const primaryGoalLabel = PRIMARY_GOAL_LABELS[primaryGoalKey] || primaryGoalKey || "General Fitness";
+  const experienceLabel = EXPERIENCE_LEVEL_LABELS[answers.experience_level] || String(answers.experience_level || "").trim();
+  const sessionLengthLabel = SESSION_LENGTH_LABELS[answers.session_length] || String(answers.session_length || "").trim();
+  const trainingLocation = String(answers.training_location || "").trim();
+  const homeEquipment = Array.isArray(answers.home_equipment)
+    ? answers.home_equipment
+    : splitIntakeListText(answers.equipment_text || "");
+  const injuryText = String(answers.injury_text || "").trim();
+  const timingConstraints = [
+    answers.timeline_adjustment,
+    answers.timeline_feedback,
+  ].map((value) => String(value || "").trim()).filter(Boolean).slice(0, 3);
+  const rawGoalText = [
+    primaryGoalLabel,
+    answers.primary_goal_detail,
+    answers.other_goals,
+    answers.timeline_adjustment,
+    answers.timeline_feedback,
+  ].map((value) => String(value || "").trim()).filter(Boolean).join(". ");
+
+  return {
+    input: "Interpret this onboarding intake without writing canonical goal state.",
+    intakeContext: {
+      rawGoalText: rawGoalText || primaryGoalLabel,
+      baselineContext: {
+        primaryGoalKey,
+        primaryGoalLabel,
+        experienceLevel: experienceLabel,
+        fitnessLevel: experienceLabel,
+        startingFresh: Boolean(answers.starting_fresh),
+        currentBaseline: [
+          experienceLabel ? `${experienceLabel} training background` : "",
+          answers.training_days ? `${answers.training_days} training days per week available` : "",
+          sessionLengthLabel ? `${sessionLengthLabel} sessions` : "",
+        ].filter(Boolean).join("; "),
+        priorMemory: (existingMemory || []).slice(-6),
+      },
+      scheduleReality: {
+        trainingDaysPerWeek: parseTrainingDaysForIntakePacket(answers.training_days),
+        sessionLength: sessionLengthLabel,
+        trainingLocation,
+        scheduleNotes: answers.training_days && sessionLengthLabel
+          ? `${answers.training_days} days per week, ${sessionLengthLabel} sessions`
+          : "",
+      },
+      equipmentAccessContext: {
+        trainingLocation,
+        equipment: homeEquipment,
+        accessNotes: trainingLocation === "Varies a lot" || trainingLocation === "Varies"
+          ? "Environment changes week to week."
+          : "",
+      },
+      injuryConstraintContext: {
+        injuryText,
+        constraints: hasMeaningfulConstraintText(injuryText) ? [injuryText] : [],
+      },
+      userProvidedConstraints: {
+        timingConstraints,
+        appearanceConstraints: extractAppearanceConstraints(
+          primaryGoalLabel,
+          answers.primary_goal_detail,
+          answers.other_goals,
+          answers.timeline_adjustment,
+          answers.timeline_feedback
+        ),
+        additionalContext: String(answers.coaching_style || "").trim(),
+      },
+    },
+  };
+};
+
+const buildIntakeTimelineFallback = (payload = {}) => {
+  const goalLabel = PRIMARY_GOAL_LABELS[payload.primary_goal] || payload.primary_goal || "your main goal";
+  const days = String(payload.training_days || "3");
+  const sessionLen = SESSION_LENGTH_LABELS[payload.session_length] || payload.session_length || "30 min";
+  const expLevel = EXPERIENCE_LEVEL_LABELS[payload.experience_level] || payload.experience_level || "your level";
+  const injuryNote = hasMeaningfulConstraintText(payload.injury_text)
+    ? ` I'll work around ${String(payload.injury_text).toLowerCase()}.`
+    : "";
+  return `With ${String(goalLabel).toLowerCase()} as the focus, ${days} days a week at ${sessionLen} per session is a solid setup for someone at the ${String(expLevel).toLowerCase()} level. The next 30 days are about locking in a repeatable rhythm. By 60 days you should see measurable progress, and by 90 days the results compound if consistency stays real.${injuryNote} Here's what I'm prioritizing in your plan: ${String(goalLabel).toLowerCase()} first.`;
+};
+
+const buildIntakeAssessmentTextFromProposal = ({ payload = {}, interpretation = null } = {}) => {
+  if (!interpretation) return buildIntakeTimelineFallback(payload);
+  const goalLabel = PRIMARY_GOAL_LABELS[payload.primary_goal] || payload.primary_goal || "your main goal";
+  const summary = String(interpretation?.coachSummary || "").trim();
+  const timelineSummary = String(interpretation?.timelineRealism?.summary || "").trim();
+  const metricLine = (interpretation?.suggestedMetrics || []).length
+    ? `We'll track ${interpretation.suggestedMetrics.map((metric) => metric.label).slice(0, 3).join(", ")} so progress stays grounded in something measurable.`
+    : "";
+  const conflictLine = interpretation?.detectedConflicts?.[0]
+    ? `Main tradeoff: ${interpretation.detectedConflicts[0]}.`
+    : "";
+  const priorityLine = /here'?s what i'?m prioritizing/i.test(summary)
+    ? ""
+    : `Here's what I'm prioritizing in your plan: ${String(goalLabel).toLowerCase()} first.`;
+  const composed = [
+    summary,
+    !summary && timelineSummary ? timelineSummary : "",
+    !summary && !timelineSummary ? `We'll keep ${String(goalLabel).toLowerCase()} realistic for your current schedule and baseline.` : "",
+    !summary ? metricLine : "",
+    !summary ? conflictLine : "",
+    priorityLine,
+  ].filter(Boolean).join(" ");
+  return sanitizeIntakeText(composed || buildIntakeTimelineFallback(payload));
+};
+
+const buildTypedIntakeAssessment = async ({ answers = {}, existingMemory = [] } = {}) => {
+  const packetArgs = buildIntakePacketArgsFromAnswers({ answers, existingMemory });
+  const fallbackText = buildIntakeTimelineFallback(answers);
+  const fallbackPacket = {
+    version: "2026-04-v1",
+    intent: "intake_interpretation",
+    intake: packetArgs.intakeContext,
+  };
+  const apiKey = resolveStoredAiApiKey({
+    safeStorageGet,
+    storageLike: typeof localStorage !== "undefined" ? localStorage : null,
+  });
+  if (!apiKey) {
+    return {
+      text: fallbackText,
+      typedIntakePacket: fallbackPacket,
+      aiInterpretationProposal: null,
+    };
+  }
+  const runtime = await runIntakeInterpretationRuntime({
+    apiKey,
+    safeFetchWithTimeout,
+    packetArgs,
+  });
+  if (!runtime?.ok || !runtime?.interpreted) {
+    return {
+      text: fallbackText,
+      typedIntakePacket: runtime?.statePacket || fallbackPacket,
+      aiInterpretationProposal: null,
+    };
+  }
+  return {
+    text: buildIntakeAssessmentTextFromProposal({
+      payload: answers,
+      interpretation: runtime.interpreted,
+    }),
+    typedIntakePacket: runtime.statePacket || fallbackPacket,
+    aiInterpretationProposal: runtime.interpreted,
+  };
+};
 
 const DEFAULT_USER_GOAL_PROFILE = {
   primary_goal: "",
@@ -5756,11 +5931,8 @@ Keep it plain and specific.`;
   const onboardingComplete = personalization?.profile?.onboardingComplete;
   const finishOnboarding = async (answers) => {
     const todayKey = new Date().toISOString().split("T")[0];
-    const GOAL_TO_CATEGORY = { fat_loss: "body_comp", muscle_gain: "strength", endurance: "running", general_fitness: "running" };
+    const existingMemory = personalization?.coachMemory?.longTermMemory || [];
     const primaryGoalKey = answers.primary_goal || "general_fitness";
-    const primaryCategory = GOAL_TO_CATEGORY[primaryGoalKey] || "running";
-    const primaryGoalLabel = PRIMARY_GOAL_LABELS[primaryGoalKey] || "General Fitness";
-    const primaryGoal = primaryGoalLabel;
     const experienceLevel = answers.experience_level || "beginner";
     const sessionLength = answers.session_length || "30";
     const coachingStyle = String(answers.coaching_style || "Find the balance").trim();
@@ -5781,27 +5953,45 @@ Keep it plain and specific.`;
     if (injuryText && !/nothing current|none|nope|healthy/i.test(injuryText)) {
       constraints.push(injuryText);
     }
+    const fallbackTypedIntakePacket = answers?.typedIntakePacket || {
+      version: "2026-04-v1",
+      intent: "intake_interpretation",
+      intake: buildIntakePacketArgsFromAnswers({ answers, existingMemory }).intakeContext,
+    };
+    const goalResolution = resolveGoalTranslation({
+      rawUserGoalIntent: fallbackTypedIntakePacket?.intake?.rawGoalText || PRIMARY_GOAL_LABELS[primaryGoalKey] || "General Fitness",
+      typedIntakePacket: fallbackTypedIntakePacket,
+      aiInterpretationProposal: answers?.aiInterpretationProposal || null,
+      explicitUserConfirmation: {
+        confirmed: true,
+        acceptedProposal: true,
+        source: "onboarding_complete",
+      },
+      now: todayKey,
+    });
+    const primaryPlanningGoal = goalResolution?.planningGoals?.[0] || null;
+    const primaryResolvedGoal = goalResolution?.resolvedGoals?.[0] || null;
+    const primaryCategory = primaryPlanningGoal?.category || "general_fitness";
+    const primaryGoalLabel = primaryResolvedGoal?.summary || PRIMARY_GOAL_LABELS[primaryGoalKey] || "General Fitness";
+    const primaryGoal = primaryGoalLabel;
+    const compatibilityPrimaryGoalKey = primaryCategory === "body_comp"
+      ? "fat_loss"
+      : primaryCategory === "strength"
+      ? "muscle_gain"
+      : primaryCategory === "running"
+      ? "endurance"
+      : "general_fitness";
     const compatibilityUserProfile = {
-      primary_goal: primaryGoalKey,
+      primary_goal: compatibilityPrimaryGoalKey,
       experience_level: experienceLevel,
       days_per_week: trainingDays,
       session_length: sessionLength,
       equipment_access: normalizedEquipment,
       constraints,
     };
-    const refreshedGoals = normalizeGoals((goalsModel || DEFAULT_MULTI_GOALS).map((goal, index) => {
-      if (index === 0) {
-        return {
-          ...goal,
-          name: primaryGoalLabel,
-          category: primaryCategory,
-          type: "ongoing",
-          targetDate: "",
-          active: true,
-          priority: 1,
-        };
-      }
-      return { ...goal, active: goal.id === "g_resilience" };
+    const refreshedGoals = normalizeGoals(applyResolvedGoalsToGoalSlots({
+      resolvedGoals: goalResolution?.resolvedGoals || [],
+      goalSlots: goalsModel || DEFAULT_MULTI_GOALS,
     }));
     const nextPresets = {
       ...(DEFAULT_PERSONALIZATION.environmentConfig?.presets || {}),
@@ -5826,11 +6016,14 @@ Keep it plain and specific.`;
       : coachingStyle === "Keep it simple"
       ? "Conservative"
       : "Standard";
-    const goalMix = primaryGoalLabel;
+    const goalMix = goalResolution?.resolvedGoals?.map((goal) => goal?.summary).filter(Boolean).join(" + ") || primaryGoalLabel;
     const onboardingMemory = [
       answers.timeline_assessment ? `Timeline assessment: ${answers.timeline_assessment}` : null,
       answers.timeline_adjustment ? `Timeline adjustment requested: ${answers.timeline_adjustment}` : null,
       `Primary goal: ${primaryGoalLabel}`,
+      goalResolution?.resolvedGoals?.length ? `Resolved goals: ${goalResolution.resolvedGoals.map((goal) => goal.summary).join(" / ")}` : null,
+      goalResolution?.tradeoffs?.[0] ? `Goal tradeoff: ${goalResolution.tradeoffs[0]}` : null,
+      goalResolution?.unresolvedGaps?.[0] ? `Goal refinement gap: ${goalResolution.unresolvedGaps[0]}` : null,
       `Experience level: ${EXPERIENCE_LEVEL_LABELS[experienceLevel] || experienceLevel}`,
       `Session length: ${SESSION_LENGTH_LABELS[sessionLength] || sessionLength}`,
       constraints.length ? `Constraints: ${constraints.join(", ")}` : "Constraints: None",
@@ -5839,18 +6032,10 @@ Keep it plain and specific.`;
       normalizedEquipment.length ? `Equipment: ${normalizedEquipment.join(", ")}` : null,
       `Coaching preference: ${coachingStyle}`,
     ].filter(Boolean);
-    const onboardingGoalState = {
-      primaryGoal,
-      priority: primaryCategory,
-      priorityOrder: primaryGoalLabel,
-      deadline: "",
+    const onboardingGoalState = buildGoalStateFromResolvedGoals({
+      resolvedGoals: goalResolution?.resolvedGoals || [],
       planStartDate: todayKey,
-      milestones: {
-        day30: "Lock in a repeatable week and establish a truthful baseline.",
-        day60: "Build workload around recovery and show measurable progress.",
-        day90: "Push the prioritized goal with enough momentum to matter.",
-      },
-    };
+    });
     const nextPersonalizationBase = mergePersonalization(personalization, {
       profile: {
         ...personalization.profile,
@@ -6296,6 +6481,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [equipmentOther, setEquipmentOther] = useState("");
   const [phase, setPhase] = useState("questions");
   const [assessmentText, setAssessmentText] = useState("");
+  const [assessmentBoundary, setAssessmentBoundary] = useState({ typedIntakePacket: null, aiInterpretationProposal: null });
   const [assessing, setAssessing] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
@@ -6402,64 +6588,6 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     const id = nextMessageIdRef.current++;
     setMessages((prev) => [...prev, { id, role: "user", text: clean, displayedText: clean }]);
   };
-  const callAnthropicIntake = async (prompt) => {
-    const key = safeStorageGet(localStorage, "coach_api_key", "") || safeStorageGet(localStorage, "anthropic_api_key", "");
-    if (!key) return null;
-    try {
-      const res = await safeFetchWithTimeout("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": key,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: "claude-3-5-haiku-latest",
-          max_tokens: 280,
-          messages: [{ role: "user", content: prompt }],
-        }),
-      }, 10000);
-      if (!res.ok) return null;
-      const data = await res.json();
-      return data?.content?.[0]?.text || null;
-    } catch {
-      return null;
-    }
-  };
-  const buildTimelineFallback = (payload) => {
-    const goalLabel = PRIMARY_GOAL_LABELS[payload.primary_goal] || "your main goal";
-    const days = String(payload.training_days || "3");
-    const sessionLen = SESSION_LENGTH_LABELS[payload.session_length] || "30 min";
-    const expLevel = EXPERIENCE_LEVEL_LABELS[payload.experience_level] || "your level";
-    const injuryNote = payload.injury_text && !/nothing current|none|nope|healthy/i.test(payload.injury_text)
-      ? ` I'll work around ${payload.injury_text.toLowerCase()}.`
-      : "";
-    return `With ${goalLabel.toLowerCase()} as the focus, ${days} days a week at ${sessionLen} per session is a solid setup for someone at the ${expLevel.toLowerCase()} level. The next 30 days are about locking in a repeatable rhythm. By 60 days you should see measurable progress, and by 90 days the results compound if consistency stays real.${injuryNote} Here's what I'm prioritizing in your plan: ${goalLabel.toLowerCase()} first.`;
-  };
-  const buildTimelineAssessment = async (payload) => {
-    const prompt = `User intake data: ${JSON.stringify({
-      primary_goal: payload.primary_goal,
-      experience_level: payload.experience_level,
-      training_days: payload.training_days,
-      session_length: payload.session_length,
-      training_location: payload.training_location,
-      equipment: payload.home_equipment || [],
-      injuries: payload.injury_text || "None",
-      previous_coach_memory: (existingMemory || []).slice(-8),
-    }, null, 2)}
-
-Generate a realistic assessment for this goal profile.
-- What is achievable in 30, 60, 90 days given their experience and availability
-- Note any constraints from injuries or equipment
-- Lead with what IS possible, not what isn't
-- End with: here's what I'm prioritizing in your plan
-Maximum 150 words total.
-Conversational. No bullet points.
-Sound like a coach who has done this a hundred times.`;
-    const ai = await callAnthropicIntake(prompt);
-    if (ai) return ai.replace(/\s+/g, " ").trim();
-    return buildTimelineFallback(payload);
-  };
   const advanceConversation = async (updatedAnswers) => {
     const nextIndex = stepIndex + 1;
     setAnswers(updatedAnswers);
@@ -6486,9 +6614,13 @@ Sound like a coach who has done this a hundred times.`;
     }
     setAssessing(true);
     setPhase("assessment");
-    const timeline = await buildTimelineAssessment(updatedAnswers);
-    const cleanTimeline = sanitizeIntakeText(timeline);
+    const assessment = await buildTypedIntakeAssessment({ answers: updatedAnswers, existingMemory });
+    const cleanTimeline = sanitizeIntakeText(assessment?.text || "");
     setAssessmentText(cleanTimeline);
+    setAssessmentBoundary({
+      typedIntakePacket: assessment?.typedIntakePacket || null,
+      aiInterpretationProposal: assessment?.aiInterpretationProposal || null,
+    });
     appendCoachMessage(cleanTimeline);
     setAssessing(false);
     setPhase("review");
@@ -6529,9 +6661,13 @@ Sound like a coach who has done this a hundred times.`;
     setPhase("assessment");
     const updatedAnswers = { ...answers, timeline_adjustment: clean };
     setAnswers(updatedAnswers);
-    const timeline = await buildTimelineAssessment(updatedAnswers);
-    const cleanTimeline = sanitizeIntakeText(timeline);
+    const assessment = await buildTypedIntakeAssessment({ answers: updatedAnswers, existingMemory });
+    const cleanTimeline = sanitizeIntakeText(assessment?.text || "");
     setAssessmentText(cleanTimeline);
+    setAssessmentBoundary({
+      typedIntakePacket: assessment?.typedIntakePacket || null,
+      aiInterpretationProposal: assessment?.aiInterpretationProposal || null,
+    });
     appendCoachMessage(cleanTimeline);
     setAssessing(false);
     setPhase("review");
@@ -6542,6 +6678,8 @@ Sound like a coach who has done this a hundred times.`;
     const payload = {
       ...answers,
       timeline_assessment: assessmentText,
+      typedIntakePacket: assessmentBoundary?.typedIntakePacket || null,
+      aiInterpretationProposal: assessmentBoundary?.aiInterpretationProposal || null,
       starting_fresh: startingFresh,
     };
     await new Promise((resolve) => setTimeout(resolve, 3200));
@@ -7504,28 +7642,6 @@ function OnboardingCoachLegacy({ onComplete }) {
   const current = SCRIPT[step];
   const needsEquipment = Boolean(answers.__needs_equipment);
 
-  const callAnthropicIntake = async (prompt) => {
-    const key = safeStorageGet(localStorage, "coach_api_key", "") || safeStorageGet(localStorage, "anthropic_api_key", "");
-    if (!key) return null;
-    try {
-      const res = await safeFetchWithTimeout("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: "claude-3-5-haiku-latest", max_tokens: 600, messages: [{ role: "user", content: prompt }] }),
-      }, 9000);
-      if (!res.ok) return null;
-      const data = await res.json();
-      return data?.content?.[0]?.text || null;
-    } catch { return null; }
-  };
-
-  const buildTimelineAssessment = async (payload) => {
-    const prompt = `The user has provided the following goals and baseline:\n${JSON.stringify(payload, null, 2)}\n\nAssess each goal against the baseline and days available. For each goal:\n1. State whether it is realistic within the user's primary deadline (if one exists)\n2. If not realistic within that deadline: state what IS realistic by that date and when the full goal could be reached\n3. Identify any goal conflicts (e.g. aggressive cut + peak strength simultaneously)\n\nRules:\n- Be honest but not discouraging\n- Lead with what IS achievable, not what isn't\n- Never say a goal is impossible Ã¢â‚¬â€ say what's needed to make it possible and how long it realistically takes\n- If goals are fully compatible: say so and move on\n- Maximum 3 sentences per goal\n- End with: 'Here's what I'm going to prioritize in your plan Ã¢â‚¬â€ tell me if you want to adjust anything.'`;
-    const ai = await callAnthropicIntake(prompt);
-    if (ai) return ai.trim();
-    return "Given your baseline and schedule, we'll prioritize one primary outcome and sequence secondary goals so recovery stays intact. By your deadline, we'll target measurable progress toward the main outcome while keeping competing goals in maintenance range, then progress them in the next block. Here's what I'm going to prioritize in your plan Ã¢â‚¬â€ tell me if you want to adjust anything.";
-  };
-
   const askNext = (nextStep) => {
     if (nextStep >= SCRIPT.length) return;
     setMessages((prev) => [...prev, { role: "coach", text: SCRIPT[nextStep].text }]);
@@ -7543,8 +7659,8 @@ function OnboardingCoachLegacy({ onComplete }) {
       const patched = { ...answers, equipment_text: answerText, __needs_equipment: false };
       setAnswers(patched);
       setAwaitingTimeline(true);
-      const timeline = await buildTimelineAssessment(patched);
-      setMessages((prev) => [...prev, { role: "coach", text: timeline }]);
+      const assessment = await buildTypedIntakeAssessment({ answers: patched });
+      setMessages((prev) => [...prev, { role: "coach", text: assessment?.text || buildIntakeTimelineFallback(patched) }]);
       setAwaitingTimeline(false);
       setAwaitingAdjustConfirm(true);
       return;
@@ -7563,8 +7679,8 @@ function OnboardingCoachLegacy({ onComplete }) {
       return;
     }
     setAwaitingTimeline(true);
-    const timeline = await buildTimelineAssessment(nextAnswers);
-    setMessages((prev) => [...prev, { role: "coach", text: timeline }]);
+    const assessment = await buildTypedIntakeAssessment({ answers: nextAnswers });
+    setMessages((prev) => [...prev, { role: "coach", text: assessment?.text || buildIntakeTimelineFallback(nextAnswers) }]);
     setAwaitingTimeline(false);
     setAwaitingAdjustConfirm(true);
   };
@@ -7858,28 +7974,6 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
   const current = SCRIPT[step];
   const needsEquipment = Boolean(answers.__needs_equipment);
 
-  const callAnthropicIntake = async (prompt) => {
-    const key = safeStorageGet(localStorage, "coach_api_key", "") || safeStorageGet(localStorage, "anthropic_api_key", "");
-    if (!key) return null;
-    try {
-      const res = await safeFetchWithTimeout("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: "claude-3-5-haiku-latest", max_tokens: 600, messages: [{ role: "user", content: prompt }] }),
-      }, 9000);
-      if (!res.ok) return null;
-      const data = await res.json();
-      return data?.content?.[0]?.text || null;
-    } catch { return null; }
-  };
-
-  const buildTimelineAssessment = async (payload) => {
-    const prompt = `The user has provided the following goals and baseline:\n${JSON.stringify(payload, null, 2)}\n\nAssess each goal against the baseline and days available. For each goal:\n1. State whether it is realistic within the user's primary deadline (if one exists)\n2. If not realistic within that deadline: state what IS realistic by that date and when the full goal could be reached\n3. Identify any goal conflicts (e.g. aggressive cut + peak strength simultaneously)\n\nRules:\n- Be honest but not discouraging\n- Lead with what IS achievable, not what isn't\n- Never say a goal is impossible Ã¢â‚¬â€ say what's needed to make it possible and how long it realistically takes\n- If goals are fully compatible: say so and move on\n- Maximum 3 sentences per goal\n- End with: 'Here's what I'm going to prioritize in your plan Ã¢â‚¬â€ tell me if you want to adjust anything.'`;
-    const ai = await callAnthropicIntake(prompt);
-    if (ai) return ai.trim();
-    return "Given your baseline and schedule, we'll prioritize one primary outcome and sequence secondary goals so recovery stays intact. By your deadline, we'll target measurable progress toward the main outcome while keeping competing goals in maintenance range, then progress them in the next block. Here's what I'm going to prioritize in your plan Ã¢â‚¬â€ tell me if you want to adjust anything.";
-  };
-
   const askNext = (nextStep) => {
     if (nextStep >= SCRIPT.length) return;
     setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(SCRIPT[nextStep].text) }]);
@@ -7897,8 +7991,8 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
       const patched = { ...answers, equipment_text: answerText, __needs_equipment: false };
       setAnswers(patched);
       setAwaitingTimeline(true);
-      const timeline = await buildTimelineAssessment(patched);
-      setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(timeline) }]);
+      const assessment = await buildTypedIntakeAssessment({ answers: patched });
+      setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(assessment?.text || buildIntakeTimelineFallback(patched)) }]);
       setAwaitingTimeline(false);
       setAwaitingAdjustConfirm(true);
       return;
@@ -7918,8 +8012,8 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
       return;
     }
     setAwaitingTimeline(true);
-    const timeline = await buildTimelineAssessment(nextAnswers);
-    setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(timeline) }]);
+    const assessment = await buildTypedIntakeAssessment({ answers: nextAnswers });
+    setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(assessment?.text || buildIntakeTimelineFallback(nextAnswers)) }]);
     setAwaitingTimeline(false);
     setAwaitingAdjustConfirm(true);
   };

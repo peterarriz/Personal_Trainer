@@ -39,8 +39,8 @@ This backlog tracks architecture-first work in priority order. It was updated af
   Progress: Today now uses `PlanDay.week` for current phase and `PlanWeek.sessionsByDay` for tomorrow preview when available, Program uses `PlanDay.week` as a current-week anchor, Nutrition reads current phase from `PlanDay.week` and keeps legacy nutrition feedback only as a boundary fallback, and Coach now uses canonical week/recovery context for prompt construction and decision framing.
   Remaining gap: Logging already prefers prescribed-day history and actual logs, but custom entry labels still fall back to legacy workout labels when no prescribed snapshot exists, and future-week Program previews still mix canonical week data with helper-derived adaptive/template rows.
 - Define the AI state packet and acceptance-only mutation boundary.
-  Progress: added a typed AI state packet built from canonical goal/profile state, `PlanDay`, `PlanWeek`, recent actuals, nutrition actuals, readiness/adherence/provenance summaries, routed the Coach LLM path and plan-analysis path through that packet, and added deterministic acceptance gates so AI plan-analysis proposals and coach action proposals are sanitized before any state mutation.
-  Remaining gap: onboarding/intake AI and deterministic-strength explanation copy still use ad hoc prompt payloads, but they remain interpretation-only and do not directly mutate canonical plan state.
+  Progress: added a typed AI state packet built from canonical goal/profile state, `PlanDay`, `PlanWeek`, recent actuals, nutrition actuals, readiness/adherence/provenance summaries, routed the Coach LLM path, plan-analysis path, and onboarding/intake interpretation path through that packet family, and added deterministic acceptance/sanitization gates so proposal payloads are bounded before any state mutation or UI reuse.
+  Remaining gap: deterministic-strength explanation copy and nutrition assistant content generation still sit outside the packet-scoped runtime.
 
 ## Next
 
@@ -56,7 +56,7 @@ This backlog tracks architecture-first work in priority order. It was updated af
 ## Later
 
 - Define the AI state packet.
-  Current gap: the core Coach and plan-analysis paths now share a typed packet, but onboarding/intake and some explanatory copy paths still construct prompts ad hoc.
+  Current gap: Coach, plan-analysis, and onboarding/intake now share the typed packet boundary, but some explanatory copy paths still construct prompts or AI text outside that runtime.
 - Expand recovery and supplement prescriptions into first-class children of the daily decision.
   Current gap: recovery and supplements are partly present in UI behavior, but not modeled as canonical prescribed state.
 - Add plan and decision audit views.
@@ -100,7 +100,7 @@ This backlog tracks architecture-first work in priority order. It was updated af
 - Same-day prescribed history is versioned, but revision reasons are still coarse and the app does not yet expose a first-class revision timeline UI.
 - Archive entries created before prescribed-day history was added still only contain legacy log snapshots unless they are re-exported or recreated.
 - AI entry points are spread across onboarding, plan analysis, strength explanation, and coach chat rather than sitting behind one typed boundary.
-- A typed AI packet now exists for Coach and plan-analysis, but onboarding/intake and deterministic explanation copy still sit outside that shared packet boundary.
+- A typed AI packet now exists for Coach, plan-analysis, and onboarding/intake, but deterministic explanation copy and nutrition assistant content generation still sit outside that shared packet boundary.
 
 ## 7-Day Usage Findings
 

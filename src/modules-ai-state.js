@@ -5,6 +5,7 @@ export const AI_PACKET_VERSION = "2026-04-v1";
 export const AI_PACKET_INTENTS = {
   coachChat: "coach_chat",
   planAnalysis: "plan_analysis",
+  intakeInterpretation: "intake_interpretation",
 };
 
 const clonePlainValueAiState = (value) => {
@@ -195,6 +196,62 @@ const sanitizePaceValue = (value = "") => {
   return /^[0-9:\/\-\u2013\u2014 .mi]+$/i.test(text) ? text : "";
 };
 
+const compactIntakeContext = (intakeContext = {}) => {
+  const baseline = intakeContext?.baselineContext || {};
+  const schedule = intakeContext?.scheduleReality || {};
+  const equipment = intakeContext?.equipmentAccessContext || {};
+  const injury = intakeContext?.injuryConstraintContext || {};
+  const userConstraints = intakeContext?.userProvidedConstraints || {};
+
+  return clonePlainValueAiState({
+    rawGoalText: sanitizeTextAiState(intakeContext?.rawGoalText || "", 320),
+    baselineContext: {
+      primaryGoalKey: sanitizeTextAiState(baseline?.primaryGoalKey || "", 40),
+      primaryGoalLabel: sanitizeTextAiState(baseline?.primaryGoalLabel || "", 80),
+      experienceLevel: sanitizeTextAiState(baseline?.experienceLevel || "", 40),
+      fitnessLevel: sanitizeTextAiState(baseline?.fitnessLevel || "", 40),
+      startingFresh: Boolean(baseline?.startingFresh),
+      currentBaseline: sanitizeTextAiState(baseline?.currentBaseline || "", 180),
+      priorMemory: (Array.isArray(baseline?.priorMemory) ? baseline.priorMemory : [])
+        .slice(-6)
+        .map((item) => sanitizeTextAiState(item, 120))
+        .filter(Boolean),
+    },
+    scheduleReality: {
+      trainingDaysPerWeek: clampNumberAiState(schedule?.trainingDaysPerWeek, 0, 14, 0),
+      sessionLength: sanitizeTextAiState(schedule?.sessionLength || "", 40),
+      trainingLocation: sanitizeTextAiState(schedule?.trainingLocation || "", 60),
+      scheduleNotes: sanitizeTextAiState(schedule?.scheduleNotes || "", 180),
+    },
+    equipmentAccessContext: {
+      trainingLocation: sanitizeTextAiState(equipment?.trainingLocation || schedule?.trainingLocation || "", 60),
+      equipment: (Array.isArray(equipment?.equipment) ? equipment.equipment : [])
+        .slice(0, 8)
+        .map((item) => sanitizeTextAiState(item, 40))
+        .filter(Boolean),
+      accessNotes: sanitizeTextAiState(equipment?.accessNotes || "", 140),
+    },
+    injuryConstraintContext: {
+      injuryText: sanitizeTextAiState(injury?.injuryText || "", 180),
+      constraints: (Array.isArray(injury?.constraints) ? injury.constraints : [])
+        .slice(0, 6)
+        .map((item) => sanitizeTextAiState(item, 120))
+        .filter(Boolean),
+    },
+    userProvidedConstraints: {
+      timingConstraints: (Array.isArray(userConstraints?.timingConstraints) ? userConstraints.timingConstraints : [])
+        .slice(0, 4)
+        .map((item) => sanitizeTextAiState(item, 120))
+        .filter(Boolean),
+      appearanceConstraints: (Array.isArray(userConstraints?.appearanceConstraints) ? userConstraints.appearanceConstraints : [])
+        .slice(0, 4)
+        .map((item) => sanitizeTextAiState(item, 120))
+        .filter(Boolean),
+      additionalContext: sanitizeTextAiState(userConstraints?.additionalContext || "", 180),
+    },
+  });
+};
+
 export const buildAiStatePacket = ({
   intent = AI_PACKET_INTENTS.coachChat,
   input = "",
@@ -223,6 +280,7 @@ export const buildAiStatePacket = ({
   paceOverrides = {},
   planAlerts = [],
   recentWindow = 7,
+  intakeContext = null,
 } = {}) => {
   const compactDay = compactPlanDay(planDay);
   const compactWeek = compactPlanWeek(planWeek || planDay?.week?.planWeek || null);
@@ -321,6 +379,7 @@ export const buildAiStatePacket = ({
       alerts: clonePlainValueAiState((planAlerts || []).slice(0, 6)),
       availablePacePhases,
     },
+    intake: compactIntakeContext(intakeContext || {}),
     boundaries: {
       sourceOfTruth: "canonical_app_state",
       mutationPolicy: "acceptance_only",
@@ -383,6 +442,110 @@ RULES:
 - Only propose weekNotes for weeks materially affected by recent actuals.
 - alerts must be short, direct, and actionable. Max 3 alerts total.
 - If nothing needs changing, return { "noChange": true }`;
+
+export const buildIntakeInterpretationAiSystemPrompt = ({ statePacket = null } = {}) => `You are an intake interpretation assistant inside a fitness app. Respond ONLY with valid JSON, no other text.
+Your source of truth is the typed intake packet below.
+Treat all output as a proposal only. You are not the system of record and you may not resolve goals as canonical truth.
+Do not invent injuries, deadlines, baseline facts, or appearance constraints that are not present in the packet.
+Keep output compact and practical for planning.
+AI_STATE_PACKET_JSON:${stringifyPacketForPrompt(statePacket)}
+
+Return JSON in this exact format:
+{
+  "interpretedGoalType": "performance|strength|body_comp|appearance|hybrid|general_fitness|re_entry",
+  "measurabilityTier": "fully_measurable|proxy_measurable|exploratory_fuzzy",
+  "suggestedMetrics": [
+    { "key": "metric_key", "label": "Metric label", "unit": "lb", "kind": "primary|proxy" }
+  ],
+  "timelineRealism": {
+    "status": "realistic|aggressive|unclear",
+    "summary": "short timeline realism assessment",
+    "suggestedHorizonWeeks": 12
+  },
+  "detectedConflicts": ["short conflict"],
+  "missingClarifyingQuestions": ["short question"],
+  "coachSummary": "2-4 sentence intake interpretation for the user"
+}
+
+RULES:
+- Max 4 suggestedMetrics.
+- Use "unclear" for timelineRealism.status when the user has not given enough timing specificity.
+- missingClarifyingQuestions should be the smallest useful set. Max 3.
+- detectedConflicts should describe goal tension or planning tradeoffs, not generic warnings. Max 3.
+- coachSummary must stay under 120 words and remain interpretation-only.
+- Never claim the goal is impossible. If the timeline is aggressive, say what is realistic first.`;
+
+export const sanitizeIntakeInterpretationProposal = (proposal = null) => {
+  const safeGoalTypes = new Set(["performance", "strength", "body_comp", "appearance", "hybrid", "general_fitness", "re_entry"]);
+  const safeMeasurability = new Set(["fully_measurable", "proxy_measurable", "exploratory_fuzzy"]);
+  const safeTimelineStatuses = new Set(["realistic", "aggressive", "unclear"]);
+  const safeMetricKinds = new Set(["primary", "proxy"]);
+
+  const fallback = {
+    interpretedGoalType: "general_fitness",
+    measurabilityTier: "exploratory_fuzzy",
+    suggestedMetrics: [],
+    timelineRealism: {
+      status: "unclear",
+      summary: "",
+      suggestedHorizonWeeks: null,
+    },
+    detectedConflicts: [],
+    missingClarifyingQuestions: [],
+    coachSummary: "",
+  };
+
+  if (!proposal || typeof proposal !== "object") return fallback;
+
+  const interpretedGoalType = sanitizeTextAiState(proposal?.interpretedGoalType || "", 40).toLowerCase();
+  const measurabilityTier = sanitizeTextAiState(proposal?.measurabilityTier || "", 40).toLowerCase();
+  const timelineStatus = sanitizeTextAiState(proposal?.timelineRealism?.status || "", 24).toLowerCase();
+  const suggestedHorizonWeeksRaw = Number(proposal?.timelineRealism?.suggestedHorizonWeeks);
+  const suggestedHorizonWeeks = Number.isFinite(suggestedHorizonWeeksRaw)
+    ? clampNumberAiState(suggestedHorizonWeeksRaw, 1, 104, 12)
+    : null;
+
+  const suggestedMetrics = (Array.isArray(proposal?.suggestedMetrics) ? proposal.suggestedMetrics : [])
+    .slice(0, 4)
+    .map((metric, index) => {
+      const rawKey = sanitizeTextAiState(metric?.key || `metric_${index + 1}`, 32)
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_|_$/g, "");
+      const label = sanitizeTextAiState(metric?.label || "", 60);
+      const unit = sanitizeTextAiState(metric?.unit || "", 16);
+      const kind = sanitizeTextAiState(metric?.kind || "", 16).toLowerCase();
+      if (!rawKey || !label || !safeMetricKinds.has(kind)) return null;
+      return {
+        key: rawKey,
+        label,
+        unit,
+        kind,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    interpretedGoalType: safeGoalTypes.has(interpretedGoalType) ? interpretedGoalType : fallback.interpretedGoalType,
+    measurabilityTier: safeMeasurability.has(measurabilityTier) ? measurabilityTier : fallback.measurabilityTier,
+    suggestedMetrics,
+    timelineRealism: {
+      status: safeTimelineStatuses.has(timelineStatus) ? timelineStatus : fallback.timelineRealism.status,
+      summary: sanitizeTextAiState(proposal?.timelineRealism?.summary || "", 220),
+      suggestedHorizonWeeks,
+    },
+    detectedConflicts: (Array.isArray(proposal?.detectedConflicts) ? proposal.detectedConflicts : [])
+      .slice(0, 3)
+      .map((item) => sanitizeTextAiState(item, 140))
+      .filter(Boolean),
+    missingClarifyingQuestions: (Array.isArray(proposal?.missingClarifyingQuestions) ? proposal.missingClarifyingQuestions : [])
+      .slice(0, 3)
+      .map((item) => sanitizeTextAiState(item, 160))
+      .filter(Boolean),
+    coachSummary: sanitizeTextAiState(proposal?.coachSummary || "", 420),
+  };
+};
 
 export const acceptAiPlanAnalysisProposal = ({ proposal = null, statePacket = null } = {}) => {
   const rejected = [];
