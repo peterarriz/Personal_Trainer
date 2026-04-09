@@ -1,4 +1,5 @@
 import { dedupeStrings } from "../utils/collection-utils.js";
+import { projectResolvedGoalToPlanningGoal } from "./goal-resolution-service.js";
 
 export const CANONICAL_ATHLETE_VERSION = "2026-04-athlete-v1";
 
@@ -68,23 +69,31 @@ export const inferGoalType = (goal = {}) => {
 };
 
 export const normalizeGoalObject = (goal = {}, idx = 0) => {
-  const type = inferGoalType(goal);
-  const tracking = goal?.tracking || (type === "ongoing"
+  const projectedFromResolved = goal?.resolvedGoal
+    ? projectResolvedGoalToPlanningGoal(goal.resolvedGoal, idx)
+    : null;
+  const mergedGoal = {
+    ...(goal || {}),
+    ...(projectedFromResolved || {}),
+    resolvedGoal: goal?.resolvedGoal || null,
+  };
+  const type = inferGoalType(mergedGoal);
+  const tracking = mergedGoal?.tracking || (type === "ongoing"
     ? {
-        mode: goal?.category === "body_comp" ? "weekly_checkin" : goal?.category === "strength" ? "logged_lifts" : "progress_tracker",
-        unit: goal?.category === "body_comp" ? "lb" : goal?.category === "strength" ? "lb" : "",
+        mode: mergedGoal?.category === "body_comp" ? "weekly_checkin" : mergedGoal?.category === "strength" ? "logged_lifts" : "progress_tracker",
+        unit: mergedGoal?.category === "body_comp" ? "lb" : mergedGoal?.category === "strength" ? "lb" : "",
       }
     : { mode: "deadline" });
 
   return {
-    id: goal?.id || `goal_${idx + 1}`,
-    name: goal?.name || "Goal",
-    category: goal?.category || "running",
-    priority: Number(goal?.priority || (idx + 1)),
-    targetDate: goal?.targetDate || "",
-    measurableTarget: goal?.measurableTarget || "",
-    active: goal?.active !== false,
-    ...goal,
+    id: mergedGoal?.id || `goal_${idx + 1}`,
+    name: mergedGoal?.name || "Goal",
+    category: mergedGoal?.category || "running",
+    priority: Number(mergedGoal?.priority || (idx + 1)),
+    targetDate: mergedGoal?.targetDate || "",
+    measurableTarget: mergedGoal?.measurableTarget || "",
+    active: mergedGoal?.active !== false,
+    ...mergedGoal,
     type,
     tracking,
   };

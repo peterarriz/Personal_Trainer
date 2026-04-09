@@ -7,11 +7,14 @@ const {
   buildAiStatePacket,
   parseAiJsonObjectFromText,
   acceptAiPlanAnalysisProposal,
+  sanitizeIntakeInterpretationProposal,
 } = require("../src/modules-ai-state.js");
 const {
   buildPlanAnalysisRuntimeInput,
   runPlanAnalysisRuntime,
   buildCoachChatRuntimeInput,
+  buildIntakeInterpretationRuntimeInput,
+  runIntakeInterpretationRuntime,
   runCoachChatRuntime,
   coordinateCoachActionCommit,
 } = require("../src/services/ai-runtime-service.js");
@@ -150,6 +153,42 @@ const createAiPacketArgs = () => ({
   planAlerts: [{ id: "existing_alert", type: "warning", msg: "Existing alert" }],
 });
 
+const createIntakePacketArgs = () => ({
+  input: "Interpret this onboarding intake without writing canonical goal state.",
+  intakeContext: {
+    rawGoalText: "I want to look athletic again and maybe run a 10k this fall.",
+    baselineContext: {
+      primaryGoalKey: "general_fitness",
+      primaryGoalLabel: "General Fitness",
+      experienceLevel: "Intermediate",
+      fitnessLevel: "Intermediate",
+      startingFresh: true,
+      currentBaseline: "Intermediate training background; 4 training days per week available; 45 min sessions",
+      priorMemory: ["Previous plan drifted during travel."],
+    },
+    scheduleReality: {
+      trainingDaysPerWeek: 4,
+      sessionLength: "45 min",
+      trainingLocation: "Both",
+      scheduleNotes: "4 days per week, 45 min sessions",
+    },
+    equipmentAccessContext: {
+      trainingLocation: "Both",
+      equipment: ["Dumbbells", "Pull-up bar"],
+      accessNotes: "",
+    },
+    injuryConstraintContext: {
+      injuryText: "Mild Achilles tightness if volume ramps too fast.",
+      constraints: ["Mild Achilles tightness if volume ramps too fast."],
+    },
+    userProvidedConstraints: {
+      timingConstraints: ["this fall"],
+      appearanceConstraints: ["look athletic again"],
+      additionalContext: "Find the balance",
+    },
+  },
+});
+
 const createPlanAnalysisResponse = (text) => async () => ({
   ok: true,
   json: async () => ({ content: [{ text }] }),
@@ -196,6 +235,26 @@ test("typed AI packet generation produces a bounded proposal-only packet", async
     assert.equal(packet.actuals.recentSessions[0].note, "Achilles was tight late.");
     assert.equal(packetArgs.planWeek.phase, "BUILDING");
     assert.equal(packetArgs.logs["2026-04-06"].notes, "Achilles was tight late.");
+  });
+});
+
+test("typed intake AI packet includes bounded intake context and keeps the same proposal-only boundary", async () => {
+  await withMockedNow("2026-04-09T12:02:00Z", async () => {
+    const packet = buildAiStatePacket({
+      intent: AI_PACKET_INTENTS.intakeInterpretation,
+      ...createIntakePacketArgs(),
+    });
+
+    assert.equal(packet.version, AI_PACKET_VERSION);
+    assert.equal(packet.intent, AI_PACKET_INTENTS.intakeInterpretation);
+    assert.equal(packet.intake.rawGoalText, "I want to look athletic again and maybe run a 10k this fall.");
+    assert.equal(packet.intake.baselineContext.experienceLevel, "Intermediate");
+    assert.equal(packet.intake.scheduleReality.trainingDaysPerWeek, 4);
+    assert.deepEqual(packet.intake.equipmentAccessContext.equipment, ["Dumbbells", "Pull-up bar"]);
+    assert.equal(packet.intake.injuryConstraintContext.injuryText, "Mild Achilles tightness if volume ramps too fast.");
+    assert.deepEqual(packet.intake.userProvidedConstraints.appearanceConstraints, ["look athletic again"]);
+    assert.deepEqual(packet.boundaries.aiMay, ["explain", "summarize", "propose"]);
+    assert.deepEqual(packet.boundaries.aiMayNot, ["directly_mutate_plan", "directly_mutate_logs", "be_source_of_truth"]);
   });
 });
 
@@ -320,6 +379,49 @@ test("runPlanAnalysisRuntime applies deterministic acceptance and strips out-of-
   });
 });
 
+test("intake interpretation runtime returns a sanitized proposal-only result without mutating canonical state", async () => {
+  await withMockedNow("2026-04-09T12:17:00Z", async () => {
+    const runtimeInput = buildIntakeInterpretationRuntimeInput(createIntakePacketArgs());
+    const result = await runIntakeInterpretationRuntime({
+      apiKey: "test-key",
+      safeFetchWithTimeout: createPlanAnalysisResponse(`{
+        "interpretedGoalType": "hybrid<script>",
+        "measurabilityTier": "proxy_measurable",
+        "suggestedMetrics": [
+          { "key": "waist", "label": "Waist circumference", "unit": "in", "kind": "proxy" },
+          { "key": "10k-completion", "label": "10k completion", "unit": "boolean", "kind": "primary" },
+          { "key": "", "label": "", "unit": "", "kind": "proxy" }
+        ],
+        "timelineRealism": {
+          "status": "aggressive",
+          "summary": "A fall 10k plus a leaner look is realistic if the body-comp side stays moderate.",
+          "suggestedHorizonWeeks": 18
+        },
+        "detectedConflicts": ["Aggressive fat loss could blunt run quality."],
+        "missingClarifyingQuestions": ["Is the 10k more important than appearance?" ],
+        "coachSummary": "We can absolutely move toward both outcomes, but the cleanest route is to treat this as a hybrid goal and keep the physique side moderate while your run base builds."
+      }`),
+      packetArgs: createIntakePacketArgs(),
+    });
+
+    assert.equal(runtimeInput.statePacket.intent, AI_PACKET_INTENTS.intakeInterpretation);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, "proposal_ready");
+    assert.equal(result.interpreted.interpretedGoalType, "general_fitness");
+    assert.equal(result.interpreted.measurabilityTier, "proxy_measurable");
+    assert.deepEqual(result.interpreted.suggestedMetrics, [
+      { key: "waist", label: "Waist circumference", unit: "in", kind: "proxy" },
+      { key: "10k_completion", label: "10k completion", unit: "boolean", kind: "primary" },
+    ]);
+    assert.equal(result.interpreted.timelineRealism.status, "aggressive");
+    assert.equal(result.interpreted.timelineRealism.suggestedHorizonWeeks, 18);
+    assert.deepEqual(result.interpreted.detectedConflicts, ["Aggressive fat loss could blunt run quality."]);
+    assert.deepEqual(result.interpreted.missingClarifyingQuestions, ["Is the 10k more important than appearance?"]);
+    assert.match(result.interpreted.coachSummary, /hybrid goal/i);
+    assert.equal(result.provenance.actor, "ai_interpretation");
+  });
+});
+
 test("coach-chat runtime treats streamed AI text as interpretation-only and ignores malformed chunks", async () => {
   await withMockedNow("2026-04-09T12:20:00Z", async () => {
     const observed = [];
@@ -349,6 +451,22 @@ test("coach-chat runtime treats streamed AI text as interpretation-only and igno
     assert.equal(result.accepted, null);
     assert.equal(observed.at(-1), "Protect the tendon today. Keep the run controlled and finishable.");
   });
+});
+
+test("sanitizeIntakeInterpretationProposal falls back safely on malformed proposal shapes", () => {
+  const sanitized = sanitizeIntakeInterpretationProposal({
+    interpretedGoalType: "mystery_goal",
+    measurabilityTier: "unknown",
+    suggestedMetrics: [{ key: "body weight", label: "Body weight", unit: "lb", kind: "weird" }],
+    timelineRealism: { status: "soon", summary: "  unclear  ", suggestedHorizonWeeks: "nan" },
+  });
+
+  assert.equal(sanitized.interpretedGoalType, "general_fitness");
+  assert.equal(sanitized.measurabilityTier, "exploratory_fuzzy");
+  assert.deepEqual(sanitized.suggestedMetrics, []);
+  assert.equal(sanitized.timelineRealism.status, "unclear");
+  assert.equal(sanitized.timelineRealism.summary, "unclear");
+  assert.equal(sanitized.timelineRealism.suggestedHorizonWeeks, null);
 });
 
 test("coach action proposals require deterministic acceptance and reject malformed or disallowed actions", async () => {
