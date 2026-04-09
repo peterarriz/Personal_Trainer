@@ -1,3 +1,5 @@
+import { normalizeStructuredProvenance } from "./services/provenance-service.js";
+
 export const DEFAULT_DAILY_CHECKIN = {
   status: "not_logged",
   sessionFeel: "",
@@ -97,7 +99,7 @@ export const buildPlannedDayRecord = (planDay = null) => {
       supplements: planDay?.resolved?.supplements || null,
     }),
     decision: clonePlainValueCheckins(planDay?.decision || {}),
-    provenance: clonePlainValueCheckins(planDay?.provenance || {}),
+    provenance: clonePlainValueCheckins(normalizeStructuredProvenance(planDay?.provenance || null)),
     flags: clonePlainValueCheckins(planDay?.flags || {}),
   };
 };
