@@ -1,3 +1,5 @@
+import { dedupeStrings } from "../utils/collection-utils.js";
+
 export const PROVENANCE_VERSION = 1;
 
 export const PROVENANCE_ACTORS = {
@@ -22,10 +24,6 @@ const clonePlainValue = (value) => {
 
 const sanitizeText = (value = "", maxLength = 200) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 
-const dedupeStrings = (values = []) => (
-  Array.from(new Set((values || []).map((value) => sanitizeText(value, 120)).filter(Boolean)))
-);
-
 export const buildProvenanceEvent = ({
   actor = PROVENANCE_ACTORS.deterministicEngine,
   trigger = "",
@@ -41,7 +39,7 @@ export const buildProvenanceEvent = ({
   trigger: sanitizeText(trigger, 80) || "unknown_trigger",
   mutationType: sanitizeText(mutationType, 80) || "state_update",
   revisionReason: sanitizeText(revisionReason, 120) || "",
-  sourceInputs: dedupeStrings(sourceInputs).slice(0, 8),
+  sourceInputs: dedupeStrings((sourceInputs || []).map((value) => sanitizeText(value, 120))).slice(0, 8),
   confidence: VALID_CONFIDENCE_LEVELS.has(confidence) ? confidence : null,
   timestamp: Number(timestamp) || Date.now(),
   details: clonePlainValue(details || {}),
@@ -67,7 +65,7 @@ export const normalizeProvenanceEvent = (event = null, fallbacks = {}) => {
 };
 
 export const buildProvenanceSummary = ({ keyDrivers = [], events = [], fallbackSummary = "" } = {}) => {
-  const driverText = dedupeStrings(keyDrivers).slice(0, 3);
+  const driverText = dedupeStrings((keyDrivers || []).map((value) => sanitizeText(value, 120))).slice(0, 3);
   if (driverText.length > 0) {
     return `Based on ${driverText.join(", ")}.`;
   }
@@ -84,7 +82,7 @@ export const buildStructuredProvenance = ({
   summary = "",
 } = {}) => {
   const normalizedEvents = (events || []).map((event) => normalizeProvenanceEvent(event)).filter(Boolean);
-  const normalizedDrivers = dedupeStrings(keyDrivers).slice(0, 8);
+  const normalizedDrivers = dedupeStrings((keyDrivers || []).map((value) => sanitizeText(value, 120))).slice(0, 8);
   const updatedAt = normalizedEvents.reduce((max, event) => Math.max(max, Number(event?.timestamp || 0) || 0), 0) || Date.now();
 
   return {

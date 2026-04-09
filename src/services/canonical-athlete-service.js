@@ -1,3 +1,5 @@
+import { dedupeStrings } from "../utils/collection-utils.js";
+
 export const CANONICAL_ATHLETE_VERSION = "2026-04-athlete-v1";
 
 export const LEGACY_GOAL_PROFILE_PATHS = [
@@ -53,10 +55,6 @@ const pickFirstNonEmpty = (...values) => {
   }
   return "";
 };
-
-const dedupeStrings = (values = []) => (
-  Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)))
-);
 
 const clampMinInt = (value, fallback = 3, min = 2) => {
   const numeric = Number(value);
