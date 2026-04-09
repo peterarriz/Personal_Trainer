@@ -20,7 +20,8 @@ const SUPABASE_UMD = fs.readFileSync(
 );
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || "";
-const LOCAL_IMPORT_RE = /^\s*import\s+.*?\s+from\s+['"](.+?)['"];?\s*$/gm;
+// Support both single-line and multiline ES import declarations when walking local deps.
+const LOCAL_IMPORT_RE = /import\s+[\s\S]*?\s+from\s+['"](.+?)['"];?/gm;
 
 console.log("Building...");
 
@@ -35,6 +36,12 @@ const resolveLocalModule = (fromFile, request) => {
   throw new Error(`Unable to resolve local module '${request}' from ${path.relative(ROOT, fromFile)}`);
 };
 
+const getLocalImportRequests = (source = "") => (
+  Array.from(source.matchAll(LOCAL_IMPORT_RE))
+    .map((match) => match[1])
+    .filter((request) => request && request.startsWith("."))
+);
+
 const collectModuleGraph = (entryFile) => {
   const ordered = [];
   const seen = new Set();
@@ -45,13 +52,10 @@ const collectModuleGraph = (entryFile) => {
     seen.add(normalized);
 
     const source = fs.readFileSync(normalized, "utf8");
-    let match;
-    while ((match = LOCAL_IMPORT_RE.exec(source)) !== null) {
-      const request = match[1];
-      if (!request.startsWith(".")) continue;
+    const localRequests = getLocalImportRequests(source);
+    for (const request of localRequests) {
       visit(resolveLocalModule(normalized, request));
     }
-    LOCAL_IMPORT_RE.lastIndex = 0;
 
     ordered.push(normalized);
   };
