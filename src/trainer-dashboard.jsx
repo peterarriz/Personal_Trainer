@@ -190,8 +190,39 @@ const CORE_FINISHER = [
   { ex: "Bird Dog", sets: "3", reps: "12/side", rest: "30s", cue: "Move slow, keep hips level and square." },
 ];
 
+const sanitizeWorkoutDetailText = (value = "") => sanitizeDisplayCopy(String(value ?? ""));
+const sanitizeWorkoutRun = (run = null) => (
+  run
+    ? {
+        ...run,
+        t: sanitizeWorkoutDetailText(run.t),
+        d: sanitizeWorkoutDetailText(run.d),
+      }
+    : null
+);
+const sanitizeWorkoutZones = (zones = null) => (
+  zones
+    ? {
+        ...zones,
+        easy: sanitizeWorkoutDetailText(zones.easy),
+        tempo: sanitizeWorkoutDetailText(zones.tempo),
+        int: sanitizeWorkoutDetailText(zones.int),
+        long: sanitizeWorkoutDetailText(zones.long),
+      }
+    : null
+);
+const sanitizeWorkoutEntry = (entry = {}) => ({
+  ...entry,
+  ex: sanitizeWorkoutDetailText(entry.ex),
+  sets: sanitizeWorkoutDetailText(entry.sets),
+  reps: sanitizeWorkoutDetailText(entry.reps),
+  rest: sanitizeWorkoutDetailText(entry.rest),
+  note: sanitizeWorkoutDetailText(entry.note),
+  cue: sanitizeWorkoutDetailText(entry.cue),
+});
+
 const parseSetPrescription = (setsText = "") => {
-  const normalized = String(setsText || "").trim().replace("Ãƒâ€”", "x");
+  const normalized = sanitizeWorkoutDetailText(setsText).trim().replace(/[×x]/gi, "x");
   const m = normalized.match(/^(\d+)\s*x\s*(.+)$/i);
   if (m) return { sets: m[1], reps: m[2] };
   return { sets: "As prescribed", reps: normalized || "As prescribed" };
@@ -219,9 +250,17 @@ const safeStorageSet = (storageLike, key, value) => {
 
 const normalizeStrengthExercise = (entry = {}) => {
   const { sets, reps } = parseSetPrescription(entry.sets || "");
-  const cue = entry.cue || entry.note || "Controlled reps with full range and stable form.";
-  const rest = entry.rest || (/rest/i.test(entry.note || "") ? (entry.note.match(/rest\s*[^.]+/i)?.[0] || "45-60s") : "45-75s");
-  return { ex: entry.ex || "Exercise", sets, reps: entry.reps || reps, rest, cue };
+  const cue = sanitizeWorkoutDetailText(entry.cue || entry.note || "Controlled reps with full range and stable form.");
+  const note = sanitizeWorkoutDetailText(entry.note || "");
+  const rest = sanitizeWorkoutDetailText(entry.rest || (/rest/i.test(note) ? (note.match(/rest\s*[^.]+/i)?.[0] || "45-60s") : "45-75s"));
+  return {
+    ex: sanitizeWorkoutDetailText(entry.ex || "Exercise"),
+    sets: sanitizeWorkoutDetailText(sets),
+    reps: sanitizeWorkoutDetailText(entry.reps || reps),
+    rest,
+    cue,
+    note,
+  };
 };
 
 const PROGRESSIVE_OVERLOAD_SET_CAPS = {
@@ -254,8 +293,8 @@ const getWeightIncrementByBucket = (bucket = "default") => {
 };
 
 const parseRepTarget = (repsText = "") => {
-  const text = String(repsText || "").toLowerCase();
-  const range = text.match(/(\d+)\s*[-Ã¢â‚¬â€œ]\s*(\d+)/);
+  const text = sanitizeWorkoutDetailText(repsText).toLowerCase();
+  const range = text.match(/(\d+)\s*[-–—]\s*(\d+)/);
   if (range) return Number(range[2]);
   const simple = text.match(/(\d+)/);
   return simple ? Number(simple[1]) : 8;
@@ -899,27 +938,27 @@ const buildRunRoutine = (todayWorkout) => {
       { ex: "Warm-up jog", sets: "1", reps: "10-15 min easy + drills", rest: "Ã¢â‚¬â€", cue: "Stay relaxed and progressively raise cadence." },
       { ex: "Main interval set", sets: "1", reps: run.d || "As prescribed", rest: "Recoveries built in", cue: "Hit quality effort; keep form tall." },
       { ex: "Cool-down", sets: "1", reps: "8-12 min easy jog/walk", rest: "Ã¢â‚¬â€", cue: "Lower HR gradually; finish with light mobility." },
-    ];
+    ].map(sanitizeWorkoutEntry);
   }
   if (focus === "Tempo") {
     return [
       { ex: "Warm-up", sets: "1", reps: "10-15 min easy + strides", rest: "Ã¢â‚¬â€", cue: "Prime mechanics before threshold work." },
       { ex: "Tempo segment", sets: "1", reps: run.d || "As prescribed", rest: "Steady", cue: "Controlled discomfort, even pacing." },
       { ex: "Cool-down", sets: "1", reps: "8-12 min easy", rest: "Ã¢â‚¬â€", cue: "Finish smooth and conversational." },
-    ];
+    ].map(sanitizeWorkoutEntry);
   }
   if (focus === "Long") {
     return [
       { ex: "Long aerobic run", sets: "1", reps: run.d || "As prescribed", rest: "Continuous", cue: "Easy effort, nose-breathing test early." },
       { ex: "Fuel & hydration", sets: "Every 30-40 min", reps: "Water + carbs as needed", rest: "Ã¢â‚¬â€", cue: "Start fueling before you feel depleted." },
       { ex: "Post-run reset", sets: "1", reps: "5-10 min walk + calf/hip mobility", rest: "Ã¢â‚¬â€", cue: "Downshift gradually to aid recovery." },
-    ];
+    ].map(sanitizeWorkoutEntry);
   }
   return [
     { ex: "Easy aerobic run", sets: "1", reps: run.d || "As prescribed", rest: "Continuous", cue: "Conversational pace, smooth cadence." },
     { ex: "Strides (optional)", sets: "4-6", reps: "15-20s", rest: "40-60s walk", cue: "Quick feet, relaxed upper body." },
     { ex: "Cool-down walk", sets: "1", reps: "5 min", rest: "Ã¢â‚¬â€", cue: "Finish breathing calm and controlled." },
-  ];
+  ].map(sanitizeWorkoutEntry);
 };
 
 const deriveReadinessAdjustedCheckin = (checkin = {}) => {
@@ -1747,7 +1786,7 @@ const getTodayWorkout = (weekNum, dayNum) => {
   // should flow through PlanDay/PlanWeek when that data exists.
   const week = WEEKS[(weekNum - 1) % WEEKS.length];
   if (!week) return null;
-  const zones = PHASE_ZONES[week.phase];
+  const zones = sanitizeWorkoutZones(PHASE_ZONES[week.phase]);
   const dayMap = {
     1: { type: "run+strength", run: week.mon, strSess: week.str, label: "Easy Run + Strength A" },
     2: { type: "otf", label: "Orange Theory Ã¢â‚¬â€ Hybrid Day" },
@@ -1757,7 +1796,14 @@ const getTodayWorkout = (weekNum, dayNum) => {
     6: { type: "long-run", run: week.sat, label: "Long Run" },
     0: { type: "rest", label: "Rest Day", isRecoverySlot: true },
   };
-  return { ...dayMap[dayNum], week, zones };
+  const workout = dayMap[dayNum] || dayMap[0];
+  return {
+    ...workout,
+    label: sanitizeWorkoutDetailText(workout.label),
+    run: sanitizeWorkoutRun(workout.run),
+    week,
+    zones,
+  };
 };
 
 const dayColors = { "run+strength":"#3c91e6", otf:"#c97a2b", "strength+prehab":"#6e63d9", "hard-run":"#d85d78", "easy-run":"#2da772", "long-run":"#c94f6d", rest:"#536479" };
@@ -5464,8 +5510,8 @@ Keep it plain and specific.`;
   })();
   // Merge default zones with any AI-generated overrides
   function getZones(phaseName) {
-    const defaults = PHASE_ZONES[phaseName] || PHASE_ZONES["BASE"];
-    const overrides = paceOverrides[phaseName] || {};
+    const defaults = sanitizeWorkoutZones(PHASE_ZONES[phaseName] || PHASE_ZONES["BASE"]);
+    const overrides = sanitizeWorkoutZones(paceOverrides[phaseName] || {});
     return { ...defaults, ...overrides };
   }
 
@@ -8153,11 +8199,13 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
   });
   const strTrack = displayWorkout?.strengthTrack || todayWorkout?.strengthTrack || "home";
   const strSess = displayWorkout?.strSess || todayWorkout?.strSess || "A";
-  const strExercises = STRENGTH[strSess]?.[strTrack] || [];
+  const displayRun = sanitizeWorkoutRun(displayWorkout?.run);
+  const strExercises = (STRENGTH[strSess]?.[strTrack] || []).map(sanitizeWorkoutEntry);
+  const prehabExercises = ACHILLES.map(sanitizeWorkoutEntry);
   const hasStrength = displayWorkout?.type === "run+strength" || displayWorkout?.type === "strength+prehab";
   const hasPrehab = displayWorkout?.type === "strength+prehab";
-  const runColor = displayWorkout?.run?.t === "Intervals" ? C.amber : displayWorkout?.run?.t === "Long" ? C.red : displayWorkout?.run?.t === "Tempo" ? C.amber : readinessTone;
-  const runPace = displayWorkout?.run ? (displayWorkout.run.t === "Intervals" ? zones?.int : displayWorkout.run.t === "Long" ? zones?.long : displayWorkout.run.t === "Tempo" ? zones?.tempo : zones?.easy) : null;
+  const runColor = displayRun?.t === "Intervals" ? C.amber : displayRun?.t === "Long" ? C.red : displayRun?.t === "Tempo" ? C.amber : readinessTone;
+  const runPace = displayRun ? sanitizeWorkoutDetailText(displayRun.t === "Intervals" ? zones?.int : displayRun.t === "Long" ? zones?.long : displayRun.t === "Tempo" ? zones?.tempo : zones?.easy) : null;
   const tomorrowDate = new Date(`${todayKey}T12:00:00`);
   tomorrowDate.setDate(tomorrowDate.getDate() + 1);
   const tomorrowDayOfWeek = tomorrowDate.getDay();
@@ -8469,9 +8517,9 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           <div style={{ display:"grid", gap:"0.22rem", minWidth:0 }}>
             <div style={{ fontSize:"1.32rem", color:"#f8fafc", fontWeight:650, lineHeight:1.15 }}>{displayWorkout?.label || "Rest Day"}</div>
             <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.55 }}>
-              {displayWorkout?.run?.t || (hasStrength ? `Strength ${strSess}` : displayWorkout?.type?.replaceAll("-", " ") || "Session")}
+              {displayRun?.t || (hasStrength ? `Strength ${strSess}` : displayWorkout?.type?.replaceAll("-", " ") || "Session")}
               {displayWorkout?.strengthDuration ? ` - ${displayWorkout.strengthDuration}` : ""}
-              {displayWorkout?.run?.d ? ` - ${displayWorkout.run.d}` : ""}
+              {displayRun?.d ? ` - ${displayRun.d}` : ""}
             </div>
           </div>
           <span style={{ fontSize:"0.72rem", color:"#475569", transform: cardExpanded ? "rotate(180deg)" : "rotate(0deg)", transition:"transform 0.2s", paddingTop:"0.15rem" }}>v</span>
@@ -8507,11 +8555,11 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
             </span>
           )}
         </div>
-        {displayWorkout?.run && (
+        {displayRun && (
           <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.6rem", marginBottom: hasStrength ? "0.35rem" : 0 }}>
             <div>
               <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>WHAT</div>
-              <div className="mono" style={{ fontSize:"0.82rem", color:runColor, fontWeight:600 }}>{displayWorkout.run.d}</div>
+              <div className="mono" style={{ fontSize:"0.82rem", color:runColor, fontWeight:600 }}>{displayRun.d}</div>
             </div>
             <div>
               <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>HOW HARD</div>
@@ -8519,11 +8567,11 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
             </div>
             <div>
               <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>SESSION</div>
-              <div style={{ fontSize:"0.82rem", color:runColor, fontWeight:600 }}>{displayWorkout.run.t}</div>
+              <div style={{ fontSize:"0.82rem", color:runColor, fontWeight:600 }}>{displayRun.t}</div>
             </div>
           </div>
         )}
-        {hasStrength && !displayWorkout?.run && (
+        {hasStrength && !displayRun && (
           <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.6rem" }}>
             <div>
               <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>WHAT</div>
@@ -8539,7 +8587,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
             </div>
           </div>
         )}
-        {hasStrength && displayWorkout?.run && (
+        {hasStrength && displayRun && (
           <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.45rem" }}>
             + Strength {strSess} ({strTrack === "hotel" ? "Gym" : "Home"}) - {displayWorkout?.strengthDuration || "20-30 min"}
           </div>
@@ -8547,11 +8595,11 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
 
         {cardExpanded && (
           <div style={{ marginTop:"0.75rem", borderTop:"1px solid #1e293b", paddingTop:"0.75rem" }} onClick={e => e.stopPropagation()}>
-            {displayWorkout?.run && (
+            {displayRun && (
               <div style={{ marginBottom: hasStrength ? "0.85rem" : 0 }}>
                 <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>RUN</div>
                 <div style={{ fontSize:"0.62rem", color:"#cbd5e1", lineHeight:1.65 }}>
-                  {displayWorkout.run.t} - {displayWorkout.run.d} at {runPace}/mi
+                  {displayRun.t} - {displayRun.d} at {runPace}/mi
                 </div>
                 {displayWorkout?.environmentNote && <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" }}>{displayWorkout.environmentNote}</div>}
                 {readinessInfluence?.recoveryLine && <div style={{ fontSize:"0.54rem", color:readinessTone, marginTop:"0.2rem" }}>{readinessInfluence.recoveryLine}</div>}
@@ -8595,7 +8643,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
               <div>
                 <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>ACHILLES PREHAB</div>
                 <div style={{ display:"grid", gap:"0.3rem" }}>
-                  {ACHILLES.map((ex, i) => (
+                  {prehabExercises.map((ex, i) => (
                     <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.5rem", padding:"0.35rem 0", borderBottom: i < ACHILLES.length - 1 ? "1px solid #1e293b20" : "none" }}>
                       <div>
                         <div style={{ fontSize:"0.6rem", color:"#e2e8f0", fontWeight:500 }}>{ex.ex}</div>
