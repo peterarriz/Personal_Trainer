@@ -816,6 +816,7 @@ const sanitizeText = (value = "", maxLength = 200) => String(value || "").replac
 
 
 
+
 var _canonicalathleteservicejs = require('./services/canonical-athlete-service.js');
 
 
@@ -825,7 +826,7 @@ var _canonicalathleteservicejs = require('./services/canonical-athlete-service.j
 var _provenanceservicejs = require('./services/provenance-service.js');
 var _collectionutilsjs = require('./utils/collection-utils.js');
 
-exports.deriveCanonicalGoalProfileState = _canonicalathleteservicejs.deriveCanonicalAthleteState; exports.getActiveTimeBoundGoal = _canonicalathleteservicejs.getActiveTimeBoundGoal; exports.getGoalBuckets = _canonicalathleteservicejs.getGoalBuckets; exports.inferGoalType = _canonicalathleteservicejs.inferGoalType; exports.normalizeGoalObject = _canonicalathleteservicejs.normalizeGoalObject; exports.normalizeGoals = _canonicalathleteservicejs.normalizeGoals;
+exports.daysUntil = _canonicalathleteservicejs.daysUntil; exports.deriveCanonicalGoalProfileState = _canonicalathleteservicejs.deriveCanonicalAthleteState; exports.getActiveTimeBoundGoal = _canonicalathleteservicejs.getActiveTimeBoundGoal; exports.getGoalBuckets = _canonicalathleteservicejs.getGoalBuckets; exports.inferGoalType = _canonicalathleteservicejs.inferGoalType; exports.normalizeGoalObject = _canonicalathleteservicejs.normalizeGoalObject; exports.normalizeGoals = _canonicalathleteservicejs.normalizeGoals;
 
  const DEFAULT_PLANNING_HORIZON_WEEKS = 12; exports.DEFAULT_PLANNING_HORIZON_WEEKS = DEFAULT_PLANNING_HORIZON_WEEKS;
  const RECOVERY_BLOCK_WEEKS = 2; exports.RECOVERY_BLOCK_WEEKS = RECOVERY_BLOCK_WEEKS;
@@ -1527,7 +1528,7 @@ const resolveWeeklyNutritionEmphasis = ({
   const runningGoal = active.find(g => g.category === "running");
   const strengthGoal = active.find(g => g.category === "strength");
   const bodyCompGoal = active.find(g => g.category === "body_comp");
-  const raceNear = daysUntil(_optionalChain([runningGoal, 'optionalAccess', _207 => _207.targetDate])) <= 56;
+  const raceNear = _canonicalathleteservicejs.daysUntil.call(void 0, _optionalChain([runningGoal, 'optionalAccess', _207 => _207.targetDate])) <= 56;
   const inconsistencyRisk = _optionalChain([momentum, 'optionalAccess', _208 => _208.inconsistencyRisk]) || "medium";
   const lowBandwidth = inconsistencyRisk === "high" || _optionalChain([learningLayer, 'optionalAccess', _209 => _209.adjustmentBias]) === "simplify";
   const strengthPriority = _optionalChain([primary, 'optionalAccess', _210 => _210.category]) === "strength" && !lowBandwidth;
@@ -1766,7 +1767,7 @@ const labelPhaseWeeks = (rows = []) => {
     }));
   }
 
-  const daysToDeadline = daysUntil(timeGoal.targetDate);
+  const daysToDeadline = _canonicalathleteservicejs.daysUntil.call(void 0, timeGoal.targetDate);
   if (daysToDeadline >= 0) {
     const rows = Array.from({ length: horizonWeeks }).map((_, idx) => buildPlanWeekRow(idx));
     return labelPhaseWeeks(rows).map(row => ({
