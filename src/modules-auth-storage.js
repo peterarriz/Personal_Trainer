@@ -5,6 +5,7 @@ import {
   DEFAULT_COACH_PLAN_ADJUSTMENTS,
   DEFAULT_NUTRITION_FAVORITES,
 } from "./services/persistence-adapter-service.js";
+import { buildLegacyStrengthPerformanceFromRecords, getExercisePerformanceRecordsForLog } from "./services/performance-record-service.js";
 
 export const SB_ROW = "trainer_v1";
 export const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
@@ -390,6 +391,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     if (!deleteRes.ok) throw new Error("Session log delete failed");
     if (!entry) return;
 
+    const exerciseRecords = getExercisePerformanceRecordsForLog(entry || {}, { dateKey: safeDateKey });
     const sessionLogRow = {
       user_id: userId,
       date: safeDateKey,
@@ -399,7 +401,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       distance_mi: toFiniteNumber(entry?.miles),
       duration_min: toFiniteNumber(entry?.runTime),
       avg_hr: toFiniteInteger(entry?.healthMetrics?.avgHr),
-      exercises: Array.isArray(entry?.strengthPerformance) ? entry.strengthPerformance : [],
+      exercises: buildLegacyStrengthPerformanceFromRecords(exerciseRecords),
     };
 
     const { res } = await authFetchWithRetry({

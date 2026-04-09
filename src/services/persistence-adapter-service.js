@@ -1,4 +1,5 @@
 import { normalizeActualNutritionLogCollection } from "../modules-nutrition.js";
+import { normalizePerformanceLogsCollection } from "./performance-record-service.js";
 
 export const PERSISTED_TRAINER_DATA_VERSION = 6;
 export const PERSISTENCE_CONTRACT_VERSION = "runtime_storage_v1";
@@ -47,7 +48,7 @@ export const buildCanonicalRuntimeState = ({
   nutritionFavorites = DEFAULT_NUTRITION_FAVORITES,
   nutritionActualLogs = {},
 } = {}) => ({
-  logs: clonePersistenceValue(logs || {}),
+  logs: normalizePerformanceLogsCollection(clonePersistenceValue(logs || {})),
   bodyweights: clonePersistenceValue(bodyweights || []),
   paceOverrides: clonePersistenceValue(paceOverrides || {}),
   weekNotes: clonePersistenceValue(weekNotes || {}),

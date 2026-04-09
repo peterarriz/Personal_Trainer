@@ -1,4 +1,5 @@
 import { normalizeStructuredProvenance } from "./services/provenance-service.js";
+import { getExercisePerformanceRecordsForLog, getPerformanceRecordsForLog } from "./services/performance-record-service.js";
 
 export const DEFAULT_DAILY_CHECKIN = {
   status: "not_logged",
@@ -50,12 +51,14 @@ const normalizeSessionText = (value = "") => String(value || "")
   .replace(/[^a-z0-9]+/g, " ")
   .trim();
 
-const inferSessionFamily = ({ type = "", label = "", run = null, strengthPerformance = [] } = {}) => {
+const inferSessionFamily = ({ type = "", label = "", run = null, strengthPerformance = [], performanceRecords = [] } = {}) => {
   const raw = `${type} ${label} ${run?.t || ""}`.toLowerCase();
-  if (!raw.trim() && Array.isArray(strengthPerformance) && strengthPerformance.length > 0) return "strength";
+  const hasExercisePerformance = (Array.isArray(performanceRecords) && performanceRecords.some((record) => record?.scope === "exercise"))
+    || (Array.isArray(strengthPerformance) && strengthPerformance.length > 0);
+  if (!raw.trim() && hasExercisePerformance) return "strength";
   if (/rest|recovery|mobility|walk/.test(raw)) return "recovery";
   if (/run|tempo|interval|easy|long|aerobic|cardio|stride/.test(raw)) return "run";
-  if (/strength|push|pull|bench|squat|deadlift|press|row|lift|prehab/.test(raw) || (Array.isArray(strengthPerformance) && strengthPerformance.length > 0)) return "strength";
+  if (/strength|push|pull|bench|squat|deadlift|press|row|lift|prehab/.test(raw) || hasExercisePerformance) return "strength";
   if (/condition|otf|hybrid/.test(raw)) return "hybrid";
   return raw ? "custom" : "unknown";
 };
@@ -114,17 +117,20 @@ export const comparePlannedDayToActual = ({ plannedDayRecord = null, actualLog =
   const actualSession = actualLog?.actualSession || {};
   const actualType = String(actualSession?.sessionType || actualLog?.type || actualLog?.label || "");
   const actualLabel = String(actualSession?.sessionLabel || actualLog?.type || actualLog?.label || "");
+  const actualPerformanceRecords = getPerformanceRecordsForLog(actualLog || {}, { dateKey });
+  const actualExerciseRecords = getExercisePerformanceRecordsForLog(actualLog || {}, { dateKey });
   const actualFamily = inferSessionFamily({
     type: actualType,
     label: actualLabel,
     strengthPerformance: actualLog?.strengthPerformance || [],
+    performanceRecords: actualPerformanceRecords,
   });
   const status = resolveActualStatus({ dateKey, dailyCheckin, logEntry: actualLog });
   const hasStructuredActual = Boolean(
     actualType
     || Number(actualLog?.miles || 0) > 0
     || Number(actualLog?.runTime || 0) > 0
-    || (Array.isArray(actualLog?.strengthPerformance) && actualLog.strengthPerformance.length > 0)
+    || actualExerciseRecords.length > 0
     || ["completed_as_planned", "completed_modified", "partial_completed", "skipped"].includes(status)
   );
 
