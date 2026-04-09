@@ -11415,6 +11415,17 @@ const buildTrustSummary = ({
   };
 };
 
+const buildReviewBadgeTone = (kind = "", palette = {}) => {
+  const green = palette.green || "#27f59a";
+  const blue = palette.blue || "#60a5fa";
+  const amber = palette.amber || "#f59e0b";
+  const value = String(kind || "").toLowerCase();
+  if (/match|completed_as_planned|on_track|followed|high/.test(value)) return { color: green, bg: green + "14" };
+  if (/modified|partial|changed|deviated|minor/.test(value)) return { color: blue, bg: blue + "14" };
+  if (/skip|miss|unknown|missing|material|low|not_logged/.test(value)) return { color: amber, bg: amber + "14" };
+  return { color: "#94a3b8", bg: "#1e293b" };
+};
+
 // Ã¢â€â‚¬Ã¢â€â‚¬ HELPERS Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const READINESS_SUCCESS_STATUSES = new Set(["completed_as_planned", "completed_modified", "partial_completed"]);
 const toReadinessNumber = (value) => {
@@ -18599,7 +18610,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     : "";
   const todayTrustTone = buildReviewBadgeTone(
     todayTrust.level === "grounded" ? "match" : todayTrust.level === "partial" ? "changed" : "recovery"
-  );
+  , C);
   const rationaleHeadline = normalizeCoachOneLine(_optionalChain([primaryAdjustment, 'optionalAccess', _1843 => _1843.summary]) || _optionalChain([readinessInfluence, 'optionalAccess', _1844 => _1844.coachLine]) || conciseFocus);
   const rationaleSupport = normalizeCoachOneLine(_optionalChain([primaryAdjustment, 'optionalAccess', _1845 => _1845.reason]) || _optionalChain([readinessInfluence, 'optionalAccess', _1846 => _1846.userVisibleLine]) || shortProvenance);
   const successHeadline = normalizeCoachOneLine(_optionalChain([displayWorkout, 'optionalAccess', _1847 => _1847.success]) || conciseSuccess || "Complete the session and log it.");
@@ -19512,7 +19523,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   });
   const programTrustTone = buildReviewBadgeTone(
     programTrust.level === "grounded" ? "match" : programTrust.level === "partial" ? "changed" : "recovery"
-  );
+  , C);
   const plannedSessionsThisWeek = getProgramWeekSessions(currentWeek, (displayHorizon || []).find((h) => _optionalChain([h, 'optionalAccess', _2104 => _2104.absoluteWeek]) === currentWeek) || null).length;
   const currentWeekStart = new Date();
   currentWeekStart.setHours(0, 0, 0, 0);
@@ -20039,6 +20050,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       status: _optionalChain([actualRecovery, 'optionalAccess', _2224 => _2224.hydrationSupport, 'optionalAccess', _2225 => _2225.followed]) ? "match" : _optionalChain([actualRecovery, 'optionalAccess', _2226 => _2226.status]) || "",
     };
   };
+  const reviewBadgeTone = (kind = "") => buildReviewBadgeTone(kind, C);
   const selectedDayReview = _react.useMemo.call(void 0, 
     () => _dayreviewservicejs.buildDayReview.call(void 0, {
       dateKey: selectedReviewDate,
@@ -20064,13 +20076,6 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       }),
     };
   }, [selectedArchiveReviewTarget, planArchives]);
-  function buildReviewBadgeTone(kind = "") {
-    const value = String(kind || "").toLowerCase();
-    if (/match|completed_as_planned|on_track|followed|high/.test(value)) return { color: C.green, bg: C.green+"14" };
-    if (/modified|partial|changed|deviated|minor/.test(value)) return { color: C.blue, bg: C.blue+"14" };
-    if (/skip|miss|unknown|missing|material|low|not_logged/.test(value)) return { color: C.amber, bg: C.amber+"14" };
-    return { color: "#94a3b8", bg: "#1e293b" };
-  }
   const sanitizeStatusLabel = (value = "", fallback = "Unknown") => {
     const textValue = String(value || "").replaceAll("_", " ").trim();
     return sanitizeDisplayText(textValue || fallback);
@@ -20338,7 +20343,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         palette: C,
         sanitizeDisplayText: sanitizeDisplayText,
         sanitizeStatusLabel: sanitizeStatusLabel,
-        buildReviewBadgeTone: buildReviewBadgeTone,
+        buildReviewBadgeTone: reviewBadgeTone,
         summarizeExecutionDelta: summarizeExecutionDelta,
         formatReviewTimestamp: formatReviewTimestamp,
         buildSessionSummary: buildSessionSummary,
@@ -20429,7 +20434,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         palette: C,
         sanitizeDisplayText: sanitizeDisplayText,
         sanitizeStatusLabel: sanitizeStatusLabel,
-        buildReviewBadgeTone: buildReviewBadgeTone,
+        buildReviewBadgeTone: reviewBadgeTone,
         summarizeExecutionDelta: summarizeExecutionDelta,
         formatReviewTimestamp: formatReviewTimestamp,
         buildSessionSummary: buildSessionSummary,
@@ -20773,8 +20778,8 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
   };
 
-  const nutritionTone = buildReviewBadgeTone(_optionalChain([nutritionComparison, 'optionalAccess', _2451 => _2451.adherence]) || _optionalChain([nutritionComparison, 'optionalAccess', _2452 => _2452.deviationKind]));
-  const targetTone = buildReviewBadgeTone(sessionIntensity === "hard" ? "progression" : recoveryDay ? "recovery" : "match");
+  const nutritionTone = buildReviewBadgeTone(_optionalChain([nutritionComparison, 'optionalAccess', _2451 => _2451.adherence]) || _optionalChain([nutritionComparison, 'optionalAccess', _2452 => _2452.deviationKind]), C);
+  const targetTone = buildReviewBadgeTone(sessionIntensity === "hard" ? "progression" : recoveryDay ? "recovery" : "match", C);
   const comparisonLabel = _optionalChain([actualNutritionToday, 'optionalAccess', _2453 => _2453.loggedAt])
     ? `${sanitizeStatusLabel(_optionalChain([nutritionComparison, 'optionalAccess', _2454 => _2454.adherence]), "logged")} - ${sanitizeStatusLabel(_optionalChain([nutritionComparison, 'optionalAccess', _2455 => _2455.deviationKind]), "matched")}`
     : "Not logged yet";
@@ -21589,10 +21594,10 @@ Rules for every response:
       : coachDecisionMode === "Push"
       ? "progression"
       : "match"
-  );
+  , C);
   const coachTrustTone = buildReviewBadgeTone(
     coachTrust.level === "grounded" ? "match" : coachTrust.level === "partial" ? "changed" : "recovery"
-  );
+  , C);
   const boundaryLine = "Coach can recommend and prepare accepted actions, but state only changes when you explicitly apply a recommendation.";
   const recentAcceptedAction = (coachActions || []).find((action) => _optionalChain([action, 'optionalAccess', _2699 => _2699.acceptedBy])) || null;
   const weeklyNutritionCoachLine = _optionalChain([weeklyNutritionReview, 'optionalAccess', _2700 => _2700.coaching, 'optionalAccess', _2701 => _2701.coachLine]) || "Weekly nutrition signal is still forming.";
