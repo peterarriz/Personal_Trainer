@@ -11341,6 +11341,10 @@ const sanitizeDisplayText = (text = "") => stripInternalTags(
     .replace(/\btravelRun\b/gi, "run")
     .replace(/\bhybridRun\b/gi, "run + strength")
 ).trim();
+const sanitizeStatusLabel = (value = "", fallback = "Unknown") => {
+  const textValue = String(value || "").replaceAll("_", " ").trim();
+  return sanitizeDisplayText(textValue || fallback);
+};
 const joinHumanList = (items = []) => {
   const filtered = (items || []).filter(Boolean);
   if (!filtered.length) return "";
@@ -16312,13 +16316,13 @@ Keep it plain and specific.`;
         .btn:hover{border-color:rgba(60,145,230,0.34);color:var(--text-strong);background:var(--surface-1);transform:translateY(-1px);box-shadow:var(--shadow-1)}
         .btn:active{transform:translateY(0) scale(0.985)}
         .btn-primary{
-          background:var(--phase-accent)!important;
-          border-color:rgba(0,0,0,0)!important;
-          color:#f8fbff!important;
+          background:linear-gradient(135deg, rgba(34,84,94,0.92), rgba(27,56,86,0.94))!important;
+          border:1px solid rgba(125,211,252,0.22)!important;
+          color:var(--text-strong)!important;
           font-weight:700;
-          box-shadow:var(--shadow-2);
+          box-shadow:0 10px 24px rgba(6, 14, 28, 0.34), inset 0 1px 0 rgba(255,255,255,0.04);
         }
-        .btn-primary:hover{filter:none;box-shadow:var(--shadow-3)}
+        .btn-primary:hover{filter:none;background:linear-gradient(135deg, rgba(40,95,106,0.95), rgba(32,65,98,0.98))!important;border-color:rgba(147,197,253,0.34)!important;box-shadow:0 14px 28px rgba(8, 18, 34, 0.38)}
         input,textarea,select{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'Inter',sans-serif;font-size:0.7rem;padding:9px 11px;outline:none;width:100%;transition:border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease}
         input:focus,textarea:focus,select:focus{border-color:rgba(60,145,230,0.5);box-shadow:0 0 0 3px rgba(60,145,230,0.14);background:var(--surface-1)}
         @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
@@ -17440,7 +17444,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       });
       setPersonalization(next);
       await onPersist(next);
-      setLocationMsg("Location permission denied. Enable it in iPhone Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Location Services.");
+      setLocationMsg(sanitizeDisplayText("Location permission denied. Enable it in iPhone Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Location Services."));
     }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 600000 });
   };
   const handleCopyBackup = async () => {
@@ -17601,8 +17605,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 
                 )
               )
-              , React.createElement('div', { style: { marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 },}, "iPhone path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ Allow all categories."
-
+              , React.createElement('div', { style: { marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 },}
+                , sanitizeDisplayText("iPhone path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ Allow all categories.")
               )
               , checkMsg && React.createElement('div', { style: { marginTop:"0.22rem", fontSize:"0.51rem", color:"#cbd5e1" },}, checkMsg)
             )
@@ -17646,8 +17650,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             )
             , React.createElement('div', { style: { fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.6 },}, locationIntegration.summary)
             , React.createElement('button', { className: "btn", onClick: requestLocationAccess, style: { marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" },}, "Enable location permission"  )
-            , React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 },}, "iPhone path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Location Services Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ While Using App."
-
+            , React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 },}
+              , sanitizeDisplayText("iPhone path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Location Services Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ While Using App.")
             )
             , !!locationMsg && React.createElement('div', { style: { marginTop:"0.18rem", fontSize:"0.5rem", color:"#cbd5e1" },}, locationMsg)
           )
@@ -18003,10 +18007,10 @@ function OnboardingCoachLegacy({ onComplete }) {
           , React.createElement('div', { style: { fontSize:"0.54rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.35rem" },}, "Your Garmin data will appear in Apple Health automatically once connected. Here's how:"
 
           )
-          , React.createElement('div', { style: { fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.7 },}, "Step 1: Open Garmin Connect app"
-                 , React.createElement('br', null ), "Step 2: Tap your profile photo Ã¢â€ â€™ Settings Ã¢â€ â€™ Connected Apps Ã¢â€ â€™ Apple Health Ã¢â€ â€™ Enable All"
-                            , React.createElement('br', null ), "Step 3: Come back here and tap \"Check Connection\""
-
+          , React.createElement('div', { style: { fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.7 },}
+            , sanitizeDisplayText("Step 1: Open Garmin Connect app"), React.createElement('br', null )
+            , sanitizeDisplayText("Step 2: Tap your profile photo Ã¢â€ â€™ Settings Ã¢â€ â€™ Connected Apps Ã¢â€ â€™ Apple Health Ã¢â€ â€™ Enable All"), React.createElement('br', null )
+            , sanitizeDisplayText("Step 3: Come back here and tap \"Check Connection\"")
           )
           , React.createElement('div', { style: { marginTop:"0.45rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" },}
             , React.createElement('button', { className: "btn", onClick: ()=>setConnectOpen(true), style: { fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" },}
@@ -18019,8 +18023,11 @@ function OnboardingCoachLegacy({ onComplete }) {
 
             )
           )
-          , React.createElement('div', { style: { marginTop:"0.28rem", fontSize:"0.5rem", color:"#6f85a7" },}, "Status: "
-             , _optionalChain([appleHealth, 'optionalAccess', _1593 => _1593.status]) || "not_connected", " Ã‚Â· Last check: "    , _optionalChain([appleHealth, 'optionalAccess', _1594 => _1594.lastConnectionCheck]) ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"
+          , React.createElement('div', { style: { marginTop:"0.28rem", fontSize:"0.5rem", color:"#6f85a7" },}
+            , _textformatservicejs.joinDisplayParts.call(void 0, [
+              `Status: ${sanitizeStatusLabel(_optionalChain([appleHealth, 'optionalAccess', _1593 => _1593.status]), "not_connected")}`,
+              `Last check: ${_optionalChain([appleHealth, 'optionalAccess', _1594 => _1594.lastConnectionCheck]) ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}`,
+            ])
           )
           , React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" },}, "Permission confirmed: "
               , _optionalChain([appleHealth, 'optionalAccess', _1595 => _1595.permissionConfirmedAt]) ? new Date(appleHealth.permissionConfirmedAt).toLocaleString() : "not confirmed"
@@ -18036,8 +18043,8 @@ function OnboardingCoachLegacy({ onComplete }) {
               ? "Connected. Run one workout, then tap Check Connection."
               : "Not connected yet."
           )
-          , React.createElement('div', { style: { marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 },}, "iPhone permission path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer (or browser app) Ã¢â€ â€™ Allow all categories."
-
+          , React.createElement('div', { style: { marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 },}
+            , sanitizeDisplayText("iPhone permission path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer (or browser app) Ã¢â€ â€™ Allow all categories.")
           )
           , React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" },}, "Active data types: "   , activeAppleTypes)
           , checkMsg && React.createElement('div', { style: { marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" },}, checkMsg)
@@ -18051,12 +18058,15 @@ function OnboardingCoachLegacy({ onComplete }) {
 
           )
           , React.createElement('div', { style: { marginTop:"0.25rem", fontSize:"0.52rem", color:_optionalChain([garmin, 'optionalAccess', _1604 => _1604.status]) === "connected" ? C.green : "#8fa5c8" },}
-            , _optionalChain([garmin, 'optionalAccess', _1605 => _1605.status]) === "connected" ? `Garmin connected Ã‚Â· ${_optionalChain([garmin, 'optionalAccess', _1606 => _1606.deviceName]) || "device"}` : "Garmin not connected"
+            , _optionalChain([garmin, 'optionalAccess', _1605 => _1605.status]) === "connected" ? _textformatservicejs.joinDisplayParts.call(void 0, ["Garmin connected", _optionalChain([garmin, 'optionalAccess', _1606 => _1606.deviceName]) || "device"]) : "Garmin not connected"
           )
-          , React.createElement('div', { style: { marginTop:"0.18rem", fontSize:"0.5rem", color:"#6f85a7" },}, "Last activity synced: "
-               , _optionalChain([lastGarminActivity, 'optionalAccess', _1607 => _1607.startTime]) || "none", " Ã‚Â· "  , _optionalChain([lastGarminActivity, 'optionalAccess', _1608 => _1608.type]) || ""
+          , React.createElement('div', { style: { marginTop:"0.18rem", fontSize:"0.5rem", color:"#6f85a7" },}
+            , _textformatservicejs.joinDisplayParts.call(void 0, [
+              `Last activity synced: ${_optionalChain([lastGarminActivity, 'optionalAccess', _1607 => _1607.startTime]) || "none"}`,
+              sanitizeDisplayText(_optionalChain([lastGarminActivity, 'optionalAccess', _1608 => _1608.type]) || ""),
+            ])
           )
-          , React.createElement('a', { href: "#", onClick: (e)=>{ e.preventDefault(); setConnectOpen(true); }, style: { display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue },}, "How to sync Garmin Ã¢â€ â€™ Apple Health"      )
+          , React.createElement('a', { href: "#", onClick: (e)=>{ e.preventDefault(); setConnectOpen(true); }, style: { display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue },}, sanitizeDisplayText("How to sync Garmin Ã¢â€ â€™ Apple Health"))
           , !!garminMsg && React.createElement('div', { style: { marginTop:"0.2rem", fontSize:"0.52rem", color:"#cbd5e1" },}, garminMsg)
         )
 
@@ -19599,7 +19609,11 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     : primaryCategory === "strength"
     ? "Strength progression"
     : "Endurance progression");
-  const phaseBanner = `${_optionalChain([currentProgramBlock, 'optionalAccess', _2076 => _2076.label]) || String(_optionalChain([currentPhaseMeta, 'optionalAccess', _2077 => _2077.name]) || currentPhase).replace(" Phase", "")} Ã‚Â· ${phaseShortMeaning} Ã‚Â· ${daysToShift ? `transitions in ${daysToShift} days.` : "current block active."}`;
+  const phaseBanner = _textformatservicejs.joinDisplayParts.call(void 0, [
+    sanitizeDisplayText(_optionalChain([currentProgramBlock, 'optionalAccess', _2076 => _2076.label]) || String(_optionalChain([currentPhaseMeta, 'optionalAccess', _2077 => _2077.name]) || currentPhase).replace(" Phase", "")),
+    sanitizeDisplayText(phaseShortMeaning),
+    daysToShift ? `transitions in ${daysToShift} days.` : "current block active.",
+  ]);
   const strengthProgress = deriveStrengthProgressTracker({ logs, goals, strengthLayer });
   const strengthGoalTracking = _optionalChain([personalization, 'optionalAccess', _2078 => _2078.strengthProgression, 'optionalAccess', _2079 => _2079.tracking]) || {};
   const displayedStrengthProgress = _react.useMemo.call(void 0, () => {
@@ -20203,10 +20217,6 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       }),
     };
   }, [selectedArchiveReviewTarget, planArchives]);
-  const sanitizeStatusLabel = (value = "", fallback = "Unknown") => {
-    const textValue = String(value || "").replaceAll("_", " ").trim();
-    return sanitizeDisplayText(textValue || fallback);
-  };
   const summarizeExecutionDelta = (comparison = {}) => {
     if (!_optionalChain([comparison, 'optionalAccess', _2221 => _2221.hasPlannedDay])) return "No planned day available for comparison.";
     return `${sanitizeStatusLabel(_optionalChain([comparison, 'optionalAccess', _2222 => _2222.completionKind]))} - ${sanitizeStatusLabel(_optionalChain([comparison, 'optionalAccess', _2223 => _2223.differenceKind]))}`;
