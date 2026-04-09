@@ -32,6 +32,7 @@ import {
   buildPlanReference,
   getCurrentPrescribedDayRecord,
   getCurrentPrescribedDayRevision,
+  getStableCaptureAtForDate,
   normalizePrescribedDayHistoryEntry,
   PRESCRIBED_DAY_DURABILITY,
   upsertPrescribedDayHistoryEntry,
