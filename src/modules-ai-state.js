@@ -56,6 +56,26 @@ const compactSessionsByDay = (sessionsByDay = {}) => {
   );
 };
 
+const compactProgramBlock = (programBlock = null) => {
+  if (!programBlock) return null;
+  return clonePlainValueAiState({
+    id: programBlock?.id || "",
+    label: programBlock?.label || "",
+    architecture: programBlock?.architecture || "",
+    phase: programBlock?.phase || "",
+    window: programBlock?.window || null,
+    dominantEmphasis: programBlock?.dominantEmphasis || null,
+    secondaryEmphasis: programBlock?.secondaryEmphasis || null,
+    recoveryPosture: programBlock?.recoveryPosture || null,
+    nutritionPosture: programBlock?.nutritionPosture || null,
+    successCriteria: (programBlock?.successCriteria || []).slice(0, 4),
+    constraints: (programBlock?.constraints || []).slice(0, 5),
+    tradeoffs: (programBlock?.tradeoffs || []).slice(0, 5),
+    goalAllocation: programBlock?.goalAllocation || null,
+    summary: programBlock?.summary || "",
+  });
+};
+
 const compactPlanDay = (planDay = null) => {
   if (!planDay) return null;
   return clonePlainValueAiState({
@@ -73,6 +93,7 @@ const compactPlanDay = (planDay = null) => {
       summary: planDay?.week?.summary || "",
       constraints: planDay?.week?.constraints || [],
       successDefinition: planDay?.week?.successDefinition || "",
+      programBlock: compactProgramBlock(planDay?.week?.programBlock || null),
       weeklyIntent: planDay?.week?.weeklyIntent || null,
     },
     base: {
@@ -105,6 +126,7 @@ const compactPlanWeek = (planWeek = null) => {
     adjusted: Boolean(planWeek?.adjusted),
     summary: planWeek?.summary || "",
     constraints: planWeek?.constraints || [],
+    programBlock: compactProgramBlock(planWeek?.programBlock || null),
     weeklyIntent: planWeek?.weeklyIntent || null,
     sessionsByDay: compactSessionsByDay(planWeek?.sessionsByDay || {}),
   });
@@ -236,6 +258,7 @@ export const buildAiStatePacket = ({
         preferences: canonicalUserProfile?.preferences || {},
       }),
       goals: goalsSnapshot,
+      programBlock: clonePlainValueAiState(compactWeek?.programBlock || compactDay?.week?.programBlock || null),
       weeklyIntent: clonePlainValueAiState(compactWeek?.weeklyIntent || compactDay?.week?.weeklyIntent || null),
       planWeek: compactWeek,
       planDay: compactDay,

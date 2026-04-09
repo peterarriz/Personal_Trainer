@@ -252,6 +252,24 @@ export const normalizeActualNutritionLogCollection = (legacyNutritionFeedback = 
   )
 );
 
+// LEGACY_COMPAT: older saves still arrive with nutritionFeedback instead of
+// nutritionActualLogs. Keep this adapter at the persistence boundary until
+// legacy payloads are migrated out of circulation.
+export const resolveNutritionActualLogStoreCompat = ({
+  nutritionActualLogs = null,
+  legacyNutritionFeedback = null,
+} = {}) => {
+  const hasNormalizedNutritionActualStore = Boolean(
+    nutritionActualLogs
+    && typeof nutritionActualLogs === "object"
+  );
+  return hasNormalizedNutritionActualStore
+    ? clonePlainValueNutrition(nutritionActualLogs || {})
+    : normalizeActualNutritionLogCollection(legacyNutritionFeedback || {});
+};
+
+// LEGACY_COMPAT: export-only bridge for older tooling/snapshots that still
+// expect nutritionFeedback shape. Runtime truth remains ActualNutritionLog.
 export const buildLegacyNutritionFeedbackFromActualLog = (actualNutritionLog = null) => {
   if (!actualNutritionLog || typeof actualNutritionLog !== "object") return {};
   const normalized = normalizeActualNutritionLog({
@@ -274,6 +292,7 @@ export const buildLegacyNutritionFeedbackFromActualLog = (actualNutritionLog = n
   };
 };
 
+// LEGACY_COMPAT: batch bridge for older persistence/export consumers.
 export const buildLegacyNutritionFeedbackCollectionFromActualLogs = (nutritionActualLogs = {}) => (
   Object.fromEntries(
     Object.entries(nutritionActualLogs || {}).map(([dateKey, actualNutritionLog]) => [
@@ -403,10 +422,13 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
 
   const recentBW = (bodyweights || []).slice(-10).map(x => Number(x.w)).filter(Boolean);
   const bwTrend = recentBW.length >= 2 ? recentBW[recentBW.length - 1] - recentBW[0] : 0;
+  // LEGACY_COMPAT: adaptive nutrition still reads legacy nutritionFeedback for
+  // older payloads that have not been normalized onto nutritionActualLogs.
   const recentFeedback = Object.values(
-    (nutritionActualLogs && Object.keys(nutritionActualLogs).length)
-      ? nutritionActualLogs
-      : normalizeActualNutritionLogCollection(legacyNutritionFeedback || {})
+    resolveNutritionActualLogStoreCompat({
+      nutritionActualLogs: (nutritionActualLogs && Object.keys(nutritionActualLogs).length) ? nutritionActualLogs : null,
+      legacyNutritionFeedback,
+    })
   ).slice(-10);
   const hungerHits = recentFeedback.filter(f => f.deviationKind === "under_fueled" || f.issue === "hunger").length;
   const offTrackHits = recentFeedback.filter(f => f.adherence === "low" || f.quickStatus === "off_track").length;
@@ -685,6 +707,141 @@ export const buildGroceryBasket = ({ store, city, days, dayType }) => {
   const extras = ["electrolytes", "sparkling water", "salsa/hot sauce"];
   const runBonus = ["bagels", "honey", "rice cakes"];
   return { store, city, days, items: [...protein, ...carbs, ...fats, ...produce, ...extras, ...(["longRun", "hardRun", "travelRun"].includes(dayType) ? runBonus : [])] };
+};
+
+const buildAnchorMealLabel = (anchor = null) => {
+  const text = typeof anchor === "string"
+    ? anchor
+    : anchor?.meal || anchor?.name || "";
+  return String(text || "").trim();
+};
+
+const dedupeBasketItems = (items = []) => (
+  [...new Set((items || []).map((item) => String(item || "").trim()).filter(Boolean))]
+);
+
+export const deriveGroceryExecutionSupport = ({
+  nutritionLayer = null,
+  realWorldNutrition = null,
+  weeklyNutritionReview = null,
+  favorites = {},
+  localFoodContext = {},
+  savedLocation = {},
+  dayType = "",
+  travelMode = false,
+  recoveryDay = false,
+  hardDay = false,
+  strengthDay = false,
+} = {}) => {
+  const city = String(localFoodContext?.city || localFoodContext?.locationLabel || "your area").trim() || "your area";
+  const preferredStore = String(localFoodContext?.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0] || "your usual grocery stop").trim() || "your usual grocery stop";
+  const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
+  const savedSafeMeals = (favorites?.safeMeals || []).map(buildAnchorMealLabel).filter(Boolean);
+  const savedDefaultMeals = (favorites?.defaultMeals || []).map(buildAnchorMealLabel).filter(Boolean);
+  const savedTravelMeals = (favorites?.travelMeals || []).map(buildAnchorMealLabel).filter(Boolean);
+  const groceryHooks = realWorldNutrition?.groceryHooks || {};
+  const weeklyFriction = String(weeklyNutritionReview?.friction?.dominantCause || "").toLowerCase();
+  const adaptationMode = String(weeklyNutritionReview?.adaptation?.mode || "").toLowerCase();
+  const travelConstraint = travelMode || weeklyFriction === "travel";
+  const convenienceConstraint = ["convenience", "time_pressure", "late_day"].includes(weeklyFriction) || adaptationMode === "simplify_defaults";
+  const needsReset = adaptationMode === "simplify_defaults" || weeklyFriction === "convenience" || weeklyFriction === "time_pressure";
+  const basketType = travelConstraint
+    ? "travel_hotel_mini_fridge_basket"
+    : recoveryDay
+    ? "two_day_recovery_basket"
+    : hardDay || strengthDay
+    ? "fast_protein_carb_basket"
+    : "todays_grocery_reset";
+  const title = basketType === "travel_hotel_mini_fridge_basket"
+    ? "Travel Hotel Mini-Fridge Basket"
+    : basketType === "two_day_recovery_basket"
+    ? "2-Day Recovery Basket"
+    : basketType === "fast_protein_carb_basket"
+    ? "Fast Protein + Carb Basket"
+    : "Today's Grocery Reset";
+  const summary = basketType === "travel_hotel_mini_fridge_basket"
+    ? "Built for hotel, airport, or convenience-store constraints without pretending full grocery access."
+    : basketType === "two_day_recovery_basket"
+    ? "Keeps recovery days simple: high protein, easy hydration, and low-decision meals."
+    : basketType === "fast_protein_carb_basket"
+    ? "Biases easy protein and quick carbs so today's training target is easier to hit."
+    : "A small reset basket to make the next 24 hours easier, not more complicated.";
+  const baseBasket = buildGroceryBasket({
+    store: preferredStore,
+    city,
+    days: basketType === "two_day_recovery_basket" ? 2 : 1,
+    dayType: dayType || nutritionLayer?.dayType || "easyRun",
+  });
+
+  const modeSpecificItems = basketType === "travel_hotel_mini_fridge_basket"
+    ? ["Greek yogurt cups", "ready-to-drink protein shakes", "bananas", "microwave rice cups", "jerky or tuna packets", "electrolyte packets"]
+    : basketType === "two_day_recovery_basket"
+    ? ["Greek yogurt", "eggs", "rotisserie chicken or pre-cooked protein", "fruit", "bagged salad", "potatoes or rice", "electrolytes"]
+    : basketType === "fast_protein_carb_basket"
+    ? ["protein shakes", "Greek yogurt", "rice cups", "bagels", "bananas", "lean protein", "electrolytes"]
+    : ["lean protein", "fruit", "rice or potatoes", "bagged salad", "Greek yogurt", "sparkling water"];
+  const priorityItems = dedupeBasketItems([
+    ...(groceryHooks?.priorityItems || []),
+    ...modeSpecificItems,
+  ]).slice(0, 8);
+  const mealAnchors = dedupeBasketItems([
+    ...(travelConstraint ? savedTravelMeals : []),
+    ...savedDefaultMeals,
+    ...savedSafeMeals,
+    ...(groceryHooks?.carryForwardMeals || []),
+    realWorldNutrition?.mealStructure?.breakfast || "",
+    realWorldNutrition?.mealStructure?.lunch || "",
+  ]).slice(0, 4);
+  const convenienceOptions = travelConstraint
+    ? [
+        "Greek yogurt + fruit + protein shake",
+        "Egg bites + oatmeal + banana",
+        "Microwave rice cup + tuna packet + fruit",
+      ]
+    : hardDay || strengthDay
+    ? [
+        "Pre-cooked protein + rice cup + fruit",
+        "Greek yogurt + bagel + banana",
+        "Protein shake + wrap + electrolyte water",
+      ]
+    : [
+        "Greek yogurt + berries + nuts",
+        "Rotisserie chicken + salad kit + potato",
+        "Eggs + toast + fruit",
+      ];
+  const locationContextLine = locationPermissionGranted
+    ? `Using saved location context for examples only: ${city} / ${preferredStore}.`
+    : `Using saved preferences only. Store and city examples are placeholders, not live availability.`;
+  const weeklyExecutionLine = weeklyNutritionReview?.friction?.summary
+    ? `Weekly pattern: ${weeklyNutritionReview.friction.summary}`
+    : needsReset
+    ? "Weekly pattern suggests simplifying food decisions."
+    : "No strong weekly grocery friction showed up.";
+  const honestyLine = travelConstraint
+    ? "This is a convenience-first basket. It does not assume exact hotel, airport, or store inventory."
+    : "This basket is a deterministic planning aid, not an inventory or price claim.";
+  const anchorPrompt = convenienceConstraint
+    ? "Pick one breakfast anchor and one lunch anchor so the rest of the day needs fewer decisions."
+    : "Use these as meal anchors, then fill the remaining meal with the same protein + carb + produce pattern.";
+
+  return {
+    title,
+    basketType,
+    summary,
+    preferredStore,
+    city,
+    basket: {
+      ...baseBasket,
+      items: priorityItems,
+    },
+    mealAnchors,
+    convenienceOptions,
+    locationContextLine,
+    weeklyExecutionLine,
+    honestyLine,
+    anchorPrompt,
+    optionalityLine: "Optional support only. Keep today's prescription primary and use this helper only if it reduces friction.",
+  };
 };
 
 export const deriveFridgeCoachMealSuggestion = ({ fridgeInput, dayType = "easyRun" }) => {

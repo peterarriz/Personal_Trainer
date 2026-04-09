@@ -50,6 +50,7 @@ export const assembleCurrentPlanWeek = ({
   todayKey = "",
   currentWeek = 1,
   baseWeek = {},
+  weekTemplates = [],
   goals = [],
   planComposer = {},
   momentum = {},
@@ -64,6 +65,7 @@ export const assembleCurrentPlanWeek = ({
   return buildPlanWeek({
     weekNumber: currentWeek,
     template: baseWeek,
+    weekTemplates,
     referenceTemplate: baseWeek,
     label: `${baseWeek?.phase || "BASE"} - Week ${currentWeek}`,
     specificity: "high",
@@ -72,6 +74,8 @@ export const assembleCurrentPlanWeek = ({
     endDate,
     goals,
     architecture: planComposer?.architecture || "hybrid_performance",
+    programBlock: planComposer?.programBlock || null,
+    programContext: planComposer?.programContext || null,
     blockIntent: planComposer?.blockIntent || null,
     split: planComposer?.split || null,
     sessionsByDay: planComposer?.dayTemplates || null,
@@ -123,6 +127,7 @@ export const assemblePlanWeekRuntime = ({
     todayKey,
     currentWeek,
     baseWeek,
+    weekTemplates,
     goals,
     planComposer,
     momentum,
@@ -139,6 +144,8 @@ export const assemblePlanWeekRuntime = ({
     goals,
     weekTemplates,
     architecture: planComposer?.architecture || "hybrid_performance",
+    programBlock: planComposer?.programBlock || null,
+    programContext: planComposer?.programContext || null,
     blockIntent: planComposer?.blockIntent || null,
     split: planComposer?.split || null,
     sessionsByDay: planComposer?.dayTemplates || null,
@@ -179,6 +186,9 @@ export const buildFallbackProgramPreviewWeeks = ({
   environmentSelection = null,
   previewLength = 4,
 } = {}) => {
+  // FALLBACK_ONLY: this preview path exists so Program can still show a horizon
+  // when durable/canonical week rows are unavailable. These rows are not
+  // committed history and should never be treated as such.
   const fallbackReferenceTemplate = currentPlanWeek?.template
     || weekTemplates[Math.max(0, Math.min(currentWeek - 1, weekTemplates.length - 1))]
     || weekTemplates[0]
@@ -190,12 +200,15 @@ export const buildFallbackProgramPreviewWeeks = ({
     const planWeek = buildPlanWeek({
       weekNumber: absoluteWeek,
       template,
+      weekTemplates,
       referenceTemplate: fallbackReferenceTemplate,
       label: `${template?.phase || "BASE"} · Week ${absoluteWeek}`,
       specificity: idx <= 1 ? "high" : idx <= 5 ? "medium" : "directional",
       kind: "plan",
       goals,
       architecture: planComposer?.architecture || "hybrid_performance",
+      programBlock: absoluteWeek === currentWeek ? (currentPlanWeek?.programBlock || planComposer?.programBlock || null) : null,
+      programContext: planComposer?.programContext || null,
       blockIntent: planComposer?.blockIntent || null,
       split: planComposer?.split || null,
       sessionsByDay: planComposer?.dayTemplates || null,
@@ -222,8 +235,9 @@ export const buildFallbackProgramPreviewWeeks = ({
   });
 };
 
-// Prefer canonical horizon rows. The fallback preview keeps Program usable
-// while the rest of the weekly planning stack is still being extracted.
+// FALLBACK_ONLY: prefer canonical horizon rows. This template-derived preview
+// keeps Program usable while older data and in-flight migrations still lack
+// durable horizon rows.
 export const resolveProgramDisplayHorizon = ({
   rollingHorizon = [],
   currentWeek = 1,
