@@ -10,7 +10,7 @@ test("sanitizeIntakeText cleans mojibake in intake copy", () => {
   const dirty = "No right answers Ã¢â‚¬â€ just pick what fits best. Coach is assessing your timelineÃ¢â‚¬Â¦";
   assert.equal(
     sanitizeIntakeText(dirty),
-    "No right answers - just pick what fits best. Coach is assessing your timeline..."
+    "No right answers — just pick what fits best. Coach is assessing your timeline…"
   );
 });
 

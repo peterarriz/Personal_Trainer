@@ -1,11 +1,6 @@
-export const sanitizeIntakeText = (text = "") => String(text || "")
-  .replaceAll("Ã¢â‚¬â€", "-")
-  .replaceAll("Ã¢â‚¬â€œ", "-")
-  .replaceAll("Ã¢â‚¬Â¢", " • ")
-  .replaceAll("Ã¢â‚¬Â¦", "...")
-  .replaceAll("Ã¢â‚¬â„¢", "'")
-  .replaceAll("Ã‚Â·", " - ")
-  .replaceAll("Ã‚Â", "");
+import { sanitizeDisplayCopy } from "./text-format-service.js";
+
+export const sanitizeIntakeText = (text = "") => sanitizeDisplayCopy(text);
 
 export const normalizeHomeEquipmentResponse = ({
   selection = [],
