@@ -1,5 +1,6 @@
 import {
   deriveCanonicalAthleteState as deriveCanonicalGoalProfileState,
+  daysUntil,
   getActiveTimeBoundGoal,
   getGoalBuckets,
   inferGoalType,
@@ -14,7 +15,7 @@ import {
 } from "./services/provenance-service.js";
 import { dedupeStrings } from "./utils/collection-utils.js";
 
-export { deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
+export { daysUntil, deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
 
 export const DEFAULT_PLANNING_HORIZON_WEEKS = 12;
 export const RECOVERY_BLOCK_WEEKS = 2;
