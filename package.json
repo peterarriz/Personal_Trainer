@@ -4,7 +4,8 @@
   "description": "AI-powered personal training dashboard",
   "scripts": {
     "build": "node scripts/build.js",
-    "dev": "npx serve . -p 3000"
+    "dev": "npx serve . -p 3000",
+    "test": "node -r sucrase/register --test tests/*.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",

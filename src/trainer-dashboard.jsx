@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+﻿import { useState, useEffect, useRef, useMemo } from "react";
 import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
 import { createAuthStorageModule, buildStorageStatus, classifyStorageError, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
 import { getGoalContext, normalizeActualNutritionLog, normalizeActualNutritionLogCollection, compareNutritionPrescriptionToActual, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket, mergeActualNutritionLogUpdate } from "./modules-nutrition.js";
@@ -21,9 +21,26 @@ import {
   exportRuntimeStateAsBase64,
   importRuntimeStateFromBase64,
 } from "./services/persistence-adapter-service.js";
+import {
+  buildExercisePerformanceRowsFromRecords,
+  getExercisePerformanceRecordsForLog,
+  getSessionPerformanceRecordsForLog,
+  normalizeLogPerformanceState,
+  normalizePerformanceExerciseKey,
+} from "./services/performance-record-service.js";
+import {
+  buildPlanReference,
+  createPrescribedDayHistoryEntry,
+  getCurrentPrescribedDayRecord,
+  getCurrentPrescribedDayRevision,
+  getStableCaptureAtForDate,
+  normalizePrescribedDayHistoryEntry,
+  PRESCRIBED_DAY_DURABILITY,
+  upsertPrescribedDayHistoryEntry,
+} from "./services/prescribed-day-history-service.js";
 import { appendProvenanceSidecar, buildLegacyProvenanceAdjustmentView, buildProvenanceEvent, buildStructuredProvenance, describeProvenanceRecord, normalizeProvenanceEvent, normalizeStructuredProvenance, PROVENANCE_ACTORS } from "./services/provenance-service.js";
 
-// ── PROFILE ──────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ PROFILE Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const PROFILE = {
   name: "Athlete", height: "6'1\"", weight: 190, age: 30,
   goalRace: "TBD", goalTime: "TBD", goalPace: "TBD",
@@ -32,91 +49,91 @@ const PROFILE = {
   pushUpMax: 33,
 };
 
-// ── PLAN DATA ─────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ PLAN DATA Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const PHASE_ZONES = {
-  "BASE":     { easy:"10:15–10:30", tempo:"8:45–8:55", int:"8:00–8:10", long:"10:15–10:30", color:"#4ade80" },
-  "BUILDING": { easy:"10:00–10:15", tempo:"8:38–8:48", int:"7:55–8:05", long:"10:00–10:15", color:"#60a5fa" },
-  "PEAKBUILD":{ easy:"9:50–10:05",  tempo:"8:30–8:40", int:"7:50–8:00", long:"9:50–10:05",  color:"#f59e0b" },
-  "PEAK":     { easy:"9:45–10:00",  tempo:"8:28–8:35", int:"7:45–7:55", long:"9:45–10:00",  color:"#f87171" },
-  "TAPER":    { easy:"9:45–10:00",  tempo:"8:28–8:01🎯",int:"7:45–7:55",long:"9:45–10:00",  color:"#c084fc" },
+  "BASE":     { easy:"10:15Ã¢â‚¬â€œ10:30", tempo:"8:45Ã¢â‚¬â€œ8:55", int:"8:00Ã¢â‚¬â€œ8:10", long:"10:15Ã¢â‚¬â€œ10:30", color:"#4ade80" },
+  "BUILDING": { easy:"10:00Ã¢â‚¬â€œ10:15", tempo:"8:38Ã¢â‚¬â€œ8:48", int:"7:55Ã¢â‚¬â€œ8:05", long:"10:00Ã¢â‚¬â€œ10:15", color:"#60a5fa" },
+  "PEAKBUILD":{ easy:"9:50Ã¢â‚¬â€œ10:05",  tempo:"8:30Ã¢â‚¬â€œ8:40", int:"7:50Ã¢â‚¬â€œ8:00", long:"9:50Ã¢â‚¬â€œ10:05",  color:"#f59e0b" },
+  "PEAK":     { easy:"9:45Ã¢â‚¬â€œ10:00",  tempo:"8:28Ã¢â‚¬â€œ8:35", int:"7:45Ã¢â‚¬â€œ7:55", long:"9:45Ã¢â‚¬â€œ10:00",  color:"#f87171" },
+  "TAPER":    { easy:"9:45Ã¢â‚¬â€œ10:00",  tempo:"8:28Ã¢â‚¬â€œ8:01Ã°Å¸Å½Â¯",int:"7:45Ã¢â‚¬â€œ7:55",long:"9:45Ã¢â‚¬â€œ10:00",  color:"#c084fc" },
 };
 
 const WEEKS = [
   { w:1,  phase:"BASE",     label:"Getting legs back",        mon:{t:"Easy",d:"3 mi"},     thu:{t:"Tempo",d:"2mi WU+20min+1mi CD"},    fri:{t:"Easy",d:"4 mi"},   sat:{t:"Long",d:"4 mi"},   str:"A", nutri:"easyRun" },
   { w:2,  phase:"BASE",     label:"Building rhythm",          mon:{t:"Easy",d:"3 mi"},     thu:{t:"Tempo",d:"2mi WU+25min+1mi CD"},    fri:{t:"Easy",d:"4 mi"},   sat:{t:"Long",d:"5 mi"},   str:"A", nutri:"easyRun" },
-  { w:3,  phase:"BASE",     label:"First intervals",          mon:{t:"Easy",d:"3.5 mi"},   thu:{t:"Intervals",d:"1mi+3×8min/3min+1mi"},fri:{t:"Easy",d:"4.5 mi"}, sat:{t:"Long",d:"5 mi"},   str:"A", nutri:"hardRun" },
-  { w:4,  phase:"BASE",     label:"⬇ Cutback",  cutback:true, mon:{t:"Easy",d:"3 mi"},     thu:{t:"Tempo",d:"1mi WU+20min easy+1mi"},  fri:{t:"Easy",d:"3 mi"},   sat:{t:"Long",d:"4 mi"},   str:"A", nutri:"easyRun" },
+  { w:3,  phase:"BASE",     label:"First intervals",          mon:{t:"Easy",d:"3.5 mi"},   thu:{t:"Intervals",d:"1mi+3Ãƒâ€”8min/3min+1mi"},fri:{t:"Easy",d:"4.5 mi"}, sat:{t:"Long",d:"5 mi"},   str:"A", nutri:"hardRun" },
+  { w:4,  phase:"BASE",     label:"Ã¢Â¬â€¡ Cutback",  cutback:true, mon:{t:"Easy",d:"3 mi"},     thu:{t:"Tempo",d:"1mi WU+20min easy+1mi"},  fri:{t:"Easy",d:"3 mi"},   sat:{t:"Long",d:"4 mi"},   str:"A", nutri:"easyRun" },
   { w:5,  phase:"BUILDING", label:"New territory",            mon:{t:"Easy",d:"3.5 mi"},   thu:{t:"Tempo",d:"2mi WU+30min+1mi CD"},    fri:{t:"Easy",d:"5 mi"},   sat:{t:"Long",d:"6 mi"},   str:"B", nutri:"easyRun" },
-  { w:6,  phase:"BUILDING", label:"Speed sharpening",         mon:{t:"Easy",d:"4 mi"},     thu:{t:"Intervals",d:"1mi+4×6min/2min+1mi"},fri:{t:"Easy",d:"5 mi"},   sat:{t:"Long",d:"7 mi"},   str:"B", nutri:"hardRun" },
+  { w:6,  phase:"BUILDING", label:"Speed sharpening",         mon:{t:"Easy",d:"4 mi"},     thu:{t:"Intervals",d:"1mi+4Ãƒâ€”6min/2min+1mi"},fri:{t:"Easy",d:"5 mi"},   sat:{t:"Long",d:"7 mi"},   str:"B", nutri:"hardRun" },
   { w:7,  phase:"BUILDING", label:"Dialing in",               mon:{t:"Easy",d:"4 mi"},     thu:{t:"Tempo",d:"2mi WU+35min+1mi CD"},    fri:{t:"Easy",d:"5.5 mi"}, sat:{t:"Long",d:"7 mi"},   str:"B", nutri:"easyRun" },
-  { w:8,  phase:"BUILDING", label:"⬇ Cutback",  cutback:true, mon:{t:"Easy",d:"3 mi"},     thu:{t:"Tempo",d:"1mi WU+20min+1mi"},       fri:{t:"Easy",d:"4 mi"},   sat:{t:"Long",d:"5 mi"},   str:"B", nutri:"easyRun" },
-  { w:9,  phase:"PEAKBUILD",label:"Double digits incoming",   mon:{t:"Easy",d:"4 mi"},     thu:{t:"Intervals",d:"1mi+4×8min/3min+1mi"},fri:{t:"Easy",d:"6 mi"},   sat:{t:"Long",d:"8 mi"},   str:"A", nutri:"hardRun" },
+  { w:8,  phase:"BUILDING", label:"Ã¢Â¬â€¡ Cutback",  cutback:true, mon:{t:"Easy",d:"3 mi"},     thu:{t:"Tempo",d:"1mi WU+20min+1mi"},       fri:{t:"Easy",d:"4 mi"},   sat:{t:"Long",d:"5 mi"},   str:"B", nutri:"easyRun" },
+  { w:9,  phase:"PEAKBUILD",label:"Double digits incoming",   mon:{t:"Easy",d:"4 mi"},     thu:{t:"Intervals",d:"1mi+4Ãƒâ€”8min/3min+1mi"},fri:{t:"Easy",d:"6 mi"},   sat:{t:"Long",d:"8 mi"},   str:"A", nutri:"hardRun" },
   { w:10, phase:"PEAKBUILD",label:"Pushing toward 9",         mon:{t:"Easy",d:"4.5 mi"},   thu:{t:"Tempo",d:"2mi WU+40min+1mi CD"},    fri:{t:"Easy",d:"6 mi"},   sat:{t:"Long",d:"9 mi"},   str:"A", nutri:"easyRun" },
-  { w:11, phase:"PEAKBUILD",label:"Holding strong",           mon:{t:"Easy",d:"4.5 mi"},   thu:{t:"Intervals",d:"1mi+5×6min/2min+1mi"},fri:{t:"Easy",d:"6.5 mi"}, sat:{t:"Long",d:"9 mi"},   str:"A", nutri:"hardRun" },
-  { w:12, phase:"PEAKBUILD",label:"⬇ Cutback",  cutback:true, mon:{t:"Easy",d:"3.5 mi"},   thu:{t:"Tempo",d:"1mi WU+25min+1mi"},       fri:{t:"Easy",d:"4 mi"},   sat:{t:"Long",d:"5 mi"},   str:"A", nutri:"easyRun" },
+  { w:11, phase:"PEAKBUILD",label:"Holding strong",           mon:{t:"Easy",d:"4.5 mi"},   thu:{t:"Intervals",d:"1mi+5Ãƒâ€”6min/2min+1mi"},fri:{t:"Easy",d:"6.5 mi"}, sat:{t:"Long",d:"9 mi"},   str:"A", nutri:"hardRun" },
+  { w:12, phase:"PEAKBUILD",label:"Ã¢Â¬â€¡ Cutback",  cutback:true, mon:{t:"Easy",d:"3.5 mi"},   thu:{t:"Tempo",d:"1mi WU+25min+1mi"},       fri:{t:"Easy",d:"4 mi"},   sat:{t:"Long",d:"5 mi"},   str:"A", nutri:"easyRun" },
   { w:13, phase:"PEAK",     label:"Double digits",            mon:{t:"Easy",d:"5 mi"},     thu:{t:"Tempo",d:"2mi WU+45min+1mi CD"},    fri:{t:"Easy",d:"7 mi"},   sat:{t:"Long",d:"10 mi"},  str:"B", nutri:"easyRun" },
-  { w:14, phase:"PEAK",     label:"Biggest week",             mon:{t:"Easy",d:"5 mi"},     thu:{t:"Intervals",d:"1mi+5×8min/3min+1mi"},fri:{t:"Easy",d:"7 mi"},   sat:{t:"Long",d:"11 mi"},  str:"B", nutri:"hardRun" },
+  { w:14, phase:"PEAK",     label:"Biggest week",             mon:{t:"Easy",d:"5 mi"},     thu:{t:"Intervals",d:"1mi+5Ãƒâ€”8min/3min+1mi"},fri:{t:"Easy",d:"7 mi"},   sat:{t:"Long",d:"11 mi"},  str:"B", nutri:"hardRun" },
   { w:15, phase:"PEAK",     label:"Peak complete",            mon:{t:"Easy",d:"5 mi"},     thu:{t:"Tempo",d:"2mi WU+45min+1mi CD"},    fri:{t:"Easy",d:"7 mi"},   sat:{t:"Long",d:"12 mi"},  str:"B", nutri:"easyRun" },
   { w:16, phase:"TAPER",    label:"Back off",                 mon:{t:"Easy",d:"4 mi"},     thu:{t:"Tempo",d:"1mi WU+30min+1mi"},       fri:{t:"Easy",d:"5 mi"},   sat:{t:"Long",d:"9 mi"},   str:"A", nutri:"easyRun" },
   { w:17, phase:"TAPER",    label:"Final sharpening",         mon:{t:"Easy",d:"3 mi"},     thu:{t:"Tempo",d:"1mi WU+20min@8:01+1mi"},  fri:{t:"Easy",d:"4 mi"},   sat:{t:"Long",d:"6 mi"},   str:"A", nutri:"easyRun" },
-  { w:18, phase:"TAPER",    label:"🏁 Race Week", race:true,   mon:{t:"Easy",d:"3 mi shakeout"},thu:{t:"Easy",d:"2mi+strides"},        fri:{t:"Easy",d:"Rest/walk"},sat:{t:"Long",d:"🏁 13.1 mi"},str:null, nutri:"longRun" },
+  { w:18, phase:"TAPER",    label:"Ã°Å¸ÂÂ Race Week", race:true,   mon:{t:"Easy",d:"3 mi shakeout"},thu:{t:"Easy",d:"2mi+strides"},        fri:{t:"Easy",d:"Rest/walk"},sat:{t:"Long",d:"Ã°Å¸ÂÂ 13.1 mi"},str:null, nutri:"longRun" },
 ];
 
 const STRENGTH = {
   A: {
     home: [
-      { ex:"Wide Push-up", sets:"4×20", note:"Slow 3-count down. Outer chest." },
-      { ex:"Standard Push-up", sets:"4×20", note:"Perfect form. 2 down, 1 up." },
-      { ex:"Diamond Push-up", sets:"4×15", note:"Triceps. Rest 45 sec between sets." },
-      { ex:"Decline Push-up (feet elevated)", sets:"3×15", note:"Upper chest emphasis." },
-      { ex:"Band Chest Fly", sets:"4×15", note:"2-sec hold at center squeeze." },
-      { ex:"Band Bicep Curl (slow)", sets:"4×15", note:"3-sec lower. No swinging." },
-      { ex:"Band Tricep Overhead Extension", sets:"4×15", note:"Full lockout each rep." },
-      { ex:"Plank to Push-up", sets:"3×10 each", note:"Core stability + chest combo." },
-      { ex:"Dead Bug", sets:"3×12 each side", note:"Low back glued to floor." },
+      { ex:"Wide Push-up", sets:"4Ãƒâ€”20", note:"Slow 3-count down. Outer chest." },
+      { ex:"Standard Push-up", sets:"4Ãƒâ€”20", note:"Perfect form. 2 down, 1 up." },
+      { ex:"Diamond Push-up", sets:"4Ãƒâ€”15", note:"Triceps. Rest 45 sec between sets." },
+      { ex:"Decline Push-up (feet elevated)", sets:"3Ãƒâ€”15", note:"Upper chest emphasis." },
+      { ex:"Band Chest Fly", sets:"4Ãƒâ€”15", note:"2-sec hold at center squeeze." },
+      { ex:"Band Bicep Curl (slow)", sets:"4Ãƒâ€”15", note:"3-sec lower. No swinging." },
+      { ex:"Band Tricep Overhead Extension", sets:"4Ãƒâ€”15", note:"Full lockout each rep." },
+      { ex:"Plank to Push-up", sets:"3Ãƒâ€”10 each", note:"Core stability + chest combo." },
+      { ex:"Dead Bug", sets:"3Ãƒâ€”12 each side", note:"Low back glued to floor." },
     ],
     hotel: [
-      { ex:"Barbell Bench Press", sets:"5×5 → 4×8", note:"Start at ~135 lbs. Progressive overload weekly." },
-      { ex:"Incline DB Press", sets:"4×10", note:"30-45° angle. Full stretch at bottom." },
-      { ex:"Cable Chest Fly", sets:"4×12", note:"Slight forward lean. Squeeze hard at center." },
-      { ex:"EZ Bar Curl", sets:"4×10", note:"Strict form. No body english." },
-      { ex:"Hammer Curl", sets:"3×12 each", note:"Brachialis hit. Control the lower." },
-      { ex:"Tricep Pushdown (cable)", sets:"4×12", note:"Elbows pinned to sides." },
-      { ex:"Overhead Tricep Extension (cable)", sets:"3×12", note:"Full stretch overhead." },
-      { ex:"Ab Wheel / Cable Crunch", sets:"4×15", note:"Slow. Feel the abs, not the hip flexors." },
+      { ex:"Barbell Bench Press", sets:"5Ãƒâ€”5 Ã¢â€ â€™ 4Ãƒâ€”8", note:"Start at ~135 lbs. Progressive overload weekly." },
+      { ex:"Incline DB Press", sets:"4Ãƒâ€”10", note:"30-45Ã‚Â° angle. Full stretch at bottom." },
+      { ex:"Cable Chest Fly", sets:"4Ãƒâ€”12", note:"Slight forward lean. Squeeze hard at center." },
+      { ex:"EZ Bar Curl", sets:"4Ãƒâ€”10", note:"Strict form. No body english." },
+      { ex:"Hammer Curl", sets:"3Ãƒâ€”12 each", note:"Brachialis hit. Control the lower." },
+      { ex:"Tricep Pushdown (cable)", sets:"4Ãƒâ€”12", note:"Elbows pinned to sides." },
+      { ex:"Overhead Tricep Extension (cable)", sets:"3Ãƒâ€”12", note:"Full stretch overhead." },
+      { ex:"Ab Wheel / Cable Crunch", sets:"4Ãƒâ€”15", note:"Slow. Feel the abs, not the hip flexors." },
     ]
   },
   B: {
     home: [
-      { ex:"Push-up Complex (3 rounds)", sets:"Wide×15 → Std×15 → Diamond×12", note:"No rest within round. 90 sec between rounds. This is the abs killer too." },
-      { ex:"Band Chest Press (one arm)", sets:"3×12 each", note:"Unilateral press challenges core stability." },
-      { ex:"Band Bent-over Row", sets:"4×15", note:"Row to chest. Posture for racing." },
-      { ex:"Band Overhead Press", sets:"4×12", note:"Stand on band. Full extension." },
-      { ex:"Band Pull-Apart", sets:"4×20", note:"Straight arms. Rear delts + posture." },
-      { ex:"Band Lateral Raise", sets:"3×12", note:"Slow lower. Don't shrug." },
-      { ex:"Hollow Body Hold", sets:"4×30 sec", note:"THE abs exercise. Lower back pressed down, legs low." },
-      { ex:"Bicycle Crunch", sets:"3×20 each side", note:"Controlled. Don't yank the neck." },
-      { ex:"Leg Raise", sets:"4×15", note:"Lower abs. Slow lower, don't let them crash." },
+      { ex:"Push-up Complex (3 rounds)", sets:"WideÃƒâ€”15 Ã¢â€ â€™ StdÃƒâ€”15 Ã¢â€ â€™ DiamondÃƒâ€”12", note:"No rest within round. 90 sec between rounds. This is the abs killer too." },
+      { ex:"Band Chest Press (one arm)", sets:"3Ãƒâ€”12 each", note:"Unilateral press challenges core stability." },
+      { ex:"Band Bent-over Row", sets:"4Ãƒâ€”15", note:"Row to chest. Posture for racing." },
+      { ex:"Band Overhead Press", sets:"4Ãƒâ€”12", note:"Stand on band. Full extension." },
+      { ex:"Band Pull-Apart", sets:"4Ãƒâ€”20", note:"Straight arms. Rear delts + posture." },
+      { ex:"Band Lateral Raise", sets:"3Ãƒâ€”12", note:"Slow lower. Don't shrug." },
+      { ex:"Hollow Body Hold", sets:"4Ãƒâ€”30 sec", note:"THE abs exercise. Lower back pressed down, legs low." },
+      { ex:"Bicycle Crunch", sets:"3Ãƒâ€”20 each side", note:"Controlled. Don't yank the neck." },
+      { ex:"Leg Raise", sets:"4Ãƒâ€”15", note:"Lower abs. Slow lower, don't let them crash." },
     ],
     hotel: [
-      { ex:"Incline Barbell Press", sets:"4×8", note:"Upper chest. Control the eccentric." },
-      { ex:"DB Fly (flat)", sets:"4×12", note:"Wide arc. Deep stretch." },
-      { ex:"Cable Row (seated)", sets:"4×12", note:"Full retraction at top." },
-      { ex:"Face Pull", sets:"4×15", note:"External rotation. Protects shoulders for runners." },
-      { ex:"Dips (weighted if possible)", sets:"4×10", note:"Lean slightly forward for chest emphasis." },
-      { ex:"Cable Crunch", sets:"4×15", note:"Round the spine. Abs only." },
-      { ex:"Hanging Leg Raise", sets:"4×12", note:"Full hang. Legs to 90°. Core only." },
-      { ex:"Plank Variations", sets:"3×60 sec each", note:"Standard, side L, side R. Squeeze everything." },
+      { ex:"Incline Barbell Press", sets:"4Ãƒâ€”8", note:"Upper chest. Control the eccentric." },
+      { ex:"DB Fly (flat)", sets:"4Ãƒâ€”12", note:"Wide arc. Deep stretch." },
+      { ex:"Cable Row (seated)", sets:"4Ãƒâ€”12", note:"Full retraction at top." },
+      { ex:"Face Pull", sets:"4Ãƒâ€”15", note:"External rotation. Protects shoulders for runners." },
+      { ex:"Dips (weighted if possible)", sets:"4Ãƒâ€”10", note:"Lean slightly forward for chest emphasis." },
+      { ex:"Cable Crunch", sets:"4Ãƒâ€”15", note:"Round the spine. Abs only." },
+      { ex:"Hanging Leg Raise", sets:"4Ãƒâ€”12", note:"Full hang. Legs to 90Ã‚Â°. Core only." },
+      { ex:"Plank Variations", sets:"3Ãƒâ€”60 sec each", note:"Standard, side L, side R. Squeeze everything." },
     ]
   }
 };
 
 const ACHILLES = [
-  { ex:"Eccentric Heel Drop (bilateral wks 1-4, single-leg wks 5+)", sets:"3×15 each leg", note:"The #1 exercise. 4-sec lower. Do EVERY day." },
-  { ex:"Calf Stretch (straight leg)", sets:"2×60 sec each", note:"Deep stretch. Hold it." },
-  { ex:"Calf Stretch (bent knee)", sets:"2×60 sec each", note:"Targets soleus → Achilles directly." },
-  { ex:"Ankle Circles + Alphabet", sets:"1× each ankle", note:"Full mobility." },
-  { ex:"Glute Bridge", sets:"3×15", note:"Strong glutes = less Achilles compensation." },
+  { ex:"Eccentric Heel Drop (bilateral wks 1-4, single-leg wks 5+)", sets:"3Ãƒâ€”15 each leg", note:"The #1 exercise. 4-sec lower. Do EVERY day." },
+  { ex:"Calf Stretch (straight leg)", sets:"2Ãƒâ€”60 sec each", note:"Deep stretch. Hold it." },
+  { ex:"Calf Stretch (bent knee)", sets:"2Ãƒâ€”60 sec each", note:"Targets soleus Ã¢â€ â€™ Achilles directly." },
+  { ex:"Ankle Circles + Alphabet", sets:"1Ãƒâ€” each ankle", note:"Full mobility." },
+  { ex:"Glute Bridge", sets:"3Ãƒâ€”15", note:"Strong glutes = less Achilles compensation." },
 ];
 const ENV_MODE_PRESETS = {
   Home: { equipment: "none", time: "30" },
@@ -146,7 +163,7 @@ const CORE_FINISHER = [
 ];
 
 const parseSetPrescription = (setsText = "") => {
-  const normalized = String(setsText || "").trim().replace("×", "x");
+  const normalized = String(setsText || "").trim().replace("Ãƒâ€”", "x");
   const m = normalized.match(/^(\d+)\s*x\s*(.+)$/i);
   if (m) return { sets: m[1], reps: m[2] };
   return { sets: "As prescribed", reps: normalized || "As prescribed" };
@@ -210,7 +227,7 @@ const getWeightIncrementByBucket = (bucket = "default") => {
 
 const parseRepTarget = (repsText = "") => {
   const text = String(repsText || "").toLowerCase();
-  const range = text.match(/(\d+)\s*[-–]\s*(\d+)/);
+  const range = text.match(/(\d+)\s*[-Ã¢â‚¬â€œ]\s*(\d+)/);
   if (range) return Number(range[2]);
   const simple = text.match(/(\d+)/);
   return simple ? Number(simple[1]) : 8;
@@ -407,7 +424,7 @@ const toFiniteNumber = (value, fallback = null) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const normalizeExerciseKey = (exerciseName = "") => String(exerciseName || "").toLowerCase().replace(/\s+/g, " ").trim();
+const normalizeExerciseKey = (exerciseName = "") => normalizePerformanceExerciseKey(exerciseName);
 
 const inferExerciseMode = (exerciseName = "", explicitMode = "") => {
   const forced = String(explicitMode || "").toLowerCase();
@@ -475,63 +492,39 @@ const parseExerciseGoalTargets = ({ goals = [], exercises = [] }) => {
   return targets;
 };
 
-const normalizeStrengthPerformanceRecord = (record = {}, dateKey = "", fallbackFeel = 3) => {
-  const exercise = String(record?.exercise || record?.exercise_name || "").trim();
-  if (!exercise) return null;
-  const bodyweightOnly = Boolean(record?.bodyweightOnly ?? record?.bodyweight_only ?? inferExerciseMode(exercise, record?.mode) === "bodyweight");
-  const bandTension = String(record?.bandTension || record?.band_tension || "").trim();
-  const prescribedSets = Math.max(1, Number(record?.prescribedSets || record?.prescribed_sets || parseSetCount(record?.prescribedSetsText || "")) || 1);
-  const actualSets = Math.max(1, Number(record?.actualSets || record?.actual_sets || prescribedSets) || prescribedSets);
-  const prescribedReps = Math.max(1, Number(record?.prescribedReps || record?.prescribed_reps || parseRepTarget(record?.prescribedRepsText || "")) || 1);
-  const actualReps = Math.max(0, Number(record?.actualReps || record?.actual_reps || record?.repsCompleted || 0) || 0);
-  const prescribedWeight = bodyweightOnly || bandTension ? null : toFiniteNumber(record?.prescribedWeight ?? record?.prescribed_weight ?? record?.weightPrescription ?? record?.weightUsed, null);
-  const actualWeight = bodyweightOnly || bandTension ? null : toFiniteNumber(record?.actualWeight ?? record?.actual_weight ?? record?.weightUsed, null);
-  const feelThisSession = Math.max(1, Math.min(5, Number(record?.feelThisSession || record?.feel_this_session || record?.sessionFeelScore || fallbackFeel || 3) || 3));
-  const completionRatio = Number(((actualReps * actualSets) / Math.max(1, prescribedReps * prescribedSets)).toFixed(2));
-  return {
-    exercise,
-    exerciseKey: normalizeExerciseKey(exercise),
-    date: dateKey || toDateKey(record?.date || Date.now()),
-    prescribedWeight,
-    actualWeight,
-    prescribedReps,
-    actualReps,
-    prescribedSets,
-    actualSets,
-    bandTension: bandTension || null,
-    bodyweightOnly,
-    feelThisSession,
-    sessionFeelScore: feelThisSession,
-    completionRatio,
-    bucket: record?.bucket || inferExerciseBucketV2(exercise),
-    mode: bodyweightOnly ? "bodyweight" : (bandTension || inferExerciseMode(exercise, record?.mode) === "band") ? "band" : "weighted",
-    liftKey: inferLiftKey(exercise),
-  };
-};
-
 const buildStrengthHistoryByExercise = (logs = {}) => {
   const historyByExercise = {};
   Object.entries(logs || {})
     .sort((a, b) => a[0].localeCompare(b[0]))
     .forEach(([dateKey, entry]) => {
-      (entry?.strengthPerformance || []).forEach((record) => {
-        const normalized = normalizeStrengthPerformanceRecord(record, dateKey, Number(entry?.feel || 3) || 3);
-        if (!normalized) return;
-        historyByExercise[normalized.exerciseKey] = historyByExercise[normalized.exerciseKey] || [];
-        historyByExercise[normalized.exerciseKey].push(normalized);
+      getExercisePerformanceRecordsForLog(entry || {}, { dateKey }).forEach((record) => {
+        if (!record?.exerciseKey) return;
+        historyByExercise[record.exerciseKey] = historyByExercise[record.exerciseKey] || [];
+        historyByExercise[record.exerciseKey].push(record);
       });
     });
   return historyByExercise;
 };
 
-const isFullExerciseCompletion = (record = {}) => Number(record?.actualReps || 0) >= Number(record?.prescribedReps || 0) && Number(record?.actualSets || 0) >= Number(record?.prescribedSets || 0);
-const isHoldSignal = (record = {}) => Number(record?.actualReps || 0) < (Number(record?.prescribedReps || 0) * 0.8) || Number(record?.actualSets || 0) < Number(record?.prescribedSets || 0) || Number(record?.feelThisSession || 3) <= 2;
-const isPoorSignal = (record = {}) => Number(record?.actualReps || 0) < (Number(record?.prescribedReps || 0) * 0.7) && Number(record?.feelThisSession || 3) <= 2;
+const getRecordActualWeight = (record = {}) => toFiniteNumber(record?.actual?.weight ?? record?.actualWeight, null);
+const getRecordPrescribedWeight = (record = {}) => toFiniteNumber(record?.prescribed?.weight ?? record?.prescribedWeight, null);
+const getRecordActualReps = (record = {}) => Number(record?.actual?.reps ?? record?.actualReps || 0);
+const getRecordPrescribedReps = (record = {}) => Number(record?.prescribed?.reps ?? record?.prescribedReps || 0);
+const getRecordActualSets = (record = {}) => Number(record?.actual?.sets ?? record?.actualSets || 0);
+const getRecordPrescribedSets = (record = {}) => Number(record?.prescribed?.sets ?? record?.prescribedSets || 0);
+const getRecordBandTension = (record = {}) => String(record?.prescribed?.bandTension || record?.bandTension || "").trim();
+const getRecordBodyweightOnly = (record = {}) => Boolean(record?.prescribed?.bodyweightOnly ?? record?.bodyweightOnly);
+const getRecordFeelScore = (record = {}) => Number(record?.metrics?.feelScore ?? record?.feelThisSession ?? 3);
+const getRecordCompletionRatio = (record = {}) => Number(record?.metrics?.completionRatio ?? record?.completionRatio || 0);
+
+const isFullExerciseCompletion = (record = {}) => getRecordActualReps(record) >= getRecordPrescribedReps(record) && getRecordActualSets(record) >= getRecordPrescribedSets(record);
+const isHoldSignal = (record = {}) => getRecordActualReps(record) < (getRecordPrescribedReps(record) * 0.8) || getRecordActualSets(record) < getRecordPrescribedSets(record) || getRecordFeelScore(record) <= 2;
+const isPoorSignal = (record = {}) => getRecordActualReps(record) < (getRecordPrescribedReps(record) * 0.7) && getRecordFeelScore(record) <= 2;
 
 const getResistanceSignature = (record = {}, prescription = {}) => {
-  if (record?.bodyweightOnly || prescription?.mode === "bodyweight") return "bodyweight";
-  if (record?.bandTension || prescription?.bandTension) return `band:${record?.bandTension || prescription?.bandTension}`;
-  const weight = toFiniteNumber(record?.actualWeight ?? record?.prescribedWeight ?? prescription?.workingWeight, null);
+  if (getRecordBodyweightOnly(record) || prescription?.mode === "bodyweight") return "bodyweight";
+  if (getRecordBandTension(record) || prescription?.bandTension) return `band:${getRecordBandTension(record) || prescription?.bandTension}`;
+  const weight = toFiniteNumber(getRecordActualWeight(record) ?? getRecordPrescribedWeight(record) ?? prescription?.workingWeight, null);
   return weight !== null ? `weight:${weight}` : "weight:0";
 };
 
@@ -542,22 +535,11 @@ const formatPrescriptionChangeValue = ({ mode = "weighted", weight = null, bandT
 };
 
 const buildExercisePerformanceRowsForStorage = (dateKey = "", performance = []) => (
-  (performance || [])
-    .map((record) => normalizeStrengthPerformanceRecord(record, dateKey, record?.feelThisSession || record?.sessionFeelScore || 3))
-    .filter(Boolean)
-    .map((record) => ({
-      exercise_name: record.exercise,
-      date: record.date,
-      prescribed_weight: record.prescribedWeight,
-      actual_weight: record.actualWeight,
-      prescribed_reps: record.prescribedReps,
-      actual_reps: record.actualReps,
-      prescribed_sets: record.prescribedSets,
-      actual_sets: record.actualSets,
-      band_tension: record.bandTension,
-      bodyweight_only: record.bodyweightOnly,
-      feel_this_session: record.feelThisSession,
-    }))
+  buildExercisePerformanceRowsFromRecords(
+    Array.isArray(performance) && performance.some((record) => record?.scope === "exercise")
+      ? performance
+      : getExercisePerformanceRecordsForLog({ strengthPerformance: performance || [] }, { dateKey })
+  )
 );
 
 const deriveProgressiveOverloadAdjustmentsV2 = ({ logs = {}, performance = [], personalization = {}, currentPhase = "BASE", goals = [], goalState = {}, sessionDateKey = "" }) => {
@@ -567,17 +549,18 @@ const deriveProgressiveOverloadAdjustmentsV2 = ({ logs = {}, performance = [], p
   const prior = personalization?.strengthProgression || {};
   const prevPrescriptions = prior?.prescriptions || {};
   const nextPrescriptions = { ...prevPrescriptions };
+  const performanceRecords = Array.isArray(performance) && performance.some((record) => record?.scope === "exercise")
+    ? performance.filter((record) => record?.scope === "exercise")
+    : getExercisePerformanceRecordsForLog({ strengthPerformance: performance || [] }, { dateKey: sessionDateKey });
   const allExercises = Array.from(new Set([
     ...Object.keys(historyByExercise),
-    ...(performance || []).map((record) => normalizeExerciseKey(record?.exercise || record?.exercise_name || "")),
+    ...performanceRecords.map((record) => normalizeExerciseKey(record?.exercise || "")),
     ...Object.values(prevPrescriptions || {}).map((record) => normalizeExerciseKey(record?.exercise || "")),
   ].filter(Boolean)));
   const goalTargets = parseExerciseGoalTargets({ goals, exercises: allExercises });
   const updates = [];
 
-  (performance || []).forEach((rawRecord) => {
-    const record = normalizeStrengthPerformanceRecord(rawRecord, sessionDateKey, rawRecord?.feelThisSession || rawRecord?.sessionFeelScore || 3);
-    if (!record) return;
+  performanceRecords.forEach((record) => {
     const exKey = record.exerciseKey;
     const exerciseHistory = historyByExercise[exKey] || [];
     const lastTwo = exerciseHistory.slice(-2);
@@ -585,16 +568,16 @@ const deriveProgressiveOverloadAdjustmentsV2 = ({ logs = {}, performance = [], p
     const bucket = record.bucket || inferExerciseBucketV2(record.exercise);
     const maxSets = PROGRESSIVE_OVERLOAD_SET_CAPS_V2[bucket] || PROGRESSIVE_OVERLOAD_SET_CAPS_V2.default;
     const mode = record.mode || inferExerciseMode(record.exercise);
-    const baseReps = Math.max(1, Number(existing?.baselineReps || record.prescribedReps || 1));
-    let nextSets = Math.max(1, Number(existing?.sets || record.prescribedSets || 1));
-    let nextReps = Math.max(1, Number(existing?.reps || record.prescribedReps || 1));
-    let nextWeight = mode === "weighted" ? toFiniteNumber(existing?.workingWeight ?? record.prescribedWeight ?? record.actualWeight, null) : null;
-    let nextBandTension = mode === "band" ? String(existing?.bandTension || record.bandTension || BAND_TENSION_LEVELS[0]) : "";
+    const baseReps = Math.max(1, Number(existing?.baselineReps || getRecordPrescribedReps(record) || 1));
+    let nextSets = Math.max(1, Number(existing?.sets || getRecordPrescribedSets(record) || 1));
+    let nextReps = Math.max(1, Number(existing?.reps || getRecordPrescribedReps(record) || 1));
+    let nextWeight = mode === "weighted" ? toFiniteNumber(existing?.workingWeight ?? getRecordPrescribedWeight(record) ?? getRecordActualWeight(record), null) : null;
+    let nextBandTension = mode === "band" ? String(existing?.bandTension || getRecordBandTension(record) || BAND_TENSION_LEVELS[0]) : "";
     const oldSets = nextSets;
     const oldReps = nextReps;
     const oldWeight = nextWeight;
     const oldBandTension = nextBandTension;
-    const bothSolid = lastTwo.length === 2 && lastTwo.every((item) => isFullExerciseCompletion(item) && Number(item?.feelThisSession || 3) >= 3);
+    const bothSolid = lastTwo.length === 2 && lastTwo.every((item) => isFullExerciseCompletion(item) && getRecordFeelScore(item) >= 3);
     const bothPoor = lastTwo.length === 2 && lastTwo.every((item) => isPoorSignal(item));
     const resistanceSignature = getResistanceSignature(record, existing);
     let consecutiveSameResistance = 0;
@@ -685,11 +668,11 @@ const deriveProgressiveOverloadAdjustmentsV2 = ({ logs = {}, performance = [], p
     const exerciseName = prescription?.exercise || history[history.length - 1]?.exercise || exerciseKey;
     const liftKey = prescription?.liftKey || inferLiftKey(exerciseName);
     const target = goalTargets[exerciseKey] || goalTargets[liftKey] || {};
-    const weightedHistory = history.filter((record) => toFiniteNumber(record?.actualWeight ?? record?.prescribedWeight, null) !== null).slice(-4);
+    const weightedHistory = history.filter((record) => toFiniteNumber(getRecordActualWeight(record) ?? getRecordPrescribedWeight(record), null) !== null).slice(-4);
     const first = weightedHistory[0];
     const last = weightedHistory[weightedHistory.length - 1];
-    const firstWeight = toFiniteNumber(first?.actualWeight ?? first?.prescribedWeight, null);
-    const lastWeight = toFiniteNumber(last?.actualWeight ?? last?.prescribedWeight ?? prescription?.workingWeight, null);
+    const firstWeight = toFiniteNumber(getRecordActualWeight(first) ?? getRecordPrescribedWeight(first), null);
+    const lastWeight = toFiniteNumber(getRecordActualWeight(last) ?? getRecordPrescribedWeight(last) ?? prescription?.workingWeight, null);
     const elapsedDays = first?.date && last?.date ? Math.max(1, (new Date(`${last.date}T12:00:00`) - new Date(`${first.date}T12:00:00`)) / 86400000) : 0;
     const elapsedWeeks = elapsedDays > 0 ? elapsedDays / 7 : 0;
     const progressionRate = weightedHistory.length >= 2 && firstWeight !== null && lastWeight !== null && elapsedWeeks > 0
@@ -777,12 +760,25 @@ const deriveFitnessLayer = ({ logs = {}, personalization = {} }) => {
   const appleWorkouts = personalization?.connectedDevices?.appleHealth?.workouts || {};
   const dated = Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0]));
   const runSessions = dated
-    .filter(([, l]) => /run/.test(String(l?.type || "").toLowerCase()))
     .map(([date, log]) => {
+      const sessionRecord = getSessionPerformanceRecordsForLog(log || {}, { dateKey: date })
+        .find((record) => record?.sessionFamily === "run" || record?.domain === "endurance");
+      const looksLikeRun = sessionRecord || /run/.test(String(log?.type || "").toLowerCase());
+      if (!looksLikeRun) return null;
       const workout = appleWorkouts?.[date] || {};
       const metrics = deriveRunHealthMetrics({ workout, log });
-      return { date, type: log?.type || "", ...metrics };
+      return {
+        date,
+        type: sessionRecord?.sessionType || log?.type || "",
+        avgHr: sessionRecord?.actual?.avgHr ?? metrics.avgHr,
+        maxHr: sessionRecord?.actual?.maxHr ?? metrics.maxHr,
+        calories: sessionRecord?.actual?.calories ?? metrics.calories,
+        hrPaceRatio: sessionRecord?.actual?.hrPaceRatio ?? metrics.hrPaceRatio,
+        hrDrift: sessionRecord?.actual?.hrDrift ?? metrics.hrDrift,
+        recoveryHr: sessionRecord?.actual?.recoveryHr ?? metrics.recoveryHr,
+      };
     })
+    .filter(Boolean)
     .filter((s) => Number(s?.avgHr || 0) > 0);
   const last5WithHr = runSessions.slice(-5);
   const fitnessLevel = classifyRunFitnessLevel({
@@ -798,7 +794,10 @@ const deriveFitnessLayer = ({ logs = {}, personalization = {} }) => {
     return recentEasy.reduce((acc, s) => acc + (Number(s.avgHr || 0) / maxHr), 0) / recentEasy.length;
   })();
   const paceOffsetSec = easyAvgPct === null ? 0 : easyAvgPct > targetMid + 0.05 ? 18 : easyAvgPct < targetMid - 0.07 ? -12 : 0;
-  const strengthSamples = dated.flatMap(([, l]) => (l?.strengthPerformance || []).map((s) => Number(s?.completionRatio || 0))).filter((n) => Number.isFinite(n) && n > 0).slice(-15);
+  const strengthSamples = dated
+    .flatMap(([dateKey, l]) => getExercisePerformanceRecordsForLog(l || {}, { dateKey }).map((record) => Number(getRecordCompletionRatio(record))))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .slice(-15);
   const strengthRirEstimate = strengthSamples.length ? Number((strengthSamples.reduce((a, b) => a + b, 0) / strengthSamples.length).toFixed(2)) : null;
   const strengthLevel = strengthRirEstimate === null ? "unknown" : strengthRirEstimate < 0.85 ? "developing" : strengthRirEstimate < 0.98 ? "intermediate" : "advanced";
   const mergedFitness = fitnessLevel === "unknown" ? strengthLevel : fitnessLevel;
@@ -873,29 +872,29 @@ const buildRunRoutine = (todayWorkout) => {
   const focus = run.t || "Run";
   if (focus === "Intervals") {
     return [
-      { ex: "Warm-up jog", sets: "1", reps: "10-15 min easy + drills", rest: "—", cue: "Stay relaxed and progressively raise cadence." },
+      { ex: "Warm-up jog", sets: "1", reps: "10-15 min easy + drills", rest: "Ã¢â‚¬â€", cue: "Stay relaxed and progressively raise cadence." },
       { ex: "Main interval set", sets: "1", reps: run.d || "As prescribed", rest: "Recoveries built in", cue: "Hit quality effort; keep form tall." },
-      { ex: "Cool-down", sets: "1", reps: "8-12 min easy jog/walk", rest: "—", cue: "Lower HR gradually; finish with light mobility." },
+      { ex: "Cool-down", sets: "1", reps: "8-12 min easy jog/walk", rest: "Ã¢â‚¬â€", cue: "Lower HR gradually; finish with light mobility." },
     ];
   }
   if (focus === "Tempo") {
     return [
-      { ex: "Warm-up", sets: "1", reps: "10-15 min easy + strides", rest: "—", cue: "Prime mechanics before threshold work." },
+      { ex: "Warm-up", sets: "1", reps: "10-15 min easy + strides", rest: "Ã¢â‚¬â€", cue: "Prime mechanics before threshold work." },
       { ex: "Tempo segment", sets: "1", reps: run.d || "As prescribed", rest: "Steady", cue: "Controlled discomfort, even pacing." },
-      { ex: "Cool-down", sets: "1", reps: "8-12 min easy", rest: "—", cue: "Finish smooth and conversational." },
+      { ex: "Cool-down", sets: "1", reps: "8-12 min easy", rest: "Ã¢â‚¬â€", cue: "Finish smooth and conversational." },
     ];
   }
   if (focus === "Long") {
     return [
       { ex: "Long aerobic run", sets: "1", reps: run.d || "As prescribed", rest: "Continuous", cue: "Easy effort, nose-breathing test early." },
-      { ex: "Fuel & hydration", sets: "Every 30-40 min", reps: "Water + carbs as needed", rest: "—", cue: "Start fueling before you feel depleted." },
-      { ex: "Post-run reset", sets: "1", reps: "5-10 min walk + calf/hip mobility", rest: "—", cue: "Downshift gradually to aid recovery." },
+      { ex: "Fuel & hydration", sets: "Every 30-40 min", reps: "Water + carbs as needed", rest: "Ã¢â‚¬â€", cue: "Start fueling before you feel depleted." },
+      { ex: "Post-run reset", sets: "1", reps: "5-10 min walk + calf/hip mobility", rest: "Ã¢â‚¬â€", cue: "Downshift gradually to aid recovery." },
     ];
   }
   return [
     { ex: "Easy aerobic run", sets: "1", reps: run.d || "As prescribed", rest: "Continuous", cue: "Conversational pace, smooth cadence." },
     { ex: "Strides (optional)", sets: "4-6", reps: "15-20s", rest: "40-60s walk", cue: "Quick feet, relaxed upper body." },
-    { ex: "Cool-down walk", sets: "1", reps: "5 min", rest: "—", cue: "Finish breathing calm and controlled." },
+    { ex: "Cool-down walk", sets: "1", reps: "5 min", rest: "Ã¢â‚¬â€", cue: "Finish breathing calm and controlled." },
   ];
 };
 
@@ -945,8 +944,156 @@ const buildProvenanceText = ({ inputs = [], limitation = "" }) => {
   if (!joined) return limitation || "";
   return limitation ? `Based on ${joined}. ${limitation}` : `Based on ${joined}.`;
 };
+const CANONICAL_INVARIANTS_ENABLED = (() => {
+  if (typeof window === "undefined") return false;
+  try {
+    const host = String(window.location?.hostname || "").toLowerCase();
+    const storedDebug = localStorage?.getItem ? (localStorage.getItem("trainer_debug") || "0") : "0";
+    return ["localhost", "127.0.0.1"].includes(host) || storedDebug === "1";
+  } catch {
+    return false;
+  }
+})();
+const warnCanonicalInvariant = (entity = "CanonicalState", message = "", context = null) => {
+  if (!CANONICAL_INVARIANTS_ENABLED) return false;
+  try {
+    console.warn(`[canonical-invariant] ${entity}: ${message}`, context || {});
+  } catch {}
+  return false;
+};
+const assertCanonicalInvariant = (condition, entity = "CanonicalState", message = "", context = null) => (
+  condition ? true : warnCanonicalInvariant(entity, message, context)
+);
+const validateActualNutritionLogInvariant = (actualNutritionLog = null, expectedDateKey = "", origin = "unknown") => {
+  if (!actualNutritionLog) return true;
+  const ok =
+    assertCanonicalInvariant(typeof actualNutritionLog === "object", "ActualNutritionLog", "value should be an object", { origin, actualNutritionLog })
+    && assertCanonicalInvariant(String(actualNutritionLog?.model || "") === "actual_nutrition_log_v1", "ActualNutritionLog", "unexpected model", { origin, model: actualNutritionLog?.model })
+    && assertCanonicalInvariant(Boolean(String(actualNutritionLog?.dateKey || "").trim()), "ActualNutritionLog", "dateKey is required", { origin, actualNutritionLog })
+    && assertCanonicalInvariant(!expectedDateKey || actualNutritionLog?.dateKey === expectedDateKey, "ActualNutritionLog", "dateKey does not match expected key", { origin, expectedDateKey, actualDateKey: actualNutritionLog?.dateKey })
+    && assertCanonicalInvariant(typeof actualNutritionLog?.adherence === "string", "ActualNutritionLog", "adherence should be a string", { origin, adherence: actualNutritionLog?.adherence })
+    && assertCanonicalInvariant(typeof actualNutritionLog?.deviationKind === "string", "ActualNutritionLog", "deviationKind should be a string", { origin, deviationKind: actualNutritionLog?.deviationKind });
+  return ok;
+};
+const validatePlanWeekInvariant = (planWeek = null, origin = "unknown") => {
+  if (!planWeek) return true;
+  const sessionsByDay = planWeek?.sessionsByDay;
+  const ok =
+    assertCanonicalInvariant(typeof planWeek === "object", "PlanWeek", "value should be an object", { origin, planWeek })
+    && assertCanonicalInvariant(Boolean(String(planWeek?.id || "").trim()), "PlanWeek", "id is required", { origin, planWeek })
+    && assertCanonicalInvariant(Number.isFinite(Number(planWeek?.absoluteWeek || planWeek?.weekNumber || 0)), "PlanWeek", "absoluteWeek/weekNumber should be numeric", { origin, absoluteWeek: planWeek?.absoluteWeek, weekNumber: planWeek?.weekNumber })
+    && assertCanonicalInvariant(Boolean(planWeek?.weeklyIntent && typeof planWeek.weeklyIntent === "object"), "PlanWeek", "weeklyIntent should be present", { origin, weeklyIntent: planWeek?.weeklyIntent })
+    && assertCanonicalInvariant(Boolean(sessionsByDay && typeof sessionsByDay === "object" && !Array.isArray(sessionsByDay)), "PlanWeek", "sessionsByDay should be an object map", { origin, sessionsByDay });
+  return ok;
+};
+const validatePlanDayInvariant = (planDay = null, origin = "unknown") => {
+  if (!planDay) return true;
+  const nutritionActual = planDay?.resolved?.nutrition?.actual || null;
+  const ok =
+    assertCanonicalInvariant(typeof planDay === "object", "PlanDay", "value should be an object", { origin, planDay })
+    && assertCanonicalInvariant(Boolean(String(planDay?.dateKey || "").trim()), "PlanDay", "dateKey is required", { origin, dateKey: planDay?.dateKey })
+    && assertCanonicalInvariant(Boolean(planDay?.base && typeof planDay.base === "object"), "PlanDay", "base branch is required", { origin, base: planDay?.base })
+    && assertCanonicalInvariant(Boolean(planDay?.resolved && typeof planDay.resolved === "object"), "PlanDay", "resolved branch is required", { origin, resolved: planDay?.resolved })
+    && assertCanonicalInvariant(Boolean(planDay?.resolved?.training || planDay?.base?.training), "PlanDay", "training payload is missing", { origin, planDay })
+    && assertCanonicalInvariant(Boolean(planDay?.decision && typeof planDay.decision === "object"), "PlanDay", "decision block is required", { origin, decision: planDay?.decision });
+  if (nutritionActual) validateActualNutritionLogInvariant(nutritionActual, planDay?.dateKey || "", `${origin}:resolved.nutrition.actual`);
+  return ok;
+};
+const validatePrescribedDayHistoryInvariant = (entry = null, expectedDateKey = "", origin = "unknown") => {
+  if (!entry) return true;
+  const revisions = Array.isArray(entry?.revisions) ? entry.revisions : [];
+  const currentRevision = revisions.find((revision) => revision?.revisionId === entry?.currentRevisionId) || null;
+  const ok =
+    assertCanonicalInvariant(Boolean(String(entry?.dateKey || expectedDateKey || "").trim()), "PrescribedDayHistory", "dateKey is required", { origin, entry })
+    && assertCanonicalInvariant(!expectedDateKey || entry?.dateKey === expectedDateKey, "PrescribedDayHistory", "history envelope dateKey mismatch", { origin, expectedDateKey, actualDateKey: entry?.dateKey })
+    && assertCanonicalInvariant(Array.isArray(entry?.revisions) && revisions.length > 0, "PrescribedDayHistory", "revisions are required", { origin, revisions })
+    && assertCanonicalInvariant(Boolean(entry?.currentRevisionId), "PrescribedDayHistory", "currentRevisionId is required", { origin, currentRevisionId: entry?.currentRevisionId })
+    && assertCanonicalInvariant(Boolean(currentRevision), "PrescribedDayHistory", "currentRevisionId must resolve to a revision", { origin, currentRevisionId: entry?.currentRevisionId, revisionIds: revisions.map((revision) => revision?.revisionId) });
+  revisions.forEach((revision, index) => {
+    assertCanonicalInvariant(Number(revision?.revisionNumber || 0) === index + 1 || Number(revision?.revisionNumber || 0) > 0, "PrescribedDayHistory", "revisionNumber should be positive and ordered", { origin, revisionNumber: revision?.revisionNumber, index });
+    assertCanonicalInvariant(revision?.record?.dateKey === (entry?.dateKey || expectedDateKey), "PrescribedDayHistory", "revision record dateKey mismatch", { origin, revisionDateKey: revision?.record?.dateKey, envelopeDateKey: entry?.dateKey || expectedDateKey });
+  });
+  return ok;
+};
+const validateAiPacketInvariant = (packetArgs = {}, origin = "unknown") => {
+  const ok =
+    assertCanonicalInvariant(Boolean(packetArgs && typeof packetArgs === "object"), "AIPacket", "packetArgs should be an object", { origin, packetArgs })
+    && assertCanonicalInvariant(Boolean(String(packetArgs?.dateKey || "").trim()), "AIPacket", "dateKey is required", { origin, dateKey: packetArgs?.dateKey })
+    && assertCanonicalInvariant(Number.isFinite(Number(packetArgs?.currentWeek || 0)), "AIPacket", "currentWeek should be numeric", { origin, currentWeek: packetArgs?.currentWeek })
+    && assertCanonicalInvariant(Boolean(packetArgs?.canonicalGoalState && typeof packetArgs.canonicalGoalState === "object"), "AIPacket", "canonicalGoalState is required", { origin })
+    && assertCanonicalInvariant(Boolean(packetArgs?.canonicalUserProfile && typeof packetArgs.canonicalUserProfile === "object"), "AIPacket", "canonicalUserProfile is required", { origin })
+    && assertCanonicalInvariant(Boolean(packetArgs?.planDay && typeof packetArgs.planDay === "object"), "AIPacket", "planDay is required", { origin })
+    && assertCanonicalInvariant(Boolean(packetArgs?.logs && typeof packetArgs.logs === "object"), "AIPacket", "logs should be an object map", { origin })
+    && assertCanonicalInvariant(Boolean(Array.isArray(packetArgs?.bodyweights)), "AIPacket", "bodyweights should be an array", { origin, bodyweights: packetArgs?.bodyweights });
+  validatePlanDayInvariant(packetArgs?.planDay || null, `${origin}:packet.planDay`);
+  validatePlanWeekInvariant(packetArgs?.planWeek || null, `${origin}:packet.planWeek`);
+  return ok;
+};
+const validateDeterministicCoachPacketInvariant = (packet = null, origin = "unknown") => {
+  if (!packet) return warnCanonicalInvariant("CoachPacket", "deterministic packet is missing", { origin, packet });
+  return (
+    assertCanonicalInvariant(typeof packet === "object", "CoachPacket", "packet should be an object", { origin, packet })
+    && assertCanonicalInvariant(
+      Boolean(String(packet?.coachBrief || "").trim()) || Array.isArray(packet?.recommendations) || Array.isArray(packet?.notices),
+      "CoachPacket",
+      "expected coachBrief, recommendations, or notices",
+      { origin, packet }
+    )
+  );
+};
+const validateCanonicalRuntimeStateInvariant = (runtimeState = null, origin = "unknown") => {
+  if (!runtimeState || typeof runtimeState !== "object") return warnCanonicalInvariant("RuntimeState", "runtimeState should be an object", { origin, runtimeState });
+  assertCanonicalInvariant(Boolean(runtimeState?.logs && typeof runtimeState.logs === "object"), "RuntimeState", "logs should be an object map", { origin });
+  assertCanonicalInvariant(Array.isArray(runtimeState?.bodyweights), "RuntimeState", "bodyweights should be an array", { origin, bodyweights: runtimeState?.bodyweights });
+  assertCanonicalInvariant(Boolean(runtimeState?.plannedDayRecords && typeof runtimeState.plannedDayRecords === "object"), "RuntimeState", "plannedDayRecords should be an object map", { origin });
+  Object.entries(runtimeState?.nutritionActualLogs || {}).slice(0, 40).forEach(([dateKey, actualNutritionLog]) => {
+    validateActualNutritionLogInvariant(actualNutritionLog, dateKey, `${origin}:runtime.nutritionActualLogs`);
+  });
+  Object.entries(runtimeState?.plannedDayRecords || {}).slice(0, 40).forEach(([dateKey, entry]) => {
+    validatePrescribedDayHistoryInvariant(entry, dateKey, `${origin}:runtime.plannedDayRecords`);
+  });
+  return true;
+};
+const buildTrustSummary = ({
+  explicitUserInput = false,
+  loggedActuals = false,
+  deviceData = false,
+  inferredHeuristics = false,
+  limitation = "",
+  stale = false,
+} = {}) => {
+  const level = (explicitUserInput || loggedActuals) && (deviceData || inferredHeuristics)
+    ? "grounded"
+    : (explicitUserInput || loggedActuals || deviceData)
+    ? "partial"
+    : "limited";
+  const sources = [
+    explicitUserInput ? "explicit user input" : null,
+    loggedActuals ? "logged actuals" : null,
+    deviceData ? "device data" : null,
+    inferredHeuristics ? "inferred heuristics" : null,
+  ].filter(Boolean);
+  let summary = sources.length ? `Using ${joinHumanList(sources)}.` : "Using limited data.";
+  if (!explicitUserInput && !loggedActuals && !deviceData) {
+    summary = inferredHeuristics
+      ? "Using inferred heuristics because no explicit input, actual log, or device data is available."
+      : "No explicit input, actual log, or device data is available yet.";
+  } else if (!explicitUserInput && !loggedActuals) {
+    summary = `Using ${joinHumanList(sources)}. No explicit input or actual log is available yet.`;
+  } else if (!deviceData && inferredHeuristics) {
+    summary = `Using ${joinHumanList(sources)}. No device data is contributing here.`;
+  }
+  if (stale) summary += " Some supporting data is stale.";
+  if (limitation) summary += ` ${limitation}`;
+  return {
+    level,
+    label: level === "grounded" ? "Grounded" : level === "partial" ? "Partial data" : "Limited data",
+    summary,
+    sourceLine: sources.length ? joinHumanList(sources) : "limited inputs",
+  };
+};
 
-// ── HELPERS ───────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ HELPERS Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const READINESS_SUCCESS_STATUSES = new Set(["completed_as_planned", "completed_modified", "partial_completed"]);
 const toReadinessNumber = (value) => {
   const n = Number(value);
@@ -1198,7 +1345,7 @@ const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().spl
     adjustedWorkout.success = "Keep the planned session and add only one controlled progression if it stays smooth.";
     adjustedWorkout.recoveryRecommendation = "Keep your normal fueling and recovery; no extra hero volume after the session.";
     adjustedWorkout.intensityGuidance = "steady with one small progression";
-    adjustedWorkout.extendedFinisher = adjustedWorkout?.extendedFinisher || (adjustedWorkout?.run ? "Optional: 4 × 20s strides if the session stays smooth." : "Optional: add one final quality set if form stays crisp.");
+    adjustedWorkout.extendedFinisher = adjustedWorkout?.extendedFinisher || (adjustedWorkout?.run ? "Optional: 4 Ãƒâ€” 20s strides if the session stays smooth." : "Optional: add one final quality set if form stays crisp.");
     appendEnvironmentNote("Progression-ready today: one small progression is available if execution stays controlled.");
     coachLine = "Progression is available today: keep the plan intact and add only one small progression if it stays smooth.";
     recoveryLine = "Recovery recommendation: normal fueling, normal mobility, and no extra bonus work after the progression.";
@@ -1538,7 +1685,7 @@ const getTodayWorkout = (weekNum, dayNum) => {
   const zones = PHASE_ZONES[week.phase];
   const dayMap = {
     1: { type: "run+strength", run: week.mon, strSess: week.str, label: "Easy Run + Strength A" },
-    2: { type: "otf", label: "Orange Theory — Hybrid Day" },
+    2: { type: "otf", label: "Orange Theory Ã¢â‚¬â€ Hybrid Day" },
     3: { type: "strength+prehab", strSess: week.str === "A" ? "B" : "A", label: "Strength B + Achilles Prehab" },
     4: { type: "hard-run", run: week.thu, label: `${week.thu?.t} Run` },
     5: { type: "easy-run", run: week.fri, label: "Easy Run" },
@@ -1548,8 +1695,8 @@ const getTodayWorkout = (weekNum, dayNum) => {
   return { ...dayMap[dayNum], week, zones };
 };
 
-const dayColors = { "run+strength":"#00f0ff", otf:"#ff8a00", "strength+prehab":"#7c5cff", "hard-run":"#ff3d81", "easy-run":"#27f59a", "long-run":"#ff3d81", rest:"#3f4f64" };
-const C = { green:"#27f59a", blue:"#00c2ff", amber:"#ff8a00", red:"#ff3d81", purple:"#7c5cff", lime:"#d8ff3e", slate:"#5f6f85" };
+const dayColors = { "run+strength":"#3c91e6", otf:"#c97a2b", "strength+prehab":"#6e63d9", "hard-run":"#d85d78", "easy-run":"#2da772", "long-run":"#c94f6d", rest:"#536479" };
+const C = { green:"#2da772", blue:"#3c91e6", amber:"#c97a2b", red:"#d85d78", purple:"#6e63d9", lime:"#b5d43a", slate:"#5f6f85" };
 const WORKOUT_TYPE_ICON = { "run+strength":"run_strength", otf:"otf", "strength+prehab":"strength_prehab", "hard-run":"hard_run", "easy-run":"easy_run", "long-run":"long_run", rest:"rest" };
 const RUN_TYPE_ICON = { Easy:"easy_run", Tempo:"tempo_run", Intervals:"interval_run", Long:"long_run", Recovery:"rest" };
 const NUTRITION_ICON = { Protein:"protein", Carbs:"carbs", Calories:"calories", Breakfast:"breakfast", Lunch:"lunch", Dinner:"dinner", "Optional snack":"snack", "Travel backup":"travel", "Grocery reset":"grocery" };
@@ -1716,14 +1863,14 @@ const applySessionNamingRules = (session = {}, injuryState = {}) => {
       return next;
     }
     if (type === "long-run") {
-      next.label = runTarget ? `Long Run · ${runTarget}` : "Long Run";
+      next.label = runTarget ? `Long Run Ã‚Â· ${runTarget}` : "Long Run";
       return next;
     }
     if (type === "hard-run" && !/easy/i.test(runType)) {
-      next.label = runTarget ? `${next?.run?.t || "Quality"} Run · ${runTarget}` : `${next?.run?.t || "Quality"} Run`;
+      next.label = runTarget ? `${next?.run?.t || "Quality"} Run Ã‚Â· ${runTarget}` : `${next?.run?.t || "Quality"} Run`;
       return next;
     }
-    next.label = runTarget ? `${SESSION_NAMING.EASY_RUN} · ${runTarget}` : SESSION_NAMING.EASY_RUN;
+    next.label = runTarget ? `${SESSION_NAMING.EASY_RUN} Ã‚Â· ${runTarget}` : SESSION_NAMING.EASY_RUN;
     return next;
   }
   const lowImpactOnly = /(bike|elliptical|pool|incline walk|low-impact)/i.test(`${next?.label || ""} ${next?.environmentNote || ""}`);
@@ -1743,7 +1890,7 @@ const relabelRecentLogs = (logs = {}) => {
     const containsRunSignal = !!runTarget || /(easy run|tempo run|interval|long run|\brun\b)/i.test(`${typeText} ${notesText}`);
     const containsRecoveryLabel = /(recovery|low-impact)/i.test(typeText);
     if (containsRunSignal && containsRecoveryLabel) {
-      const nextType = runTarget ? `${SESSION_NAMING.EASY_RUN} · ${runTarget}` : SESSION_NAMING.EASY_RUN;
+      const nextType = runTarget ? `${SESSION_NAMING.EASY_RUN} Ã‚Â· ${runTarget}` : SESSION_NAMING.EASY_RUN;
       if (nextType !== typeText) {
         nextLogs[dateKey] = { ...entry, type: nextType };
         changed += 1;
@@ -1757,14 +1904,14 @@ const DAY_CONTEXT_OVERRIDES = {
     label: "Busy Day Override",
     type: "rest",
     nutri: "easyRun",
-    fallback: "10–15 min brisk walk + mobility",
-    success: "Today = just show up for 10–20 minutes and hit protein target.",
+    fallback: "10Ã¢â‚¬â€œ15 min brisk walk + mobility",
+    success: "Today = just show up for 10Ã¢â‚¬â€œ20 minutes and hit protein target.",
   },
   low_energy_day: {
     label: "Low Energy Override",
     type: "easy-run",
     nutri: "rest",
-    fallback: "15–20 min zone-2 easy movement",
+    fallback: "15Ã¢â‚¬â€œ20 min zone-2 easy movement",
     success: "Today = 20 minutes + recovery nutrition + early sleep.",
   },
   travel_day: {
@@ -1779,13 +1926,13 @@ const DAY_CONTEXT_OVERRIDES = {
     type: "rest",
     nutri: "rest",
     fallback: "10 min walk before event + hydration",
-    success: "Today = don’t break the streak: minimum session + simple meal anchor.",
+    success: "Today = donÃ¢â‚¬â„¢t break the streak: minimum session + simple meal anchor.",
   },
   minimum_viable_day: {
     label: "Short Version Day",
     type: "rest",
     nutri: "easyRun",
-    fallback: "10–20 min fallback: 5 min mobility + 10 min easy cardio + 2 sets push/pull/core",
+    fallback: "10Ã¢â‚¬â€œ20 min fallback: 5 min mobility + 10 min easy cardio + 2 sets push/pull/core",
     success: "Today = minimum effective work, no guilt, preserve momentum.",
   },
 };
@@ -2070,7 +2217,7 @@ const buildInjuryRuleResult = (todayWorkout, injuryState) => {
       workout: { ...base, label: `${base.label || "Session"}`, injuryAdjusted: true },
       mods: ["Reduce intensity by ~10%", "Add 10-15 min warm-up", "Preserve easy aerobic work only"],
       why: `${area} mild tightness is active, so we keep movement but reduce risk.`,
-      caution: "Training adjustment logic only — not medical advice."
+      caution: "Training adjustment logic only Ã¢â‚¬â€ not medical advice."
     };
   }
   if (level === "moderate_pain") {
@@ -2203,7 +2350,7 @@ const applyEnvironmentToWorkout = (workout, env, context = {}) => {
 
   if (dayIdentity === "recovery") {
     next.type = "rest";
-    next.label = next.todayPlan?.label || "Active Recovery — Walk + Mobility";
+    next.label = next.todayPlan?.label || "Active Recovery Ã¢â‚¬â€ Walk + Mobility";
     next.environmentNote = "Recovery stays recovery. Walk, mobility, rehab only.";
     next.optionalSecondary = null;
     next.fallback = "Easy walk + mobility only.";
@@ -2325,7 +2472,7 @@ const arbitrateGoals = ({ goals, momentum, personalization }) => {
   }
   if (active.find(g=>g.category==="strength") && active.find(g=>g.category==="running")) {
     conflicts.push("Strength vs endurance recovery load");
-    pushes.push("1–2 meaningful strength sessions");
+    pushes.push("1Ã¢â‚¬â€œ2 meaningful strength sessions");
     maintains.push("Key run sessions");
     reduces.push("Extra accessory volume");
   }
@@ -2365,7 +2512,7 @@ const arbitrateGoals = ({ goals, momentum, personalization }) => {
   const allocationNarrative = `This block prioritizes ${prioritizedCategory}. ${goalAllocation.maintained[0]} is maintained. ${active.some(g => g.category === "body_comp") ? "Core work is kept minimal but consistent." : `${goalAllocation.minimized} is minimized this block.`}`;
   const strengthSessionsTarget = primary?.category === "strength" && !consistencyThreatened ? 2 : 1;
   const strengthInclusion = {
-    sessionsPerWeek: strengthSessionsTarget === 2 ? "1–2" : "1",
+    sessionsPerWeek: strengthSessionsTarget === 2 ? "1Ã¢â‚¬â€œ2" : "1",
     dose: primary?.category === "strength" && !consistencyThreatened ? "full_progression" : "maintenance_short",
     duration: primary?.category === "strength" && !consistencyThreatened ? "40-55 min" : "20-35 min",
     label: primary?.category === "strength" && !consistencyThreatened ? "Strength progression session" : "Short strength maintenance session",
@@ -2428,19 +2575,19 @@ const buildProactiveTriggers = ({ momentum, personalization, goals, learning, nu
   const triggers = [];
   const actualNutritionLogs = Object.values(nutritionActualLogs || {});
   const dropFast = (longTermMemory || []).some(m => m.key === "drops_after_3_4_days" && m.confidence === "high");
-  if (momentum.momentumState === "drifting") triggers.push({ id:"drift", msg:"Drift detected — want a simplified version of this week?", actionLabel:"Simplify week", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 12 }, priority:85 });
-  if (momentum.momentumState === "falling off") triggers.push({ id:"reset", msg:"Momentum has dipped — want a compressed reset week to make execution easier?", actionLabel:"Activate reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:95 });
-  if (momentum.score >= 80) triggers.push({ id:"progress", msg:"Consistency streak is strong — progress slightly this week?", actionLabel:"Progress slightly", actionType:"PROGRESS_STRENGTH_EMPHASIS", payload:{ weeks: 1 }, priority:70 });
-  if (personalization.travelState.isTravelWeek) triggers.push({ id:"env", msg:"Environment changed — switch to travel/home assumptions?", actionLabel:"Switch travel mode", actionType:"SWITCH_TRAVEL_MODE", payload:{ mode:"travel" }, priority:72 });
-  if (goals?.find(g=>g.category==="body_comp" && g.active) && momentum.logGapDays >= 3) triggers.push({ id:"nutrition", msg:"Nutrition drift risk is rising — simplify meals for a few days?", actionLabel:"Simplify meals", actionType:"SIMPLIFY_MEALS_THIS_WEEK", payload:{ days: 3 }, priority:78 });
-  if (momentum.logGapDays >= (dropFast ? 2 : 3)) triggers.push({ id:"nolog", msg:"No logs recently — apply low-friction reset plan?", actionLabel:"Low-friction reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:88 });
-  if (learning?.stats?.timeBlockers >= 2) triggers.push({ id:"time_friction", msg:"Time blockers keep repeating — cap sessions and reduce density?", actionLabel:"Reduce density", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 15 }, priority:84 });
-  if (learning?.stats?.harder >= 3) triggers.push({ id:"too_hard", msg:"Sessions are repeatedly harder than expected — lower aggressiveness?", actionLabel:"Lower aggressiveness", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 10 }, priority:80 });
-  if ((learning?.stats?.equipBlockers || 0) + (learning?.stats?.travelBlockers || 0) >= 2) triggers.push({ id:"env_fast", msg:"Gym access pattern changed — switch environment assumptions faster?", actionLabel:"Use no-equipment mode", actionType:"SWITCH_ENV_MODE", payload:{ mode:"no equipment" }, priority:74 });
+  if (momentum.momentumState === "drifting") triggers.push({ id:"drift", msg:"Drift detected Ã¢â‚¬â€ want a simplified version of this week?", actionLabel:"Simplify week", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 12 }, priority:85 });
+  if (momentum.momentumState === "falling off") triggers.push({ id:"reset", msg:"Momentum has dipped Ã¢â‚¬â€ want a compressed reset week to make execution easier?", actionLabel:"Activate reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:95 });
+  if (momentum.score >= 80) triggers.push({ id:"progress", msg:"Consistency streak is strong Ã¢â‚¬â€ progress slightly this week?", actionLabel:"Progress slightly", actionType:"PROGRESS_STRENGTH_EMPHASIS", payload:{ weeks: 1 }, priority:70 });
+  if (personalization.travelState.isTravelWeek) triggers.push({ id:"env", msg:"Environment changed Ã¢â‚¬â€ switch to travel/home assumptions?", actionLabel:"Switch travel mode", actionType:"SWITCH_TRAVEL_MODE", payload:{ mode:"travel" }, priority:72 });
+  if (goals?.find(g=>g.category==="body_comp" && g.active) && momentum.logGapDays >= 3) triggers.push({ id:"nutrition", msg:"Nutrition drift risk is rising Ã¢â‚¬â€ simplify meals for a few days?", actionLabel:"Simplify meals", actionType:"SIMPLIFY_MEALS_THIS_WEEK", payload:{ days: 3 }, priority:78 });
+  if (momentum.logGapDays >= (dropFast ? 2 : 3)) triggers.push({ id:"nolog", msg:"No logs recently Ã¢â‚¬â€ apply low-friction reset plan?", actionLabel:"Low-friction reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:88 });
+  if (learning?.stats?.timeBlockers >= 2) triggers.push({ id:"time_friction", msg:"Time blockers keep repeating Ã¢â‚¬â€ cap sessions and reduce density?", actionLabel:"Reduce density", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 15 }, priority:84 });
+  if (learning?.stats?.harder >= 3) triggers.push({ id:"too_hard", msg:"Sessions are repeatedly harder than expected Ã¢â‚¬â€ lower aggressiveness?", actionLabel:"Lower aggressiveness", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 10 }, priority:80 });
+  if ((learning?.stats?.equipBlockers || 0) + (learning?.stats?.travelBlockers || 0) >= 2) triggers.push({ id:"env_fast", msg:"Gym access pattern changed Ã¢â‚¬â€ switch environment assumptions faster?", actionLabel:"Use no-equipment mode", actionType:"SWITCH_ENV_MODE", payload:{ mode:"no equipment" }, priority:74 });
   const recentNutri = actualNutritionLogs.slice(-7);
-  if (recentNutri.filter(n => n.adherence === "low").length >= 2) triggers.push({ id:"nutri_simplify", msg:"Nutrition has been off-track — simplify meal structure for 3 days?", actionLabel:"Apply meal defaults", actionType:"SIMPLIFY_MEALS_THIS_WEEK", payload:{ days: 3 }, priority:82 });
-  if (recentNutri.filter(n => n.issue === "travel" || n.issue === "convenience" || n.deviationKind === "deviated").length >= 2) triggers.push({ id:"nutri_travel", msg:"Travel/convenience is derailing nutrition — switch to travel nutrition mode?", actionLabel:"Enable travel nutrition", actionType:"SWITCH_TRAVEL_NUTRITION_MODE", payload:{ enabled:true }, priority:79 });
-  if ((momentum.momentumState === "drifting" || momentum.momentumState === "falling off") && learning?.stats?.skipped >= 2) triggers.push({ id:"salvage_mode", msg:"You’ve missed 2+ sessions — switch to a 3-day salvage plan?", actionLabel:"Activate salvage", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:92 });
+  if (recentNutri.filter(n => n.adherence === "low").length >= 2) triggers.push({ id:"nutri_simplify", msg:"Nutrition has been off-track Ã¢â‚¬â€ simplify meal structure for 3 days?", actionLabel:"Apply meal defaults", actionType:"SIMPLIFY_MEALS_THIS_WEEK", payload:{ days: 3 }, priority:82 });
+  if (recentNutri.filter(n => n.issue === "travel" || n.issue === "convenience" || n.deviationKind === "deviated").length >= 2) triggers.push({ id:"nutri_travel", msg:"Travel/convenience is derailing nutrition Ã¢â‚¬â€ switch to travel nutrition mode?", actionLabel:"Enable travel nutrition", actionType:"SWITCH_TRAVEL_NUTRITION_MODE", payload:{ enabled:true }, priority:79 });
+  if ((momentum.momentumState === "drifting" || momentum.momentumState === "falling off") && learning?.stats?.skipped >= 2) triggers.push({ id:"salvage_mode", msg:"YouÃ¢â‚¬â„¢ve missed 2+ sessions Ã¢â‚¬â€ switch to a 3-day salvage plan?", actionLabel:"Activate salvage", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:92 });
   const confidenceBoost = learning?.adaptation?.active ? 6 : -4;
   return triggers
     .map(t => ({ ...t, priority: (t.priority || 50) + confidenceBoost }))
@@ -2453,7 +2600,7 @@ const detectBehaviorPatterns = ({ logs, bodyweights, personalization }) => {
   const last21 = entries.slice(-21);
   const patterns = [];
   const streakThenMiss = last21.some((_, i) => i >= 3 && /missed|skip|rest/i.test((last21[i]?.[1]?.notes || "")) && last21.slice(Math.max(0, i-3), i).filter(([,l])=>/run|strength|otf/i.test(l.type || "")).length >= 2);
-  if (streakThenMiss) patterns.push("You often miss after 2–3 strong days.");
+  if (streakThenMiss) patterns.push("You often miss after 2Ã¢â‚¬â€œ3 strong days.");
   const env = personalization.travelState.environmentMode || "home";
   const travelLow = ["travel","limited gym","no equipment"].includes(env) && last21.length < 6;
   if (travelLow) patterns.push("Adherence tends to drop when environment changes.");
@@ -2561,7 +2708,7 @@ const buildUnifiedDailyStory = ({ todayWorkout, dailyBrief, progress, arbitratio
   if (priority === "progress") {
     return {
       priority,
-      brief: `You’re trending in the right direction (${progressSentence}), so today stays focused on high-value execution. ${arbitrationSentence}`,
+      brief: `YouÃ¢â‚¬â„¢re trending in the right direction (${progressSentence}), so today stays focused on high-value execution. ${arbitrationSentence}`,
       success: successSentence
     };
   }
@@ -2599,20 +2746,20 @@ const deriveBehaviorLoop = ({ dailyCheckins, logs, momentum, salvageLayer }) => 
   const resolution = !latest || latestStatus === "not_logged"
     ? "New streak starts with one completed day."
     : latestStatus === "completed_as_planned"
-    ? "Good day — you hit what mattered."
+    ? "Good day Ã¢â‚¬â€ you hit what mattered."
     : latestStatus === "completed_modified"
     ? "Not perfect, but you kept momentum."
     : latestStatus === "skipped"
-    ? "Recovery day logged — next action is to restart with a minimum day."
-    : "Day logged — momentum stays alive.";
+    ? "Recovery day logged Ã¢â‚¬â€ next action is to restart with a minimum day."
+    : "Day logged Ã¢â‚¬â€ momentum stays alive.";
 
   const identity = salvageLayer?.active
-    ? "You’re handling setbacks like an athlete who stays in the game."
+    ? "YouÃ¢â‚¬â„¢re handling setbacks like an athlete who stays in the game."
     : consistencyStreak >= 5
-    ? "You’re building consistency identity."
+    ? "YouÃ¢â‚¬â„¢re building consistency identity."
     : ["drifting","falling off"].includes(momentum?.momentumState)
-    ? "You’re back on track by showing up today."
-    : "You’re reinforcing a reliable training rhythm.";
+    ? "YouÃ¢â‚¬â„¢re back on track by showing up today."
+    : "YouÃ¢â‚¬â„¢re reinforcing a reliable training rhythm.";
 
   return {
     consistencyStreak,
@@ -2714,7 +2861,7 @@ const deriveRecalibrationEngine = ({ currentWeek, progress, momentum, learningLa
 
   const aggressiveness = prolongedInconsistency ? "lower" : progress?.adherenceRate >= 75 ? "slightly_higher" : "steady";
   const summary = active
-    ? "We’re recalibrating your plan to keep progress aligned with current reality."
+    ? "WeÃ¢â‚¬â„¢re recalibrating your plan to keep progress aligned with current reality."
     : "No recalibration needed this week.";
   const why = active
     ? `Trigger: ${reasons.join(" + ")}.`
@@ -2760,10 +2907,10 @@ const deriveStrengthLayer = ({ goals, momentum, personalization, logs }) => {
 
   const recentBenchHits = Object.values(logs || {}).filter(l => /bench/i.test((l.type || "") + " " + (l.notes || ""))).length;
   const progression = focus === "push"
-    ? [`Bench 4×6 @ ~${Math.round(trainingMax*0.72)} lbs`, "If bar speed is solid, add 5 lbs next week", "Incline DB 3×10 + row 3×10 + triceps 3×12"]
+    ? [`Bench 4Ãƒâ€”6 @ ~${Math.round(trainingMax*0.72)} lbs`, "If bar speed is solid, add 5 lbs next week", "Incline DB 3Ãƒâ€”10 + row 3Ãƒâ€”10 + triceps 3Ãƒâ€”12"]
     : focus === "maintain"
-    ? [`Bench 2×5 @ ~${Math.round(trainingMax*0.65)} lbs`, "Keep 1 short upper hypertrophy block", "No grind reps while run load is high"]
-    : ["Minimal dose: push-up ladder 3 rounds", "DB or band press 3×12", "One pull movement + shoulder health work"];
+    ? [`Bench 2Ãƒâ€”5 @ ~${Math.round(trainingMax*0.65)} lbs`, "Keep 1 short upper hypertrophy block", "No grind reps while run load is high"]
+    : ["Minimal dose: push-up ladder 3 rounds", "DB or band press 3Ãƒâ€”12", "One pull movement + shoulder health work"];
 
   const lowerBody = ["Running weeks: 1 moderate lower session only", "Hip hinge + split squat + calf/achilles support", "Avoid heavy eccentric leg volume before key runs"];
   const substitutions = env === "full gym" ? ["Barbell bench", "Incline DB", "Cable fly"] :
@@ -2786,13 +2933,22 @@ const deriveStrengthProgressTracker = ({ logs = {}, goals = [], strengthLayer = 
   ];
   return liftDefs.map((lift) => {
     const sessions = entries
-      .filter(([, l]) => lift.keywords.test(`${l?.type || ""} ${l?.notes || ""}`))
-      .slice(-4)
-      .map(([date, l]) => {
-        const text = `${l?.type || ""} ${l?.notes || ""}`;
+      .flatMap(([date, log]) => {
+        const canonicalSessions = getExercisePerformanceRecordsForLog(log || {}, { dateKey: date })
+          .filter((record) => record?.liftKey === lift.key || lift.keywords.test(record?.exercise || ""))
+          .map((record) => ({
+            date,
+            load: getRecordActualWeight(record) ?? getRecordPrescribedWeight(record),
+            note: record?.exercise || log?.notes || log?.type || "Strength session",
+          }));
+        if (canonicalSessions.length > 0) return canonicalSessions;
+        if (!lift.keywords.test(`${log?.type || ""} ${log?.notes || ""}`)) return [];
+        const text = `${log?.type || ""} ${log?.notes || ""}`;
         const load = parseInt((text.match(/(\d{2,3})\s?(lb|lbs)?/i) || [])[1] || "0", 10) || null;
-        return { date, load, note: l?.notes || l?.type || "Strength session" };
-      });
+        return [{ date, load, note: log?.notes || log?.type || "Strength session" }];
+      })
+      .filter((session) => session?.load || session?.note)
+      .slice(-4);
     const current = sessions[sessions.length - 1]?.load || lift.baseCurrent;
     const goal = Math.max(lift.goal, current + 5);
     const delta = Math.max(0, goal - current);
@@ -2801,7 +2957,7 @@ const deriveStrengthProgressTracker = ({ logs = {}, goals = [], strengthLayer = 
       ...lift,
       current,
       goal,
-      projected: `${projectedWeeks}–${projectedWeeks + 2} weeks`,
+      projected: `${projectedWeeks}Ã¢â‚¬â€œ${projectedWeeks + 2} weeks`,
       sessions,
     };
   });
@@ -2861,7 +3017,7 @@ const deriveExpectationEngine = ({ progress, momentum, arbitration }) => {
   })();
   const monthWeight = weightWeekly ? Math.max(0.8, Math.min(4.5, weightWeekly * 4)) : null;
   const weightExpectation = progress?.weightSignal?.includes("down")
-    ? `At this pace, you’ll likely drop ~${Math.round(monthWeight)}–${Math.round(monthWeight + 1)} lbs over the next month if consistency holds.`
+    ? `At this pace, youÃ¢â‚¬â„¢ll likely drop ~${Math.round(monthWeight)}Ã¢â‚¬â€œ${Math.round(monthWeight + 1)} lbs over the next month if consistency holds.`
     : progress?.weightSignal?.includes("steady")
     ? "Scale trend should stay relatively stable over the next month if intake and execution stay similar."
     : "Bodyweight trend may drift up if this pattern continues; tightening consistency should correct it.";
@@ -2871,9 +3027,9 @@ const deriveExpectationEngine = ({ progress, momentum, arbitration }) => {
     ? "Running performance should keep inching forward if consistency holds."
     : progress?.runSignal?.includes("down")
     ? "Running performance may stay flat or dip short-term unless we simplify load and recover better."
-    : "Running forecast is still forming; 2–3 consistent weeks will make direction clearer.";
+    : "Running forecast is still forming; 2Ã¢â‚¬â€œ3 consistent weeks will make direction clearer.";
   const strengthExpectation = progress?.strengthSignal?.includes("pushing")
-    ? "You’re on track to rebuild strength over the next few weeks if we maintain current structure."
+    ? "YouÃ¢â‚¬â„¢re on track to rebuild strength over the next few weeks if we maintain current structure."
     : "Strength should hold and gradually rebuild if consistency and recovery stay in place.";
   const expectationStrength = adherenceBand === "high" && momentum?.momentumState !== "falling off"
     ? "slightly_positive"
@@ -2886,8 +3042,8 @@ const deriveExpectationEngine = ({ progress, momentum, arbitration }) => {
     ? "Near-term outlook: progress is still possible, but slower unless consistency improves."
     : "Near-term outlook: steady progress if routines remain stable.";
   const motivationLine = expectationStrength === "conservative"
-    ? "This is still worth continuing — even small consistent weeks re-accelerate progress."
-    : "This is worth continuing — current habits are creating real momentum.";
+    ? "This is still worth continuing Ã¢â‚¬â€ even small consistent weeks re-accelerate progress."
+    : "This is worth continuing Ã¢â‚¬â€ current habits are creating real momentum.";
   const conditionLine = expectationStrength === "conservative"
     ? "Condition: outcomes improve meaningfully if consistency and logging tighten."
     : "Condition: outcomes hold if consistency, structure, and current intake stay similar.";
@@ -2985,7 +3141,7 @@ const deriveLearningLayer = ({ dailyCheckins, logs, weeklyCheckins, momentum, pe
   if ((equipBlockers + travelBlockers) >= 1) observations.push({ key:"env", count: equipBlockers + travelBlockers, msg:"When gym access disappears, adherence drops; switch to simpler environment assumptions faster.", confidence: toConfidence(equipBlockers + travelBlockers), impact: "simplify_environment" });
   if (strengthMods > runMods) observations.push({ key:"strength_mods", count: strengthMods - runMods + 1, msg:"You modify strength sessions more than runs; keep strength sessions concise and practical.", confidence: toConfidence(strengthMods - runMods + 1), impact: "strength_simplify" });
   if (skippedByTravel >= 1) observations.push({ key:"travel_falloff", count: skippedByTravel, msg:"You often fall off after travel/missed days; reduce weekly density during chaotic periods.", confidence: toConfidence(skippedByTravel), impact: "reduce_week_density" });
-  if (easier >= 2 && skipped <= 1) observations.push({ key:"ready", count: easier, msg:"You’ve handled this workload well before; modest progression is usually tolerated.", confidence: toConfidence(easier), impact: "modest_progress" });
+  if (easier >= 2 && skipped <= 1) observations.push({ key:"ready", count: easier, msg:"YouÃ¢â‚¬â„¢ve handled this workload well before; modest progression is usually tolerated.", confidence: toConfidence(easier), impact: "modest_progress" });
   if (highStressWeeks + lowEnergyWeeks >= 1) observations.push({ key:"stress", count: highStressWeeks + lowEnergyWeeks, msg:"High-stress/low-energy weeks reduce execution; simplify sooner.", confidence: toConfidence(highStressWeeks + lowEnergyWeeks), impact: "simplify_week" });
   const ranked = observations.sort((a,b) => b.count - a.count);
   const topObservations = ranked.slice(0, 3);
@@ -3061,7 +3217,7 @@ const deriveSalvageLayer = ({ logs, momentum, dailyCheckins, weeklyCheckins, per
 
   const exitReady = !active && ["stable","building momentum"].includes(momentum.momentumState) && missedCount <= 1;
   const coachMessage = active
-    ? "Week has been compressed to preserve momentum. We’re prioritizing consistency over perfection."
+    ? "Week has been compressed to preserve momentum. WeÃ¢â‚¬â„¢re prioritizing consistency over perfection."
     : exitReady
     ? "Salvage mode can be exited: adherence and momentum have recovered."
     : "Standard mode active.";
@@ -3105,17 +3261,17 @@ const deriveFailureModeHardening = ({ logs, dailyCheckins, bodyweights, coachPla
   const coachBehavior = {
     tone: "no-guilt-forward-looking",
     primaryLine: isReEntry
-      ? "Welcome back — we reset from today and rebuild momentum with a re-entry week."
+      ? "Welcome back Ã¢â‚¬â€ we reset from today and rebuild momentum with a re-entry week."
       : chaotic
       ? "Keeping this week simple to protect your streak."
       : isLowEngagement
-      ? "Low engagement detected — only essentials for now; keep it light and achievable."
+      ? "Low engagement detected Ã¢â‚¬â€ only essentials for now; keep it light and achievable."
       : "Standard coaching mode.",
   };
   return { mode, engagementGapDays, planningHorizonDays, uncertainty, staleData, chaotic, isLowEngagement, isReEntry, minimumViableStructure, coachBehavior };
 };
 
-// ── MAIN APP ──────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ MAIN APP Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const cloneStructuredValue = (value) => {
   if (value == null) return value;
   try {
@@ -3125,451 +3281,6 @@ const cloneStructuredValue = (value) => {
   }
 };
 
-const PRESCRIBED_DAY_HISTORY_VERSION = 2;
-const PRESCRIBED_DAY_DURABILITY = {
-  durable: "durable",
-  legacyBackfill: "legacy_backfill",
-  fallbackDerived: "fallback_derived",
-};
-
-const stripPlannedRecordMetadata = (record = null) => {
-  if (!record) return null;
-  const next = cloneStructuredValue(record);
-  if (!next) return null;
-  delete next.capturedAt;
-  delete next.updatedAt;
-  return next;
-};
-
-const normalizeRevisionText = (value = "") => String(value || "")
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, " ")
-  .trim();
-
-const collectPatternNumbers = (text = "", regex = /$^/) => {
-  const values = [];
-  String(text || "").replace(regex, (_, numeric) => {
-    const parsed = Number(numeric);
-    if (Number.isFinite(parsed)) values.push(parsed);
-    return _;
-  });
-  return values;
-};
-
-const sumPatternNumbers = (text = "", regex = /$^/) => (
-  collectPatternNumbers(text, regex).reduce((sum, value) => sum + value, 0)
-);
-
-const extractRunStructureMetrics = (training = null) => {
-  const run = training?.run || null;
-  const detail = String(run?.d || training?.strengthDuration || training?.fallback || "").trim();
-  const totalMinutes = sumPatternNumbers(detail, /(\d+(?:\.\d+)?)\s*min\b/gi);
-  const totalMiles = sumPatternNumbers(detail, /(\d+(?:\.\d+)?)\s*(?:mi|mile|miles)\b/gi);
-  return {
-    runType: normalizeRevisionText(run?.t || ""),
-    detailKey: normalizeRevisionText(detail),
-    totalMinutes: totalMinutes > 0 ? totalMinutes : null,
-    totalMiles: totalMiles > 0 ? Number(totalMiles.toFixed(2)) : null,
-    strengthTrack: normalizeRevisionText(training?.strengthTrack || ""),
-  };
-};
-
-const extractNutritionMaterialMetrics = (nutrition = null) => {
-  const prescription = nutrition?.prescription || nutrition || {};
-  const targets = prescription?.targets || prescription || {};
-  const metric = (value, precision = 0) => {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? Number(numeric.toFixed(precision)) : null;
-  };
-  return {
-    dayType: normalizeRevisionText(nutrition?.dayType || prescription?.dayType || ""),
-    calories: metric(targets?.cal || targets?.calories || prescription?.cal || prescription?.calories || null),
-    protein: metric(targets?.p || targets?.protein || prescription?.p || prescription?.protein || null),
-    carbs: metric(targets?.c || targets?.carbs || prescription?.c || prescription?.carbs || null),
-    fat: metric(targets?.f || targets?.fat || prescription?.f || prescription?.fat || null),
-    hydrationOz: metric(targets?.hydrationTargetOz || prescription?.hydrationTargetOz || null),
-  };
-};
-
-const extractRecoveryMaterialMetrics = (recovery = null) => ({
-  state: normalizeRevisionText(recovery?.state || recovery?.mode || ""),
-  recommendation: normalizeRevisionText(recovery?.prescription?.recommendation || recovery?.recommendation || recovery?.recoveryLine || ""),
-  intensityGuidance: normalizeRevisionText(recovery?.prescription?.intensityGuidance || ""),
-  success: normalizeRevisionText(recovery?.prescription?.success || recovery?.success || ""),
-});
-
-const extractExplicitUserAdjustmentKey = (plannedDayRecord = null) => (
-  Array.isArray(plannedDayRecord?.provenance?.events)
-    ? plannedDayRecord.provenance.events
-      .filter((event) => event?.actor === PROVENANCE_ACTORS.user)
-      .map((event) => [
-        normalizeRevisionText(event?.trigger || ""),
-        normalizeRevisionText(event?.mutationType || ""),
-        normalizeRevisionText(event?.revisionReason || ""),
-      ].filter(Boolean).join(":"))
-      .filter(Boolean)
-      .join("|")
-    : ""
-);
-
-const buildMaterialPlannedDaySnapshot = (plannedDayRecord = null) => {
-  if (!plannedDayRecord?.dateKey) return null;
-  const resolvedTraining = plannedDayRecord?.resolved?.training || plannedDayRecord?.base?.training || null;
-  const baseTraining = plannedDayRecord?.base?.training || null;
-  return {
-    dateKey: plannedDayRecord.dateKey,
-    sessionType: normalizeRevisionText(resolvedTraining?.type || baseTraining?.type || ""),
-    sessionLabel: normalizeRevisionText(resolvedTraining?.label || baseTraining?.label || ""),
-    sessionIdentity: normalizeRevisionText([
-      resolvedTraining?.label || baseTraining?.label || "",
-      resolvedTraining?.type || baseTraining?.type || "",
-      resolvedTraining?.strengthTrack || baseTraining?.strengthTrack || "",
-      resolvedTraining?.run?.t || baseTraining?.run?.t || "",
-    ].filter(Boolean).join(" ")),
-    runStructure: extractRunStructureMetrics(resolvedTraining || baseTraining || null),
-    readinessState: normalizeRevisionText(
-      plannedDayRecord?.resolved?.recovery?.state
-      || resolvedTraining?.readinessState
-      || plannedDayRecord?.decision?.mode
-      || ""
-    ),
-    decisionMode: normalizeRevisionText(plannedDayRecord?.decision?.mode || ""),
-    nutrition: extractNutritionMaterialMetrics(plannedDayRecord?.resolved?.nutrition || plannedDayRecord?.base?.nutrition || null),
-    recovery: extractRecoveryMaterialMetrics(plannedDayRecord?.resolved?.recovery || plannedDayRecord?.base?.recovery || null),
-    explicitUserAdjustmentKey: extractExplicitUserAdjustmentKey(plannedDayRecord),
-  };
-};
-
-const hasDifferenceAtThreshold = (currentValue, nextValue, threshold = 1) => {
-  if (!Number.isFinite(currentValue) || !Number.isFinite(nextValue)) return false;
-  return Math.abs(Number(nextValue) - Number(currentValue)) >= threshold;
-};
-
-// Prescribed-day revisions should only capture meaningful prescription movement.
-// Same-day recomputations are ignored unless one of these changes materially:
-// - session identity/type
-// - run duration >= 5 min or distance >= 0.5 mi
-// - readiness/intensity state
-// - nutrition day type or macros (>= 100 kcal or >= 15g macro, >= 12 oz hydration)
-// - recovery prescription text/state
-// - explicit user-approved adjustment provenance
-const hasMaterialPlannedDayChange = (currentRecord = null, nextRecord = null) => {
-  const current = buildMaterialPlannedDaySnapshot(currentRecord);
-  const next = buildMaterialPlannedDaySnapshot(nextRecord);
-  if (!current || !next) return current !== next;
-  if (current.sessionType !== next.sessionType) return true;
-  if (current.sessionIdentity !== next.sessionIdentity || current.sessionLabel !== next.sessionLabel) return true;
-  if (current.runStructure?.runType !== next.runStructure?.runType) return true;
-  if (hasDifferenceAtThreshold(current.runStructure?.totalMinutes, next.runStructure?.totalMinutes, 5)) return true;
-  if (hasDifferenceAtThreshold(current.runStructure?.totalMiles, next.runStructure?.totalMiles, 0.5)) return true;
-  if (
-    current.runStructure?.detailKey !== next.runStructure?.detailKey
-    && !Number.isFinite(current.runStructure?.totalMinutes)
-    && !Number.isFinite(next.runStructure?.totalMinutes)
-    && !Number.isFinite(current.runStructure?.totalMiles)
-    && !Number.isFinite(next.runStructure?.totalMiles)
-  ) return true;
-  if (current.runStructure?.strengthTrack !== next.runStructure?.strengthTrack) return true;
-  if (current.readinessState !== next.readinessState || current.decisionMode !== next.decisionMode) return true;
-  if (current.nutrition?.dayType !== next.nutrition?.dayType) return true;
-  if (hasDifferenceAtThreshold(current.nutrition?.calories, next.nutrition?.calories, 100)) return true;
-  if (hasDifferenceAtThreshold(current.nutrition?.protein, next.nutrition?.protein, 15)) return true;
-  if (hasDifferenceAtThreshold(current.nutrition?.carbs, next.nutrition?.carbs, 15)) return true;
-  if (hasDifferenceAtThreshold(current.nutrition?.fat, next.nutrition?.fat, 15)) return true;
-  if (hasDifferenceAtThreshold(current.nutrition?.hydrationOz, next.nutrition?.hydrationOz, 12)) return true;
-  if (JSON.stringify(current.recovery || {}) !== JSON.stringify(next.recovery || {})) return true;
-  if (current.explicitUserAdjustmentKey !== next.explicitUserAdjustmentKey) return true;
-  return false;
-};
-
-const getStableCaptureAtForDate = (dateKey = "") => {
-  const parsed = new Date(`${dateKey}T12:00:00`).getTime();
-  return Number.isNaN(parsed) ? Date.now() : parsed;
-};
-
-const isPrescribedDayHistoryEntry = (entry = null) => Boolean(
-  entry
-  && typeof entry === "object"
-  && Array.isArray(entry.revisions)
-  && Number(entry.historyVersion || 0) >= 1
-);
-
-const inferProvenanceActorFromDurability = (durability = "", sourceType = "") => {
-  if (durability === PRESCRIBED_DAY_DURABILITY.legacyBackfill) return PROVENANCE_ACTORS.migration;
-  if (durability === PRESCRIBED_DAY_DURABILITY.fallbackDerived) return PROVENANCE_ACTORS.fallback;
-  if (/ai/i.test(sourceType || "")) return PROVENANCE_ACTORS.aiInterpretation;
-  return PROVENANCE_ACTORS.deterministicEngine;
-};
-
-const buildPrescribedRevisionProvenance = ({
-  sourceType = "plan_day_engine",
-  durability = PRESCRIBED_DAY_DURABILITY.durable,
-  reason = "daily_decision_capture",
-  capturedAt = Date.now(),
-  plannedDayRecord = null,
-} = {}) => {
-  const actor = inferProvenanceActorFromDurability(durability, sourceType);
-  return buildProvenanceEvent({
-    actor,
-    trigger: sourceType || "plan_day_engine",
-    mutationType: "prescribed_day_revision",
-    revisionReason: String(reason || "daily_decision_capture").replace(/_/g, " "),
-    sourceInputs: [
-      sourceType || "plan_day_engine",
-      durability || PRESCRIBED_DAY_DURABILITY.durable,
-      plannedDayRecord?.provenance?.summary ? "plan_day_provenance" : "",
-    ],
-    confidence: actor === PROVENANCE_ACTORS.fallback ? "low" : actor === PROVENANCE_ACTORS.migration ? "medium" : "high",
-    timestamp: capturedAt,
-    details: {
-      sourceType,
-      durability,
-      planDayId: plannedDayRecord?.id || "",
-      decisionMode: plannedDayRecord?.decision?.mode || "",
-    },
-  });
-};
-
-const getCurrentPrescribedDayRevision = (entry = null) => {
-  if (!entry) return null;
-  if (!isPrescribedDayHistoryEntry(entry)) {
-    return entry?.dateKey ? {
-      revisionId: entry?.revisionId || `${entry.dateKey}_rev_1`,
-      revisionNumber: Number(entry?.revisionNumber || 1),
-      capturedAt: entry?.capturedAt || entry?.updatedAt || null,
-      durability: entry?.durability || (entry?.source === "legacy_schedule_helper" ? PRESCRIBED_DAY_DURABILITY.fallbackDerived : PRESCRIBED_DAY_DURABILITY.durable),
-      sourceType: entry?.source || "legacy_single_snapshot",
-      reason: entry?.reason || "legacy_single_snapshot",
-      provenance: normalizeProvenanceEvent(entry?.provenance || null, {
-        actor: inferProvenanceActorFromDurability(entry?.durability, entry?.source),
-        trigger: entry?.source || "legacy_single_snapshot",
-        mutationType: "prescribed_day_revision",
-        revisionReason: entry?.reason || "legacy_single_snapshot",
-        sourceInputs: [entry?.source || "legacy_single_snapshot"],
-        timestamp: entry?.capturedAt || entry?.updatedAt || Date.now(),
-        details: {
-          durability: entry?.durability || PRESCRIBED_DAY_DURABILITY.durable,
-        },
-      }),
-      record: entry,
-    } : null;
-  }
-  const revisions = Array.isArray(entry.revisions) ? entry.revisions : [];
-  if (!revisions.length) return null;
-  const matched = revisions.find((revision) => revision?.revisionId === entry.currentRevisionId);
-  return matched || revisions[revisions.length - 1] || null;
-};
-
-const getCurrentPrescribedDayRecord = (entry = null) => {
-  const revision = getCurrentPrescribedDayRevision(entry);
-  return revision?.record || null;
-};
-
-const buildPrescribedDayRevision = ({
-  plannedDayRecord = null,
-  revisionNumber = 1,
-  capturedAt = Date.now(),
-  sourceType = "plan_day_engine",
-  durability = PRESCRIBED_DAY_DURABILITY.durable,
-  reason = "daily_decision_capture",
-} = {}) => {
-  if (!plannedDayRecord?.dateKey) return null;
-  return {
-    revisionId: `${plannedDayRecord.dateKey}_rev_${revisionNumber}_${capturedAt}`,
-    revisionNumber,
-    capturedAt,
-    sourceType,
-    durability,
-    reason,
-    provenance: buildPrescribedRevisionProvenance({
-      sourceType,
-      durability,
-      reason,
-      capturedAt,
-      plannedDayRecord,
-    }),
-    record: {
-      ...cloneStructuredValue(plannedDayRecord),
-      capturedAt,
-      updatedAt: capturedAt,
-    },
-  };
-};
-
-const createPrescribedDayHistoryEntry = ({
-  plannedDayRecord = null,
-  capturedAt = Date.now(),
-  sourceType = "plan_day_engine",
-  durability = PRESCRIBED_DAY_DURABILITY.durable,
-  reason = "daily_decision_capture",
-} = {}) => {
-  if (!plannedDayRecord?.dateKey) return null;
-  const revision = buildPrescribedDayRevision({
-    plannedDayRecord,
-    revisionNumber: 1,
-    capturedAt,
-    sourceType,
-    durability,
-    reason,
-  });
-  if (!revision) return null;
-  return {
-    model: "prescribed_day_history",
-    historyVersion: PRESCRIBED_DAY_HISTORY_VERSION,
-    dateKey: plannedDayRecord.dateKey,
-    firstCapturedAt: capturedAt,
-    lastCapturedAt: capturedAt,
-    currentRevisionId: revision.revisionId,
-    revisions: [revision],
-    provenance: buildStructuredProvenance({
-      keyDrivers: plannedDayRecord?.provenance?.keyDrivers || [],
-      events: [revision.provenance],
-      summary: plannedDayRecord?.provenance?.summary || revision?.reason || "",
-    }),
-  };
-};
-
-const normalizePrescribedDayHistoryEntry = (dateKey = "", entry = null) => {
-  if (!dateKey || !entry) return null;
-  if (isPrescribedDayHistoryEntry(entry)) {
-    const revisions = (entry.revisions || [])
-      .map((revision, idx) => {
-        const record = revision?.record || null;
-        if (!record?.dateKey) return null;
-        return {
-          revisionId: revision?.revisionId || `${record.dateKey}_rev_${idx + 1}_${revision?.capturedAt || entry?.lastCapturedAt || Date.now()}`,
-          revisionNumber: Number(revision?.revisionNumber || (idx + 1)),
-          capturedAt: revision?.capturedAt || entry?.lastCapturedAt || Date.now(),
-          sourceType: revision?.sourceType || record?.source || "plan_day_engine",
-          durability: revision?.durability || record?.durability || (record?.source === "legacy_schedule_helper" ? PRESCRIBED_DAY_DURABILITY.fallbackDerived : PRESCRIBED_DAY_DURABILITY.durable),
-          reason: revision?.reason || "history_normalized",
-          provenance: normalizeProvenanceEvent(revision?.provenance || record?.provenance || null, {
-            actor: inferProvenanceActorFromDurability(revision?.durability || record?.durability, revision?.sourceType || record?.source),
-            trigger: revision?.sourceType || record?.source || "plan_day_engine",
-            mutationType: "prescribed_day_revision",
-            revisionReason: revision?.reason || "history_normalized",
-            sourceInputs: [revision?.sourceType || record?.source || "plan_day_engine"],
-            timestamp: revision?.capturedAt || entry?.lastCapturedAt || Date.now(),
-            details: {
-              durability: revision?.durability || record?.durability || PRESCRIBED_DAY_DURABILITY.durable,
-            },
-          }),
-          record: {
-            ...cloneStructuredValue(record),
-            capturedAt: record?.capturedAt || revision?.capturedAt || entry?.lastCapturedAt || Date.now(),
-            updatedAt: record?.updatedAt || revision?.capturedAt || entry?.lastCapturedAt || Date.now(),
-          },
-        };
-      })
-      .filter(Boolean)
-      .sort((a, b) => Number(a.revisionNumber || 0) - Number(b.revisionNumber || 0));
-    if (!revisions.length) return null;
-    const currentRevision = revisions.find((revision) => revision.revisionId === entry.currentRevisionId) || revisions[revisions.length - 1];
-    return {
-      model: "prescribed_day_history",
-      historyVersion: PRESCRIBED_DAY_HISTORY_VERSION,
-      dateKey,
-      firstCapturedAt: entry?.firstCapturedAt || revisions[0]?.capturedAt || Date.now(),
-      lastCapturedAt: entry?.lastCapturedAt || currentRevision?.capturedAt || Date.now(),
-      currentRevisionId: currentRevision?.revisionId || revisions[revisions.length - 1]?.revisionId,
-      revisions,
-      provenance: buildStructuredProvenance({
-        keyDrivers: currentRevision?.record?.provenance?.keyDrivers || entry?.provenance?.keyDrivers || [],
-        events: revisions.map((revision) => revision?.provenance).filter(Boolean),
-        summary: currentRevision?.record?.provenance?.summary || entry?.provenance?.summary || currentRevision?.reason || "",
-      }),
-    };
-  }
-  const capturedAt = entry?.capturedAt || entry?.updatedAt || Date.now();
-  return createPrescribedDayHistoryEntry({
-    plannedDayRecord: { ...cloneStructuredValue(entry), dateKey: entry?.dateKey || dateKey },
-    capturedAt,
-    sourceType: entry?.source || "legacy_single_snapshot",
-    durability: entry?.durability || (entry?.source === "legacy_schedule_helper" ? PRESCRIBED_DAY_DURABILITY.fallbackDerived : PRESCRIBED_DAY_DURABILITY.durable),
-    reason: "legacy_single_snapshot_normalized",
-  });
-};
-
-const upsertPrescribedDayHistoryEntry = ({
-  dateKey = "",
-  existingEntry = null,
-  plannedDayRecord = null,
-  capturedAt = Date.now(),
-  sourceType = "plan_day_engine",
-  durability = PRESCRIBED_DAY_DURABILITY.durable,
-  reason = "daily_decision_capture",
-} = {}) => {
-  if (!dateKey || !plannedDayRecord?.dateKey) return { nextEntry: normalizePrescribedDayHistoryEntry(dateKey, existingEntry), changed: false };
-  const normalizedExisting = normalizePrescribedDayHistoryEntry(dateKey, existingEntry);
-  if (!normalizedExisting) {
-    return {
-      nextEntry: createPrescribedDayHistoryEntry({ plannedDayRecord, capturedAt, sourceType, durability, reason }),
-      changed: true,
-    };
-  }
-  const currentRecord = getCurrentPrescribedDayRecord(normalizedExisting);
-  const currentComparable = JSON.stringify(stripPlannedRecordMetadata(currentRecord) || null);
-  const nextComparable = JSON.stringify(stripPlannedRecordMetadata(plannedDayRecord) || null);
-  if (currentComparable === nextComparable || !hasMaterialPlannedDayChange(currentRecord, plannedDayRecord)) {
-    return {
-      nextEntry: normalizedExisting,
-      changed: !isPrescribedDayHistoryEntry(existingEntry),
-    };
-  }
-  const nextRevisionNumber = Number(normalizedExisting?.revisions?.[normalizedExisting.revisions.length - 1]?.revisionNumber || 0) + 1;
-  const nextRevision = buildPrescribedDayRevision({
-    plannedDayRecord,
-    revisionNumber: nextRevisionNumber,
-    capturedAt,
-    sourceType,
-    durability,
-    reason,
-  });
-  const nextRevisions = [...(normalizedExisting.revisions || []), nextRevision].slice(-16);
-  return {
-    nextEntry: {
-      ...normalizedExisting,
-      lastCapturedAt: capturedAt,
-      currentRevisionId: nextRevision.revisionId,
-      revisions: nextRevisions,
-      provenance: buildStructuredProvenance({
-        keyDrivers: plannedDayRecord?.provenance?.keyDrivers || normalizedExisting?.provenance?.keyDrivers || [],
-        events: nextRevisions.map((revision) => revision?.provenance).filter(Boolean),
-        summary: plannedDayRecord?.provenance?.summary || normalizedExisting?.provenance?.summary || nextRevision?.reason || "",
-      }),
-    },
-    changed: true,
-  };
-};
-
-const buildPlanReference = (plannedDayEntry = null) => {
-  const revision = getCurrentPrescribedDayRevision(plannedDayEntry);
-  const plannedDayRecord = revision?.record || getCurrentPrescribedDayRecord(plannedDayEntry);
-  if (!plannedDayRecord?.dateKey) return null;
-  return {
-    planDayId: plannedDayRecord.id || `plan_day_${plannedDayRecord.dateKey}`,
-    dateKey: plannedDayRecord.dateKey,
-    source: plannedDayRecord.source || revision?.sourceType || "planned_day_record",
-    capturedAt: revision?.capturedAt || plannedDayRecord.capturedAt || null,
-    updatedAt: plannedDayRecord.updatedAt || revision?.capturedAt || null,
-    decisionMode: plannedDayRecord?.decision?.mode || "",
-    modifiedFromBase: Boolean(plannedDayRecord?.decision?.modifiedFromBase),
-    revisionId: revision?.revisionId || "",
-    revisionNumber: Number(revision?.revisionNumber || 1),
-    durability: revision?.durability || plannedDayRecord?.durability || PRESCRIBED_DAY_DURABILITY.durable,
-    provenance: normalizeProvenanceEvent(revision?.provenance || plannedDayRecord?.provenance || null, {
-      actor: inferProvenanceActorFromDurability(revision?.durability || plannedDayRecord?.durability, revision?.sourceType || plannedDayRecord?.source),
-      trigger: revision?.sourceType || plannedDayRecord?.source || "planned_day_record",
-      mutationType: "plan_reference",
-      revisionReason: revision?.reason || "",
-      sourceInputs: ["plannedDayRecords"],
-      timestamp: revision?.capturedAt || plannedDayRecord?.updatedAt || Date.now(),
-      details: {
-        decisionMode: plannedDayRecord?.decision?.mode || "",
-      },
-    }),
-  };
-};
 
 const buildLegacyPlanSnapshot = (plannedDayEntry = null) => {
   const plannedDayRecord = getCurrentPrescribedDayRecord(plannedDayEntry) || plannedDayEntry;
@@ -3791,22 +3502,26 @@ export default function TrainerDashboard() {
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
   const planComposer = composeGoalNativePlan({ goals: goalsModel, personalization, momentum, learningLayer, currentWeek, baseWeek });
-  const planWeekRuntime = useMemo(() => assemblePlanWeekRuntime({
-    todayKey,
-    currentWeek,
-    dayOfWeek,
-    goals: goalsModel,
-    baseWeek,
-    weekTemplates: WEEKS,
-    planComposer,
-    momentum,
-    learningLayer,
-    weeklyCheckins,
-    coachPlanAdjustments,
-    failureMode,
-    environmentSelection,
-    horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS,
-  }), [
+  const planWeekRuntime = useMemo(() => {
+    const runtime = assemblePlanWeekRuntime({
+      todayKey,
+      currentWeek,
+      dayOfWeek,
+      goals: goalsModel,
+      baseWeek,
+      weekTemplates: WEEKS,
+      planComposer,
+      momentum,
+      learningLayer,
+      weeklyCheckins,
+      coachPlanAdjustments,
+      failureMode,
+      environmentSelection,
+      horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS,
+    });
+    validatePlanWeekInvariant(runtime?.currentPlanWeek || null, "assemblePlanWeekRuntime.currentPlanWeek");
+    return runtime;
+  }, [
     todayKey,
     currentWeek,
     dayOfWeek,
@@ -3887,16 +3602,16 @@ export default function TrainerDashboard() {
   const compoundingCoachMemory = deriveCompoundingCoachMemory({ dailyCheckins, weeklyCheckins, personalization, momentum });
   const recalibration = deriveRecalibrationEngine({ currentWeek, progress: progressEngine, momentum, learningLayer, memoryInsights, arbitration });
   const todayWorkoutHardenedBase = failureMode.isReEntry
-    ? { ...todayWorkout, label: `Re-entry day: ${todayWorkout?.label || "short version"}`, minDay: true, success: "Re-entry week: complete one essential session and log it. Momentum first.", explanation: `You haven't trained in a while, so today is a re-entry session. The goal is to rebuild rhythm with one manageable session — not to catch up.` }
+    ? { ...todayWorkout, label: `Re-entry day: ${todayWorkout?.label || "short version"}`, minDay: true, success: "Re-entry week: complete one essential session and log it. Momentum first.", explanation: `You haven't trained in a while, so today is a re-entry session. The goal is to rebuild rhythm with one manageable session Ã¢â‚¬â€ not to catch up.` }
     : (failureMode.mode === "chaotic" || failureMode.isLowEngagement)
     ? { ...todayWorkout, minDay: true, success: "Complete the short version only.", explanation: `Life has been chaotic recently, so today is the short version. Completing something small protects your momentum better than skipping entirely.` }
     : todayWorkout;
   const todayWorkoutHardened = garminReadiness?.mode === "recovery"
-    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Garmin readiness)", run: null, strSess: null, nutri: "rest", success: "Walk + mobility only today. Resume loading when readiness improves.", explanation: `Your Garmin readiness score is low, indicating your body hasn't recovered from recent load. Recovery today means tomorrow's session will be higher quality.` }
+    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Garmin readiness)", run: null, strSess: null, nutri: "rest", success: "Walk + mobility only today. Resume loading when readiness improves.", explanation: `Garmin readiness is coming in low today, so the app is treating device data as a caution signal rather than a guarantee. Recovery today protects the rest of the week.` }
     : garminReadiness?.mode === "reduced_load"
-    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Reduced-load)`, explanation: `Garmin readiness suggests partial recovery — today's session is reduced to prevent overreaching while still making progress.` }
+    ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Reduced-load)`, explanation: `Garmin readiness is pointing to partial recovery, so today's session is reduced as a caution move rather than a hard stop.` }
     : deviceSyncAudit?.planMode === "recovery"
-    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data suggests recovery focus today.", explanation: `Your connected device data indicates recovery is needed. Resting today protects your training quality for the rest of the week.` }
+    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data points toward a recovery day.", explanation: `Connected device data is leaning recovery today. The app is using that signal cautiously because device context is supportive, not definitive, on its own.` }
     : deviceSyncAudit?.planMode === "reduced_load"
     ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Device-adjusted)`, explanation: `Device signals suggest slightly reducing today's load to stay within productive training ranges.` }
     : todayWorkoutHardenedBase;
@@ -3906,8 +3621,8 @@ export default function TrainerDashboard() {
   const cadenceRuns = (personalization?.connectedDevices?.garmin?.activities || []).filter((a) => /run/i.test(String(a?.type || a?.sport || "")) && Number(a?.cadence || 0) > 0);
   const avgCadence = cadenceRuns.length ? (cadenceRuns.reduce((acc, a) => acc + Number(a?.cadence || 0), 0) / cadenceRuns.length) : null;
   if (todayWorkoutHardened?.run?.t === "Easy" && cadenceRuns.length >= 10) {
-    if (avgCadence < 170) todayWorkoutHardened.environmentNote = `${todayWorkoutHardened.environmentNote ? `${todayWorkoutHardened.environmentNote} ` : ""}Target 170+ spm — shorter, quicker steps.`;
-    else if (avgCadence > 180 && (currentWeek % 2 === 0)) todayWorkoutHardened.environmentNote = `${todayWorkoutHardened.environmentNote ? `${todayWorkoutHardened.environmentNote} ` : ""}Cadence is efficient — keep that quick, relaxed turnover.`;
+    if (avgCadence < 170) todayWorkoutHardened.environmentNote = `${todayWorkoutHardened.environmentNote ? `${todayWorkoutHardened.environmentNote} ` : ""}Target 170+ spm Ã¢â‚¬â€ shorter, quicker steps.`;
+    else if (avgCadence > 180 && (currentWeek % 2 === 0)) todayWorkoutHardened.environmentNote = `${todayWorkoutHardened.environmentNote ? `${todayWorkoutHardened.environmentNote} ` : ""}Cadence is efficient Ã¢â‚¬â€ keep that quick, relaxed turnover.`;
   }
   const todaySummary = personalization?.connectedDevices?.garmin?.dailySummaries?.[todayKey] || {};
   if (todayWorkoutHardened?.type === "rest" && Number(todaySummary?.steps || 0) > 0) {
@@ -3934,41 +3649,46 @@ export default function TrainerDashboard() {
     momentum,
     userProfile: canonicalUserProfile,
   });
-  const planDayBundle = useMemo(() => assembleCanonicalPlanDay({
-    dateKey: todayKey,
-    dayOfWeek,
-    currentWeek,
-    baseWeek,
-    basePlannedDay: goalNativeWorkout,
-    resolvedTrainingCandidate: todayWorkoutHardened,
-    todayPlan,
-    readinessInfluence: sharedReadinessInfluence,
-    goals: goalsModel,
-    momentum,
-    personalization,
-    bodyweights,
-    learningLayer,
-    nutritionActualLogs,
-    coachPlanAdjustments,
-    salvageLayer,
-    failureMode,
-    nutritionFavorites,
-    currentPlanWeek: {
-      ...currentPlanWeek,
-      architecture: planComposer?.architecture || "",
-      blockIntent: planComposer?.blockIntent || null,
-    },
-    dayOverride,
-    nutritionOverride,
-    environmentSelection,
-    injuryRule,
-    garminReadiness,
-    deviceSyncAudit,
-    logs,
-    dailyCheckins,
-    stateInputs: planDayStateInputs,
-    timeOfDay: planDayTimeOfDay,
-  }), [
+  const planDayBundle = useMemo(() => {
+    const bundle = assembleCanonicalPlanDay({
+      dateKey: todayKey,
+      dayOfWeek,
+      currentWeek,
+      baseWeek,
+      basePlannedDay: goalNativeWorkout,
+      resolvedTrainingCandidate: todayWorkoutHardened,
+      todayPlan,
+      readinessInfluence: sharedReadinessInfluence,
+      goals: goalsModel,
+      momentum,
+      personalization,
+      bodyweights,
+      learningLayer,
+      nutritionActualLogs,
+      coachPlanAdjustments,
+      salvageLayer,
+      failureMode,
+      nutritionFavorites,
+      currentPlanWeek: {
+        ...currentPlanWeek,
+        architecture: planComposer?.architecture || "",
+        blockIntent: planComposer?.blockIntent || null,
+      },
+      dayOverride,
+      nutritionOverride,
+      environmentSelection,
+      injuryRule,
+      garminReadiness,
+      deviceSyncAudit,
+      logs,
+      dailyCheckins,
+      stateInputs: planDayStateInputs,
+      timeOfDay: planDayTimeOfDay,
+    });
+    validatePlanDayInvariant(bundle?.planDay || null, "assembleCanonicalPlanDay.planDay");
+    validateActualNutritionLogInvariant(bundle?.planDay?.resolved?.nutrition?.actual || null, todayKey, "assembleCanonicalPlanDay.actualNutrition");
+    return bundle;
+  }, [
     todayKey,
     dayOfWeek,
     currentWeek,
@@ -4366,7 +4086,7 @@ export default function TrainerDashboard() {
     await persistAll(logs, bodyweights, paceOverrides, previousNotes, planAlerts, personalization, coachActions, previousAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   };
 
-  // ── SUPABASE STORAGE ─────────────────────────────────────────────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ SUPABASE STORAGE Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   const authStorage = useMemo(() => createAuthStorageModule({
     safeFetchWithTimeout,
     logDiag,
@@ -4442,6 +4162,7 @@ export default function TrainerDashboard() {
       nutritionFavorites: newNutritionFavorites,
       nutritionActualLogs: newNutritionActualLogs,
     });
+    validateCanonicalRuntimeStateInvariant(runtimeState, "persistAll.buildCanonicalRuntimeState");
     const payload = buildPersistedTrainerPayload({
       runtimeState,
       transformPersonalization: (draftPersonalization) => buildPersistedPersonalization(draftPersonalization, normalizedGoalPayload),
@@ -4507,6 +4228,7 @@ export default function TrainerDashboard() {
         sourceType: "plan_day_engine",
         durability: PRESCRIBED_DAY_DURABILITY.durable,
         reason: "today_plan_capture",
+        validateInvariant: validatePrescribedDayHistoryInvariant,
       });
     }
     const legacySnapshot = buildLegacyPlannedDayRecordFromSnapshot({ dateKey, snapshot: logEntry?.prescribedPlanSnapshot || null });
@@ -4517,6 +4239,7 @@ export default function TrainerDashboard() {
         sourceType: "legacy_log_snapshot",
         durability: PRESCRIBED_DAY_DURABILITY.legacyBackfill,
         reason: "legacy_snapshot_backfill",
+        validateInvariant: validatePrescribedDayHistoryInvariant,
       });
     }
     const hasHistoricalNeed = Boolean(
@@ -4541,6 +4264,7 @@ export default function TrainerDashboard() {
       sourceType: "legacy_schedule_helper",
       durability: PRESCRIBED_DAY_DURABILITY.fallbackDerived,
       reason: "schedule_backfill",
+      validateInvariant: validatePrescribedDayHistoryInvariant,
     });
   };
 
@@ -4550,12 +4274,13 @@ export default function TrainerDashboard() {
 
   const decorateLogEntryWithPlanContext = ({ dateKey, entry = null, dailyCheckin = {} } = {}) => {
     if (!dateKey || !entry) return entry;
+    const exercisePerformance = getExercisePerformanceRecordsForLog(entry || {}, { dateKey });
     const plannedDayHistory = getPlannedDayHistoryForDate(dateKey, entry);
     const plannedDayRecord = getCurrentPrescribedDayRecord(plannedDayHistory);
     const shouldIgnoreDailyOutcome = !entry?.actualSession?.status && !entry?.checkin?.status && (
       Number(entry?.miles || 0) > 0
       || Number(entry?.runTime || 0) > 0
-      || (Array.isArray(entry?.strengthPerformance) && entry.strengthPerformance.length > 0)
+      || exercisePerformance.length > 0
       || Boolean(String(entry?.type || "").trim())
     );
     const comparisonDailyCheckin = shouldIgnoreDailyOutcome
@@ -4577,7 +4302,9 @@ export default function TrainerDashboard() {
     const actualStatus = legacyStatus || comparison.status;
     const sessionType = String(entry?.actualSession?.sessionType || entry?.type || "").trim();
     const sessionLabel = String(entry?.actualSession?.sessionLabel || entry?.type || entry?.label || sessionType || "Session").trim();
-    return {
+    return normalizeLogPerformanceState({
+      dateKey,
+      logEntry: {
       ...entry,
       planDayId: entry?.planDayId || plannedDayRecord?.id || "",
       planReference: buildPlanReference(plannedDayHistory || plannedDayRecord) || entry?.planReference || null,
@@ -4603,7 +4330,8 @@ export default function TrainerDashboard() {
         ts: Date.now(),
       },
       ts: Date.now(),
-    };
+      },
+    });
   };
 
   const buildRealtimeLogEntry = (row = {}, existing = {}) => {
@@ -4615,7 +4343,9 @@ export default function TrainerDashboard() {
       || (Number(row?.distance_mi || 0) > 0 ? "Run" : "")
       || "Logged session";
     const completionStatus = row?.completion_status || existing?.actualSession?.status || existing?.checkin?.status || "";
-    return {
+    return normalizeLogPerformanceState({
+      dateKey,
+      logEntry: {
       ...existing,
       date: dateKey,
       type: inferredType,
@@ -4639,7 +4369,8 @@ export default function TrainerDashboard() {
       },
       ts: Date.now(),
       syncedFromRealtime: true,
-    };
+      },
+    });
   };
 
   useEffect(() => {
@@ -4674,6 +4405,7 @@ export default function TrainerDashboard() {
           reason: currentHistoryEntry
             ? (todayPlannedDayRecord?.decision?.modifiedFromBase ? "same_day_adjustment" : "daily_decision_refresh")
             : "daily_decision_capture",
+          validateInvariant: validatePrescribedDayHistoryInvariant,
         });
         if (nextEntry && JSON.stringify(nextEntry) !== JSON.stringify(nextPlannedDayRecords?.[dateKey] || null)) {
           nextPlannedDayRecords[dateKey] = nextEntry;
@@ -4799,6 +4531,7 @@ export default function TrainerDashboard() {
               normalizeGoals,
               DEFAULT_MULTI_GOALS,
             });
+            validateCanonicalRuntimeStateInvariant(cachedRuntimeState, "buildCanonicalRuntimeStateFromStorage.cache");
             applyCanonicalRuntimeState(cachedRuntimeState);
           } catch (cacheErr) {
             logDiag("local cache import fallback failed", cacheErr?.message || "unknown");
@@ -4996,10 +4729,13 @@ export default function TrainerDashboard() {
     const changedDateKey = String(options?.changedDateKey || "").trim();
     const nextLogs = { ...(newLogs || {}) };
     if (changedDateKey && nextLogs?.[changedDateKey]) {
-      nextLogs[changedDateKey] = decorateLogEntryWithPlanContext({
+      nextLogs[changedDateKey] = normalizeLogPerformanceState({
         dateKey: changedDateKey,
-        entry: nextLogs[changedDateKey],
-        dailyCheckin: dailyCheckins?.[changedDateKey] || {},
+        logEntry: decorateLogEntryWithPlanContext({
+          dateKey: changedDateKey,
+          entry: nextLogs[changedDateKey],
+          dailyCheckin: dailyCheckins?.[changedDateKey] || {},
+        }),
       });
     }
     setLogs(nextLogs);
@@ -5007,8 +4743,9 @@ export default function TrainerDashboard() {
     const m = getMomentumEngineState({ logs: nextLogs, bodyweights, personalization: derivedBase });
     let derived = mergePersonalization(derivedBase, { profile: { ...derivedBase.profile, inconsistencyRisk: m.inconsistencyRisk, currentMomentumState: m.momentumState, likelyAdherencePattern: m.likelyAdherencePattern } });
     const changedLog = changedDateKey ? nextLogs?.[changedDateKey] : null;
-    if (changedDateKey) await syncExercisePerformanceRows(changedDateKey, changedLog?.strengthPerformance || []);
-    if (changedDateKey && (changedLog?.strengthPerformance || []).length > 0) {
+    const changedExerciseRecords = changedDateKey ? getExercisePerformanceRecordsForLog(changedLog || {}, { dateKey: changedDateKey }) : [];
+    if (changedDateKey) await syncExercisePerformanceRows(changedDateKey, changedLog || null);
+    if (changedDateKey && changedExerciseRecords.length > 0) {
       const currentPhase = getPhaseForDateKey(changedDateKey, canonicalGoalState?.planStartDate || "");
       derived = await applyStrengthProgressionForLog({
         dateKey: changedDateKey,
@@ -5044,8 +4781,13 @@ export default function TrainerDashboard() {
     try { await persistAll(logs, bodyweights, newOvr, newNotes, newAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs); } catch(e) {}
   };
 
-  const syncExercisePerformanceRows = async (dateKey, performance = []) => {
-    const rows = buildExercisePerformanceRowsForStorage(dateKey, performance);
+  const syncExercisePerformanceRows = async (dateKey, logEntryOrPerformance = null) => {
+    const exerciseRecords = Array.isArray(logEntryOrPerformance) && logEntryOrPerformance.some((record) => record?.scope === "exercise")
+      ? logEntryOrPerformance.filter((record) => record?.scope === "exercise")
+      : Array.isArray(logEntryOrPerformance)
+      ? getExercisePerformanceRecordsForLog({ strengthPerformance: logEntryOrPerformance || [] }, { dateKey })
+      : getExercisePerformanceRecordsForLog(logEntryOrPerformance || {}, { dateKey });
+    const rows = buildExercisePerformanceRowsForStorage(dateKey, exerciseRecords);
     if (!authSession?.user?.id) return rows;
     try {
       await authStorage.syncExercisePerformanceForDate({ dateKey, rows, authSession, setAuthSession });
@@ -5058,8 +4800,8 @@ export default function TrainerDashboard() {
   const buildStrengthAdjustmentNotification = async (update, tomorrowKey, currentPhase) => {
     const isUp = /increase|add/.test(String(update?.ruleTriggered || ""));
     const isDown = /decrease/.test(String(update?.ruleTriggered || ""));
-    const icon = isUp ? "↑" : isDown ? "↓" : "→";
-    const summary = `${icon} ${update.exercise}: ${update.oldValue} → ${update.newValue} today`;
+    const icon = isUp ? "Ã¢â€ â€˜" : isDown ? "Ã¢â€ â€œ" : "Ã¢â€ â€™";
+    const summary = `${icon} ${update.exercise}: ${update.oldValue} Ã¢â€ â€™ ${update.newValue} today`;
     const coachPrompt = `Exercise: ${update.exercise}
 Change: ${update.oldValue} -> ${update.newValue}
 Reason: ${String(update.ruleTriggered || "progressive_overload").replaceAll("_", " ")}
@@ -5088,7 +4830,7 @@ Keep it plain and specific.`;
       icon,
       summary,
       inlineNote: summary,
-      note: `${update.exercise}: ${update.oldValue} → ${update.newValue} today`,
+      note: `${update.exercise}: ${update.oldValue} Ã¢â€ â€™ ${update.newValue} today`,
       coachLine: (coachLineRaw || "").trim().split("\n")[0] || `${update.exercise} moves ${update.oldValue} to ${update.newValue}.`,
       explanation: (explanationRaw || "").trim() || `${update.exercise} changed from ${update.oldValue} to ${update.newValue} because the last two sessions matched the engine rule ${String(update.ruleTriggered || "progressive_overload").replaceAll("_", " ")}.`,
       reason: update.ruleTriggered,
@@ -5107,13 +4849,13 @@ Keep it plain and specific.`;
   };
 
   const applyStrengthProgressionForLog = async ({ dateKey, nextLogs, linkedLog, basePersonalization, currentPhase, shouldSync = true }) => {
-    const performance = Array.isArray(linkedLog?.strengthPerformance) ? linkedLog.strengthPerformance : [];
-    if (shouldSync) await syncExercisePerformanceRows(dateKey, performance);
-    if (performance.length === 0) return basePersonalization;
+    const performanceRecords = getExercisePerformanceRecordsForLog(linkedLog || {}, { dateKey });
+    if (shouldSync) await syncExercisePerformanceRows(dateKey, linkedLog || null);
+    if (performanceRecords.length === 0) return basePersonalization;
 
     const { updates, nextPrescriptions, nextTracking } = deriveProgressiveOverloadAdjustmentsV2({
       logs: nextLogs,
-      performance,
+      performance: performanceRecords,
       personalization: basePersonalization,
       currentPhase,
       goals,
@@ -5185,39 +4927,43 @@ Keep it plain and specific.`;
     let linkedLog = existingLog;
     let nextLogs = logs;
     if (shouldMaterializeLog) {
-      linkedLog = decorateLogEntryWithPlanContext({
+      linkedLog = normalizeLogPerformanceState({
         dateKey,
-        entry: {
-          ...baseLog,
-          miles: matchedGarminRun?.distanceMiles ? String(Number(matchedGarminRun.distanceMiles).toFixed(2)) : (baseLog?.miles || ""),
-          pace: matchedGarminRun?.pace ? String(matchedGarminRun.pace) : (baseLog?.pace || ""),
-          runTime: matchedGarminRun?.durationMin ? String(Math.round(Number(matchedGarminRun.durationMin))) : (baseLog?.runTime || ""),
-          feel: baseLog.feel || feelMap[merged.sessionFeel] || "3",
-          notes: merged.note ? (baseLog.notes ? `${baseLog.notes} | ${merged.note}` : merged.note) : baseLog.notes,
-          strengthPerformance: hasStrengthPerformance ? merged.strengthPerformance : (baseLog?.strengthPerformance || []),
-          healthMetrics: (() => {
-            const workout = matchedGarminRun
-              ? { avgHr: matchedGarminRun?.avgHr, maxHr: matchedGarminRun?.maxHr, calories: matchedGarminRun?.calories, paceSeconds: matchedGarminRun?.paceSeconds, source: "garmin" }
-              : (personalization?.connectedDevices?.appleHealth?.workouts?.[dateKey] || {});
-            const isRun = /run/.test(String(baseLog?.type || plannedTraining?.type || "").toLowerCase());
-            if (!isRun) return baseLog?.healthMetrics || null;
-            return deriveRunHealthMetrics({ workout, log: baseLog });
-          })(),
-          actualSession: {
-            ...(baseLog?.actualSession || {}),
-            ...(actualOutcomeLogged ? { status: merged.status } : {}),
-            sessionType: baseLog?.actualSession?.sessionType || baseLog?.type || plannedTraining?.label || "Logged session",
-            sessionLabel: baseLog?.actualSession?.sessionLabel || baseLog?.type || plannedTraining?.label || "Logged session",
+        logEntry: decorateLogEntryWithPlanContext({
+          dateKey,
+          entry: {
+            ...baseLog,
+            miles: matchedGarminRun?.distanceMiles ? String(Number(matchedGarminRun.distanceMiles).toFixed(2)) : (baseLog?.miles || ""),
+            pace: matchedGarminRun?.pace ? String(matchedGarminRun.pace) : (baseLog?.pace || ""),
+            runTime: matchedGarminRun?.durationMin ? String(Math.round(Number(matchedGarminRun.durationMin))) : (baseLog?.runTime || ""),
+            feel: baseLog.feel || feelMap[merged.sessionFeel] || "3",
+            notes: merged.note ? (baseLog.notes ? `${baseLog.notes} | ${merged.note}` : merged.note) : baseLog.notes,
+            strengthPerformance: hasStrengthPerformance ? merged.strengthPerformance : (baseLog?.strengthPerformance || []),
+            healthMetrics: (() => {
+              const workout = matchedGarminRun
+                ? { avgHr: matchedGarminRun?.avgHr, maxHr: matchedGarminRun?.maxHr, calories: matchedGarminRun?.calories, paceSeconds: matchedGarminRun?.paceSeconds, source: "garmin" }
+                : (personalization?.connectedDevices?.appleHealth?.workouts?.[dateKey] || {});
+              const isRun = /run/.test(String(baseLog?.type || plannedTraining?.type || "").toLowerCase());
+              if (!isRun) return baseLog?.healthMetrics || null;
+              return deriveRunHealthMetrics({ workout, log: baseLog });
+            })(),
+            actualSession: {
+              ...(baseLog?.actualSession || {}),
+              ...(actualOutcomeLogged ? { status: merged.status } : {}),
+              sessionType: baseLog?.actualSession?.sessionType || baseLog?.type || plannedTraining?.label || "Logged session",
+              sessionLabel: baseLog?.actualSession?.sessionLabel || baseLog?.type || plannedTraining?.label || "Logged session",
+            },
+            ts: Date.now(),
           },
-          ts: Date.now(),
-        },
-        dailyCheckin: nextDailyEntry,
+          dailyCheckin: nextDailyEntry,
+        }),
       });
       nextLogs = { ...logs, [dateKey]: linkedLog };
     }
     let nextPersonalization = personalization;
-    const isStrengthDay = ["run+strength", "strength+prehab"].includes(plannedTraining?.type || "") || (linkedLog?.strengthPerformance || []).length > 0;
-    if (isStrengthDay && (linkedLog?.strengthPerformance || []).length > 0) {
+    const strengthPerformanceRecords = getExercisePerformanceRecordsForLog(linkedLog || {}, { dateKey });
+    const isStrengthDay = ["run+strength", "strength+prehab"].includes(plannedTraining?.type || "") || strengthPerformanceRecords.length > 0;
+    if (isStrengthDay && strengthPerformanceRecords.length > 0) {
       const currentPhase = plannedTraining?.week?.phase || todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
       nextPersonalization = await applyStrengthProgressionForLog({
         dateKey,
@@ -5241,11 +4987,11 @@ Keep it plain and specific.`;
         tomorrow.setDate(tomorrow.getDate() + 1);
         const tomorrowKey = toDateKey(tomorrow);
         const primary = updates[0];
-        let oneLine = `${primary.exercise} adjusts ${primary.oldWeight}→${primary.newWeight} lbs tomorrow due to ${String(primary.ruleTriggered || "rule").replaceAll("_"," ")}.`;
+        let oneLine = `${primary.exercise} adjusts ${primary.oldWeight}Ã¢â€ â€™${primary.newWeight} lbs tomorrow due to ${String(primary.ruleTriggered || "rule").replaceAll("_"," ")}.`;
         const aiPrompt = `The rules engine has determined this adjustment for tomorrow: ${primary.exercise} moves from ${primary.oldWeight} to ${primary.newWeight} because ${primary.ruleTriggered}. Write one sentence a coach would say mid-workout about this change. Under 15 words. Include specific numbers only. No encouragement language. No "great job." No "you've earned." Sound like you're standing next to them.`;
         const aiLine = await callAnthropic({ system: "You are a concise strength coach notification writer.", user: aiPrompt, maxTokens: 60 });
         if (aiLine) oneLine = aiLine.trim().split("\n")[0];
-        let explain = `Rule trigger: ${primary.ruleTriggered.replaceAll("_"," ")}. Weight ${primary.oldWeight}→${primary.newWeight} lbs; sets ${primary.oldSets}→${primary.newSets}.`;
+        let explain = `Rule trigger: ${primary.ruleTriggered.replaceAll("_"," ")}. Weight ${primary.oldWeight}Ã¢â€ â€™${primary.newWeight} lbs; sets ${primary.oldSets}Ã¢â€ â€™${primary.newSets}.`;
         const explainPrompt = `Explain in one short paragraph why ${primary.exercise} changed from ${primary.oldWeight} to ${primary.newWeight} lbs and sets ${primary.oldSets} to ${primary.newSets}. Include reps completion trend, feel trend, injury flag (${personalization?.injuryPainState?.level || "none"}), phase (${currentPhase}), and days to goal (${primary.daysToGoal ?? "unknown"}).`;
         const aiExplain = await callAnthropic({ system: "You explain deterministic training-rule outcomes in plain language.", user: explainPrompt, maxTokens: 150 });
         if (aiExplain) explain = aiExplain.trim();
@@ -5257,7 +5003,7 @@ Keep it plain and specific.`;
             ...(personalization?.strengthProgression?.pendingByDate || {}),
             [tomorrowKey]: {
               exercise: primary.exercise,
-              inlineNote: `${primary.newWeight > primary.oldWeight ? "↑" : primary.newWeight < primary.oldWeight ? "↓" : "→"} ${primary.exercise}: ${primary.oldWeight} → ${primary.newWeight} lbs today`,
+              inlineNote: `${primary.newWeight > primary.oldWeight ? "Ã¢â€ â€˜" : primary.newWeight < primary.oldWeight ? "Ã¢â€ â€œ" : "Ã¢â€ â€™"} ${primary.exercise}: ${primary.oldWeight} Ã¢â€ â€™ ${primary.newWeight} lbs today`,
               reason: primary.ruleTriggered,
               note: oneLine,
               explanation: explain,
@@ -5292,7 +5038,7 @@ Keep it plain and specific.`;
         return `${mm}:${String(ss).padStart(2, "0")}`;
       };
       const baseEasy = getZones(phaseNow)?.easy || "";
-      const easyStart = baseEasy.split("–")[0] || baseEasy;
+      const easyStart = baseEasy.split("Ã¢â‚¬â€œ")[0] || baseEasy;
       const easySec = parsePaceToSec(easyStart);
       if (easySec) {
         const shifted = secToPace(clamp(easySec + Number(nextFitnessSignals.paceOffsetSec || 0), 360, 900));
@@ -5312,7 +5058,7 @@ Keep it plain and specific.`;
 
   const saveWeeklyCheckin = async (weekNum, checkin) => {
     const nextWeekly = { ...weeklyCheckins, [String(weekNum)]: { ...(checkin || {}), ts: Date.now() } };
-    const nextAlerts = [{ id:`weekly_${Date.now()}`, type:"info", msg:"Weekly reflection saved — nice follow-through." }, ...planAlerts].slice(0, 12);
+    const nextAlerts = [{ id:`weekly_${Date.now()}`, type:"info", msg:"Weekly reflection saved Ã¢â‚¬â€ nice follow-through." }, ...planAlerts].slice(0, 12);
     setWeeklyCheckins(nextWeekly);
     setPlanAlerts(nextAlerts);
     await persistAll(logs, bodyweights, paceOverrides, weekNotes, nextAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, nextWeekly, nutritionFavorites, nutritionActualLogs);
@@ -5333,6 +5079,7 @@ Keep it plain and specific.`;
       feedback,
       planReference,
     });
+    validateActualNutritionLogInvariant(actualNutrition, dateKey, "saveNutritionActualLog.mergeActualNutritionLogUpdate");
     const nextActualLogs = {
       ...nutritionActualLogs,
       [dateKey]: actualNutrition,
@@ -5576,7 +5323,7 @@ Keep it plain and specific.`;
   const startFreshPlan = async () => {
     const todayIso = new Date().toISOString().split("T")[0];
     const undoExpiresAt = Date.now() + (7 * 24 * 60 * 60 * 1000);
-    const planArcLabel = `${canonicalGoalState?.planStartDate || "Unknown start"} → ${todayIso}`;
+    const planArcLabel = `${canonicalGoalState?.planStartDate || "Unknown start"} Ã¢â€ â€™ ${todayIso}`;
     const archiveEntry = {
       id: `archive_${Date.now()}`,
       archivedAt: new Date().toISOString(),
@@ -5668,7 +5415,7 @@ Keep it plain and specific.`;
     return { ...defaults, ...overrides };
   };
 
-  // ── AI PLAN ANALYSIS ──────────────────────────────────────────────────────
+  // Ã¢â€â‚¬Ã¢â€â‚¬ AI PLAN ANALYSIS Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
   // Fires after every log save. Compares actual vs prescribed, detects patterns,
   // returns JSON modifications to apply to the plan.
   // TODO(ai-runtime): Remaining ad hoc AI payload paths are tracked in
@@ -5705,10 +5452,7 @@ Keep it plain and specific.`;
   const analyzePlan = async (newLogs) => {
     setAnalyzing(true);
     try {
-      const analysisResult = await runPlanAnalysisRuntime({
-        apiKey: getAnthropicKey(),
-        safeFetchWithTimeout,
-        packetArgs: {
+      const analysisPacketArgs = {
         dateKey: todayKey,
         currentWeek,
         canonicalGoalState,
@@ -5732,7 +5476,12 @@ Keep it plain and specific.`;
         weekNotes,
         paceOverrides,
         planAlerts,
-        },
+      };
+      validateAiPacketInvariant(analysisPacketArgs, "runPlanAnalysisRuntime");
+      const analysisResult = await runPlanAnalysisRuntime({
+        apiKey: getAnthropicKey(),
+        safeFetchWithTimeout,
+        packetArgs: analysisPacketArgs,
       });
       if (!analysisResult.ok && analysisResult.status === "invalid_json") {
         logDiag("Plan analysis degraded: invalid JSON proposal");
@@ -5786,7 +5535,7 @@ Keep it plain and specific.`;
         savePlanState(newOverrides, newWeekNotes, newAlerts);
       }
     } catch(e) {
-      // Silent fail — analysis is best-effort, never blocks logging
+      // Silent fail Ã¢â‚¬â€ analysis is best-effort, never blocks logging
       logDiag("Plan analysis degraded:", e.message);
     }
     setAnalyzing(false);
@@ -5795,16 +5544,16 @@ Keep it plain and specific.`;
   const TABS = ["Today", "Program", "Log", "Nutrition", "Coach"];
 
   if (authInitializing || loading) return (
-    <div style={{ background:"radial-gradient(110% 110% at 85% -5%, rgba(124,92,255,0.32), transparent 48%), radial-gradient(120% 120% at -10% 0%, rgba(0,194,255,0.2), transparent 42%), linear-gradient(175deg,#06080f 0%, #0b1220 45%, #10192d 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#6b7c99", fontSize:"0.7rem", letterSpacing:"0.2em" }}>
+    <div style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#7f90a8", fontSize:"0.7rem", letterSpacing:"0.14em" }}>
       LOADING...
     </div>
   );
 
   if (!authSession?.user?.id) return (
-    <div style={{ background:"radial-gradient(110% 110% at 85% -5%, rgba(124,92,255,0.32), transparent 48%), radial-gradient(120% 120% at -10% 0%, rgba(0,194,255,0.2), transparent 42%), linear-gradient(175deg,#06080f 0%, #0b1220 45%, #10192d 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#e2e8f0", padding:"1rem" }}>
-      <div style={{ width:"100%", maxWidth:380, border:"1px solid rgba(0,194,255,0.26)", borderRadius:14, padding:"1rem", background:"rgba(14,23,41,0.88)", boxShadow:"0 14px 38px rgba(0,0,0,0.45)" }}>
-        <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1.2rem", fontWeight:700, letterSpacing:"0.08em", color:"#ff3d81", marginBottom:"0.5rem" }}>ACCOUNT ACCESS</div>
-        <div style={{ fontSize:"0.58rem", color:"#8fa2bf", marginBottom:"0.5rem" }}>Sign in to load your private training state.</div>
+    <div style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#e7edf7", padding:"1rem" }}>
+      <div style={{ width:"100%", maxWidth:380, border:"1px solid rgba(114,138,173,0.24)", borderRadius:16, padding:"1rem", background:"#162131", boxShadow:"0 14px 28px rgba(5,10,18,0.28)" }}>
+        <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1.08rem", fontWeight:700, letterSpacing:"0.05em", color:"#f6f8fc", marginBottom:"0.5rem" }}>ACCOUNT ACCESS</div>
+        <div style={{ fontSize:"0.58rem", color:"#8da0bb", marginBottom:"0.5rem" }}>Sign in to load your private training state.</div>
         <input value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="email" style={{ marginBottom:"0.4rem" }} />
         <input type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="password" style={{ marginBottom:"0.5rem" }} />
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
@@ -5820,7 +5569,7 @@ Keep it plain and specific.`;
   const activeTargetDate = activeTimeBoundGoal?.targetDate || canonicalGoalState?.deadline || null;
   const daysToRace = activeTargetDate ? Math.max(0, Math.ceil((new Date(activeTargetDate) - today) / (1000*60*60*24))) : null;
   const activePhase = (rollingHorizon || []).find(h => h.absoluteWeek === currentWeek)?.template?.phase || todayWorkoutHardened?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
-  const currentPhaseWeekLabel = (rollingHorizon || []).find(h => h.absoluteWeek === currentWeek)?.weekLabel || `${activePhase} · Week ${currentWeek}`;
+  const currentPhaseWeekLabel = (rollingHorizon || []).find(h => h.absoluteWeek === currentWeek)?.weekLabel || `${activePhase} Ã‚Â· Week ${currentWeek}`;
   const PHASE_THEME = {
     BASE: { accent: "#27f59a", accentSoft: "rgba(39,245,154,0.2)", accentGlow: "rgba(39,245,154,0.34)" },
     BUILDING: { accent: "#00c2ff", accentSoft: "rgba(0,194,255,0.22)", accentGlow: "rgba(0,194,255,0.34)" },
@@ -5843,47 +5592,63 @@ Keep it plain and specific.`;
   const themeTokens = selectedThemeMode === "Light"
     ? {
         "--bg": "#edf3fb",
-        "--panel": "rgba(255,255,255,0.88)",
-        "--panel-2": "rgba(248,251,255,0.94)",
-        "--panel-3": "rgba(237,243,251,0.98)",
-        "--border": "rgba(115,138,176,0.34)",
-        "--muted": "#5b6f91",
-        "--text": "#10203a",
-        "--card-border": "rgba(115,138,176,0.28)",
-        "--card-shadow": "0 10px 24px rgba(102,123,155,0.16), inset 0 1px 0 rgba(255,255,255,0.72), inset 0 -10px 18px rgba(219,228,242,0.22)",
-        "--card-shadow-hover": "0 16px 32px rgba(84,104,138,0.2)",
-        "--card-strong-shadow": "0 14px 30px rgba(84,104,138,0.18), 0 0 0 1px var(--phase-accent-soft)",
-        "--card-soft-border": "rgba(255,61,129,0.2)",
-        "--card-soft-shadow": "0 8px 18px rgba(102,123,155,0.14)",
-        "--shell-overlay": "radial-gradient(140% 100% at 50% -5%, var(--phase-accent-soft), transparent 58%)",
-        "--tab-strip-bg": "rgba(255,255,255,0.7)",
-        "--tab-strip-border": "rgba(115,138,176,0.28)",
-        "--tab-text": "#4e6486",
-        "--heading-start": "#10203a",
+        "--panel": "rgba(255,255,255,0.92)",
+        "--panel-2": "rgba(247,250,254,0.98)",
+        "--panel-3": "rgba(239,244,251,0.98)",
+        "--border": "rgba(111,129,160,0.26)",
+        "--muted": "#5d6d86",
+        "--text": "#142033",
+        "--text-strong": "#0d1728",
+        "--text-soft": "#6b7d97",
+        "--card-border": "rgba(111,129,160,0.22)",
+        "--card-shadow": "0 8px 18px rgba(81,99,126,0.08)",
+        "--card-shadow-hover": "0 12px 24px rgba(81,99,126,0.12)",
+        "--card-strong-shadow": "0 10px 22px rgba(81,99,126,0.1)",
+        "--card-soft-border": "rgba(111,129,160,0.24)",
+        "--card-soft-shadow": "0 8px 18px rgba(81,99,126,0.07)",
+        "--shell-overlay": "radial-gradient(120% 90% at 50% -10%, rgba(61,114,181,0.08), transparent 60%)",
+        "--tab-strip-bg": "rgba(255,255,255,0.76)",
+        "--tab-strip-border": "rgba(111,129,160,0.22)",
+        "--tab-text": "#53657f",
+        "--heading-start": "#142033",
+        "--surface-1": "#ffffff",
+        "--surface-2": "#f7fafe",
+        "--surface-3": "#eef3f9",
+        "--shadow-1": "0 6px 14px rgba(81,99,126,0.08)",
+        "--shadow-2": "0 10px 24px rgba(81,99,126,0.12)",
+        "--shadow-3": "0 16px 34px rgba(81,99,126,0.14)",
       }
     : {
-        "--bg": "#0b1220",
-        "--panel": "#121d33",
-        "--panel-2": "#172742",
-        "--panel-3": "#203253",
-        "--border": "#324767",
-        "--muted": "#8ea2c4",
-        "--text": "#e8eefc",
-        "--card-border": "rgba(111,148,198,0.22)",
-        "--card-shadow": "0 8px 20px rgba(4,8,14,0.34), inset 0 1px 0 rgba(255,255,255,0.03), inset 0 -14px 24px rgba(0,0,0,0.2)",
-        "--card-shadow-hover": "0 16px 34px rgba(4,8,14,0.52)",
-        "--card-strong-shadow": "0 14px 32px rgba(6,12,22,0.52), 0 0 0 1px var(--phase-accent-soft)",
-        "--card-soft-border": "rgba(255,61,129,0.22)",
-        "--card-soft-shadow": "0 6px 14px rgba(4,8,14,0.3)",
-        "--shell-overlay": "radial-gradient(140% 100% at 50% -5%, var(--phase-accent-soft), transparent 58%)",
-        "--tab-strip-bg": "rgba(17,29,50,0.9)",
-        "--tab-strip-border": "rgba(90,126,179,0.4)",
-        "--tab-text": "#95abd0",
-        "--heading-start": "#dff6ff",
+        "--bg": "#0f1724",
+        "--panel": "#162131",
+        "--panel-2": "#1a2738",
+        "--panel-3": "#213247",
+        "--border": "rgba(114,138,173,0.26)",
+        "--muted": "#8da0bb",
+        "--text": "#e7edf7",
+        "--text-strong": "#f6f8fc",
+        "--text-soft": "#9aacc4",
+        "--card-border": "rgba(114,138,173,0.22)",
+        "--card-shadow": "0 10px 22px rgba(5,10,18,0.24)",
+        "--card-shadow-hover": "0 14px 28px rgba(5,10,18,0.3)",
+        "--card-strong-shadow": "0 12px 26px rgba(5,10,18,0.28)",
+        "--card-soft-border": "rgba(114,138,173,0.22)",
+        "--card-soft-shadow": "0 10px 20px rgba(5,10,18,0.22)",
+        "--shell-overlay": "radial-gradient(120% 90% at 50% -10%, rgba(61,114,181,0.12), transparent 58%)",
+        "--tab-strip-bg": "rgba(18,29,44,0.92)",
+        "--tab-strip-border": "rgba(114,138,173,0.24)",
+        "--tab-text": "#95a8c2",
+        "--heading-start": "#f2f6fb",
+        "--surface-1": "#162131",
+        "--surface-2": "#1a2738",
+        "--surface-3": "#213247",
+        "--shadow-1": "0 8px 18px rgba(5,10,18,0.22)",
+        "--shadow-2": "0 12px 26px rgba(5,10,18,0.28)",
+        "--shadow-3": "0 18px 36px rgba(5,10,18,0.34)",
       };
   const appBackground = selectedThemeMode === "Light"
-    ? "linear-gradient(175deg,#f4f8ff 0%, #e8effb 100%)"
-    : "radial-gradient(110% 110% at 85% -5%, var(--phase-accent-glow), transparent 48%), radial-gradient(120% 120% at -10% 0%, rgba(0,194,255,0.2), transparent 42%), linear-gradient(175deg,#06080f 0%, #0b1220 45%, #10192d 100%)";
+    ? "linear-gradient(180deg,#f5f8fc 0%, #ecf2f8 100%)"
+    : "linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)";
   const onboardingComplete = personalization?.profile?.onboardingComplete;
   const finishOnboarding = async (answers) => {
     const todayKey = new Date().toISOString().split("T")[0];
@@ -6066,36 +5831,53 @@ Keep it plain and specific.`;
           --accent-2:#7c5cff;
           --hot:#ff3d81;
           --signal:#27f59a;
+          --space-1:0.25rem;
+          --space-2:0.5rem;
+          --space-3:0.75rem;
+          --space-4:1rem;
+          --space-5:1.5rem;
+          --radius-sm:10px;
+          --radius-md:14px;
+          --radius-lg:18px;
+          --type-label:0.48rem;
+          --type-meta:0.54rem;
+          --type-body:0.6rem;
+          --type-title:0.95rem;
+          --state-success:${C.green};
+          --state-info:${C.blue};
+          --state-warning:${C.amber};
+          --state-danger:${C.red};
         }
         * { box-sizing:border-box; margin:0; padding:0; }
-        ::-webkit-scrollbar{width:6px} ::-webkit-scrollbar-track{background:#0c1424} ::-webkit-scrollbar-thumb{background:#2f4365;border-radius:999px}
+        ::-webkit-scrollbar{width:8px} ::-webkit-scrollbar-track{background:transparent} ::-webkit-scrollbar-thumb{background:rgba(111,129,160,0.38);border-radius:999px}
         .fi{animation:fi 0.22s ease forwards}
-        .hov{transition:all 0.2s ease;cursor:pointer} .hov:hover{background:rgba(0,194,255,0.08)!important}
+        .hov{transition:background 0.18s ease,border-color 0.18s ease;cursor:pointer} .hov:hover{background:rgba(60,145,230,0.06)!important}
         .btn{
-          background:linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0)), var(--panel-2);
+          background:var(--surface-2);
           border:1px solid var(--border);
-          border-radius:10px;
+          border-radius:var(--radius-sm);
           font-family:'Inter',sans-serif;
-          font-size:0.62rem;
+          font-size:var(--type-meta);
           font-weight:600;
-          letter-spacing:0.07em;
+          letter-spacing:0.04em;
           cursor:pointer;
-          padding:7px 11px;
-          transition:all 0.2s ease;
+          padding:8px 12px;
+          transition:background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
           color:var(--text);
+          box-shadow:none;
         }
-        .btn:hover{border-color:var(--phase-accent);color:#ffffff;transform:translateY(-1px);box-shadow:0 0 0 1px var(--phase-accent-soft), 0 8px 16px var(--phase-accent-soft)}
+        .btn:hover{border-color:rgba(60,145,230,0.34);color:var(--text-strong);background:var(--surface-1);transform:translateY(-1px);box-shadow:var(--shadow-1)}
         .btn:active{transform:translateY(0) scale(0.985)}
         .btn-primary{
-          background:linear-gradient(130deg, var(--phase-accent), #27f59a)!important;
-          border-color:transparent!important;
-          color:#081321!important;
+          background:var(--phase-accent)!important;
+          border-color:rgba(0,0,0,0)!important;
+          color:#f8fbff!important;
           font-weight:700;
-          box-shadow:0 7px 24px var(--phase-accent-soft);
+          box-shadow:var(--shadow-2);
         }
-        .btn-primary:hover{filter:brightness(1.05);box-shadow:0 10px 26px var(--phase-accent-glow)}
-        input,textarea,select{background:var(--panel-2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:'Inter',sans-serif;font-size:0.7rem;padding:8px 10px;outline:none;width:100%;transition:border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease}
-        input:focus,textarea:focus,select:focus{border-color:#00c2ff;box-shadow:0 0 0 3px rgba(0,194,255,0.16);transform:translateY(-1px)}
+        .btn-primary:hover{filter:none;box-shadow:var(--shadow-3)}
+        input,textarea,select{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'Inter',sans-serif;font-size:0.7rem;padding:9px 11px;outline:none;width:100%;transition:border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease}
+        input:focus,textarea:focus,select:focus{border-color:rgba(60,145,230,0.5);box-shadow:0 0 0 3px rgba(60,145,230,0.14);background:var(--surface-1)}
         @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
         @keyframes pulseGlow{0%,100%{box-shadow:0 0 0 0 rgba(124,92,255,0)}50%{box-shadow:0 0 0 10px rgba(124,92,255,0.14)}}
         @keyframes heroShift{
@@ -6116,69 +5898,60 @@ Keep it plain and specific.`;
           from{opacity:0; transform:translateY(6px)}
           to{opacity:1; transform:translateY(0)}
         }
-        .tag{font-size:0.56rem;padding:3px 7px;border-radius:999px;letter-spacing:0.03em;white-space:nowrap;background:var(--panel-2);color:var(--text)}
+        .tag{font-size:var(--type-meta);padding:4px 8px;border-radius:999px;letter-spacing:0.02em;white-space:nowrap;background:var(--surface-2);color:var(--text-soft);border:1px solid var(--border)}
         .card{
           position:relative;
           overflow:hidden;
-          background:linear-gradient(180deg, var(--phase-accent-soft), rgba(255,255,255,0)) , var(--panel);
+          background:var(--panel);
           border:1px solid var(--card-border);
-          border-radius:14px;
-          padding:1.05rem;
+          border-radius:var(--radius-md);
+          padding:var(--space-4);
           box-shadow:var(--card-shadow);
-          transition:transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, filter 0.2s ease
+          transition:transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease
         }
         .card::before{
           content:"";
           position:absolute;
           inset:-1px -1px auto -1px;
-          height:42%;
+          height:22%;
           pointer-events:none;
-          background:linear-gradient(180deg, rgba(255,255,255,0.13), rgba(255,255,255,0));
-          opacity:0.45;
+          background:linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0));
+          opacity:0.3;
         }
         .card::after{
-          content:"";
-          position:absolute;
-          width:180px;
-          height:180px;
-          right:-80px;
-          top:-80px;
-          border-radius:999px;
-          background:radial-gradient(circle, rgba(124,92,255,0.2), transparent 70%);
-          pointer-events:none;
-          opacity:0.75;
+          content:none;
         }
-        .card:hover{transform:translateY(-1px); box-shadow:var(--card-shadow-hover); border-color:var(--phase-accent); filter:saturate(1.08)}
+        .card:hover{transform:translateY(-1px); box-shadow:var(--card-shadow-hover); border-color:rgba(60,145,230,0.24)}
         .card-strong{
-          background:linear-gradient(180deg, var(--phase-accent-soft), rgba(0,194,255,0.03)), var(--panel-2);
-          border-color:var(--phase-accent-soft);
+          background:var(--panel-2);
+          border-color:rgba(60,145,230,0.26);
           box-shadow:var(--card-strong-shadow);
         }
         .card-soft{
-          background:linear-gradient(180deg, rgba(255,61,129,0.07), rgba(255,255,255,0)), var(--panel);
+          background:var(--panel);
           border-color:var(--card-soft-border);
           box-shadow:var(--card-soft-shadow);
         }
-        .sect-title{font-family:'Space Grotesk',sans-serif;font-size:1.02rem;font-weight:700;letter-spacing:0.03em;text-transform:none;color:var(--text)}
+        .sect-title{font-family:'Space Grotesk',sans-serif;font-size:var(--type-title);font-weight:700;letter-spacing:0.015em;text-transform:none;color:var(--text-strong)}
         .mono{font-family:'JetBrains Mono',monospace; letter-spacing:0.01em}
-        .coach-copy{font-family:'Inter',sans-serif; color:var(--text); line-height:1.7}
+        .coach-copy{font-family:'Inter',sans-serif; color:var(--text); line-height:1.65}
         .completion-pop{animation:completePop 0.35s ease-out}
         .pulse-ring{animation:ringPulse 1.35s ease-in-out infinite; border-radius:999px}
         .coach-fade{animation:coachFadeIn 0.28s ease-out both}
         .card-hero{
-          border-color:var(--phase-accent)!important;
-          box-shadow:0 20px 44px rgba(6,12,22,0.58), 0 0 0 1px var(--phase-accent-soft), 0 0 34px var(--phase-accent-soft);
+          border-color:rgba(60,145,230,0.34)!important;
+          box-shadow:var(--shadow-2);
         }
         .card-hero::after{
-          background:radial-gradient(circle, var(--phase-accent-glow), transparent 70%);
+          content:none;
         }
         .card-action{
-          border-color:rgba(0,194,255,0.48)!important;
-          box-shadow:0 16px 36px rgba(6,12,22,0.5), 0 0 0 1px rgba(0,194,255,0.15), 0 0 26px rgba(0,194,255,0.17);
+          border-color:rgba(60,145,230,0.24)!important;
+          box-shadow:var(--shadow-2);
         }
         .card-subtle{
-          opacity:0.95;
-          box-shadow:0 8px 18px rgba(6,12,22,0.38);
+          opacity:1;
+          box-shadow:var(--shadow-1);
         }
         details > summary{list-style:none}
         details > summary::-webkit-details-marker{display:none}
@@ -6188,16 +5961,16 @@ Keep it plain and specific.`;
       {!onboardingComplete ? (
         <OnboardingCoach onComplete={finishOnboarding} startingFresh={Boolean(personalization?.planResetUndo?.startedAt)} existingMemory={personalization?.coachMemory?.longTermMemory || []} />
       ) : (
-      <div style={{ maxWidth:860, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
+      <div style={{ maxWidth:900, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
 
-        {/* ── HEADER BAR ── */}
+        {/* Ã¢â€â‚¬Ã¢â€â‚¬ HEADER BAR Ã¢â€â‚¬Ã¢â€â‚¬ */}
         <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:"1.25rem", gap:"0.75rem" }}>
           <div>
-            <h1 style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:"1.95rem", letterSpacing:"0.04em", background:"linear-gradient(120deg,var(--heading-start) 15%,var(--phase-accent) 58%,#ff3d81 95%)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", lineHeight:1 }}>
+            <h1 style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:"1.84rem", letterSpacing:"0.025em", color:"var(--heading-start)", lineHeight:1.02 }}>
               PERSONAL TRAINER
             </h1>
-            <div style={{ fontFamily:"'Inter',sans-serif", fontSize:"0.58rem", color:"var(--muted)", letterSpacing:"0.12em", marginTop:2 }}>
-              {fmtDate(today).toUpperCase()} · WEEK {currentWeek}
+            <div style={{ fontFamily:"'Inter',sans-serif", fontSize:"0.56rem", color:"var(--muted)", letterSpacing:"0.08em", marginTop:4 }}>
+              {fmtDate(today).toUpperCase()} Ã‚Â· WEEK {currentWeek}
             </div>
           </div>
           <button className="btn" onClick={()=>setTab(5)} aria-label="Open settings" title="Settings" style={{ width:40, height:40, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
@@ -6209,43 +5982,43 @@ Keep it plain and specific.`;
             <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>New plan started {undoBanner.startedDate}. <button className="btn" onClick={undoStartFresh} style={{ marginLeft:"0.2rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"45" }}>Undo</button></div>
           </div>
         )}
-        {/* ── TABS ── */}
-        <div style={{ display:"flex", gap:"0.3rem", marginBottom:"1.25rem", background:"var(--tab-strip-bg)", padding:"0.35rem", borderRadius:12, border:"1px solid var(--tab-strip-border)", overflowX:"auto", boxShadow:"inset 0 1px 0 rgba(255,255,255,0.05)" }}>
+        {/* Ã¢â€â‚¬Ã¢â€â‚¬ TABS Ã¢â€â‚¬Ã¢â€â‚¬ */}
+        <div style={{ display:"flex", gap:"0.3rem", marginBottom:"1.25rem", background:"var(--tab-strip-bg)", padding:"0.32rem", borderRadius:14, border:"1px solid var(--tab-strip-border)", overflowX:"auto", boxShadow:"var(--shadow-1)" }}>
           {TABS.map((t,i) => (
             <button key={t} className="btn" onClick={()=>setTab(i)}
-              style={{ color:tab===i?"#041220":"var(--tab-text)", background:tab===i?"linear-gradient(130deg,var(--phase-accent),#27f59a)":"transparent", borderColor:tab===i?"transparent":"var(--border)", fontWeight:tab===i?700:500, flexShrink:0 }}>
+              style={{ color:tab===i?"#f8fbff":"var(--tab-text)", background:tab===i?"var(--phase-accent)":"transparent", borderColor:tab===i?"transparent":"var(--border)", fontWeight:tab===i?700:500, flexShrink:0 }}>
               {t}
             </button>
           ))}
         </div>
 
-        {/* ══════════════════════════════════════════════════════════
+        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
             TODAY
-        ══════════════════════════════════════════════════════════ */}
+        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
         {tab === 0 && <TodayTab planDay={planDay} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} loading={loading} storageStatus={storageStatus} authError={authError} />}
 
-        {/* ══════════════════════════════════════════════════════════
+        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
             PROGRAM
-        ══════════════════════════════════════════════════════════ */}
+        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
             <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} todayWorkout={planDay?.resolved?.training} />
           </ProgramTabErrorBoundary>
         )}
 
-        {/* ══════════════════════════════════════════════════════════
+        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
             LOG
-        ══════════════════════════════════════════════════════════ */}
+        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
         {tab === 2 && <LogTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} />}
 
-        {/* ══════════════════════════════════════════════════════════
+        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
             NUTRITION
-        ══════════════════════════════════════════════════════════ */}
+        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
         {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} />}
 
-        {/* ══════════════════════════════════════════════════════════
+        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
             COACH
-        ══════════════════════════════════════════════════════════ */}
+        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
         {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
@@ -6296,7 +6069,7 @@ Keep it plain and specific.`;
           <div style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:50, padding:"1rem" }}>
             <div className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"var(--border)", background:"var(--panel)", padding:"0.9rem" }}>
               <div style={{ fontSize:"0.62rem", color:"var(--text)", lineHeight:1.7, marginBottom:"0.6rem" }}>
-                This will archive your current plan and start a new intake from today. Your history stays saved, your coach memory carries forward, and you can rebuild around new priorities. This cannot be reversed automatically — but you have 7 days to undo it.
+                This will archive your current plan and start a new intake from today. Your history stays saved, your coach memory carries forward, and you can rebuild around new priorities. This cannot be reversed automatically Ã¢â‚¬â€ but you have 7 days to undo it.
               </div>
               <div style={{ display:"flex", justifyContent:"flex-end", gap:"0.45rem" }}>
                 <button className="btn btn-primary" onClick={()=>setStartFreshConfirmOpen(false)} style={{ fontSize:"0.56rem" }}>Cancel</button>
@@ -6325,7 +6098,7 @@ function RuntimeInspector({ snapshot }) {
       <span style={{ color:"var(--text)" }}>{label}:</span> {value || "none"}
     </div>
   );
-  const compactList = (items) => (Array.isArray(items) && items.length ? items.join(" • ") : "none");
+  const compactList = (items) => (Array.isArray(items) && items.length ? items.join(" Ã¢â‚¬Â¢ ") : "none");
   return (
     <details style={{ position:"fixed", right:14, bottom:14, width:"min(420px, calc(100vw - 28px))", zIndex:70 }}>
       <summary className="btn" style={{ width:"100%", justifyContent:"space-between", background:"rgba(5,10,18,0.92)", borderColor:"rgba(0,194,255,0.35)", color:"var(--text)", fontSize:"0.56rem" }}>
@@ -6349,17 +6122,17 @@ function RuntimeInspector({ snapshot }) {
           </div>
           <div>
             <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>PlanWeek</div>
-            {line("Week", `${snapshot?.planWeek?.weekNumber || "?"} • ${snapshot?.planWeek?.label || snapshot?.planWeek?.phase || "unlabeled"}`)}
+            {line("Week", `${snapshot?.planWeek?.weekNumber || "?"} Ã¢â‚¬Â¢ ${snapshot?.planWeek?.label || snapshot?.planWeek?.phase || "unlabeled"}`)}
             {line("Focus", snapshot?.planWeek?.focus)}
-            {line("Biases", [snapshot?.planWeek?.aggressionLevel, snapshot?.planWeek?.recoveryBias, snapshot?.planWeek?.volumeBias, snapshot?.planWeek?.performanceBias].filter(Boolean).join(" • "))}
+            {line("Biases", [snapshot?.planWeek?.aggressionLevel, snapshot?.planWeek?.recoveryBias, snapshot?.planWeek?.volumeBias, snapshot?.planWeek?.performanceBias].filter(Boolean).join(" Ã¢â‚¬Â¢ "))}
             {line("Nutrition", snapshot?.planWeek?.nutritionEmphasis)}
             {line("Constraints", compactList(snapshot?.planWeek?.constraints))}
-            {line("Status", `${snapshot?.planWeek?.status || "planned"}${snapshot?.planWeek?.adjusted ? " • adjusted" : ""}`)}
+            {line("Status", `${snapshot?.planWeek?.status || "planned"}${snapshot?.planWeek?.adjusted ? " Ã¢â‚¬Â¢ adjusted" : ""}`)}
           </div>
           <div>
             <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>Readiness</div>
             {line("State", snapshot?.readiness?.stateLabel || snapshot?.readiness?.state)}
-            {line("Source", `${snapshot?.readiness?.source || "unknown"}${snapshot?.readiness?.inputDriven ? " • input-driven" : ""}`)}
+            {line("Source", `${snapshot?.readiness?.source || "unknown"}${snapshot?.readiness?.inputDriven ? " Ã¢â‚¬Â¢ input-driven" : ""}`)}
             {line("Summary", snapshot?.readiness?.userVisibleLine)}
             {line("Factors", compactList(snapshot?.readiness?.factors))}
           </div>
@@ -6369,24 +6142,24 @@ function RuntimeInspector({ snapshot }) {
             {line("Actual logged", snapshot?.nutrition?.actualLogged ? "yes" : "no", snapshot?.nutrition?.actualLogged ? C.green : "var(--muted)")}
             {line("Compliance", snapshot?.nutrition?.compliance)}
             {line("Deviation", snapshot?.nutrition?.deviationKind)}
-            {line("Comparison", `${snapshot?.nutrition?.comparisonStatus || "unknown"}${snapshot?.nutrition?.comparisonImpact ? ` • ${snapshot.nutrition.comparisonImpact}` : ""}`)}
+            {line("Comparison", `${snapshot?.nutrition?.comparisonStatus || "unknown"}${snapshot?.nutrition?.comparisonImpact ? ` Ã¢â‚¬Â¢ ${snapshot.nutrition.comparisonImpact}` : ""}`)}
             {line("Summary", snapshot?.nutrition?.comparisonSummary)}
           </div>
           <div>
             <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>Logging And History</div>
             {line("Session status", snapshot?.logging?.sessionStatus)}
-            {line("Check-in", `${snapshot?.logging?.checkinStatus || "none"}${snapshot?.logging?.hasCheckin ? " • saved" : ""}`)}
+            {line("Check-in", `${snapshot?.logging?.checkinStatus || "none"}${snapshot?.logging?.hasCheckin ? " Ã¢â‚¬Â¢ saved" : ""}`)}
             {line("Nutrition log", snapshot?.logging?.hasNutritionLog ? "saved" : "missing")}
             {line("Plan history", `rev ${snapshot?.prescribedHistory?.revisionNumber || 0} of ${snapshot?.prescribedHistory?.revisionCount || 0}`)}
-            {line("Snapshot source", `${snapshot?.prescribedHistory?.sourceType || "none"}${snapshot?.prescribedHistory?.durability ? ` • ${snapshot.prescribedHistory.durability}` : ""}`)}
+            {line("Snapshot source", `${snapshot?.prescribedHistory?.sourceType || "none"}${snapshot?.prescribedHistory?.durability ? ` Ã¢â‚¬Â¢ ${snapshot.prescribedHistory.durability}` : ""}`)}
           </div>
           <div>
             <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>AI Boundary</div>
             {line("Analyzing", snapshot?.ai?.analyzing ? "yes" : "no", snapshot?.ai?.analyzing ? C.amber : "var(--muted)")}
-            {line("Plan proposal", snapshot?.ai?.latestAcceptedPlanProposal ? `${snapshot.ai.latestAcceptedPlanProposal.type || "accepted"} • ${snapshot.ai.latestAcceptedPlanProposal.acceptedBy || "gate"}` : "none accepted")}
-            {line("Plan packet", snapshot?.ai?.latestAcceptedPlanProposal ? `${snapshot.ai.latestAcceptedPlanProposal.packetIntent || "unknown"} • ${snapshot.ai.latestAcceptedPlanProposal.packetVersion || ""}` : "none")}
-            {line("Coach action", snapshot?.ai?.latestAcceptedCoachAction ? `${snapshot.ai.latestAcceptedCoachAction.type || "accepted"} • ${snapshot.ai.latestAcceptedCoachAction.acceptedBy || "gate"}` : "none accepted")}
-            {line("Coach source", snapshot?.ai?.latestAcceptedCoachAction ? `${snapshot.ai.latestAcceptedCoachAction.proposalSource || "unknown"} • ${snapshot.ai.latestAcceptedCoachAction.acceptancePolicy || "unknown"}` : "none")}
+            {line("Plan proposal", snapshot?.ai?.latestAcceptedPlanProposal ? `${snapshot.ai.latestAcceptedPlanProposal.type || "accepted"} Ã¢â‚¬Â¢ ${snapshot.ai.latestAcceptedPlanProposal.acceptedBy || "gate"}` : "none accepted")}
+            {line("Plan packet", snapshot?.ai?.latestAcceptedPlanProposal ? `${snapshot.ai.latestAcceptedPlanProposal.packetIntent || "unknown"} Ã¢â‚¬Â¢ ${snapshot.ai.latestAcceptedPlanProposal.packetVersion || ""}` : "none")}
+            {line("Coach action", snapshot?.ai?.latestAcceptedCoachAction ? `${snapshot.ai.latestAcceptedCoachAction.type || "accepted"} Ã¢â‚¬Â¢ ${snapshot.ai.latestAcceptedCoachAction.acceptedBy || "gate"}` : "none accepted")}
+            {line("Coach source", snapshot?.ai?.latestAcceptedCoachAction ? `${snapshot.ai.latestAcceptedCoachAction.proposalSource || "unknown"} Ã¢â‚¬Â¢ ${snapshot.ai.latestAcceptedCoachAction.acceptancePolicy || "unknown"}` : "none")}
           </div>
         </div>
       </div>
@@ -6396,8 +6169,8 @@ function RuntimeInspector({ snapshot }) {
 
 function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [] }) {
   const initialPrompt = startingFresh
-    ? "Starting fresh. I still remember everything from before — I'm just building a new plan from today. What's the primary goal this time?"
-    : "Hey. I'm going to ask you a few questions before I build your plan. No right answers — just pick what fits best. What's your primary goal?";
+    ? "Starting fresh. I still remember everything from before Ã¢â‚¬â€ I'm just building a new plan from today. What's the primary goal this time?"
+    : "Hey. I'm going to ask you a few questions before I build your plan. No right answers Ã¢â‚¬â€ just pick what fits best. What's your primary goal?";
   const BUILD_STAGES = [
     "Mapping your training blocks...",
     "Calibrating intensity to your baseline...",
@@ -6424,7 +6197,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const flow = useMemo(() => ([
     { key: "primary_goal", type: "buttons", message: initialPrompt, options: PRIMARY_GOAL_OPTIONS.map(k => PRIMARY_GOAL_LABELS[k]), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
     { key: "experience_level", type: "buttons", message: "Got it. How long have you been training consistently?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week — not your best one.", options: ["2", "3", "4", "5", "6+"] },
+    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week Ã¢â‚¬â€ not your best one.", options: ["2", "3", "4", "5", "6+"] },
     { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
     ...(["Home", "Both"].includes(answers.training_location || "") ? [{
@@ -6434,7 +6207,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       options: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
     }] : []),
     { key: "injury_text", type: "text_optional", message: "Do you have any injuries or physical limitations I need to plan around?", placeholder: "Anything current?", skipLabel: "Nothing current", skipValue: "Nothing current" },
-    { key: "coaching_style", type: "buttons", message: "Last one — how do you want to be coached?", options: ["Push me hard", "Find the balance", "Keep it simple", "Let the data decide"] },
+    { key: "coaching_style", type: "buttons", message: "Last one Ã¢â‚¬â€ how do you want to be coached?", options: ["Push me hard", "Find the balance", "Keep it simple", "Let the data decide"] },
   ]), [answers.training_location, initialPrompt]);
   const currentPrompt = flow[stepIndex] || null;
   const isCoachStreaming = Boolean(streamTargetId);
@@ -6588,7 +6361,7 @@ Sound like a coach who has done this a hundred times.`;
     const nextFlow = [
       { key: "primary_goal", type: "buttons", message: initialPrompt, options: PRIMARY_GOAL_OPTIONS.map(k => PRIMARY_GOAL_LABELS[k]), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
       { key: "experience_level", type: "buttons", message: "Got it. How long have you been training consistently?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-      { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week — not your best one.", options: ["2", "3", "4", "5", "6+"] },
+      { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week Ã¢â‚¬â€ not your best one.", options: ["2", "3", "4", "5", "6+"] },
       { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
       { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
       ...(["Home", "Both"].includes(updatedAnswers.training_location || "") ? [{
@@ -6598,7 +6371,7 @@ Sound like a coach who has done this a hundred times.`;
         options: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
       }] : []),
       { key: "injury_text", type: "text_optional", message: "Do you have any injuries or physical limitations I need to plan around?", placeholder: "Anything current?", skipLabel: "Nothing current", skipValue: "Nothing current" },
-      { key: "coaching_style", type: "buttons", message: "Last one — how do you want to be coached?", options: ["Push me hard", "Find the balance", "Keep it simple", "Let the data decide"] },
+      { key: "coaching_style", type: "buttons", message: "Last one Ã¢â‚¬â€ how do you want to be coached?", options: ["Push me hard", "Find the balance", "Keep it simple", "Let the data decide"] },
     ];
     if (nextIndex < nextFlow.length) {
       setStepIndex(nextIndex);
@@ -6897,6 +6670,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     }
     await persistAppleHealth({
       status,
+      connectionMode: status === "simulated_web" ? "simulated" : "live",
       permissionRequestedAt: now,
       permissionsGranted: [...HEALTHKIT_PERMISSIONS],
       skipped: false,
@@ -6969,10 +6743,147 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const profileWeightVal = profile?.weight ?? profile?.bodyweight ?? "";
   const profileHeightVal = profile?.height ?? "";
   const garminLastSyncLabel = garmin?.lastSyncAt ? new Date(garmin.lastSyncAt).toLocaleString() : "never";
+  const formatIntegrationTimestamp = (value) => value ? new Date(value).toLocaleString() : "never";
+  const integrationStateTone = (state = "idle") => {
+    if (state === "operational") return { color: C.green, bg: `${C.green}14` };
+    if (state === "pending") return { color: C.blue, bg: `${C.blue}14` };
+    if (state === "manual") return { color: C.amber, bg: `${C.amber}14` };
+    if (state === "simulated") return { color: C.purple, bg: `${C.purple}14` };
+    return { color: "#8fa5c8", bg: "rgba(143,165,200,0.12)" };
+  };
+  const integrationDevVisible = useMemo(() => {
+    if (typeof window === "undefined") return appleHealth?.status === "simulated_web";
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("devtools") === "1"
+        || ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        || appleHealth?.status === "simulated_web";
+    } catch {
+      return appleHealth?.status === "simulated_web";
+    }
+  }, [appleHealth?.status]);
+  const appleMode = appleHealth?.connectionMode
+    || (appleHealth?.status === "simulated_web" ? "simulated" : appleHealth?.status === "manual_import" ? "manual_import" : appleHealth?.status === "connected" ? "live" : "unavailable");
+  const appleIntegration = (() => {
+    if (appleMode === "live" && appleHealth?.lastSyncStatus === "garmin_detected") {
+      return {
+        state: "operational",
+        label: "Operational",
+        summary: "Apple Health is live and recent Garmin-origin workouts were verified.",
+        detail: `Last verified check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
+      };
+    }
+    if (appleMode === "live") {
+      return {
+        state: "pending",
+        label: "Connected, awaiting verification",
+        summary: appleHealth?.lastSyncStatus === "health_only"
+          ? "Apple Health is connected, but Garmin-origin workouts have not been verified yet."
+          : "Apple Health permissions were requested, but a recent live workout verification has not happened yet.",
+        detail: `Last check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
+      };
+    }
+    if (appleMode === "manual_import") {
+      return {
+        state: "manual",
+        label: "Manual import only",
+        summary: "Apple Health data exists from a manual JSON import, not from a live device permission flow.",
+        detail: `Imported: ${formatIntegrationTimestamp(appleHealth?.importedAt)}.`,
+      };
+    }
+    if (appleMode === "simulated") {
+      return {
+        state: "simulated",
+        label: "Simulated on web",
+        summary: "Apple Health cannot be authorized in this web environment, so the app is using a simulated placeholder state.",
+        detail: "Use an iPhone-capable environment for a real Apple Health permission flow.",
+      };
+    }
+    if (appleHealth?.skipped) {
+      return {
+        state: "unavailable",
+        label: "Not enabled",
+        summary: "Apple Health has been skipped or not enabled yet.",
+        detail: "Connect it when you want live workout/device context.",
+      };
+    }
+    return {
+      state: "unavailable",
+      label: "Not configured",
+      summary: "Apple Health is not connected.",
+      detail: "No live permission flow or manual import is active.",
+    };
+  })();
+  const garminMode = garmin?.connectionMode || (garmin?.status === "manual_import" ? "manual_import" : garmin?.status === "connected" ? "live" : "unavailable");
+  const garminIntegration = (() => {
+    if (garminMode === "live" && garmin?.lastSyncAt && (garmin?.activities || []).length > 0) {
+      return {
+        state: "operational",
+        label: "Operational",
+        summary: "Garmin Connect is live and recent activities have synced through the server integration.",
+        detail: `Last sync: ${garminLastSyncLabel}.`,
+      };
+    }
+    if (garminMode === "live") {
+      return {
+        state: "pending",
+        label: "Connected, never synced",
+        summary: "Garmin authorization exists, but no completed sync has been recorded yet.",
+        detail: `Last sync: ${garminLastSyncLabel}.`,
+      };
+    }
+    if (garminMode === "manual_import") {
+      return {
+        state: "manual",
+        label: "Manual import only",
+        summary: "Garmin activity data exists from a manual import, not from the live server-side integration.",
+        detail: `Imported: ${formatIntegrationTimestamp(garmin?.importedAt)}.`,
+      };
+    }
+    return {
+      state: "unavailable",
+      label: "Not configured",
+      summary: "Garmin Connect is not configured.",
+      detail: "No live authorization or manual import is active.",
+    };
+  })();
+  const locationIntegration = (() => {
+    const status = personalization?.localFoodContext?.locationStatus || personalization?.connectedDevices?.location?.status || "unknown";
+    if (status === "granted") {
+      return {
+        state: "operational",
+        label: "Available",
+        summary: "Location access is available for travel context and local nutrition guidance.",
+      };
+    }
+    if (status === "denied") {
+      return {
+        state: "unavailable",
+        label: "Permission denied",
+        summary: "Location access was denied, so travel/location context stays manual.",
+      };
+    }
+    if (status === "unavailable") {
+      return {
+        state: "unavailable",
+        label: "Unavailable here",
+        summary: "Location services are unavailable in this environment.",
+      };
+    }
+    return {
+      state: "unavailable",
+      label: "Not enabled",
+      summary: "Location access is not enabled.",
+    };
+  })();
 
   const checkConnection = async () => {
     setChecking(true);
     try {
+      if (appleMode === "manual_import") {
+        setCheckMsg("Manual Apple Health imports do not verify a live Apple Health connection.");
+        return;
+      }
       const workouts = appleHealth?.workouts || {};
       const cutoff = Date.now() - (7 * 86400000);
       const recent = Object.entries(workouts).filter(([date]) => new Date(`${date}T12:00:00`).getTime() >= cutoff);
@@ -6997,7 +6908,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
           ? Object.fromEntries(parsed.map((w, idx) => [w?.date || w?.startDate || `${new Date().toISOString().split("T")[0]}_${idx}`, w]))
           : (parsed?.workouts || {});
         await persistAppleHealth({
-          status: "connected",
+          status: "manual_import",
+          connectionMode: "manual_import",
           workouts,
           importedAt: Date.now(),
           lastSyncStatus: Object.keys(workouts || {}).length > 0 ? "health_only" : (appleHealth?.lastSyncStatus || "connected"),
@@ -7008,7 +6920,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         const dailySummaries = parsed?.dailySummaries || garmin?.dailySummaries || {};
         const nextGarmin = {
           ...garmin,
-          status: "connected",
+          status: "manual_import",
+          connectionMode: "manual_import",
           activities,
           dailySummaries,
           trainingReadinessScore: Number(parsed?.trainingReadinessScore ?? garmin?.trainingReadinessScore ?? 0) || garmin?.trainingReadinessScore || null,
@@ -7084,7 +6997,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       });
       setPersonalization(next);
       await onPersist(next);
-      setLocationMsg("Location permission denied. Enable it in iPhone Settings → Privacy & Security → Location Services.");
+      setLocationMsg("Location permission denied. Enable it in iPhone Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Location Services.");
     }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 600000 });
   };
   const handleCopyBackup = async () => {
@@ -7196,108 +7109,146 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         </div>
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
-          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>CONNECTED DEVICES</div>
-          <div style={{ fontSize:"0.54rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.35rem" }}>
-            Your Garmin data will appear in Apple Health automatically once connected. Here&apos;s how:
+          <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>INTEGRATIONS</div>
+          <div style={{ fontSize:"0.55rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.5rem" }}>
+            Live integrations, manual imports, simulated states, and unavailable services are shown separately so device status is easier to trust.
           </div>
-          <div style={{ fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.7 }}>
-            Step 1: Open Garmin Connect app<br />
-            Step 2: Tap your profile photo → Settings → Connected Apps → Apple Health → Enable All<br />
-            Step 3: Come back here and tap &quot;Check Connection&quot;
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:"0.4rem", marginBottom:"0.55rem" }}>
+            {[
+              ["Apple Health", appleIntegration],
+              ["Garmin Connect", garminIntegration],
+              ["Location", locationIntegration],
+            ].map(([label, state]) => {
+              const tone = integrationStateTone(state.state);
+              return (
+                <div key={label} style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.3rem", alignItems:"center", flexWrap:"wrap" }}>
+                    <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>{label}</div>
+                    <span style={{ fontSize:"0.46rem", color:tone.color, background:tone.bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{state.label}</span>
+                  </div>
+                  <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.16rem" }}>{state.summary}</div>
+                </div>
+              );
+            })}
           </div>
-          <div style={{ marginTop:"0.45rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-            <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
-              {appleHealth?.status === "connected" || appleHealth?.status === "simulated_web" ? "Reconnect Apple Health" : "Connect Apple Health"}
-            </button>
-            <button className="btn" onClick={checkConnection} disabled={checking} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
-              {checking ? "Checking..." : "Check Connection"}
-            </button>
-            <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
-              I enabled Health permissions
-            </button>
+          <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5, marginBottom:"0.55rem" }}>
+            Current data use: {(deviceSyncAudit?.utilization || ["No live device utilization signals are available yet."]).slice(0, 3).join(" ")}
           </div>
-          <div style={{ marginTop:"0.28rem", fontSize:"0.5rem", color:"#6f85a7" }}>
-            Status: {appleHealth?.status || "not_connected"} · Last check: {appleHealth?.lastConnectionCheck ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}
-          </div>
-          <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>
-            Permission confirmed: {appleHealth?.permissionConfirmedAt ? new Date(appleHealth.permissionConfirmedAt).toLocaleString() : "not confirmed"}
-          </div>
-          <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:appleHealth?.lastSyncStatus === "garmin_detected" ? C.green : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web" ? C.blue : "#8fa5c8" }}>
-            {appleHealth?.lastSyncStatus === "garmin_detected"
-              ? "Sync verified: Garmin activity detected in Apple Health."
-              : appleHealth?.lastSyncStatus === "permissions_confirmed"
-              ? "Permissions confirmed. Complete one Health workout, then tap Check Connection."
-              : appleHealth?.lastSyncStatus === "health_only"
-              ? "Connected, but Garmin source not detected yet."
-              : appleHealth?.status === "connected" || appleHealth?.status === "simulated_web"
-              ? "Connected. Run one workout, then tap Check Connection."
-              : "Not connected yet."}
-          </div>
-          <div style={{ marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 }}>
-            iPhone permission path: Settings → Privacy &amp; Security → Health → Personal Trainer (or browser app) → Allow all categories.
-          </div>
-          <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
-          {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
-          <div style={{ marginTop:"0.4rem", borderTop:"1px solid #243752", paddingTop:"0.35rem", display:"grid", gap:"0.28rem" }}>
-            <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Manual Apple Health import (JSON from exporter)</div>
-            <textarea value={appleImportText} onChange={e=>setAppleImportText(e.target.value)} placeholder='{"workouts":{"2026-04-07":{"distanceMiles":3.2,"avgHr":148}}}' style={{ minHeight:62, fontSize:"0.5rem" }} />
-            <button className="btn" onClick={()=>importDeviceData("apple")} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"35" }}>Import Apple JSON</button>
-          </div>
-        </div>
-        <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
-          <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>GARMIN CONNECT</div>
-          <div style={{ fontSize:"0.53rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.35rem" }}>
-            Direct Garmin integration runs server-side so the Garmin client secret and token exchange never have to live in the browser.
-          </div>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7, marginBottom:"0.35rem" }}>
-            Developer setup: register the app at `developer.garmin.com`, make the callback path `/auth/garmin/callback`, then add the Garmin env vars in Vercel before tapping Connect Garmin.
-          </div>
-          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-            <button className="btn" onClick={connectGarmin} disabled={garminBusy !== ""} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" }}>
-              {garminBusy === "connect" ? "Connecting..." : garmin?.status === "connected" ? "Reconnect Garmin" : "Connect Garmin"}
-            </button>
-            <button className="btn" onClick={syncGarminNow} disabled={garminBusy !== "" || garmin?.status !== "connected"} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
-              {garminBusy === "sync" ? "Syncing..." : "Sync now"}
-            </button>
-            <button className="btn" onClick={disconnectGarmin} disabled={garminBusy !== "" || garmin?.status !== "connected"} style={{ fontSize:"0.52rem", color:C.red, borderColor:C.red+"35" }}>
-              {garminBusy === "disconnect" ? "Disconnecting..." : "Disconnect"}
-            </button>
-          </div>
-          <div style={{ marginTop:"0.25rem", fontSize:"0.52rem", color:garmin?.status === "connected" ? C.green : "#8fa5c8" }}>
-            {garmin?.status === "connected" ? `Garmin connected · ${garmin?.deviceName || "device"}` : "Garmin not connected"}
-          </div>
-          <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#6f85a7" }}>
-            Last sync: {garminLastSyncLabel}
-          </div>
-          <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#6f85a7" }}>
-            Last activity synced: {lastGarminActivity?.startTime || "none"} · {lastGarminActivity?.type || ""}
-          </div>
-          {(garmin?.lastErrorMessage || garmin?.lastErrorFix) && (
-            <div style={{ marginTop:"0.22rem", fontSize:"0.5rem", color:C.amber, lineHeight:1.6 }}>
-              {garmin?.lastErrorMessage || "Garmin needs attention."}
-              {garmin?.lastErrorFix ? ` ${garmin.lastErrorFix}` : ""}
+
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:"0.6rem" }}>
+            <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap", marginBottom:"0.26rem" }}>
+                <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>APPLE HEALTH</div>
+                <span style={{ fontSize:"0.46rem", color:integrationStateTone(appleIntegration.state).color, background:integrationStateTone(appleIntegration.state).bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{appleIntegration.label}</span>
+              </div>
+              <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.55 }}>{appleIntegration.summary}</div>
+              <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>{appleIntegration.detail}</div>
+              <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.18rem", lineHeight:1.5 }}>
+                Permission requested: {formatIntegrationTimestamp(appleHealth?.permissionRequestedAt)} · Last check: {formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}
+              </div>
+              <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.12rem", lineHeight:1.5 }}>Active data types: {activeAppleTypes}</div>
+              <div style={{ marginTop:"0.35rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
+                  {appleMode === "live" || appleMode === "simulated" ? "Reconnect Apple Health" : "Connect Apple Health"}
+                </button>
+                <button className="btn" onClick={checkConnection} disabled={checking || appleMode === "manual_import"} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
+                  {checking ? "Checking..." : "Verify sync"}
+                </button>
+                <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
+                  I enabled permissions
+                </button>
+              </div>
+              <div style={{ marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
+                iPhone path: Settings Ã¢â€ â€™ Privacy &amp; Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ Allow all categories.
+              </div>
+              {checkMsg && <div style={{ marginTop:"0.22rem", fontSize:"0.51rem", color:"#cbd5e1" }}>{checkMsg}</div>}
             </div>
+
+            <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap", marginBottom:"0.26rem" }}>
+                <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>GARMIN CONNECT</div>
+                <span style={{ fontSize:"0.46rem", color:integrationStateTone(garminIntegration.state).color, background:integrationStateTone(garminIntegration.state).bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{garminIntegration.label}</span>
+              </div>
+              <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.55 }}>{garminIntegration.summary}</div>
+              <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>{garminIntegration.detail}</div>
+              <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.18rem", lineHeight:1.5 }}>
+                Last activity: {lastGarminActivity?.startTime || "none"} · {lastGarminActivity?.type || "no synced activity"}
+              </div>
+              {(garmin?.lastErrorMessage || garmin?.lastErrorFix) && (
+                <div style={{ marginTop:"0.18rem", fontSize:"0.49rem", color:C.amber, lineHeight:1.55 }}>
+                  {garmin?.lastErrorMessage || "Garmin needs attention."}
+                  {garmin?.lastErrorFix ? ` ${garmin.lastErrorFix}` : ""}
+                </div>
+              )}
+              {!!garminMsg && <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#cbd5e1" }}>{garminMsg}</div>}
+              {!!garminFix && integrationDevVisible && <div style={{ marginTop:"0.12rem", fontSize:"0.48rem", color:C.amber }}>{garminFix}</div>}
+              <div style={{ marginTop:"0.35rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                <button className="btn" onClick={connectGarmin} disabled={garminBusy !== ""} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" }}>
+                  {garminBusy === "connect" ? "Connecting..." : garminMode === "live" ? "Reconnect Garmin" : "Connect Garmin"}
+                </button>
+                <button className="btn" onClick={syncGarminNow} disabled={garminBusy !== "" || garminMode !== "live"} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
+                  {garminBusy === "sync" ? "Syncing..." : "Sync now"}
+                </button>
+                <button className="btn" onClick={disconnectGarmin} disabled={garminBusy !== "" || garminMode !== "live"} style={{ fontSize:"0.52rem", color:C.red, borderColor:C.red+"35" }}>
+                  {garminBusy === "disconnect" ? "Disconnecting..." : "Disconnect"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginTop:"0.6rem", border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap", marginBottom:"0.22rem" }}>
+              <div className="sect-title" style={{ color:C.amber, marginBottom:0 }}>LOCATION SERVICES</div>
+              <span style={{ fontSize:"0.46rem", color:integrationStateTone(locationIntegration.state).color, background:integrationStateTone(locationIntegration.state).bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{locationIntegration.label}</span>
+            </div>
+            <div style={{ fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.6 }}>{locationIntegration.summary}</div>
+            <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Enable location permission</button>
+            <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
+              iPhone path: Settings Ã¢â€ â€™ Privacy &amp; Security Ã¢â€ â€™ Location Services Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ While Using App.
+            </div>
+            {!!locationMsg && <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#cbd5e1" }}>{locationMsg}</div>}
+          </div>
+
+          <details style={{ marginTop:"0.6rem" }}>
+            <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#8fa5c8" }}>Manual imports</summary>
+            <div style={{ marginTop:"0.38rem", display:"grid", gap:"0.5rem" }}>
+              <div style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
+                <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>Apple Health JSON import</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only when you are restoring or testing data without a live Apple Health link.</div>
+                <textarea value={appleImportText} onChange={e=>setAppleImportText(e.target.value)} placeholder='{"workouts":{"2026-04-07":{"distanceMiles":3.2,"avgHr":148}}}' style={{ minHeight:62, fontSize:"0.5rem" }} />
+                <button className="btn" onClick={()=>importDeviceData("apple")} style={{ width:"fit-content", fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"35" }}>Import Apple JSON</button>
+              </div>
+              <div style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
+                <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>Garmin JSON import</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only when you need Garmin activity data without the live server-side connection.</div>
+                <textarea value={garminImportText} onChange={e=>setGarminImportText(e.target.value)} placeholder='{"activities":[{"startTime":"2026-04-07T07:30:00Z","type":"Run","distanceMiles":4.1}]}' style={{ minHeight:62, fontSize:"0.5rem" }} />
+                <button className="btn" onClick={()=>importDeviceData("garmin")} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Import Garmin JSON</button>
+              </div>
+              {!!importMsg && <div style={{ fontSize:"0.51rem", color:"#cbd5e1" }}>{importMsg}</div>}
+            </div>
+          </details>
+
+          {(integrationDevVisible || appleMode === "simulated" || !!garminFix) && (
+            <details style={{ marginTop:"0.55rem" }}>
+              <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#8fa5c8" }}>Developer / simulated states</summary>
+              <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.35rem" }}>
+                {appleMode === "simulated" && (
+                  <div style={{ fontSize:"0.5rem", color:"#9fb2d2", lineHeight:1.6 }}>
+                    Apple Health is currently marked `simulated_web`, which is a web-only placeholder and should not be treated like a live connection.
+                  </div>
+                )}
+                <div style={{ fontSize:"0.5rem", color:"#9fb2d2", lineHeight:1.6 }}>
+                  Direct Garmin integration runs server-side so secrets and token exchange stay off the client.
+                </div>
+                {integrationDevVisible && (
+                  <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
+                    Developer setup: register the app at `developer.garmin.com`, use callback path `/auth/garmin/callback`, and configure the Garmin env vars before connecting.
+                  </div>
+                )}
+              </div>
+            </details>
           )}
-          {!!garminMsg && <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:"#cbd5e1" }}>{garminMsg}</div>}
-          {!!garminFix && <div style={{ marginTop:"0.15rem", fontSize:"0.5rem", color:C.amber }}>{garminFix}</div>}
-          <div style={{ marginTop:"0.4rem", borderTop:"1px solid #243752", paddingTop:"0.35rem", display:"grid", gap:"0.28rem" }}>
-            <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Manual Garmin import (JSON from Garmin export/API)</div>
-            <textarea value={garminImportText} onChange={e=>setGarminImportText(e.target.value)} placeholder='{"activities":[{"startTime":"2026-04-07T07:30:00Z","type":"Run","distanceMiles":4.1}]}' style={{ minHeight:62, fontSize:"0.5rem" }} />
-            <button className="btn" onClick={()=>importDeviceData("garmin")} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Import Garmin JSON</button>
-          </div>
         </div>
-        <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
-          <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>LOCATION SERVICES (IPHONE)</div>
-          <div style={{ fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.65, marginBottom:"0.35rem" }}>
-            Location helps auto-detect travel context and local food guidance.
-          </div>
-          <button className="btn" onClick={requestLocationAccess} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Enable location permission</button>
-          <div style={{ marginTop:"0.22rem", fontSize:"0.5rem", color:"#8fa5c8" }}>
-            iPhone path: Settings → Privacy &amp; Security → Location Services → Personal Trainer → While Using App.
-          </div>
-          {!!locationMsg && <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:"#cbd5e1" }}>{locationMsg}</div>}
-        </div>
-        {!!importMsg && <div style={{ marginTop:"0.35rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{importMsg}</div>}
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.purple, marginBottom:"0.35rem" }}>TRAINING PREFERENCES</div>
@@ -7434,7 +7385,7 @@ function OnboardingCoachLegacy({ onComplete }) {
   const SCRIPT = [
     { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
     { key: "experience_level", text: "How long have you been training consistently?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
+    { key: "training_days", text: "How many days per week can you realistically train? Not your best week Ã¢â‚¬â€ your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
     { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
@@ -7465,10 +7416,10 @@ function OnboardingCoachLegacy({ onComplete }) {
   };
 
   const buildTimelineAssessment = async (payload) => {
-    const prompt = `The user has provided the following goals and baseline:\n${JSON.stringify(payload, null, 2)}\n\nAssess each goal against the baseline and days available. For each goal:\n1. State whether it is realistic within the user's primary deadline (if one exists)\n2. If not realistic within that deadline: state what IS realistic by that date and when the full goal could be reached\n3. Identify any goal conflicts (e.g. aggressive cut + peak strength simultaneously)\n\nRules:\n- Be honest but not discouraging\n- Lead with what IS achievable, not what isn't\n- Never say a goal is impossible — say what's needed to make it possible and how long it realistically takes\n- If goals are fully compatible: say so and move on\n- Maximum 3 sentences per goal\n- End with: 'Here's what I'm going to prioritize in your plan — tell me if you want to adjust anything.'`;
+    const prompt = `The user has provided the following goals and baseline:\n${JSON.stringify(payload, null, 2)}\n\nAssess each goal against the baseline and days available. For each goal:\n1. State whether it is realistic within the user's primary deadline (if one exists)\n2. If not realistic within that deadline: state what IS realistic by that date and when the full goal could be reached\n3. Identify any goal conflicts (e.g. aggressive cut + peak strength simultaneously)\n\nRules:\n- Be honest but not discouraging\n- Lead with what IS achievable, not what isn't\n- Never say a goal is impossible Ã¢â‚¬â€ say what's needed to make it possible and how long it realistically takes\n- If goals are fully compatible: say so and move on\n- Maximum 3 sentences per goal\n- End with: 'Here's what I'm going to prioritize in your plan Ã¢â‚¬â€ tell me if you want to adjust anything.'`;
     const ai = await callAnthropicIntake(prompt);
     if (ai) return ai.trim();
-    return "Given your baseline and schedule, we'll prioritize one primary outcome and sequence secondary goals so recovery stays intact. By your deadline, we'll target measurable progress toward the main outcome while keeping competing goals in maintenance range, then progress them in the next block. Here's what I'm going to prioritize in your plan — tell me if you want to adjust anything.";
+    return "Given your baseline and schedule, we'll prioritize one primary outcome and sequence secondary goals so recovery stays intact. By your deadline, we'll target measurable progress toward the main outcome while keeping competing goals in maintenance range, then progress them in the next block. Here's what I'm going to prioritize in your plan Ã¢â‚¬â€ tell me if you want to adjust anything.";
   };
 
   const askNext = (nextStep) => {
@@ -7611,7 +7562,7 @@ function OnboardingCoachLegacy({ onComplete }) {
           </div>
           <div style={{ fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.7 }}>
             Step 1: Open Garmin Connect app<br />
-            Step 2: Tap your profile photo → Settings → Connected Apps → Apple Health → Enable All<br />
+            Step 2: Tap your profile photo Ã¢â€ â€™ Settings Ã¢â€ â€™ Connected Apps Ã¢â€ â€™ Apple Health Ã¢â€ â€™ Enable All<br />
             Step 3: Come back here and tap &quot;Check Connection&quot;
           </div>
           <div style={{ marginTop:"0.45rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
@@ -7626,7 +7577,7 @@ function OnboardingCoachLegacy({ onComplete }) {
             </button>
           </div>
           <div style={{ marginTop:"0.28rem", fontSize:"0.5rem", color:"#6f85a7" }}>
-            Status: {appleHealth?.status || "not_connected"} · Last check: {appleHealth?.lastConnectionCheck ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}
+            Status: {appleHealth?.status || "not_connected"} Ã‚Â· Last check: {appleHealth?.lastConnectionCheck ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}
           </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>
             Permission confirmed: {appleHealth?.permissionConfirmedAt ? new Date(appleHealth.permissionConfirmedAt).toLocaleString() : "not confirmed"}
@@ -7643,7 +7594,7 @@ function OnboardingCoachLegacy({ onComplete }) {
               : "Not connected yet."}
           </div>
           <div style={{ marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 }}>
-            iPhone permission path: Settings → Privacy &amp; Security → Health → Personal Trainer (or browser app) → Allow all categories.
+            iPhone permission path: Settings Ã¢â€ â€™ Privacy &amp; Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer (or browser app) Ã¢â€ â€™ Allow all categories.
           </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
           {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
@@ -7657,12 +7608,12 @@ function OnboardingCoachLegacy({ onComplete }) {
             Connect Garmin
           </button>
           <div style={{ marginTop:"0.25rem", fontSize:"0.52rem", color:garmin?.status === "connected" ? C.green : "#8fa5c8" }}>
-            {garmin?.status === "connected" ? `Garmin connected · ${garmin?.deviceName || "device"}` : "Garmin not connected"}
+            {garmin?.status === "connected" ? `Garmin connected Ã‚Â· ${garmin?.deviceName || "device"}` : "Garmin not connected"}
           </div>
           <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#6f85a7" }}>
-            Last activity synced: {lastGarminActivity?.startTime || "none"} · {lastGarminActivity?.type || ""}
+            Last activity synced: {lastGarminActivity?.startTime || "none"} Ã‚Â· {lastGarminActivity?.type || ""}
           </div>
-          <a href="#" onClick={(e)=>{ e.preventDefault(); setConnectOpen(true); }} style={{ display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue }}>How to sync Garmin → Apple Health</a>
+          <a href="#" onClick={(e)=>{ e.preventDefault(); setConnectOpen(true); }} style={{ display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue }}>How to sync Garmin Ã¢â€ â€™ Apple Health</a>
           {!!garminMsg && <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:"#cbd5e1" }}>{garminMsg}</div>}
         </div>
 
@@ -7782,7 +7733,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
   const SCRIPT = [
     { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
     { key: "experience_level", text: "How long have you been training consistently?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
+    { key: "training_days", text: "How many days per week can you realistically train? Not your best week Ã¢â‚¬â€ your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
     { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
@@ -7813,10 +7764,10 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
   };
 
   const buildTimelineAssessment = async (payload) => {
-    const prompt = `The user has provided the following goals and baseline:\n${JSON.stringify(payload, null, 2)}\n\nAssess each goal against the baseline and days available. For each goal:\n1. State whether it is realistic within the user's primary deadline (if one exists)\n2. If not realistic within that deadline: state what IS realistic by that date and when the full goal could be reached\n3. Identify any goal conflicts (e.g. aggressive cut + peak strength simultaneously)\n\nRules:\n- Be honest but not discouraging\n- Lead with what IS achievable, not what isn't\n- Never say a goal is impossible — say what's needed to make it possible and how long it realistically takes\n- If goals are fully compatible: say so and move on\n- Maximum 3 sentences per goal\n- End with: 'Here's what I'm going to prioritize in your plan — tell me if you want to adjust anything.'`;
+    const prompt = `The user has provided the following goals and baseline:\n${JSON.stringify(payload, null, 2)}\n\nAssess each goal against the baseline and days available. For each goal:\n1. State whether it is realistic within the user's primary deadline (if one exists)\n2. If not realistic within that deadline: state what IS realistic by that date and when the full goal could be reached\n3. Identify any goal conflicts (e.g. aggressive cut + peak strength simultaneously)\n\nRules:\n- Be honest but not discouraging\n- Lead with what IS achievable, not what isn't\n- Never say a goal is impossible Ã¢â‚¬â€ say what's needed to make it possible and how long it realistically takes\n- If goals are fully compatible: say so and move on\n- Maximum 3 sentences per goal\n- End with: 'Here's what I'm going to prioritize in your plan Ã¢â‚¬â€ tell me if you want to adjust anything.'`;
     const ai = await callAnthropicIntake(prompt);
     if (ai) return ai.trim();
-    return "Given your baseline and schedule, we'll prioritize one primary outcome and sequence secondary goals so recovery stays intact. By your deadline, we'll target measurable progress toward the main outcome while keeping competing goals in maintenance range, then progress them in the next block. Here's what I'm going to prioritize in your plan — tell me if you want to adjust anything.";
+    return "Given your baseline and schedule, we'll prioritize one primary outcome and sequence secondary goals so recovery stays intact. By your deadline, we'll target measurable progress toward the main outcome while keeping competing goals in maintenance range, then progress them in the next block. Here's what I'm going to prioritize in your plan Ã¢â‚¬â€ tell me if you want to adjust anything.";
   };
 
   const askNext = (nextStep) => {
@@ -7886,7 +7837,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
               {m.text}
             </div>
           ))}
-          {awaitingTimeline && <div style={{ fontSize:"0.54rem", color:"#8fa5c8" }}>Coach is assessing your timeline…</div>}
+          {awaitingTimeline && <div style={{ fontSize:"0.54rem", color:"#8fa5c8" }}>Coach is assessing your timelineÃ¢â‚¬Â¦</div>}
         </div>
 
         {!awaitingAdjustConfirm && !building && (
@@ -7918,7 +7869,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
   );
 }
 
-// ── TODAY TAB ─────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ TODAY TAB Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, loading, storageStatus, authError }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const userProfile = athleteProfile?.userProfile || {};
@@ -7986,7 +7937,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     if (sessionVariant === "short") {
       const canCompress = ["hard-run", "easy-run", "long-run", "run+strength", "strength+prehab", "conditioning"].includes(base?.type || "");
       if (!canCompress) {
-        return { ...base, label: "20-min stimulus swap", fallback: "Could not preserve today’s structure under 20 min. Swapped to: 12-min tempo + 8-min strength finisher.", variantBadge: "20-min version active" };
+        return { ...base, label: "20-min stimulus swap", fallback: "Could not preserve todayÃ¢â‚¬â„¢s structure under 20 min. Swapped to: 12-min tempo + 8-min strength finisher.", variantBadge: "20-min version active" };
       }
       return {
         ...base,
@@ -8005,8 +7956,8 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       run: base.run ? { ...base.run, d: reduceRunDescriptor(base.run.d || "20 min", 1.25) } : base.run,
       strengthDuration: "45-55 min",
       extendedFinisher: base.run?.t
-        ? "Extended finisher: 4 × 20s strides with 40s walk."
-        : "Extended finisher: 2 rounds — 12 DB goblet squats, 10 push-ups, 30s plank.",
+        ? "Extended finisher: 4 Ãƒâ€” 20s strides with 40s walk."
+        : "Extended finisher: 2 rounds Ã¢â‚¬â€ 12 DB goblet squats, 10 push-ups, 30s plank.",
       variantBadge: "Extended",
     };
   }, [todayWorkout, sessionVariant]);
@@ -8022,7 +7973,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     await setEnvironmentMode({ mode: "Travel", scope: "today" });
     setEnvDraft({ equipment: "none", time: "20", mode: "Travel", scope: "today" });
   };
-  const conciseFocus = (dailyStory?.focus || dailyStory?.brief || "Execute today’s session cleanly.")
+  const conciseFocus = (dailyStory?.focus || dailyStory?.brief || "Execute todayÃ¢â‚¬â„¢s session cleanly.")
     .replace(/^execute\s*/i, "")
     .split(".")[0];
   const conciseSuccess = (dailyStory?.success || "Complete the session and log it.").split(".")[0];
@@ -8221,7 +8172,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     const trimmed = String(line || "").replace(/\s+/g, " ").trim();
     if (!trimmed) return "";
     const firstSentence = trimmed.split(/[.!?]/)[0].trim();
-    return firstSentence.length > 100 ? `${firstSentence.slice(0, 99).trim()}…` : firstSentence;
+    return firstSentence.length > 100 ? `${firstSentence.slice(0, 99).trim()}Ã¢â‚¬Â¦` : firstSentence;
   };
 
   const adjustmentCards = useMemo(() => {
@@ -8229,7 +8180,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     if (activeStrengthAdjustment) {
       const oldW = Number(activeStrengthAdjustment?.oldWeight || 0);
       const newW = Number(activeStrengthAdjustment?.newWeight || 0);
-      const icon = newW > oldW ? "↑" : newW < oldW ? "↓" : "⚡";
+      const icon = newW > oldW ? "Ã¢â€ â€˜" : newW < oldW ? "Ã¢â€ â€œ" : "Ã¢Å¡Â¡";
       cards.push({
         id: activeStrengthAdjustment?.id || `strength_${todayKey}_${activeStrengthAdjustment?.exercise || "session"}`,
         icon,
@@ -8247,7 +8198,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       const isSwap = /shift|move|swap/.test(reason) || /moved/.test(String(activeDayOverride?.label || "").toLowerCase());
       cards.push({
         id: `day_override_${todayKey}_${reason}`,
-        icon: isSwap ? "🔁" : "⚡",
+        icon: isSwap ? "Ã°Å¸â€Â" : "Ã¢Å¡Â¡",
         type: isSwap ? "session_swap" : "session_mod",
         impact: isSwap ? 75 : 90,
         summary: normalizeCoachOneLine(activeDayOverride?.coachOneLine || activeDayOverride?.fallback || `${isSwap ? "Session moved in schedule today" : "Session structure adjusted today"} - ${provenanceReason}.`),
@@ -8260,7 +8211,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       const nutritionReason = describeProvenanceRecord(activeNutritionOverride?.provenance || null, String(activeNutritionOverride?.reason || nutritionDayType || "nutrition override").replaceAll("_", " "));
       cards.push({
         id: `nutrition_${todayKey}_${nutritionDayType || "override"}`,
-        icon: "💧",
+        icon: "Ã°Å¸â€™Â§",
         type: "nutrition_mod",
         impact: 60,
         summary: normalizeCoachOneLine(`Nutrition target set to ${String(nutritionDayType || "custom").replaceAll("_", " ")} today.`),
@@ -8319,6 +8270,42 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     salvageLayer.active ? salvageLayer.compressedPlan.success : null,
     validationLayer?.coachNudge || null,
   ].filter(Boolean);
+  const readinessBadgeLabel = readinessInfluence?.stateLabel || displayWorkout?.variantBadge || readinessInfluence?.badge || "On plan";
+  const readinessSourceLabel = readinessInfluence?.source || (todayUsesDeviceRecovery ? "device" : "plan");
+  const shortProvenance = normalizeCoachOneLine(todayProvenance || "");
+  const todayTrust = buildTrustSummary({
+    explicitUserInput: Boolean(readinessMetrics?.hasTodayRecoveryInput),
+    loggedActuals: Boolean(historicalLogs.length || readinessMetrics?.countableCount),
+    deviceData: Boolean(todayUsesDeviceRecovery || garminReadinessScore),
+    inferredHeuristics: true,
+    limitation: !historicalLogs.length ? "Recent training history is still limited." : "",
+    stale: Boolean(garminApiStaleError),
+  });
+  const todayTrustTone = buildReviewBadgeTone(
+    todayTrust.level === "grounded" ? "match" : todayTrust.level === "partial" ? "changed" : "recovery"
+  );
+  const rationaleHeadline = normalizeCoachOneLine(primaryAdjustment?.summary || readinessInfluence?.coachLine || conciseFocus);
+  const rationaleSupport = normalizeCoachOneLine(primaryAdjustment?.reason || readinessInfluence?.userVisibleLine || shortProvenance);
+  const successHeadline = normalizeCoachOneLine(displayWorkout?.success || conciseSuccess || "Complete the session and log it.");
+  const successSupport = normalizeCoachOneLine(
+    displayWorkout?.intensityGuidance
+      ? `Keep intensity at ${displayWorkout.intensityGuidance}.`
+      : readinessInfluence?.recoveryLine
+      ? readinessInfluence.recoveryLine
+      : displayWorkout?.recoveryRecommendation
+      ? displayWorkout.recoveryRecommendation
+      : displayWorkout?.compressionWhy
+      ? displayWorkout.compressionWhy
+      : displayWorkout?.extendedFinisher
+      ? displayWorkout.extendedFinisher
+      : ""
+  );
+  const tomorrowPreviewText = `${tomorrowWorkout?.label || "Rest"}${tomorrowWorkout?.run ? ` - ${tomorrowWorkout.run.d}` : ""}`;
+  const primaryActionSummary = sessionVariant === "short"
+    ? "Short version active"
+    : sessionVariant === "extended"
+    ? "Extended version active"
+    : "Primary actions";
   const storageBannerCopy = (() => {
     const reason = storageStatus?.reason || "";
     if (reason === STORAGE_STATUS_REASONS.transient) {
@@ -8340,7 +8327,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     <div className="fi">
       {loading && (
         <div className="card card-soft" style={{ marginBottom:"0.7rem", borderColor:"#2a3b56", fontSize:"0.56rem", color:"#9fb2d2" }}>
-          Loading today’s training state…
+          Loading todayÃ¢â‚¬â„¢s training stateÃ¢â‚¬Â¦
         </div>
       )}
       {!loading && authError && (
@@ -8358,41 +8345,66 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           Garmin data has been unavailable for over 48 hours. Using Apple Health fallback.
         </div>
       )}
-      {/* Header */}
-      <div style={{ marginBottom:"0.85rem", display:"grid", gap:"0.2rem" }}>
-        <div style={{ fontSize:"0.56rem", color:"#64748b", letterSpacing:"0.14em" }}>TODAY</div>
-        <div style={{ fontFamily:"’Inter’,sans-serif", fontSize:"1.45rem", color:"#f8fafc", fontWeight:600, lineHeight:1.15 }}>{displayWorkout?.label || "Rest Day"}</div>
-        {displayWorkout?.explanation && (
-          <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.6, marginTop:"0.15rem" }}>
-            {displayWorkout.explanation}
+
+      <div style={{ marginBottom:"0.85rem", display:"grid", gap:"0.65rem" }}>
+        <div className="card card-soft" style={{ borderColor:readinessTone+"26", background:"#0d1420" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap", marginBottom:"0.38rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em" }}>WHY TODAY</div>
+            <span style={{ fontSize:"0.46rem", color:todayTrustTone.color, background:todayTrustTone.bg, padding:"0.14rem 0.4rem", borderRadius:999 }}>{todayTrust.label}</span>
+          </div>
+          <div style={{ fontSize:"0.62rem", color:"#e2e8f0", lineHeight:1.55 }}>{rationaleHeadline}</div>
+          {!!rationaleSupport && <div style={{ marginTop:"0.28rem", fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.5 }}>{rationaleSupport}</div>}
+          <div style={{ marginTop:"0.3rem", fontSize:"0.48rem", color:"#64748b" }}>Source: {readinessSourceLabel}{shortProvenance ? ` - ${shortProvenance}` : ""}</div>
+          <div style={{ marginTop:"0.16rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{todayTrust.summary}</div>
+        </div>
+        <div className="card card-soft" style={{ borderColor:C.green+"26", background:"#0d1711" }}>
+          <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.38rem" }}>SUCCESS TODAY</div>
+          <div style={{ fontSize:"0.62rem", color:"#e2e8f0", lineHeight:1.55 }}>{successHeadline}</div>
+          {!!successSupport && <div style={{ marginTop:"0.28rem", fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.5 }}>{successSupport}</div>}
+        </div>
+        {primaryAdjustment && (
+          <div className="card card-soft" style={{ borderColor:C.blue+"28", background:"#0d1420" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:"0.45rem", marginBottom:"0.28rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em" }}>WHAT CHANGED</div>
+              <button className="btn" onClick={() => dismissAdjustment(primaryAdjustment.id)} style={{ border:"none", background:"none", padding:0, fontSize:"0.62rem", color:"#64748b", minWidth:18 }} aria-label="Dismiss coach adjustment notification">x</button>
+            </div>
+            <button className="btn" onClick={() => openAdjustmentDetail(primaryAdjustment)} style={{ border:"none", background:"none", padding:0, fontSize:"0.58rem", color:"#dbe7f6", textAlign:"left", justifyContent:"flex-start" }}>
+              {primaryAdjustment.icon} {primaryAdjustment.summary}
+            </button>
+            {primaryAdjustment.reason && <div style={{ marginTop:"0.24rem", fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>{primaryAdjustment.reason}</div>}
           </div>
         )}
-        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{todayProvenance}</div>
-        <div style={{ fontSize:"0.58rem", color:"#cbd5e1", lineHeight:1.55 }}>{readinessInfluence?.coachLine || conciseFocus}</div>
-        {displayWorkout?.intensityGuidance && (
-          <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.55 }}>
-            Intensity today: {displayWorkout.intensityGuidance}.
-          </div>
-        )}
-        {readinessInfluence && (
-          <div style={{ fontSize:"0.54rem", color:readinessTone, lineHeight:1.55 }}>
-            Readiness engine: {readinessInfluence.userVisibleLine}
-          </div>
-        )}
+        <div className="card card-soft" style={{ borderColor:"#2b3f5e", background:"#0d1420" }}>
+          <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.38rem" }}>NEXT</div>
+          <div style={{ fontSize:"0.62rem", color:"#e2e8f0", lineHeight:1.55 }}>Tomorrow: {tomorrowPreviewText}</div>
+          <div style={{ marginTop:"0.28rem", fontSize:"0.52rem", color:"#8fa5c8" }}>{primaryActionSummary}</div>
+        </div>
       </div>
 
-      {/* ── Expandable Workout Card ── */}
       <div
         onClick={toggleCard}
-        style={{ marginBottom:"0.5rem", background:"#0f172a", border:`1px solid ${cardColor}18`, borderRadius:12, padding:"1rem 1.1rem", cursor:"pointer", transition:"border-color 0.15s", userSelect:"none" }}
+        style={{ marginBottom:"0.75rem", background:"#0f172a", border:`1px solid ${cardColor}22`, boxShadow:`0 18px 42px ${cardColor}10`, borderRadius:16, padding:"1rem 1.05rem", cursor:"pointer", transition:"border-color 0.15s", userSelect:"none" }}
       >
-        {/* Card header row: badges + chevron */}
-        <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.55rem", flexWrap:"wrap" }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:"0.6rem", marginBottom:"0.7rem" }}>
+          <div style={{ display:"grid", gap:"0.22rem", minWidth:0 }}>
+            <div style={{ fontSize:"1.32rem", color:"#f8fafc", fontWeight:650, lineHeight:1.15 }}>{displayWorkout?.label || "Rest Day"}</div>
+            <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.55 }}>
+              {displayWorkout?.run?.t || (hasStrength ? `Strength ${strSess}` : displayWorkout?.type?.replaceAll("-", " ") || "Session")}
+              {displayWorkout?.strengthDuration ? ` - ${displayWorkout.strengthDuration}` : ""}
+              {displayWorkout?.run?.d ? ` - ${displayWorkout.run.d}` : ""}
+            </div>
+          </div>
+          <span style={{ fontSize:"0.72rem", color:"#475569", transform: cardExpanded ? "rotate(180deg)" : "rotate(0deg)", transition:"transform 0.2s", paddingTop:"0.15rem" }}>v</span>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.7rem", flexWrap:"wrap" }}>
           <span style={{ fontSize:"0.48rem", color:cardColor, background:cardColor+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500, letterSpacing:"0.04em" }}>
             {displayWorkout?.type?.replace(/[+-]/g," + ").toUpperCase() || "REST"}
           </span>
+          <span style={{ fontSize:"0.48rem", color:readinessTone, background:readinessTone+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:600, letterSpacing:"0.04em" }}>
+            {readinessBadgeLabel}
+          </span>
           <span onClick={e=>{ e.stopPropagation(); setEnvDraft({ equipment: environmentSelection?.equipment || "dumbbells", time: environmentSelection?.time || "30", scope: "today" }); setShowEnvEditor(true); }} style={{ fontSize:"0.48rem", color:"#94a3b8", background:"#1e293b", padding:"0.15rem 0.45rem", borderRadius:6, cursor:"pointer" }}>
-            {equipmentLabel} · {timeLabel}
+            {equipmentLabel} - {timeLabel}
           </span>
           {injuryBadge && (
             <span onClick={e=>{ e.stopPropagation(); setShowInjuryPanel(p=>!p); }} style={{ fontSize:"0.48rem", color:injuryBadge.color, background:injuryBadge.color+"15", padding:"0.15rem 0.45rem", borderRadius:6, cursor:"pointer" }}>
@@ -8404,71 +8416,66 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
               {displayWorkout.modifierBadge}
             </span>
           )}
-          {(displayWorkout?.variantBadge || readinessInfluence?.stateLabel || readinessInfluence?.badge) && (
+          {displayWorkout?.variantBadge && (
             <span style={{ fontSize:"0.48rem", color:C.green, background:C.green+"15", padding:"0.15rem 0.45rem", borderRadius:6 }}>
-              {displayWorkout?.variantBadge || readinessInfluence?.stateLabel || readinessInfluence?.badge}
+              {displayWorkout?.variantBadge}
             </span>
           )}
-          <span style={{ marginLeft:"auto", fontSize:"0.65rem", color:"#475569", transform: cardExpanded ? "rotate(180deg)" : "rotate(0deg)", transition:"transform 0.2s" }}>▾</span>
         </div>
-        {/* Key stats row (always visible) */}
         {displayWorkout?.run && (
-          <div style={{ display:"flex", gap:"1.2rem", marginBottom: hasStrength ? "0.35rem" : 0 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.6rem", marginBottom: hasStrength ? "0.35rem" : 0 }}>
             <div>
-              <div style={{ fontSize:"0.52rem", color:"#475569" }}>Distance</div>
-              <div className="mono" style={{ fontSize:"0.85rem", color:runColor, fontWeight:500 }}>{displayWorkout.run.d}</div>
+              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>WHAT</div>
+              <div className="mono" style={{ fontSize:"0.82rem", color:runColor, fontWeight:600 }}>{displayWorkout.run.d}</div>
             </div>
             <div>
-              <div style={{ fontSize:"0.52rem", color:"#475569" }}>Pace</div>
-              <div className="mono" style={{ fontSize:"0.85rem", color:runColor, fontWeight:500 }}>{runPace}/mi</div>
+              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>HOW HARD</div>
+              <div className="mono" style={{ fontSize:"0.82rem", color:runColor, fontWeight:600 }}>{runPace}/mi</div>
             </div>
             <div>
-              <div style={{ fontSize:"0.52rem", color:"#475569" }}>Type</div>
-              <div style={{ fontSize:"0.85rem", color:runColor, fontWeight:500 }}>{displayWorkout.run.t}</div>
+              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>SESSION</div>
+              <div style={{ fontSize:"0.82rem", color:runColor, fontWeight:600 }}>{displayWorkout.run.t}</div>
             </div>
           </div>
         )}
         {hasStrength && !displayWorkout?.run && (
-          <div style={{ display:"flex", gap:"1.2rem" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.6rem" }}>
             <div>
-              <div style={{ fontSize:"0.52rem", color:"#475569" }}>Session</div>
-              <div style={{ fontSize:"0.85rem", color:C.blue, fontWeight:500 }}>Strength {strSess}</div>
+              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>WHAT</div>
+              <div style={{ fontSize:"0.82rem", color:C.blue, fontWeight:600 }}>Strength {strSess}</div>
             </div>
             <div>
-              <div style={{ fontSize:"0.52rem", color:"#475569" }}>Track</div>
-              <div style={{ fontSize:"0.85rem", color:C.blue, fontWeight:500 }}>{strTrack === "hotel" ? "Gym" : "Home"}</div>
+              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>HOW HARD</div>
+              <div style={{ fontSize:"0.82rem", color:C.blue, fontWeight:600 }}>{displayWorkout?.intensityGuidance || "Controlled"}</div>
             </div>
             <div>
-              <div style={{ fontSize:"0.52rem", color:"#475569" }}>Duration</div>
-              <div className="mono" style={{ fontSize:"0.85rem", color:C.blue, fontWeight:500 }}>{displayWorkout?.strengthDuration || "20-30 min"}</div>
+              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>SETUP</div>
+              <div className="mono" style={{ fontSize:"0.82rem", color:C.blue, fontWeight:600 }}>{strTrack === "hotel" ? "Gym" : "Home"}</div>
             </div>
           </div>
         )}
         {hasStrength && displayWorkout?.run && (
-          <div style={{ fontSize:"0.56rem", color:"#94a3b8" }}>
-            + Strength {strSess} ({strTrack === "hotel" ? "Gym" : "Home"}) · {displayWorkout?.strengthDuration || "20-30 min"}
+          <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.45rem" }}>
+            + Strength {strSess} ({strTrack === "hotel" ? "Gym" : "Home"}) - {displayWorkout?.strengthDuration || "20-30 min"}
           </div>
         )}
 
-        {/* ── Expanded detail ── */}
         {cardExpanded && (
           <div style={{ marginTop:"0.75rem", borderTop:"1px solid #1e293b", paddingTop:"0.75rem" }} onClick={e => e.stopPropagation()}>
-            {/* Run section */}
             {displayWorkout?.run && (
               <div style={{ marginBottom: hasStrength ? "0.85rem" : 0 }}>
                 <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>RUN</div>
                 <div style={{ fontSize:"0.62rem", color:"#cbd5e1", lineHeight:1.65 }}>
-                  {displayWorkout.run.t} — {displayWorkout.run.d} at {runPace}/mi
+                  {displayWorkout.run.t} - {displayWorkout.run.d} at {runPace}/mi
                 </div>
                 {displayWorkout?.environmentNote && <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" }}>{displayWorkout.environmentNote}</div>}
                 {readinessInfluence?.recoveryLine && <div style={{ fontSize:"0.54rem", color:readinessTone, marginTop:"0.2rem" }}>{readinessInfluence.recoveryLine}</div>}
               </div>
             )}
 
-            {/* Strength section */}
             {hasStrength && (
               <div style={{ marginBottom: hasPrehab ? "0.85rem" : 0 }}>
-                <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>STRENGTH {strSess} — {strTrack === "hotel" ? "GYM" : "HOME"}</div>
+                <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>STRENGTH {strSess} - {strTrack === "hotel" ? "GYM" : "HOME"}</div>
                 <div style={{ display:"grid", gap:"0.3rem" }}>
                   {strExercises.map((ex, i) => (
                     <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.5rem", padding:"0.35rem 0", borderBottom: i < strExercises.length - 1 ? "1px solid #1e293b20" : "none" }}>
@@ -8479,9 +8486,9 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
                         const prescriptionBadge = mode === "bodyweight"
                           ? `${prescription?.sets || parseSetCount(ex?.sets)}x${prescription?.reps || parseRepTarget(ex?.sets)}`
                           : mode === "band" && prescription?.bandTension
-                          ? `${prescription.bandTension} · ${prescription?.sets || parseSetCount(ex?.sets)} sets`
+                          ? `${prescription.bandTension} - ${prescription?.sets || parseSetCount(ex?.sets)} sets`
                           : prescription?.workingWeight
-                          ? `${prescription?.workingWeight} lb · ${prescription?.sets || parseSetCount(ex?.sets)} sets`
+                          ? `${prescription?.workingWeight} lb - ${prescription?.sets || parseSetCount(ex?.sets)} sets`
                           : ex.sets;
                         return (
                           <>
@@ -8498,7 +8505,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
                 </div>
               </div>
             )}
-
             {/* Prehab section */}
             {hasPrehab && (
               <div>
@@ -8537,13 +8543,13 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
         )}
       </div>
 
-      {/* ── ACTIONS ── */}
-      <div style={{ fontSize:"0.5rem", color:"#475569", letterSpacing:"0.14em", marginBottom:"0.55rem", marginTop:"0.3rem" }}>ACTIONS</div>
+
+      <div style={{ fontSize:"0.5rem", color:"#475569", letterSpacing:"0.14em", marginBottom:"0.45rem", marginTop:"0.1rem" }}>PRIMARY ACTIONS</div>
 
       {/* Session modify buttons */}
-      <div style={{ marginBottom:"0.65rem", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" }}>
-        <button className="btn" onClick={()=>setSessionVariant(v=>v === "short" ? "standard" : "short")} style={{ fontSize:"0.5rem", color: sessionVariant === "short" ? "#0f172a" : C.green, background: sessionVariant === "short" ? C.green : "transparent", borderColor:C.green+"30", fontWeight: sessionVariant === "short" ? 600 : 400 }}>{sessionVariant === "short" ? "✓ Shortened to 20 min" : "Shorten to 20 min"}</button>
-        <button className="btn" onClick={()=>setSessionVariant(v=>v === "extended" ? "standard" : "extended")} style={{ fontSize:"0.5rem", color: sessionVariant === "extended" ? "#0f172a" : C.amber, background: sessionVariant === "extended" ? C.amber : "transparent", borderColor:C.amber+"35", fontWeight: sessionVariant === "extended" ? 600 : 400 }}>{sessionVariant === "extended" ? "✓ Extended (+15 min)" : "Extend session (+15 min)"}</button>
+      <div style={{ marginBottom:"0.75rem", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" }}>
+        <button className="btn" onClick={()=>setSessionVariant(v=>v === "short" ? "standard" : "short")} style={{ fontSize:"0.5rem", color: sessionVariant === "short" ? "#0f172a" : C.green, background: sessionVariant === "short" ? C.green : "transparent", borderColor:C.green+"30", fontWeight: sessionVariant === "short" ? 600 : 400 }}>{sessionVariant === "short" ? "Ã¢Å“â€œ Shortened to 20 min" : "Shorten to 20 min"}</button>
+        <button className="btn" onClick={()=>setSessionVariant(v=>v === "extended" ? "standard" : "extended")} style={{ fontSize:"0.5rem", color: sessionVariant === "extended" ? "#0f172a" : C.amber, background: sessionVariant === "extended" ? C.amber : "transparent", borderColor:C.amber+"35", fontWeight: sessionVariant === "extended" ? 600 : 400 }}>{sessionVariant === "extended" ? "Ã¢Å“â€œ Extended (+15 min)" : "Extend session (+15 min)"}</button>
         <button className="btn" onClick={async ()=>{
           if (tomorrowHasSession) { setShiftChoiceOpen(true); return; }
           const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
@@ -8603,7 +8609,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
         <div className="card card-soft" style={{ marginBottom:"0.75rem" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.35rem" }}>
             <div className="sect-title" style={{ color:C.amber }}>INJURY STATUS</div>
-            <button onClick={()=>setShowInjuryPanel(false)} style={{ background:"none", border:"none", color:"#64748b", cursor:"pointer", fontSize:"0.7rem" }}>×</button>
+            <button onClick={()=>setShowInjuryPanel(false)} style={{ background:"none", border:"none", color:"#64748b", cursor:"pointer", fontSize:"0.7rem" }}>Ãƒâ€”</button>
           </div>
           <select value={injuryArea} onChange={e=>setInjuryArea(e.target.value)} style={{ fontSize:"0.56rem", marginBottom:"0.35rem" }}>
             {AFFECTED_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
@@ -8614,13 +8620,15 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
             <button className="btn" onClick={()=>setInjuryState("moderate_pain", injuryArea)} style={{ color:C.amber, borderColor:C.amber+"35" }}>Moderate</button>
             <button className="btn" onClick={()=>setInjuryState("sharp_pain_stop", injuryArea)} style={{ color:C.red, borderColor:C.red+"35" }}>Sharp/Stop</button>
           </div>
-          <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>{injuryLevel.replaceAll("_"," ")} · {injuryRule.why}</div>
+          <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>{injuryLevel.replaceAll("_"," ")} Ã‚Â· {injuryRule.why}</div>
         </div>
       )}
 
-      {/* Quick check-in */}
-      <div className="card card-soft" style={{ marginBottom:"0.75rem" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>QUICK CHECK-IN</div>
+      <div className="card card-soft" style={{ marginBottom:"0.75rem", borderColor:C.green+"25", background:"#0d1410" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:"0.5rem", marginBottom:"0.45rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>LOG TODAY</div>
+          <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>compact check-in</div>
+        </div>
         {garminConnected && garminReadinessScore !== null && (
           <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginBottom:"0.35rem" }}>
             Garmin readiness {garminReadinessScore}/100 is primary today. Sliders are optional confirmation.
@@ -8743,11 +8751,11 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
         </div>
       </div>
 
-      {/* ── CONTEXT ── */}
-      <div style={{ fontSize:"0.5rem", color:"#475569", letterSpacing:"0.14em", marginBottom:"0.55rem", marginTop:"0.3rem" }}>CONTEXT</div>
+      {/* Ã¢â€â‚¬Ã¢â€â‚¬ CONTEXT Ã¢â€â‚¬Ã¢â€â‚¬ */}
+      <div style={{ display:"none" }}>CONTEXT</div>
 
       {/* Coach adjustments */}
-      {primaryAdjustment && (
+      {false && primaryAdjustment && (
         <div style={{ marginBottom:"0.65rem", padding:"0.15rem 0.05rem 0.1rem 0.15rem" }}>
           <div style={{ display:"grid", gap:"0.25rem" }}>
             <div style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:"0.35rem" }}>
@@ -8764,7 +8772,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
                 style={{ border:"none", background:"none", padding:0, fontSize:"0.62rem", color:"#64748b", minWidth:18 }}
                 aria-label="Dismiss coach adjustment notification"
               >
-                ×
+                Ãƒâ€”
               </button>
             </div>
             {primaryAdjustment.reason && (
@@ -8797,7 +8805,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
                     style={{ border:"none", background:"none", padding:0, fontSize:"0.6rem", color:"#64748b" }}
                     aria-label="Dismiss coach adjustment notification"
                   >
-                    ×
+                    Ãƒâ€”
                   </button>
                 </div>
                 {card.reason && (
@@ -8812,7 +8820,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       )}
 
       {/* Coach context */}
-      {contextLines.length > 0 && (
+      {false && contextLines.length > 0 && (
         <div style={{ marginBottom:"0.65rem", padding:"0.55rem 0.7rem", background:"#0d1117", borderRadius:8, display:"grid", gap:"0.25rem" }}>
           {contextLines.map((line, i) => (
             <div key={i} style={{ fontSize:"0.54rem", color: i === 0 ? C.amber : i === 1 ? C.green : C.blue }}>{line}</div>
@@ -8821,8 +8829,8 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       )}
 
       {/* Tomorrow preview */}
-      <div style={{ fontSize:"0.54rem", color:"#475569", marginBottom:"0.85rem", paddingLeft:"0.15rem" }}>
-        Tomorrow: {tomorrowWorkout?.label || "Rest"}{tomorrowWorkout?.run ? ` — ${tomorrowWorkout.run.d}` : ""}
+      <div style={{ display:"none" }}>
+        Tomorrow: {tomorrowWorkout?.label || "Rest"}{tomorrowWorkout?.run ? ` Ã¢â‚¬â€ ${tomorrowWorkout.run.d}` : ""}
       </div>
 
       {activeCoachAdjustment && (
@@ -8912,7 +8920,7 @@ function WorkoutBlock({ title, color, items, icon, routine = [], defaultOpen = f
   );
 }
 
-// ── PLAN TAB ──────────────────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ PLAN TAB Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 class ProgramTabErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -8977,7 +8985,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
         weekNumber: absoluteWeek,
         template,
         referenceTemplate: fallbackReferenceTemplate,
-        label: `${template?.phase || "BASE"} · Week ${absoluteWeek}`,
+        label: `${template?.phase || "BASE"} Ã‚Â· Week ${absoluteWeek}`,
         specificity: idx <= 1 ? "high" : idx <= 5 ? "medium" : "directional",
         kind: "plan",
         goals,
@@ -8998,7 +9006,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
         absoluteWeek,
         planWeek,
         template,
-        weekLabel: planWeek?.label || `${template?.phase || "BASE"} · Week ${absoluteWeek}`,
+        weekLabel: planWeek?.label || `${template?.phase || "BASE"} Ã‚Â· Week ${absoluteWeek}`,
       };
     });
   }, [currentPlanWeek, currentWeek, fallbackReferenceTemplate, goals, planComposer, momentum, learningLayer, weeklyCheckins, failureMode, environmentSelection]);
@@ -9102,7 +9110,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     : primaryCategory === "strength"
     ? "Strength progression"
     : "Endurance progression");
-  const phaseBanner = `${String(currentPhaseMeta?.name || currentPhase).replace(" Phase", "")} · ${phaseShortMeaning} · ${daysToShift ? `transitions in ${daysToShift} days.` : "current block active."}`;
+  const phaseBanner = `${String(currentPhaseMeta?.name || currentPhase).replace(" Phase", "")} Ã‚Â· ${phaseShortMeaning} Ã‚Â· ${daysToShift ? `transitions in ${daysToShift} days.` : "current block active."}`;
   const strengthProgress = deriveStrengthProgressTracker({ logs, goals, strengthLayer });
   const strengthGoalTracking = personalization?.strengthProgression?.tracking || {};
   const displayedStrengthProgress = useMemo(() => {
@@ -9143,6 +9151,17 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     ],
     limitation: hasWeeklyCheckinInput ? "" : "Weekly check-in input is limited.",
   });
+  const programTrust = buildTrustSummary({
+    explicitUserInput: hasWeeklyCheckinInput,
+    loggedActuals: Boolean(Object.keys(logs || {}).length),
+    deviceData: Boolean((deviceSyncAudit?.utilization || []).some((line) => !/none|unavailable/i.test(String(line || "")))),
+    inferredHeuristics: true,
+    limitation: hasWeeklyCheckinInput ? "" : "Weekly check-in input is limited.",
+    stale: Boolean(deviceSyncAudit?.readiness <= 0 && deviceSyncAudit?.garminRecentCount === 0 && deviceSyncAudit?.appleRecentCount === 0),
+  });
+  const programTrustTone = buildReviewBadgeTone(
+    programTrust.level === "grounded" ? "match" : programTrust.level === "partial" ? "changed" : "recovery"
+  );
   const plannedSessionsThisWeek = getProgramWeekSessions(currentWeek, (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek) || null).length;
   const currentWeekStart = new Date();
   currentWeekStart.setHours(0, 0, 0, 0);
@@ -9223,339 +9242,267 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
         nextWeekPlan: nextWeekType,
       })
     : "";
-  const viewedWeekIndex = availableProgramWeeks.indexOf(openWeek);
-  const viewedWeekLabel = (displayHorizon || []).find((h) => h?.absoluteWeek === openWeek)?.weekLabel || `Week ${openWeek || currentWeek}`;
+  const currentWeekRow = (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek) || null;
+  const currentWeekSessions = getProgramWeekSessions(currentWeek, currentWeekRow);
+  const futureWeekRows = (displayHorizon || []).filter((h) => Number(h?.absoluteWeek || 0) > currentWeek);
+  const activeGoalsList = (goals || []).filter((goal) => goal?.active);
+  const currentWeekLabel = currentWeekRow?.weekLabel || currentWeekModel?.label || `Week ${currentWeek}`;
+  const blockSummaryLine = currentWeekModel?.summary || planComposer?.blockIntent?.narrative || arbitration.allocationNarrative;
+  const hierarchyIntentBits = [
+    currentWeeklyIntent?.aggressionLevel ? String(currentWeeklyIntent.aggressionLevel).replaceAll("_", " ") : null,
+    currentWeeklyIntent?.recoveryBias ? `recovery ${String(currentWeeklyIntent.recoveryBias).replaceAll("_", " ")}` : null,
+    currentWeeklyIntent?.volumePct ? `volume ${currentWeeklyIntent.volumePct}%` : null,
+    currentWeeklyIntent?.nutritionEmphasis || null,
+  ].filter(Boolean);
 
   return (
     <div className="fi">
-      <div className="card card-soft" style={{ marginBottom:"0.85rem", borderColor:C.green+"2f" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>WEEKLY COACH BRIEF</div>
-        <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap", lineHeight:1.65 }}>{weeklyCoachBrief}</div>
-      </div>
-      <div className="card card-soft" style={{ marginBottom:"0.85rem", borderColor:C.blue+"30" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>DEVICE DATA UTILIZATION</div>
-        <div style={{ fontSize:"0.54rem", color:"#cbd5e1", lineHeight:1.65 }}>
-          {((deviceSyncAudit?.utilization || ["No device signals available yet."]) ?? []).map((line, idx) => (
-            <div key={idx}>• {line}</div>
-          ))}
-        </div>
-        <div style={{ marginTop:"0.25rem", fontSize:"0.52rem", color:"#8fa5c8" }}>
-          Plan mode signal: {deviceSyncAudit?.planMode || "normal"}{deviceSyncAudit?.reason ? ` · ${deviceSyncAudit.reason}` : ""}
-        </div>
-      </div>
-      <div className="card card-soft" style={{ marginBottom:"0.85rem", borderColor:C.blue+"35" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>WEEKLY CONSISTENCY ANCHOR</div>
-        <div className="coach-copy" style={{ fontSize:"0.56rem", lineHeight:1.62 }}>{weeklyConsistencyAnchor}</div>
-      </div>
-      {!!badWeekTriage && (
-        <div className="card card-soft" style={{ marginBottom:"0.85rem", borderColor:C.amber+"35" }}>
-          <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>WEEKLY TRIAGE DECISION</div>
-          <div className="coach-copy" style={{ fontSize:"0.56rem", lineHeight:1.62 }}>{badWeekTriage}</div>
-        </div>
-      )}
-      <div className="card card-strong card-hero" style={{ marginBottom:"0.85rem", borderColor:C.blue+"30" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>YOUR PROGRAM</div>
-        {safeRollingHorizon.length === 0 && (
-          <div style={{ fontSize:"0.54rem", color:"#9fb2d2", marginBottom:"0.35rem" }}>
-            Program horizon was empty, so a 4-week fallback view is shown.
-          </div>
-        )}
-        <button className="btn" onClick={()=>setPhaseExpanded(v=>!v)} style={{ width:"100%", justifyContent:"flex-start", textAlign:"left", fontSize:"0.56rem", color:"#dbe7f6", borderColor:"#2b3f5e", background:"rgba(9,16,30,0.45)", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", marginBottom:"0.35rem" }}>
-          {phaseBanner}
-        </button>
-        {phaseExpanded && (
-          <div style={{ maxHeight:"50vh", overflowY:"auto", border:"1px solid #243752", borderRadius:10, padding:"0.55rem 0.6rem", background:"rgba(8,14,26,0.75)", marginBottom:"0.45rem" }}>
-            <div style={{ fontSize:"0.66rem", color:"#f1f5f9", marginBottom:"0.25rem" }}>{currentPhaseMeta.name}</div>
-            <div style={{ fontSize:"0.56rem", color:"#b8cae6", lineHeight:1.6, marginBottom:"0.3rem" }}>{currentPhaseMeta.objective}</div>
-            <div style={{ fontSize:"0.54rem", color:"#8fa5c8", marginBottom:"0.2rem" }}>{daysToShift ? `Expected transition in ~${daysToShift} days.` : "No transition currently scheduled in horizon."}</div>
-            <div style={{ display:"grid", gap:"0.18rem", fontSize:"0.53rem", color:"#9fb2d2" }}>
-              {((phaseNarrative ?? []).slice(0, 5)).map((block, idx) => (
-                <div key={`${block.phase}-${idx}`}>• W{block.startWeek}–W{block.endWeek}: {block.name}</div>
-              ))}
+      <div style={{ display:"grid", gap:"0.85rem" }}>
+        <section className="card card-strong card-hero" style={{ borderColor:C.blue+"30" }}>
+          <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.35rem" }}>PLAN HIERARCHY</div>
+          <div style={{ display:"grid", gap:"0.8rem" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.6rem" }}>
+              <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.25rem" }}>ACTIVE GOALS</div>
+                <div style={{ display:"grid", gap:"0.22rem" }}>
+                  {activeGoalsList.length > 0 ? activeGoalsList.map((goal) => (
+                    <div key={goal.id || goal.name} style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{goal.name}</div>
+                  )) : (
+                    <div style={{ fontSize:"0.56rem", color:"#94a3b8" }}>No active goals configured.</div>
+                  )}
+                </div>
+              </div>
+              <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.25rem" }}>CURRENT BLOCK</div>
+                <div style={{ fontSize:"0.72rem", color:C.blue, fontWeight:600, lineHeight:1.2 }}>{currentPhaseMeta.name}</div>
+                <div style={{ fontSize:"0.55rem", color:"#cbd5e1", marginTop:"0.18rem", lineHeight:1.55 }}>{currentPhaseMeta.objective}</div>
+                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.24rem" }}>{daysToShift ? `Transition expected in about ${daysToShift} days.` : "Current block remains active in the visible horizon."}</div>
+              </div>
+              <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.25rem" }}>CURRENT WEEKLY INTENT</div>
+                <div style={{ fontSize:"0.64rem", color:"#e2e8f0", lineHeight:1.45 }}>{currentWeeklyIntent?.focus || currentWeekLabel}</div>
+                {!!hierarchyIntentBits.length && <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>{hierarchyIntentBits.join(" - ")}</div>}
+                {currentWeekModel?.adjusted && <div style={{ fontSize:"0.5rem", color:C.green, marginTop:"0.22rem" }}>Current week has active plan adjustments.</div>}
+              </div>
             </div>
-          </div>
-        )}
-        <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.7 }}>Current block: <span style={{ color:C.blue }}>{String(planComposer?.architecture || "balanced").replaceAll("_"," ")}</span></div>
-        {currentWeekModel && (
-          <div style={{ marginTop:"0.2rem", display:"grid", gap:"0.15rem" }}>
-            <div style={{ fontSize:"0.58rem", color:"#dbe7f6" }}>Week focus: <span style={{ color:C.green }}>{currentWeeklyIntent?.focus || currentWeekModel?.label || "Current week"}</span></div>
-            <div style={{ fontSize:"0.56rem", color:"#94a3b8" }}>
-              Week posture: {String(currentWeeklyIntent?.aggressionLevel || currentWeekModel?.status || "planned").replaceAll("_"," ")}
-              {currentWeekModel?.adjusted ? " · adjusted" : " · planned"}
-              {currentWeeklyIntent?.volumePct ? ` · volume ${currentWeeklyIntent.volumePct}%` : ""}
+            <div style={{ display:"grid", gridTemplateColumns:"1.15fr 0.85fr", gap:"0.7rem" }}>
+              <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>PLAN SUMMARY</div>
+                <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.65 }}>{blockSummaryLine}</div>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55, marginTop:"0.28rem" }}>{programProvenance}</div>
+              </div>
+              <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>GOAL ALLOCATION</div>
+                <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>Prioritized: {planComposer?.blockIntent?.prioritized || arbitration.goalAllocation.primary}</div>
+                <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>Maintained: {(planComposer?.blockIntent?.maintained || arbitration.goalAllocation.maintained || []).join(" - ") || "None"}</div>
+                <div style={{ fontSize:"0.54rem", color:C.amber, marginTop:"0.16rem", lineHeight:1.5 }}>Minimized: {planComposer?.blockIntent?.minimized || arbitration.goalAllocation.minimized || "None"}</div>
+                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.22rem", lineHeight:1.5 }}>Tradeoff: {arbitration.coachTradeoffLine || arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
+              </div>
             </div>
-            <div style={{ fontSize:"0.56rem", color:"#94a3b8" }}>
-              Recovery bias: {String(currentWeeklyIntent?.recoveryBias || "moderate").replaceAll("_"," ")} · Nutrition emphasis: {currentWeeklyIntent?.nutritionEmphasis || "balanced support"}
-            </div>
-            {Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0 && (
-              <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.6 }}>
-                Constraints: {currentWeekModel.constraints.slice(0, 3).join(" · ")}
+            <button className="btn" onClick={()=>setPhaseExpanded(v=>!v)} style={{ width:"100%", justifyContent:"space-between", fontSize:"0.55rem", color:"#dbe7f6", borderColor:"#2b3f5e", background:"rgba(9,16,30,0.45)" }}>
+              <span>{phaseBanner}</span>
+              <span>{phaseExpanded ? "Hide" : "View block arc"}</span>
+            </button>
+            {phaseExpanded && (
+              <div style={{ display:"grid", gap:"0.28rem", border:"1px solid #243752", borderRadius:12, padding:"0.7rem 0.8rem", background:"rgba(8,14,26,0.75)" }}>
+                {((phaseNarrative ?? []).slice(0, 5)).map((block, idx) => (
+                  <div key={`${block.phase}-${idx}`} style={{ display:"grid", gridTemplateColumns:"90px 1fr", gap:"0.45rem", alignItems:"start" }}>
+                    <div className="mono" style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>{`W${block.startWeek}-W${block.endWeek}`}</div>
+                    <div>
+                      <div style={{ fontSize:"0.58rem", color:"#e2e8f0" }}>{block.name}</div>
+                      <div style={{ fontSize:"0.52rem", color:"#94a3b8", marginTop:"0.08rem" }}>{block.objective}</div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
-        )}
-        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55, marginTop:"0.2rem" }}>{programProvenance}</div>
-        <div style={{ fontSize:"0.58rem", color:"#cbd5e1", marginTop:"0.25rem", lineHeight:1.7 }}>
-          {currentWeekModel?.summary || planComposer?.blockIntent?.narrative || arbitration.allocationNarrative}
-        </div>
-        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.2rem" }}>Prioritized: {planComposer?.blockIntent?.prioritized || arbitration.goalAllocation.primary}</div>
-        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginTop:"0.15rem" }}>Maintained: {(planComposer?.blockIntent?.maintained || arbitration.goalAllocation.maintained || []).join(" · ")}</div>
-        <div style={{ fontSize:"0.58rem", color:C.amber, marginTop:"0.15rem" }}>Minimized: {planComposer?.blockIntent?.minimized || arbitration.goalAllocation.minimized}</div>
-        <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.25rem" }}>
-          Strength inclusion: {planComposer?.strengthAllocation?.sessionsPerWeek || 1} session{(planComposer?.strengthAllocation?.sessionsPerWeek || 1) > 1 ? "s" : ""}/week · {planComposer?.strengthAllocation?.targetSessionDuration || arbitration.strengthInclusion.duration}
-        </div>
-        {planComposer?.aestheticAllocation?.active && (
-          <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.15rem" }}>
-            Aesthetic support: {planComposer.aestheticAllocation.dosage} ({planComposer.aestheticAllocation.weeklyCoreFinishers}/week target).
+        </section>
+
+        <section className="card card-action" style={{ borderColor:C.green+"38", background:"#0d1510" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.7rem" }}>
+            <div>
+              <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>CURRENT WEEK DETAIL</div>
+              <div style={{ fontSize:"1rem", color:"#f8fafc", fontWeight:650 }}>{currentWeekLabel}</div>
+              <div style={{ fontSize:"0.55rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Current committed plan week. Today can still reflect live PlanDay adjustments.</div>
+              <div style={{ fontSize:"0.5rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>{programTrust.summary}</div>
+            </div>
+            <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+              <div style={{ fontSize:"0.5rem", color:C.green, background:C.green+"14", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>CURRENT</div>
+              <div style={{ fontSize:"0.48rem", color:programTrustTone.color, background:programTrustTone.bg, padding:"0.18rem 0.5rem", borderRadius:999 }}>{programTrust.label}</div>
+            </div>
           </div>
-        )}
-        <div style={{ fontSize:"0.58rem", color:C.amber, marginTop:"0.25rem" }}>Tradeoff: {arbitration.coachTradeoffLine || arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
-        {goalState?.milestones && (
-          <div style={{ marginTop:"0.3rem", fontSize:"0.55rem", color:"#9eb2cf", lineHeight:1.6 }}>
-            30d: {goalState.milestones.day30} · 60d: {goalState.milestones.day60} · 90d: {goalState.milestones.day90}
+
+          <div style={{ display:"grid", gridTemplateColumns:"1.1fr 0.9fr", gap:"0.8rem", marginBottom:"0.75rem" }}>
+            <div style={{ display:"grid", gap:"0.45rem" }}>
+              <div style={{ fontSize:"0.6rem", color:"#dbe7f6", lineHeight:1.55 }}>{currentWeeklyIntent?.focus || "Current week plan"}</div>
+              <div style={{ fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 }}>{weeklyCoachBrief}</div>
+              <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>{weeklyConsistencyAnchor}</div>
+              {!!badWeekTriage && <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.55 }}>{badWeekTriage}</div>}
+              {Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0 && (
+                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>Constraints: {currentWeekModel.constraints.slice(0, 4).join(" - ")}</div>
+              )}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:"0.45rem" }}>
+              <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>STATUS</div>
+                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{String(currentWeekModel?.status || "planned").replaceAll("_", " ")}</div>
+              </div>
+              <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>COMPLETION</div>
+                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{sessionsCompletedThisWeek}/{Math.max(1, plannedSessionsThisWeek)}</div>
+              </div>
+              <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>WEEK TYPE</div>
+                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{nextWeekType}</div>
+              </div>
+              <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PLAN MODE</div>
+                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{deviceSyncAudit?.planMode || "normal"}</div>
+              </div>
+            </div>
           </div>
-        )}
-        <div style={{ marginTop:"0.45rem", display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.3rem", alignItems:"center" }}>
-          <select value={environmentSelection?.mode || personalization?.environmentConfig?.defaultMode || "Home"} onChange={e=>setEnvironmentMode({ mode:e.target.value, scope: "week" })} style={{ fontSize:"0.55rem" }}>
-            {(["Home","Gym","Travel"] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-          <button className="btn" onClick={()=>setEnvironmentMode({ mode: environmentSelection?.mode || "Home", scope: "week" })} style={{ fontSize:"0.5rem" }}>This week</button>
-          <button className="btn" onClick={()=>setEnvironmentMode({ mode: environmentSelection?.mode || "Home", scope: "base" })} style={{ fontSize:"0.5rem" }}>Set default</button>
-        </div>
-        <div style={{ marginTop:"0.45rem", borderTop:"1px solid #203047", paddingTop:"0.42rem" }}>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginBottom:"0.28rem", letterSpacing:"0.08em" }}>CALENDAR ENVIRONMENT SCHEDULE</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 90px auto", gap:"0.28rem", alignItems:"center" }}>
-            <input type="date" value={scheduleDraft.startDate} onChange={e=>setScheduleDraft(prev=>({ ...prev, startDate:e.target.value }))} />
-            <input type="date" value={scheduleDraft.endDate} onChange={e=>setScheduleDraft(prev=>({ ...prev, endDate:e.target.value }))} />
-            <select value={scheduleDraft.mode} onChange={e=>setScheduleDraft(prev=>({ ...prev, mode:e.target.value }))} style={{ fontSize:"0.54rem" }}>
-              {(["Travel","Home","Gym"] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <button className="btn" onClick={()=>{
-              if (!scheduleDraft.startDate || !scheduleDraft.endDate) return;
-              const next = [
-                ...scheduleEntries,
-                { id:`env_${Date.now()}`, startDate:scheduleDraft.startDate, endDate:scheduleDraft.endDate, mode:scheduleDraft.mode }
-              ].sort((a,b) => String(a.startDate).localeCompare(String(b.startDate)));
-              saveEnvironmentSchedule(next);
-              setScheduleDraft({ startDate:"", endDate:"", mode:"Travel" });
-            }} style={{ fontSize:"0.52rem" }}>Add</button>
-          </div>
-          <div style={{ marginTop:"0.24rem", fontSize:"0.51rem", color:"#7085a8" }}>Example: Apr 10–14 set to Travel once; Today auto-switches silently on those dates.</div>
-          {scheduleEntries.length > 0 && (
-            <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.22rem" }}>
-              {((scheduleEntries ?? []).slice(0, 6)).map((slot) => (
-                <div key={slot.id || `${slot.startDate}-${slot.endDate}-${slot.mode}`} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.25rem", alignItems:"center", fontSize:"0.53rem", color:"#dbe6f7" }}>
-                  <div>{slot.startDate} → {slot.endDate}: {slot.mode}</div>
-                  <button className="btn" onClick={()=>saveEnvironmentSchedule(scheduleEntries.filter(x => (x.id || `${x.startDate}-${x.endDate}-${x.mode}`) !== (slot.id || `${slot.startDate}-${slot.endDate}-${slot.mode}`)))} style={{ fontSize:"0.49rem", padding:"0.12rem 0.35rem" }}>remove</button>
+
+          <div style={{ marginBottom:"0.7rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.32rem" }}>THIS WEEK PLAN</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:"0.45rem" }}>
+              {(currentWeekSessions ?? []).map((session) => (
+                <div key={`current_${session.day}_${session.title}`} style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+                  <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>{session.day}</div>
+                  <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.12rem", display:"flex", alignItems:"center", gap:"0.28rem" }}>
+                    {session.icon && <InlineGlyph name={session.icon} color={C.green} size={12} />}
+                    <span>{session.title}</span>
+                  </div>
+                  <div style={{ fontSize:"0.54rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{session.detail || "Planned session"}</div>
+                  {session.live && <div style={{ fontSize:"0.48rem", color:C.green, marginTop:"0.18rem" }}>Live PlanDay view</div>}
                 </div>
               ))}
             </div>
-          )}
-        </div>
-      </div>
-
-      <div className="card card-soft card-action" style={{ marginBottom:"0.85rem" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.45rem" }}>
-          <div className="sect-title" style={{ color:C.green }}>THIS WEEK CHECK-IN</div>
-          <div className={weeklyGoalHit ? "pulse-ring" : ""} style={{ width:40, height:40, borderRadius:999, display:"grid", placeItems:"center", background:`conic-gradient(${C.green} ${weeklyProgress * 3.6}deg, #25334a 0deg)`, padding:3 }}>
-            <div className="mono" style={{ width:"100%", height:"100%", borderRadius:999, display:"grid", placeItems:"center", background:"#0f172a", fontSize:"0.52rem", color:weeklyGoalHit ? C.green : "#94a3b8" }}>{weeklyProgress}%</div>
           </div>
-        </div>
-        <div style={{ display:"grid", gap:"0.35rem", fontSize:"0.57rem" }}>
-          {([ ["energy", "Energy"], ["stress", "Stress"], ["confidence", "Confidence"] ] ?? []).map(([k, label]) => (
-            <div key={k} style={{ display:"grid", gridTemplateColumns:"120px 1fr", alignItems:"center", gap:"0.5rem" }}>
-              <div style={{ color:"#94a3b8" }}>{label}</div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:"0.25rem" }}>
-                {([1,2,3,4,5] ?? []).map(n => (
-                  <button key={n} className="btn" onClick={()=>setMiniWeekly(prev=>({ ...prev, [k]: n }))} style={{ fontSize:"0.53rem", padding:"3px 0", borderColor:Number(miniWeekly[k])===n ? C.green : "#1e293b", color:Number(miniWeekly[k])===n ? C.green : "#64748b" }}>{n}</button>
-                ))}
-              </div>
-            </div>
-          ))}
-          <button className="btn btn-primary" onClick={()=>saveWeeklyCheckin(currentWeek, miniWeekly)} style={{ width:"fit-content", fontSize:"0.55rem" }}>SAVE</button>
-        </div>
-      </div>
 
-      <div className="card card-subtle" style={{ marginBottom:"0.85rem" }}>
-        <div className="sect-title" style={{ color:C.purple, marginBottom:"0.38rem" }}>PLAN ARC NARRATIVE</div>
-        <div style={{ display:"grid", gap:"0.35rem" }}>
-          {(phaseNarrative ?? []).map((b, i) => (
-            <div key={`${b.phase}_${i}`} style={{ display:"grid", gridTemplateColumns:"88px 1fr", gap:"0.45rem", alignItems:"start", background:"#0f172a", border:"1px solid #20314a", borderRadius:9, padding:"0.45rem 0.5rem" }}>
-              <div className="mono" style={{ fontSize:"0.5rem", color:"#9db2d2" }}>W{b.startWeek}–W{b.endWeek}</div>
-              <div>
-                <div style={{ fontSize:"0.6rem", color:"#e6efff" }}>{b.name}</div>
-                <div style={{ fontSize:"0.54rem", color:"#8fa3c2", marginTop:"0.1rem" }}>{b.objective}</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.7rem" }}>
+            <div style={{ borderTop:"1px solid #1f3026", paddingTop:"0.6rem" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.35rem" }}>
+                <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>WEEK CHECK-IN</div>
+                <div className={weeklyGoalHit ? "pulse-ring" : ""} style={{ width:38, height:38, borderRadius:999, display:"grid", placeItems:"center", background:`conic-gradient(${C.green} ${weeklyProgress * 3.6}deg, #25334a 0deg)`, padding:3 }}>
+                  <div className="mono" style={{ width:"100%", height:"100%", borderRadius:999, display:"grid", placeItems:"center", background:"#0f172a", fontSize:"0.5rem", color:weeklyGoalHit ? C.green : "#94a3b8" }}>{weeklyProgress}%</div>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="card card-subtle" style={{ marginBottom:"0.85rem" }}>
-        <button className="btn" onClick={()=>setStrengthTrackerOpen(v=>!v)} style={{ width:"100%", justifyContent:"space-between", fontSize:"0.56rem", color:C.blue, borderColor:C.blue+"30" }}>
-          <span>STRENGTH PROGRESSION TRACKER</span>
-          <span>{strengthTrackerOpen ? "Hide" : "View"}</span>
-        </button>
-        {strengthTrackerOpen && (
-          <div style={{ marginTop:"0.4rem", display:"grid", gap:"0.3rem" }}>
-            {(displayedStrengthProgress ?? []).map((lift) => (
-              <div key={lift.key} style={{ border:"1px solid #20314a", borderRadius:9, background:"#0f172a", padding:"0.4rem 0.45rem" }}>
-                {(() => {
-                  const tracked = strengthGoalTracking?.[lift.key] || {};
-                  const goalWeight = tracked?.goalWeight || lift.goal || null;
-                  const currentWorking = tracked?.currentWorkingWeight || lift.current || null;
-                  const rate = Number(tracked?.progressionRateLbsPerWeek || 0);
-                  const projected = tracked?.projectedDateToGoal || lift.projected || "TBD";
-                  return (
-                <button className="btn" onClick={()=>setOpenLiftKey(prev => prev === lift.key ? "" : lift.key)} style={{ width:"100%", justifyContent:"space-between", fontSize:"0.55rem", color:"#dbe7f6", borderColor:"transparent", padding:"0.1rem 0" }}>
-                  <span style={{ whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{lift.label}: {currentWorking} → {goalWeight || "goal?"} · {rate >= 0 ? "+" : ""}{rate} lb/wk · {projected}</span>
-                </button>
-                  );
-                })()}
-                {openLiftKey === lift.key && (
-                  <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#9fb2d2", display:"grid", gap:"0.15rem" }}>
-                    {(() => {
-                      const tracked = strengthGoalTracking?.[lift.key] || {};
-                      return (
-                        <>
-                          <div>Current working weight: {tracked?.currentWorkingWeight || lift.current || "N/A"} lb</div>
-                          <div>Goal weight: {tracked?.goalWeight || lift.goal || "Not set in active goal text (e.g., \"bench 225\")"}</div>
-                          <div>Progression rate: {Number(tracked?.progressionRateLbsPerWeek || 0)} lb/week (last ~4 weeks)</div>
-                          <div>Projected date to goal: {tracked?.projectedDateToGoal || "Insufficient trend data"}</div>
-                          {tracked?.deadlineConflict && <div style={{ color:C.amber }}>Timeline risk: {tracked?.deadlineMessage}</div>}
-                        </>
-                      );
-                    })()}
-                    {(((lift.sessions ?? []).length ? lift.sessions : [{ date: new Date().toISOString().split("T")[0], note: "No recent logged sessions yet.", load: null }]) ?? []).map((s, idx) => (
-                      <div key={`${lift.key}_${idx}`}>• {s.date}: {s.load ? `${s.load} lb` : "Logged"} {s.note ? `— ${sanitizeDisplayText(s.note)}` : ""}</div>
-                    ))}
+              <div style={{ display:"grid", gap:"0.32rem" }}>
+                {([["energy", "Energy"], ["stress", "Stress"], ["confidence", "Confidence"]] ?? []).map(([k, label]) => (
+                  <div key={k} style={{ display:"grid", gridTemplateColumns:"110px 1fr", alignItems:"center", gap:"0.45rem" }}>
+                    <div style={{ fontSize:"0.53rem", color:"#94a3b8" }}>{label}</div>
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:"0.22rem" }}>
+                      {([1,2,3,4,5] ?? []).map((n) => (
+                        <button key={n} className="btn" onClick={()=>setMiniWeekly(prev=>({ ...prev, [k]: n }))} style={{ fontSize:"0.5rem", padding:"3px 0", borderColor:Number(miniWeekly[k])===n ? C.green : "#1e293b", color:Number(miniWeekly[k])===n ? C.green : "#64748b" }}>{n}</button>
+                      ))}
+                    </div>
                   </div>
-                )}
+                ))}
+                <button className="btn btn-primary" onClick={()=>saveWeeklyCheckin(currentWeek, miniWeekly)} style={{ width:"fit-content", fontSize:"0.54rem" }}>Save weekly check-in</button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            </div>
 
-      {(goalBuckets?.ongoing || []).length > 0 && (
-        <div className="card card-subtle" style={{ marginBottom:"0.85rem", borderColor:C.green+"28" }}>
-          <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>ONGOING GOAL PROGRESS</div>
-          <div style={{ display:"grid", gap:"0.28rem" }}>
-            {((goalBuckets?.ongoing || []) ?? []).map((g) => {
-              const isWeight = g.category === "body_comp";
-              const isStrength = g.category === "strength";
-              const target = g.measurableTarget || "Goal";
-              const trend = isWeight ? "weekly Sunday check-in trend" : isStrength ? "lift log trend" : "consistency trend";
+            <div style={{ borderTop:"1px solid #1f3026", paddingTop:"0.6rem", display:"grid", gap:"0.45rem" }}>
+              <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>WEEK SETTINGS</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.3rem", alignItems:"center" }}>
+                <select value={environmentSelection?.mode || personalization?.environmentConfig?.defaultMode || "Home"} onChange={e=>setEnvironmentMode({ mode:e.target.value, scope: "week" })} style={{ fontSize:"0.55rem" }}>
+                  {(["Home","Gym","Travel"] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <button className="btn" onClick={()=>setEnvironmentMode({ mode: environmentSelection?.mode || "Home", scope: "week" })} style={{ fontSize:"0.5rem" }}>This week</button>
+                <button className="btn" onClick={()=>setEnvironmentMode({ mode: environmentSelection?.mode || "Home", scope: "base" })} style={{ fontSize:"0.5rem" }}>Default</button>
+              </div>
+              <div style={{ fontSize:"0.51rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                Device input: {(deviceSyncAudit?.utilization || ["No device signals available yet."]).slice(0, 2).join(" ")}
+              </div>
+              <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>
+                Data use: {programTrust.sourceLine}
+              </div>
+              {scheduleEntries.length > 0 && (
+                <div style={{ fontSize:"0.51rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                  Upcoming environment schedule: {scheduleEntries.slice(0, 2).map((slot) => `${slot.startDate} to ${slot.endDate} ${slot.mode}`).join(" - ")}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className="card card-subtle" style={{ borderColor:C.blue+"26" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.7rem" }}>
+            <div>
+              <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>FUTURE WEEK PREVIEW</div>
+              <div style={{ fontSize:"0.58rem", color:"#8fa5c8", lineHeight:1.55 }}>Projected structure only. Future weeks are planning previews, not committed day-level prescriptions.</div>
+            </div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", background:"#1e293b", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>PROJECTED</div>
+          </div>
+
+          <div style={{ display:"grid", gap:"0.55rem" }}>
+            {futureWeekRows.map((h) => {
+              const w = h?.template || null;
+              const adaptive = adjustedWeekMap[h.absoluteWeek] || { adjusted: w, changed: [] };
+              const weekSessions = getProgramWeekSessions(h.absoluteWeek, h);
+              const weekIntent = h?.planWeek?.weeklyIntent || (h?.planWeek ? {
+                focus: h.planWeek.focus,
+                aggressionLevel: h.planWeek.aggressionLevel,
+                recoveryBias: h.planWeek.recoveryBias,
+                nutritionEmphasis: h.planWeek.nutritionEmphasis,
+              } : null);
+              const isExpanded = openWeek === h.absoluteWeek;
+              const hasCanonicalSessions = Object.values(h?.planWeek?.sessionsByDay || {}).some(Boolean);
+              const projectionLabel = h.kind === "recovery"
+                ? "Recovery placeholder"
+                : h.kind === "next_goal_prompt"
+                ? "Next-goal placeholder"
+                : hasCanonicalSessions
+                ? "Projected week"
+                : "Directional preview";
+              const previewTone = hasCanonicalSessions ? C.blue : C.amber;
+              const collapsedSummary = weekSessions.length > 0
+                ? weekSessions.slice(0, 3).map((session) => `${session.day} ${session.title}`).join(" - ")
+                : (h?.focus || "Preview unavailable");
               return (
-                <div key={g.id} style={{ border:"1px solid #22324a", borderRadius:8, background:"#0e1727", padding:"0.42rem 0.5rem" }}>
-                  <div style={{ fontSize:"0.58rem", color:"#e2e8f0" }}>{g.name}</div>
-                  <div style={{ fontSize:"0.54rem", color:"#9fb2d2", marginTop:"0.12rem" }}>{(g.currentValue || "Current")} → {target}</div>
-                  <div style={{ fontSize:"0.5rem", color:"#7187a8", marginTop:"0.1rem" }}>Trend: {trend}</div>
+                <div key={h.absoluteWeek} className="card card-subtle" style={{ borderColor:"#22324a", background:"#0d1117" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.6rem", flexWrap:"wrap" }}>
+                    <div>
+                      <div style={{ fontSize:"0.74rem", color:"#f8fafc", fontWeight:600 }}>{h.weekLabel || `${w?.phase || "Plan"} - Week ${h.absoluteWeek}`}</div>
+                      <div style={{ fontSize:"0.5rem", color:previewTone, marginTop:"0.12rem", letterSpacing:"0.08em" }}>{projectionLabel}</div>
+                      {weekIntent?.focus && <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.18rem" }}>{weekIntent.focus}</div>}
+                      <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.55 }}>
+                        {hasCanonicalSessions ? "Built from PlanWeek structure. Day details may still change when that week becomes current." : "Direction derived from templates and current planning inputs. Day detail is not final yet."}
+                      </div>
+                    </div>
+                    <button className="btn" onClick={()=>setOpenWeek(openWeek===h.absoluteWeek ? null : h.absoluteWeek)} style={{ fontSize:"0.5rem" }}>{isExpanded ? "Hide" : "View"}</button>
+                  </div>
+
+                  {!isExpanded && <div style={{ fontSize:"0.55rem", color:"#94a3b8", marginTop:"0.35rem", lineHeight:1.6 }}>{collapsedSummary}</div>}
+
+                  {isExpanded && (
+                    <div style={{ marginTop:"0.45rem", display:"grid", gap:"0.4rem" }}>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:"0.4rem" }}>
+                        {(weekSessions ?? []).map((session) => (
+                          <div key={`${h.absoluteWeek}_${session.day}_${session.title}`} style={{ border:"1px solid #1e293b", borderRadius:9, background:"#0f172a", padding:"0.45rem 0.5rem" }}>
+                            <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>{session.day}</div>
+                            <div style={{ fontSize:"0.57rem", color:"#e2e8f0", marginTop:"0.12rem", display:"flex", alignItems:"center", gap:"0.25rem" }}>
+                              {session.icon && <InlineGlyph name={session.icon} color={previewTone} size={12} />}
+                              <span>{session.title}</span>
+                            </div>
+                            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{session.detail || "Planned session"}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {adaptive.changed?.length > 0 && (
+                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                          {adaptive.changed.slice(0,3).map((line, idx) => <div key={idx}>- {line}</div>)}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
-        </div>
-      )}
-
-      <div className="card card-subtle" style={{ marginBottom:"0.85rem", borderColor:C.blue+"25" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>PLAN NAVIGATION</div>
-        <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.4rem", alignItems:"center" }}>
-          <button className="btn" disabled={viewedWeekIndex <= 0} onClick={()=>setOpenWeek(availableProgramWeeks[Math.max(0, viewedWeekIndex - 1)] ?? openWeek)} style={{ fontSize:"0.52rem", opacity:viewedWeekIndex <= 0 ? 0.45 : 1 }}>Prev</button>
-          <div style={{ fontSize:"0.58rem", color:"#dbe7f6", textAlign:"center" }}>Viewing {viewedWeekLabel}</div>
-          <button className="btn" disabled={viewedWeekIndex < 0 || viewedWeekIndex >= availableProgramWeeks.length - 1} onClick={()=>setOpenWeek(availableProgramWeeks[Math.min(availableProgramWeeks.length - 1, viewedWeekIndex + 1)] ?? openWeek)} style={{ fontSize:"0.52rem", opacity:viewedWeekIndex < 0 || viewedWeekIndex >= availableProgramWeeks.length - 1 ? 0.45 : 1 }}>Next</button>
-        </div>
+        </section>
       </div>
-
-      <div style={{ display:"grid", gap:"0.65rem" }}>
-        {(displayHorizon ?? []).map((h) => {
-          const w = h?.template || null;
-          if (h.kind === "recovery" || h.kind === "next_goal_prompt") {
-            return (
-              <div key={h.absoluteWeek} className="card card-subtle" style={{ borderColor:"#2a3b54", background:"#0d1320" }}>
-                <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.1rem", color:h.kind === "recovery" ? C.blue : C.amber, letterSpacing:"0.06em" }}>{h.weekLabel}</div>
-                <div style={{ fontSize:"0.58rem", color:"#9fb2d2", marginTop:"0.22rem", lineHeight:1.7 }}>{h.focus}</div>
-              </div>
-            );
-          }
-          if (!w) {
-            return (
-              <div key={h.absoluteWeek} className="card card-subtle" style={{ borderColor:"#2a3b54", background:"#0d1320" }}>
-                <div style={{ fontSize:"0.58rem", color:"#9fb2d2" }}>Program week unavailable.</div>
-              </div>
-            );
-          }
-          const adaptive = adjustedWeekMap[h.absoluteWeek] || { adjusted: w, changed: [] };
-          const weekSessions = getProgramWeekSessions(h.absoluteWeek, h);
-          const weekIntent = h?.planWeek?.weeklyIntent || (h?.planWeek ? {
-            focus: h.planWeek.focus,
-            aggressionLevel: h.planWeek.aggressionLevel,
-            recoveryBias: h.planWeek.recoveryBias,
-            nutritionEmphasis: h.planWeek.nutritionEmphasis,
-          } : null);
-          const showingLiveToday = Boolean(h.absoluteWeek === currentWeek && weekSessions.some((session) => session?.live));
-          const isCurrent = h.absoluteWeek === currentWeek;
-          const isExpanded = openWeek === h.absoluteWeek;
-          const mon = { t: weekSessions?.[0]?.title || "Plan", d: weekSessions?.[0]?.detail || "Planned session" };
-          const thu = { t: weekSessions?.[1]?.title || weekSessions?.[0]?.title || "Plan", d: weekSessions?.[1]?.detail || weekSessions?.[0]?.detail || "Planned session" };
-          const fri = { t: weekSessions?.[2]?.title || weekSessions?.[1]?.title || "Plan", d: weekSessions?.[2]?.detail || weekSessions?.[1]?.detail || "Planned session" };
-          const sat = { t: weekSessions?.[3]?.title || weekSessions?.[2]?.title || "Plan", d: weekSessions?.[3]?.detail || weekSessions?.[2]?.detail || "Planned session" };
-          const isNear = h.slot >= 2 && h.slot <= 4;
-          const detailLevel = isExpanded ? "full" : (isCurrent || isNear ? "medium" : "directional");
-          const boxTone = isCurrent ? C.green : C.blue;
-          const collapsedSummary = weekSessions.length > 0
-            ? weekSessions.slice(0, 3).map((session) => `${session.day} ${session.title}${session.detail ? ` (${session.detail})` : ""}`).join(" · ")
-            : "Program week unavailable.";
-          return (
-            <div key={h.absoluteWeek} className={`card ${isCurrent ? "card-action" : "card-subtle"}`} style={{ borderColor:isCurrent ? C.green+"55" : "#1e293b", background:isCurrent ? "#0a160f" : "#0d1117" }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.5rem", marginBottom:"0.35rem", flexWrap:"wrap" }}>
-                <div>
-                  <div style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:"1.15rem", color:boxTone, letterSpacing:"0.06em" }}>{h.weekLabel || `${w.phase} · Week ${h.absoluteWeek}`}</div>
-                  <div style={{ fontSize:"0.56rem", color:"#64748b" }}>{isExpanded ? "Expanded" : isCurrent ? "Current week" : "Preview"}</div>
-                  {weekIntent?.focus && <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.1rem" }}>{weekIntent.focus}</div>}
-                  {weekIntent?.aggressionLevel && <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.08rem" }}>Posture: {String(weekIntent.aggressionLevel).replaceAll("_"," ")}{h?.planWeek?.adjusted ? " · adjusted" : ""}</div>}
-                  {showingLiveToday && <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Today reflects your current daily adjustment.</div>}
-                </div>
-                <button className="btn" onClick={()=>setOpenWeek(openWeek===h.absoluteWeek?null:h.absoluteWeek)} style={{ fontSize:"0.52rem" }}>{isExpanded?"Hide":"View"}</button>
-              </div>
-
-              {isExpanded && (
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.45rem" }}>
-                  {(weekSessions ?? []).map((session) => (
-                    <div key={`${h.absoluteWeek}_${session.day}_${session.title}`} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
-                      <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.08em" }}>{session.day}</div>
-                      <div style={{ fontSize:"0.58rem", color:"#e2e8f0", marginTop:"0.1rem", display:"flex", alignItems:"center", gap:"0.28rem" }}>
-                        {session.icon && <InlineGlyph name={session.icon} color={boxTone} size={12} />}
-                        <span>{session.title}</span>
-                      </div>
-                      <div style={{ fontSize:"0.55rem", color:boxTone }}>{session.detail || "Planned session"}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {detailLevel === "medium" && (
-                <div style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.7 }}>
-                  {mon.t} ({mon.d}) · {thu.t} ({thu.d}) · {sat.t} ({sat.d})
-                </div>
-              )}
-
-              {detailLevel === "directional" && (
-                <div style={{ fontSize:"0.58rem", color:"#94a3b8", lineHeight:1.7 }}>
-                  {collapsedSummary}
-                </div>
-              )}
-
-              {openWeek === h.absoluteWeek && adaptive.changed?.length > 0 && (
-                <div style={{ marginTop:"0.4rem", fontSize:"0.55rem", color:"#64748b", lineHeight:1.6 }}>
-                  {adaptive.changed.slice(0,3).map((line, i)=><div key={i}>• {line}</div>)}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
       {Object.keys(paceOverrides || {}).length > 0 && (
         <div style={{ marginTop:"0.75rem", padding:"0.6rem 0.8rem", background:"#0d1117", border:`1px solid ${C.amber}30`, borderRadius:8, fontSize:"0.58rem", color:C.amber }}>
           Paces were adjusted from recent execution. <button className="btn" onClick={() => setPaceOverrides({})} style={{ marginLeft:"0.4rem", fontSize:"0.5rem", color:C.amber, borderColor:C.amber+"30" }}>Reset</button>
@@ -9565,7 +9512,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   );
 }
 
-// ── LOG TAB (POLISHED) ──────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ LOG TAB (POLISHED) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "" }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const plannedWorkout = planDay?.base?.training || legacyTodayWorkout;
@@ -9574,7 +9521,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     "1": { title: "Rough", tip: "Rest, eat, sleep. Tomorrow is a new session." },
     "2": { title: "Tired", tip: "Manageable. Log it and move on." },
     "3": { title: "Solid", tip: "Standard execution. Building as planned." },
-    "4": { title: "Strong", tip: "Good day. Note it — the coach will." },
+    "4": { title: "Strong", tip: "Good day. Note it Ã¢â‚¬â€ the coach will." },
     "5": { title: "Best", tip: "Flag this. Worth knowing when these happen." },
   };
   const today = new Date().toISOString().split("T")[0];
@@ -9614,6 +9561,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         sourceType: "plan_day_engine",
         durability: PRESCRIBED_DAY_DURABILITY.durable,
         reason: "today_plan_capture",
+        validateInvariant: validatePrescribedDayHistoryInvariant,
       });
     }
     const legacySnapshotRecord = buildLegacyPlannedDayRecordFromSnapshot({ dateKey, snapshot: entry?.prescribedPlanSnapshot || null });
@@ -9624,6 +9572,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         sourceType: "legacy_log_snapshot",
         durability: PRESCRIBED_DAY_DURABILITY.legacyBackfill,
         reason: "legacy_snapshot_backfill",
+        validateInvariant: validatePrescribedDayHistoryInvariant,
       });
     }
     const dateObj = new Date(`${dateKey}T12:00:00`);
@@ -9642,6 +9591,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       sourceType: "legacy_schedule_helper",
       durability: PRESCRIBED_DAY_DURABILITY.fallbackDerived,
       reason: "schedule_backfill",
+      validateInvariant: validatePrescribedDayHistoryInvariant,
     });
   };
   const getPlanComparison = (dateKey, entry = null) => {
@@ -9691,7 +9641,21 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     }),
     [selectedReviewDate, logs, dailyCheckins, plannedDayRecords, nutritionActualLogs, todayPlannedDayRecord]
   );
-  useEffect(() => {
+  const buildReviewBadgeTone = (kind = "") => {
+    const value = String(kind || "").toLowerCase();
+    if (/match|completed_as_planned|on_track|followed|high/.test(value)) return { color: C.green, bg: C.green+"14" };
+    if (/modified|partial|changed|deviated|minor/.test(value)) return { color: C.blue, bg: C.blue+"14" };
+    if (/skip|miss|unknown|missing|material|low|not_logged/.test(value)) return { color: C.amber, bg: C.amber+"14" };
+    return { color: "#94a3b8", bg: "#1e293b" };
+  };
+  const sanitizeStatusLabel = (value = "", fallback = "Unknown") => {
+    const textValue = String(value || "").replaceAll("_", " ").trim();
+    return sanitizeDisplayText(textValue || fallback);
+  };
+  const summarizeExecutionDelta = (comparison = {}) => {
+    if (!comparison?.hasPlannedDay) return "No planned day available for comparison.";
+    return `${sanitizeStatusLabel(comparison?.completionKind)} - ${sanitizeStatusLabel(comparison?.differenceKind)}`;
+  };  useEffect(() => {
     if (!reviewDateKeys.length) return;
     if (!reviewDateKeys.includes(selectedReviewDate)) setSelectedReviewDate(reviewDateKeys[0]);
   }, [reviewDateKeys, selectedReviewDate]);
@@ -9729,7 +9693,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     : consistencyDelta < -3
     ? "down"
     : "flat";
-  const consistencyTrendArrow = consistencyTrend === "up" ? "↑" : consistencyTrend === "down" ? "↓" : "→";
+  const consistencyTrendArrow = consistencyTrend === "up" ? "Ã¢â€ â€˜" : consistencyTrend === "down" ? "Ã¢â€ â€œ" : "Ã¢â€ â€™";
   const lifetimeLoggedCount = history.filter(([dateKey, l]) => {
     const status = resolveActualStatus({ dateKey, dailyCheckin: dailyCheckins?.[dateKey] || {}, logEntry: l || {} });
     return ["completed_as_planned", "completed_modified", "skipped", "partial_completed"].includes(status) || Number(l?.miles || 0) > 0 || String(l?.type || "").length > 0;
@@ -9755,6 +9719,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     : "Execution is the current limiter. Simplified week is active.";
   const cleanHistorySessionName = (value = "") => sanitizeDisplayText(String(value || "Session").replace(/\s*\([^)]*\)/g, "").replace(/\s{2,}/g, " ").trim() || "Session");
   const openHistoryEntry = (date, log = {}) => {
+    const firstExerciseRecord = getExercisePerformanceRecordsForLog(log || {}, { dateKey: date })[0] || null;
     setSelectedReviewDate(date);
     setDetailed({
       date,
@@ -9762,8 +9727,8 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       miles: log?.miles ?? "",
       pace: log?.pace ?? "",
       runTime: log?.runTime ?? "",
-      reps: log?.reps ?? log?.pushups ?? log?.strengthPerformance?.[0]?.repsCompleted ?? "",
-      weight: log?.weight ?? log?.strengthPerformance?.[0]?.weightUsed ?? "",
+      reps: log?.reps ?? log?.pushups ?? firstExerciseRecord?.actual?.reps ?? log?.strengthPerformance?.[0]?.repsCompleted ?? "",
+      weight: log?.weight ?? firstExerciseRecord?.actual?.weight ?? firstExerciseRecord?.prescribed?.weight ?? log?.strengthPerformance?.[0]?.weightUsed ?? "",
       notes: log?.notes ?? "",
       feel: String(log?.feel || "3"),
       location: log?.location || "home",
@@ -9865,7 +9830,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Pick the fast path, or add details if you need them.</div>
         <div style={{ display:"grid", gap:"0.4rem" }}>
           <button className="btn btn-primary" onClick={savePrescribed} style={{ fontSize:"0.55rem" }}>Mark Prescribed Workout Complete</button>
-          {saved && <div className="completion-pop" style={{ fontSize:"0.57rem", color:C.green, display:"inline-flex", alignItems:"center", gap:"0.3rem", background:"rgba(39,245,154,0.1)", border:"1px solid rgba(39,245,154,0.38)", borderRadius:999, padding:"0.18rem 0.5rem" }}><span className="mono">✓</span> {savedMsg}</div>}
+          {saved && <div className="completion-pop" style={{ fontSize:"0.57rem", color:C.green, display:"inline-flex", alignItems:"center", gap:"0.3rem", background:"rgba(39,245,154,0.1)", border:"1px solid rgba(39,245,154,0.38)", borderRadius:999, padding:"0.18rem 0.5rem" }}><span className="mono">Ã¢Å“â€œ</span> {savedMsg}</div>}
         </div>
       </div>
 
@@ -9879,7 +9844,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
           <input value={detailed.runTime} onChange={e=>setDetailed({ ...detailed, runTime:e.target.value })} placeholder="Run time" />
           <input value={detailed.reps} onChange={e=>setDetailed({ ...detailed, reps:e.target.value })} placeholder="Reps" />
           <input value={detailed.weight} onChange={e=>setDetailed({ ...detailed, weight:e.target.value })} placeholder="Weight" />
-          <select value={detailed.feel} onChange={e=>setDetailed({ ...detailed, feel:e.target.value })}>{[1,2,3,4,5].map(n=><option key={n} value={String(n)}>{`${n} · ${FEEL_LABELS[String(n)]?.title}`}</option>)}</select>
+          <select value={detailed.feel} onChange={e=>setDetailed({ ...detailed, feel:e.target.value })}>{[1,2,3,4,5].map(n=><option key={n} value={String(n)}>{`${n} Ã‚Â· ${FEEL_LABELS[String(n)]?.title}`}</option>)}</select>
           <input style={{ gridColumn:"1 / -1" }} value={detailed.notes} onChange={e=>setDetailed({ ...detailed, notes:e.target.value })} placeholder="Notes" />
           <button className="btn btn-primary" onClick={saveDetailed} style={{ width:"fit-content", fontSize:"0.55rem" }}>Save custom workout</button>
         </div>
@@ -9927,119 +9892,118 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         </div>
         {selectedDayReview && (
           <div style={{ display:"grid", gap:"0.55rem" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
-              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
-                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PLAN VS ACTUAL</div>
-                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.12rem" }}>{sanitizeDisplayText(selectedDayReview?.comparison?.summary || "Comparison unavailable.")}</div>
-                <div style={{ fontSize:"0.52rem", color:"#94a3b8", marginTop:"0.18rem" }}>
-                  {sanitizeDisplayText(String(selectedDayReview?.comparison?.completionKind || "unknown").replaceAll("_", " "))} · {sanitizeDisplayText(String(selectedDayReview?.comparison?.differenceKind || "unknown").replaceAll("_", " "))}
-                </div>
-              </div>
-              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
-                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PRESCRIBED HISTORY</div>
-                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.12rem" }}>
-                  Rev {selectedDayReview?.currentRevision?.revisionNumber || 0} of {selectedDayReview?.revisions?.length || 0}
-                </div>
-                <div style={{ fontSize:"0.52rem", color:"#94a3b8", marginTop:"0.18rem" }}>
-                  {sanitizeDisplayText(selectedDayReview?.currentRevision?.sourceType || "unknown")} · {sanitizeDisplayText(selectedDayReview?.currentRevision?.durability || "unknown")}
-                </div>
-              </div>
-              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
-                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>NUTRITION OUTCOME</div>
-                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.12rem" }}>{sanitizeDisplayText(selectedDayReview?.nutritionComparison?.summary || "Nutrition comparison unavailable.")}</div>
-                <div style={{ fontSize:"0.52rem", color:"#94a3b8", marginTop:"0.18rem" }}>
-                  {sanitizeDisplayText(selectedDayReview?.actualNutrition?.adherence || "unknown")} · {sanitizeDisplayText(selectedDayReview?.actualNutrition?.deviationKind || "unknown")}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.45rem" }}>
-              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.5rem" }}>
-                <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>ORIGINAL PRESCRIPTION</div>
-                {(() => {
-                  const summary = buildSessionSummary(selectedDayReview?.originalRecord?.resolved?.training || selectedDayReview?.originalRecord?.base?.training || null);
-                  return (
-                    <>
-                      <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{summary.label}</div>
-                      <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
-                      <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem" }}>
-                        {selectedDayReview?.originalRevision ? `${formatReviewTimestamp(selectedDayReview.originalRevision.capturedAt)} · ${sanitizeDisplayText(describeProvenanceRecord(selectedDayReview.originalRevision.provenance || null, selectedDayReview.originalRevision.reason || "initial_capture"))}` : "No original revision available."}
+            {(() => {
+              const comparisonTone = buildReviewBadgeTone(selectedDayReview?.comparison?.completionKind || selectedDayReview?.comparison?.differenceKind);
+              const revisionTone = buildReviewBadgeTone((selectedDayReview?.revisions?.length || 0) > 1 ? "changed" : "match");
+              const nutritionTone = buildReviewBadgeTone(selectedDayReview?.actualNutrition?.adherence || selectedDayReview?.actualNutrition?.deviationKind);
+              const planChanged = (selectedDayReview?.revisions?.length || 0) > 1;
+              const executedDifferently = !["completed_as_planned", "matched", "followed"].includes(String(selectedDayReview?.comparison?.completionKind || "").toLowerCase()) || !["matched", "followed", "none"].includes(String(selectedDayReview?.comparison?.differenceKind || "").toLowerCase());
+              return (
+                <>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
+                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.5rem" }}>
+                      <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>REVIEW STATUS</div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:"0.28rem", marginTop:"0.18rem" }}>
+                        <span style={{ fontSize:"0.48rem", color:comparisonTone.color, background:comparisonTone.bg, padding:"0.14rem 0.4rem", borderRadius:999 }}>{summarizeExecutionDelta(selectedDayReview?.comparison)}</span>
+                        <span style={{ fontSize:"0.48rem", color:revisionTone.color, background:revisionTone.bg, padding:"0.14rem 0.4rem", borderRadius:999 }}>{planChanged ? "Plan changed" : "Plan stable"}</span>
+                        <span style={{ fontSize:"0.48rem", color:executedDifferently ? C.amber : C.green, background:(executedDifferently ? C.amber : C.green)+"14", padding:"0.14rem 0.4rem", borderRadius:999 }}>{executedDifferently ? "Executed differently" : "Executed as prescribed"}</span>
                       </div>
-                    </>
-                  );
-                })()}
-              </div>
-              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.5rem" }}>
-                <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>LATEST PRESCRIPTION</div>
-                {(() => {
-                  const summary = buildSessionSummary(selectedDayReview?.currentRecord?.resolved?.training || selectedDayReview?.currentRecord?.base?.training || null);
-                  return (
-                    <>
-                      <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{summary.label}</div>
-                      <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
-                      <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem" }}>
-                        {selectedDayReview?.currentRevision ? `${formatReviewTimestamp(selectedDayReview.currentRevision.capturedAt)} · ${sanitizeDisplayText(describeProvenanceRecord(selectedDayReview.currentRevision.provenance || null, selectedDayReview.currentRevision.reason || "latest_revision"))}` : "No current revision available."}
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.5rem" }}>
-                <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>ACTUAL OUTCOME</div>
-                <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{sanitizeDisplayText(cleanHistorySessionName(selectedDayReview?.actualLog?.type || selectedDayReview?.comparison?.actualSession?.label || "No workout log"))}</div>
-                <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>
-                  {sanitizeDisplayText(selectedDayReview?.actualLog?.notes || selectedDayReview?.comparison?.actualSession?.detail || selectedDayReview?.comparison?.status || "No session detail logged.")}
-                </div>
-                <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem" }}>
-                  Check-in: {sanitizeDisplayText(selectedDayReview?.actualCheckin?.status || "none")} · Feel {sanitizeDisplayText(String(selectedDayReview?.actualLog?.feel || selectedDayReview?.actualCheckin?.feel || "—"))}
-                </div>
-              </div>
-            </div>
-
-            <details style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem 0.5rem" }} open={selectedDayReview?.revisions?.length > 1}>
-              <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>
-                Revision timeline ({selectedDayReview?.revisions?.length || 0})
-              </summary>
-              <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.3rem" }}>
-                {(selectedDayReview?.revisions || []).map((revision) => {
-                  const summary = buildSessionSummary(revision?.record?.resolved?.training || revision?.record?.base?.training || null);
-                  return (
-                    <div key={revision?.revisionId || `${selectedDayReview?.dateKey}_${revision?.revisionNumber}`} style={{ border:"1px solid #182335", borderRadius:8, background:"rgba(8,12,20,0.65)", padding:"0.38rem 0.42rem" }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", flexWrap:"wrap" }}>
-                        <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>Rev {revision?.revisionNumber || 0}: {summary.label}</div>
-                        <div style={{ fontSize:"0.48rem", color:"#64748b" }}>{formatReviewTimestamp(revision?.capturedAt)}</div>
-                      </div>
-                      <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.08rem" }}>{summary.detail || summary.type || "No session detail saved."}</div>
-                      <div style={{ fontSize:"0.49rem", color:"#94a3b8", marginTop:"0.12rem" }}>
-                        Reason: {sanitizeDisplayText(revision?.provenanceSummary || revision?.reason || "unknown")} · Source: {sanitizeDisplayText(revision?.sourceType || "unknown")} · Durability: {sanitizeDisplayText(revision?.durability || "unknown")}
-                      </div>
+                      <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>{sanitizeDisplayText(selectedDayReview?.comparison?.summary || "Comparison unavailable.")}</div>
                     </div>
-                  );
-                })}
-              </div>
-            </details>
+                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.5rem" }}>
+                      <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PRESCRIPTION STATE</div>
+                      <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>Rev {selectedDayReview?.currentRevision?.revisionNumber || 0} of {selectedDayReview?.revisions?.length || 0}</div>
+                      <div style={{ fontSize:"0.51rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>Source: {sanitizeStatusLabel(selectedDayReview?.currentRevision?.sourceType, "unknown")} - {sanitizeStatusLabel(selectedDayReview?.currentRevision?.durability, "unknown")}</div>
+                    </div>
+                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.5rem" }}>
+                      <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>NUTRITION STATUS</div>
+                      <div style={{ display:"inline-flex", fontSize:"0.48rem", color:nutritionTone.color, background:nutritionTone.bg, padding:"0.14rem 0.4rem", borderRadius:999, marginTop:"0.18rem" }}>{sanitizeStatusLabel(selectedDayReview?.actualNutrition?.adherence || selectedDayReview?.actualNutrition?.deviationKind, "Not logged")}</div>
+                      <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>{sanitizeDisplayText(selectedDayReview?.nutritionComparison?.summary || "Nutrition comparison unavailable.")}</div>
+                    </div>
+                  </div>
 
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.45rem" }}>
-              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
-                <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.18rem" }}>ACTUAL CHECK-IN</div>
-                <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>{sanitizeDisplayText(selectedDayReview?.actualCheckin?.status || "No check-in saved")}</div>
-                <div style={{ fontSize:"0.51rem", color:"#8fa5c8", marginTop:"0.12rem" }}>
-                  {sanitizeDisplayText(selectedDayReview?.actualCheckin?.note || selectedDayReview?.actualCheckin?.blocker || selectedDayReview?.actualCheckin?.sessionFeel || "No additional context saved.")}
-                </div>
-              </div>
-              <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:8, padding:"0.45rem" }}>
-                <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.18rem" }}>ACTUAL NUTRITION</div>
-                {(() => {
-                  const nutritionSummary = buildNutritionActualSummary(selectedDayReview?.actualNutrition);
-                  return (
-                    <>
-                      <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>{sanitizeDisplayText(nutritionSummary.label)}</div>
-                      <div style={{ fontSize:"0.51rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{sanitizeDisplayText(nutritionSummary.detail)}</div>
-                    </>
-                  );
-                })()}
-              </div>
-            </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:"0.45rem" }}>
+                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem" }}>
+                      <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>ORIGINAL PRESCRIPTION</div>
+                      {(() => {
+                        const summary = buildSessionSummary(selectedDayReview?.originalRecord?.resolved?.training || selectedDayReview?.originalRecord?.base?.training || null);
+                        return (
+                          <>
+                            <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{summary.label}</div>
+                            <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
+                            <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem", lineHeight:1.5 }}>{selectedDayReview?.originalRevision ? `${formatReviewTimestamp(selectedDayReview.originalRevision.capturedAt)} - ${sanitizeDisplayText(describeProvenanceRecord(selectedDayReview.originalRevision.provenance || null, selectedDayReview.originalRevision.reason || "initial_capture"))}` : "No original revision available."}</div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem" }}>
+                      <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>LATEST PRESCRIPTION</div>
+                      {(() => {
+                        const summary = buildSessionSummary(selectedDayReview?.currentRecord?.resolved?.training || selectedDayReview?.currentRecord?.base?.training || null);
+                        return (
+                          <>
+                            <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{summary.label}</div>
+                            <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
+                            <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem", lineHeight:1.5 }}>{selectedDayReview?.currentRevision ? `${formatReviewTimestamp(selectedDayReview.currentRevision.capturedAt)} - ${sanitizeDisplayText(describeProvenanceRecord(selectedDayReview.currentRevision.provenance || null, selectedDayReview.currentRevision.reason || "latest_revision"))}` : "No current revision available."}</div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:"0.45rem" }}>
+                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem" }}>
+                      <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>ACTUAL OUTCOME</div>
+                      <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{sanitizeDisplayText(cleanHistorySessionName(selectedDayReview?.actualLog?.type || selectedDayReview?.comparison?.actualSession?.label || "No workout log"))}</div>
+                      <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{sanitizeDisplayText(selectedDayReview?.actualLog?.notes || selectedDayReview?.comparison?.actualSession?.detail || selectedDayReview?.comparison?.status || "No session detail logged.")}</div>
+                      <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem" }}>Executed: {sanitizeStatusLabel(selectedDayReview?.comparison?.completionKind, "unknown")} - {sanitizeStatusLabel(selectedDayReview?.comparison?.differenceKind, "unknown")}</div>
+                    </div>
+                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem" }}>
+                      <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.18rem" }}>ACTUAL CHECK-IN</div>
+                      <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>{sanitizeDisplayText(selectedDayReview?.actualCheckin?.status || "No check-in saved")}</div>
+                      <div style={{ fontSize:"0.51rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{sanitizeDisplayText(selectedDayReview?.actualCheckin?.note || selectedDayReview?.actualCheckin?.blocker || selectedDayReview?.actualCheckin?.sessionFeel || "No additional context saved.")}</div>
+                    </div>
+                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem" }}>
+                      <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.18rem" }}>ACTUAL NUTRITION</div>
+                      {(() => {
+                        const nutritionSummary = buildNutritionActualSummary(selectedDayReview?.actualNutrition);
+                        return (
+                          <>
+                            <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>{sanitizeDisplayText(nutritionSummary.label)}</div>
+                            <div style={{ fontSize:"0.51rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{sanitizeDisplayText(nutritionSummary.detail)}</div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  <details style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.5rem 0.55rem" }} open={selectedDayReview?.revisions?.length > 1}>
+                    <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Revision timeline ({selectedDayReview?.revisions?.length || 0})</summary>
+                    <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.32rem" }}>
+                      {(selectedDayReview?.revisions || []).map((revision) => {
+                        const summary = buildSessionSummary(revision?.record?.resolved?.training || revision?.record?.base?.training || null);
+                        const isOriginal = revision?.revisionNumber === selectedDayReview?.originalRevision?.revisionNumber;
+                        const isCurrent = revision?.revisionNumber === selectedDayReview?.currentRevision?.revisionNumber;
+                        return (
+                          <div key={revision?.revisionId || `${selectedDayReview?.dateKey}_${revision?.revisionNumber}`} style={{ border:"1px solid #182335", borderRadius:8, background:"rgba(8,12,20,0.65)", padding:"0.4rem 0.45rem" }}>
+                            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", flexWrap:"wrap", alignItems:"center" }}>
+                              <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>Rev {revision?.revisionNumber || 0}: {summary.label}</div>
+                              <div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap", alignItems:"center" }}>
+                                {isOriginal && <span style={{ fontSize:"0.46rem", color:C.blue, background:C.blue+"14", padding:"0.12rem 0.35rem", borderRadius:999 }}>original</span>}
+                                {isCurrent && <span style={{ fontSize:"0.46rem", color:C.green, background:C.green+"14", padding:"0.12rem 0.35rem", borderRadius:999 }}>latest</span>}
+                                <div style={{ fontSize:"0.48rem", color:"#64748b" }}>{formatReviewTimestamp(revision?.capturedAt)}</div>
+                              </div>
+                            </div>
+                            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.1rem" }}>{summary.detail || summary.type || "No session detail saved."}</div>
+                            <div style={{ fontSize:"0.49rem", color:"#94a3b8", marginTop:"0.14rem", lineHeight:1.5 }}>Plan changed because: {sanitizeDisplayText(revision?.provenanceSummary || revision?.reason || "unknown")} - {sanitizeDisplayText(revision?.sourceType || "unknown")} - {sanitizeDisplayText(revision?.durability || "unknown")}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                </>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -10055,7 +10019,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         <div style={{ display:"grid", gap:"0.35rem" }}>
           {history.slice(0, 20).map(([date, log]) => {
             const displayName = cleanHistorySessionName(log?.type || "Session");
-            const feelDisplay = String(log?.feel || "").trim() ? `Feel ${log.feel}` : "—";
+            const feelDisplay = String(log?.feel || "").trim() ? `Feel ${log.feel}` : "Ã¢â‚¬â€";
             const showEditedBadge = Boolean(log?.retroEdited || (log?.editedAt && date < today));
             const comparison = getPlanComparison(date, log);
             const comparisonTone = comparison?.severity === "material" ? C.amber : comparison?.severity === "minor" ? C.blue : "#64748b";
@@ -10092,7 +10056,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
                       </div>
                     )}
                   </div>
-                  <div style={{ fontSize:"0.55rem", color:feelDisplay === "—" ? "#64748b" : C.blue }}>{feelDisplay}</div>
+                  <div style={{ fontSize:"0.55rem", color:feelDisplay === "Ã¢â‚¬â€" ? "#64748b" : C.blue }}>{feelDisplay}</div>
                 </button>
                 <div style={{ justifySelf:"end" }}>
                   {pendingDeleteDate === date ? (
@@ -10136,7 +10100,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
                     const revisionCount = Array.isArray(historyEntry?.revisions) ? historyEntry.revisions.length : 0;
                     return (
                       <div key={`${arc.id || "arc"}_history_${entry.date || idx}`} style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>
-                        â€¢ {entry.date}: {plannedLabel ? `planned ${sanitizeDisplayText(plannedLabel)} â†’ ` : ""}{sanitizeDisplayText(entry.type || "Session")}{entry.notes ? ` â€” ${sanitizeDisplayText(entry.notes)}` : ""}{revisionCount > 1 ? ` (${revisionCount} revisions)` : ""}
+                        ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {entry.date}: {plannedLabel ? `planned ${sanitizeDisplayText(plannedLabel)} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ ` : ""}{sanitizeDisplayText(entry.type || "Session")}{entry.notes ? ` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ${sanitizeDisplayText(entry.notes)}` : ""}{revisionCount > 1 ? ` (${revisionCount} revisions)` : ""}
                       </div>
                     );
                   });
@@ -10148,14 +10112,14 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
                     const revisionCount = Array.isArray(normalized?.revisions) ? normalized.revisions.length : 0;
                     return (
                       <div key={`${arc.id || "arc"}_history_${dateKey}`} style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>
-                        â€¢ {dateKey}: planned {sanitizeDisplayText(plannedLabel)}{revisionCount > 1 ? ` (${revisionCount} revisions)` : ""}
+                        ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {dateKey}: planned {sanitizeDisplayText(plannedLabel)}{revisionCount > 1 ? ` (${revisionCount} revisions)` : ""}
                       </div>
                     );
                   });
                 })()}
                 {false && (arc.logEntries || []).slice(0, 80).map((entry, idx) => (
                   <div key={`${arc.id || "arc"}_${entry.date || idx}`} style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>
-                    • {entry.date}: {sanitizeDisplayText(entry.type || "Session")} {entry.notes ? `— ${sanitizeDisplayText(entry.notes)}` : ""}
+                    Ã¢â‚¬Â¢ {entry.date}: {sanitizeDisplayText(entry.type || "Session")} {entry.notes ? `Ã¢â‚¬â€ ${sanitizeDisplayText(entry.notes)}` : ""}
                   </div>
                 ))}
               </div>
@@ -10167,7 +10131,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   );
 }
 
-// ── MINI CHART (kept) ───────────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ MINI CHART (kept) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 function MiniChart({ data, color, baseline }) {
   if (data.length < 2) return null;
   const min = Math.min(...data, baseline) - 2;
@@ -10199,7 +10163,7 @@ const buildSundayStoreGroceryList = ({ store, nutritionLayer, realWorldNutrition
   ];
   const filteredSections = sections.map(sec => ({ ...sec, items: sec.items.filter(Boolean) })).filter(sec => sec.items.length > 0);
   return {
-    title: `Sunday list for ${store} · next week (${phaseMode.toUpperCase()})`,
+    title: `Sunday list for ${store} Ã‚Â· next week (${phaseMode.toUpperCase()})`,
     sections: filteredSections,
     text: filteredSections.map(sec => `${sec.name}: ${sec.items.join(", ")}`).join("\n"),
   };
@@ -10219,7 +10183,7 @@ const buildLocationAwareOrderSuggestion = ({ nearby = [] }) => {
   return null;
 };
 
-// ── NUTRITION TAB (REDESIGNED) ──────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ NUTRITION TAB (REDESIGNED) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, logs, personalization, athleteProfile = null, momentum, bodyweights, learningLayer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFavorites, saveNutritionFavorites, saveNutritionActualLog }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
@@ -10311,14 +10275,14 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const inferredSessionTime = todayWorkout?.sessionTime || todayWorkout?.scheduledTime || (nowHour < 12 ? "morning" : nowHour < 18 ? "afternoon" : "evening");
   const isTravelNoSession = Boolean(nutritionLayer?.travelMode && (recoveryDay || sessionKind === "rest"));
   const directiveSentence = isTravelNoSession
-    ? "Travel day with no session — keep it simple and hit your recovery anchors."
+    ? "Travel day with no session Ã¢â‚¬â€ keep it simple and hit your recovery anchors."
     : hardDay
-    ? "Hard session today — lead with carbs, close with protein."
+    ? "Hard session today Ã¢â‚¬â€ lead with carbs, close with protein."
     : strengthDay
-    ? "Strength session today — prioritize protein timing and steady carbs."
+    ? "Strength session today Ã¢â‚¬â€ prioritize protein timing and steady carbs."
     : recoveryDay
-    ? "Recovery day — keep protein high and appetite decisions simple."
-    : "Steady day — balanced meals and consistency win.";
+    ? "Recovery day Ã¢â‚¬â€ keep protein high and appetite decisions simple."
+    : "Steady day Ã¢â‚¬â€ balanced meals and consistency win.";
   const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
   const locationUnavailable = !locationPermissionGranted && ["denied", "unavailable"].includes(String(localFoodContext?.locationStatus || savedLocation?.status || "").toLowerCase());
   const showNearbySection = locationPermissionGranted;
@@ -10340,7 +10304,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     { key: "Protein", name: "Protein", defaultTiming: "post-workout", defaultDose: "1 scoop", product: "Transparent Labs 100% Grass-Fed Whey" },
     { key: "Electrolytes", name: "Electrolytes", defaultTiming: "30 min pre-run", defaultDose: "1 serving", product: "LMNT Electrolyte Drink Mix" },
     { key: "Omega-3", name: "Omega-3", defaultTiming: "with lunch", defaultDose: "2 caps", product: "Nordic Naturals Ultimate Omega" },
-    { key: "Magnesium", name: "Magnesium", defaultTiming: "before bed", defaultDose: "400mg", product: "Doctor’s Best High Absorption Magnesium" },
+    { key: "Magnesium", name: "Magnesium", defaultTiming: "before bed", defaultDose: "400mg", product: "DoctorÃ¢â‚¬â„¢s Best High Absorption Magnesium" },
     { key: "Vitamin D3", name: "Vitamin D3", defaultTiming: "with first meal", defaultDose: "1 cap", product: "NOW Vitamin D3 2000 IU" },
   ];
   const allSupplements = [
@@ -10393,7 +10357,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
         : `${supp.name} supports consistency when food/training constraints are high.`,
       why: `Included for your active goals: ${(goals || []).filter(g => g.active).map(g => g.name).slice(0, 2).join(" + ") || "performance consistency"}.`,
       stop: "Reduce or pause if your clinician advises, if labs indicate no need, or if GI side effects persist for more than a week.",
-      product: `${supp.product} — Amazon or brand direct.`,
+      product: `${supp.product} Ã¢â‚¬â€ Amazon or brand direct.`,
     },
   ]));
   const mealMacroPlan = [
@@ -10479,214 +10443,191 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
   };
 
+  const nutritionTone = buildReviewBadgeTone(nutritionComparison?.adherence || nutritionComparison?.deviationKind);
+  const targetTone = buildReviewBadgeTone(sessionIntensity === "hard" ? "progression" : recoveryDay ? "recovery" : "match");
+  const comparisonLabel = actualNutritionToday?.loggedAt
+    ? `${sanitizeStatusLabel(nutritionComparison?.adherence, "logged")} - ${sanitizeStatusLabel(nutritionComparison?.deviationKind, "matched")}`
+    : "Not logged yet";
+  const complianceLine = actualNutritionToday?.loggedAt
+    ? sanitizeDisplayText(nutritionComparison?.summary || "Nutrition logged.")
+    : "Log a quick outcome once the day settles so today's prescription and actual intake stay separated.";
+  const fastFallback = locationAwareOrder || (showNearbySection
+    ? `${fastest.name}: ${fastest.meal}`
+    : nutritionLayer?.travelMode
+    ? travelBreakfast[0]
+    : "Use your default: protein + carb + fruit + water.");
+
   return (
     <div className="fi">
-      <div className="card card-soft card-action" style={{ marginBottom:"0.8rem" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.3rem" }}>
-          <div className="sect-title" style={{ color:C.blue }}>TODAY</div>
-          <button className="btn" onClick={()=>setShowNutritionWhy(v=>!v)} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"35" }}>?</button>
+      <div className="card card-soft card-action" style={{ marginBottom:"0.8rem", borderColor:C.blue+"28" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap", marginBottom:"0.45rem" }}>
+          <div>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.14rem" }}>TODAY'S NUTRITION TARGET</div>
+            <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.5 }}>{directiveSentence}</div>
+          </div>
+          <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+            <span style={{ fontSize:"0.48rem", color:targetTone.color, background:targetTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{sanitizeStatusLabel(dayType, "today")}</span>
+            <span style={{ fontSize:"0.48rem", color:nutritionTone.color, background:nutritionTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{comparisonLabel}</span>
+            <span style={{ fontSize:"0.48rem", color:"#8fa5c8", background:"#0f172a", padding:"0.16rem 0.42rem", borderRadius:999 }}>{phaseMode}</span>
+          </div>
         </div>
-        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55, marginBottom:"0.3rem" }}>{nutritionProvenance}</div>
-        <div style={{ fontSize:"0.64rem", color:"#e2e8f0", lineHeight:1.6, marginBottom:"0.35rem" }}>{directiveSentence}</div>
-        <div style={{ background:"#0f172a", border:"1px solid #243752", borderRadius:8, padding:"0.38rem 0.42rem", marginBottom:"0.35rem" }}>
-          <div style={{ fontSize:"0.5rem", letterSpacing:"0.08em", color:"#8fa5c8", marginBottom:"0.16rem" }}>WHY THIS TODAY</div>
-          <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.6 }}>{whyThisToday}</div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.4rem" }}>
+          {[["Protein", proteinLevel, C.red], ["Carbs", carbLevel, C.green], ["Calories", calorieLevel, C.amber]].map(([label, value, col]) => (
+            <div key={label} style={{ background:"#0f172a", border:`1px solid ${col}30`, borderRadius:10, padding:"0.46rem 0.4rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>{label}</div>
+              <div className="mono" style={{ color:col, fontSize:"0.9rem", marginTop:"0.12rem" }}>{value}</div>
+            </div>
+          ))}
         </div>
-        <div style={{ background:"#0f172a", border:"1px solid #243752", borderRadius:8, padding:"0.38rem 0.42rem", marginBottom:"0.35rem" }}>
-          <div style={{ fontSize:"0.5rem", letterSpacing:"0.08em", color:"#8fa5c8", marginBottom:"0.16rem" }}>PLAN VS ACTUAL</div>
-          <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.6 }}>{nutritionComparison?.summary || "Actual nutrition has not been logged yet."}</div>
-          {nutritionComparison?.hasActual && (
-            <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#8fa5c8" }}>
-              Adherence: {nutritionComparison?.adherence || "unknown"} · Difference: {String(nutritionComparison?.deviationKind || "unknown").replaceAll("_"," ")} · Impact: {nutritionComparison?.matters || "unknown"}
+      </div>
+
+      <div className="card" style={{ marginBottom:"0.8rem" }}>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>WHY THIS MATCHES TODAY'S TRAINING</div>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.48rem 0.52rem" }}>
+            <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.55 }}>{whyThisToday}</div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>TRAINING LINK</div>
+              <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{sanitizeDisplayText(todayWorkout?.type || dayType || "session")}</div>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{macroShiftLine}</div>
+            </div>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PRESCRIPTION BASIS</div>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.55 }}>{nutritionProvenance}</div>
+            </div>
+          </div>
+          {dailyRecommendations.length > 0 && (
+            <div style={{ display:"grid", gap:"0.22rem" }}>
+              {dailyRecommendations.slice(0, 3).map((line, idx) => (
+                <div key={`nutrition_rec_${idx}`} style={{ fontSize:"0.54rem", color:"#c7d5ea", lineHeight:1.5 }}>
+                  {idx + 1}. {line}
+                </div>
+              ))}
             </div>
           )}
         </div>
-        {dailyRecommendations.length > 0 && (
-          <div style={{ display:"grid", gap:"0.22rem", marginBottom:"0.35rem" }}>
-            {dailyRecommendations.map((line, idx) => (
-              <div key={`nutrition_rec_${idx}`} style={{ fontSize:"0.54rem", color:"#c7d5ea", lineHeight:1.55 }}>
-                {idx + 1}. {line}
-              </div>
-            ))}
-          </div>
-        )}
-        {showNutritionWhy && (
-          <div style={{ fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.55, marginBottom:"0.35rem" }}>{macroShiftLine}</div>
-        )}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.35rem", marginBottom:"0.35rem" }}>
-          {[["Protein", proteinLevel, C.red], ["Carbs", carbLevel, C.green], ["Calories", calorieLevel, C.amber]].map(([label, value, col]) => (
-            <div key={label} style={{ background:"#0f172a", border:`1px solid ${col}30`, borderRadius:8, padding:"0.42rem 0.35rem", textAlign:"center" }}>
-              <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>{label}</div>
-              <div className="mono" style={{ color:col, fontSize:"0.9rem", marginTop:"0.1rem" }}>{value}</div>
-            </div>
-          ))}
-        </div>
-        <button className="btn" onClick={()=>logHydration(12)} style={{ width:"100%", display:"block", textAlign:"left", borderColor:"#2a3b56", padding:"0.35rem", marginBottom:"0.3rem" }}>
-          <div style={{ display:"flex", justifyContent:"space-between", fontSize:"0.56rem", color:"#dbe7f6", marginBottom:"0.2rem" }}>
-            <span>{Math.round(hydrationOz)} oz</span>
-            <span style={{ color:"#8fa5c8" }}>Target {hydrationTargetOz} oz</span>
-          </div>
-          <div style={{ width:"100%", height:9, borderRadius:999, background:"#0f172a", border:"1px solid #243752", overflow:"hidden" }}>
-            <div style={{ width:`${hydrationPct}%`, height:"100%", background: hydrationPct >= 100 ? C.green : C.blue, transition:"width 180ms ease" }} />
-          </div>
-          <div style={{ marginTop:"0.22rem", fontSize:"0.52rem", color:"#8fa5c8" }}>+12oz tap</div>
-        </button>
-        <details>
-          <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#9fb2d2" }}>Supplement checklist</summary>
-          <div style={{ marginTop:"0.3rem", display:"grid", gap:"0.3rem" }}>
-            {supplementRows.map((supp, i) => (
-              <div key={`${supp.name}_${i}`} style={{ background:"#0f172a", border:"1px solid #20314a", borderRadius:9, padding:"0.36rem 0.42rem" }}>
-                <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.35rem", alignItems:"center" }}>
-                  <button className="btn" onClick={()=>toggleSupplementTaken(supp.name)} style={{ width:22, minWidth:22, height:22, padding:0, borderColor:"#2d435f", color:supplementTaken?.[supp.name] ? C.green : "#64748b", background:"transparent", fontSize:"0.62rem" }}>
-                    {supplementTaken?.[supp.name] ? "✓" : ""}
-                  </button>
-                  <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>{supp.name} · {supp.instruction}</div>
-                  <button className="btn" onClick={()=>setOpenSupplementInfo(prev => prev === supp.name ? "" : supp.name)} style={{ fontSize:"0.5rem", padding:"0.12rem 0.35rem", color:"#8fa5c8", borderColor:"#2c3e58" }}>?</button>
-                </div>
-                {openSupplementInfo === supp.name && (
-                  <div style={{ marginTop:"0.3rem", fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.6, display:"grid", gap:"0.12rem" }}>
-                    <div>{supplementInfoByName[supp.name]?.plain}</div>
-                    <div>{supplementInfoByName[supp.name]?.why}</div>
-                    <div>{supplementInfoByName[supp.name]?.stop}</div>
-                    <div style={{ color:"#dbe7f6" }}>{supplementInfoByName[supp.name]?.product}</div>
-                  </div>
-                )}
-              </div>
-            ))}
-            <details>
-              <summary style={{ cursor:"pointer", fontSize:"0.53rem", color:"#8fa5c8" }}>Edit stack</summary>
-              <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.28rem" }}>
-                {(favorites?.supplementStack || []).map((s, idx) => (
-                  <div key={`${s?.name || "custom"}_${idx}`} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.3rem", alignItems:"center" }}>
-                    <div style={{ fontSize:"0.54rem", color:"#dbe7f6" }}>{s?.name} · {s?.timing}</div>
-                    <button className="btn" onClick={()=>removeCustomSupplement(s?.name)} style={{ fontSize:"0.48rem", color:C.red, borderColor:C.red+"30" }}>remove</button>
-                  </div>
-                ))}
-                <input value={newSupplementName} onChange={e=>setNewSupplementName(e.target.value)} placeholder="What is it?" />
-                <input value={newSupplementTiming} onChange={e=>setNewSupplementTiming(e.target.value)} placeholder="When do you usually take it?" />
-                <button className="btn" onClick={addCustomSupplement} style={{ width:"fit-content", fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>Add supplement</button>
-              </div>
-            </details>
-          </div>
-        </details>
       </div>
 
-      <details className="card" style={{ marginBottom:"0.7rem" }}>
-        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#dbe7f6" }}>What this looks like today</summary>
-        <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.24rem" }}>
+      <div className="card" style={{ marginBottom:"0.8rem" }}>
+        <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>PRACTICAL MEAL STRUCTURE</div>
+        <div style={{ display:"grid", gap:"0.38rem" }}>
           {mealMacroRows.map((meal) => (
-            <div key={meal.key} style={{ border:"1px solid #243752", borderRadius:8, background:"#0f172a", padding:"0.3rem 0.35rem" }}>
-              <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>{meal.label}: {meal.text} · {meal.p}g protein</div>
-              <button className="btn" onClick={()=>setOpenMealKey(prev => prev === meal.key ? "" : meal.key)} style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", borderColor:"#2c3e58" }}>{openMealKey === meal.key ? "Hide macro detail" : "Show macro detail"}</button>
-              {openMealKey === meal.key && <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:"#9fb2d2" }}>P/C/F: {meal.p}g / {meal.c}g / {meal.f}g</div>}
-            </div>
-          ))}
-        </div>
-      </details>
-
-      <details className="card" style={{ marginBottom:"0.7rem" }}>
-        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#dbe7f6" }}>Saved-city options</summary>
-        <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.3rem" }}>
-          {!showNearbySection && !locationUnavailable && <div style={{ fontSize:"0.55rem", color:"#8fa5c8" }}>Enable location to set the city defaults used for these meal options.</div>}
-          {!showNearbySection && locationUnavailable && <div style={{ fontSize:"0.55rem", color:"#8fa5c8" }}>Location is unavailable, so these are saved-city defaults rather than live nearby results.</div>}
-          {showNearbySection && <div style={{ fontSize:"0.53rem", color:"#8fa5c8" }}>Using saved location to choose city defaults: {resolvedLocationLabel}.</div>}
-          {showNearbySection && nearby.slice(0,2).map((p) => (
-            <div key={p.id} style={{ background:"#0f172a", border:"1px solid #20314a", borderRadius:8, padding:"0.35rem 0.4rem" }}>
-              <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>{p.name}</div>
-              <div style={{ fontSize:"0.54rem", color:"#9fb2d2" }}>{p.meal} · ~40-55g protein</div>
-            </div>
-          ))}
-        </div>
-      </details>
-
-      <details className="card" style={{ marginBottom:"0.7rem" }}>
-        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#dbe7f6" }}>What's in my fridge</summary>
-        <div style={{ marginTop:"0.35rem", display:"flex", gap:"0.3rem", alignItems:"center" }}>
-          <input value={fridgeInput} onChange={e=>setFridgeInput(e.target.value)} onKeyDown={e=>e.key==="Enter" && requestFridgeMeal()} placeholder="What do you have?" style={{ flex:1 }} />
-          <button className="btn" onClick={requestFridgeMeal} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>Ask Coach</button>
-        </div>
-        {fridgeCoachReply && <div style={{ marginTop:"0.3rem", fontSize:"0.55rem", color:"#dbe7f6", lineHeight:1.6 }}>{fridgeCoachReply}</div>}
-      </details>
-
-      {showSundayGrocerySection && (
-        <details className="card" style={{ marginBottom:"0.7rem" }}>
-          <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#dbe7f6" }}>Sunday grocery list</summary>
-          <div style={{ marginTop:"0.35rem" }}>
-            {groceryHooks?.active && (
-              <div style={{ marginBottom:"0.35rem", display:"grid", gap:"0.18rem" }}>
-                <div style={{ fontSize:"0.54rem", color:"#dbe7f6" }}>Grocery focus: {String(groceryHooks.focus || "balanced_defaults").replace(/_/g, " ")}</div>
-                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
-                  Priority items: {(groceryHooks.priorityItems || []).join(", ") || "lean protein, fruit, easy staples"}
-                </div>
+            <div key={meal.key} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.46rem 0.52rem" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
+                <div style={{ fontSize:"0.58rem", color:"#e2e8f0" }}>{meal.label}</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>{meal.p}g protein • {meal.c}g carbs • {meal.f}g fat</div>
               </div>
-            )}
-            <select value={String(shoppingDay)} onChange={e=>saveNutritionFavorites({ ...favorites, shoppingDay: Number(e.target.value) })} style={{ marginBottom:"0.3rem" }}>
-              {[["0","Sunday"],["1","Monday"],["2","Tuesday"],["3","Wednesday"],["4","Thursday"],["5","Friday"],["6","Saturday"]].map(([v,l]) => <option key={v} value={v}>Typical shop day: {l}</option>)}
-            </select>
-            <select value={store} onChange={e=>setStore(e.target.value)} style={{ marginBottom:"0.35rem" }}>
-              {[...new Set([...(localFoodContext.groceryOptions || []), ...Object.keys(LOCAL_PLACE_TEMPLATES[city]?.groceries || {})])].map(s => <option key={s}>{s}</option>)}
-            </select>
-            <div style={{ display:"flex", gap:"0.3rem", marginBottom:"0.35rem" }}>
-              <button className="btn" onClick={()=>{ setSundayGrocery(buildSundayStoreGroceryList({ store, nutritionLayer, realWorldNutrition })); setGroceryShareAck(""); }} style={{ fontSize:"0.53rem", color:C.green, borderColor:C.green+"35" }}>Generate</button>
-              <button className="btn" onClick={async ()=>{
-                if (!sundayGrocery?.text) return;
-                const payload = `${sundayGrocery.title}\n${sundayGrocery.text}`;
-                if (navigator.share) { try { await navigator.share({ title: "Sunday Grocery List", text: payload }); setGroceryShareAck("Shared."); return; } catch {} }
-                try { await navigator.clipboard.writeText(payload); setGroceryShareAck("Copied."); } catch { setGroceryShareAck("Unable to copy."); }
-              }} style={{ fontSize:"0.53rem", color:C.blue, borderColor:C.blue+"35" }}>Copy / Share</button>
+              <div style={{ fontSize:"0.54rem", color:"#c7d5ea", marginTop:"0.12rem", lineHeight:1.5 }}>{meal.text}</div>
             </div>
-            {sundayGrocery && <div style={{ fontSize:"0.55rem", color:"#94a3b8", lineHeight:1.6 }}>{sundayGrocery.sections.map((sec) => <div key={sec.name}><span style={{ color:C.purple }}>{sec.name}:</span> {sec.items.join(", ")}</div>)}</div>}
+          ))}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LOW-FRICTION BACKUP</div>
+              <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{fastFallback}</div>
+            </div>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>SHOPPING / TRAVEL NOTE</div>
+              <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>
+                {nutritionLayer?.travelMode
+                  ? travelBreakfast[0]
+                  : `${store}: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`}
+              </div>
+            </div>
           </div>
-        </details>
-      )}
-
-      {nutritionLayer?.travelMode && (
-        <details className="card" style={{ marginBottom:"0.7rem" }}>
-          <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#dbe7f6" }}>Travel mode</summary>
-          <div style={{ marginTop:"0.35rem", fontSize:"0.56rem", color:"#9fb2d2", lineHeight:1.6 }}>
-            <div>Airport options: Chipotle double-protein bowl, CAVA double chicken bowl, or sandwich + Greek yogurt.</div>
-            <div>Hotel strategy: eggs + Greek yogurt + fruit, skip pastries, hydrate early.</div>
-            <div>No-kitchen plan: shakes, jerky, tuna packets, deli turkey wraps.</div>
-          </div>
-        </details>
-      )}
+        </div>
+      </div>
 
       <div className="card" style={{ marginBottom:"0.8rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.5rem" }}>REFLECTION</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem", marginBottom:"0.35rem" }}>
-          {[["on_track","on track"],["decent","decent"],["off_track","off track"]].map(([k,lab]) => (
-            <button key={k} className="btn" onClick={()=>setNutritionCheck(prev=>({ ...prev, status:k }))}
-              style={{ fontSize:"0.72rem", borderColor:nutritionCheck.status===k?C.blue:"#1e293b", color:nutritionCheck.status===k?C.blue:"#64748b", background:nutritionCheck.status===k?`${C.blue}12`:"transparent" }}>{lab}</button>
-          ))}
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>HYDRATION / SUPPLEMENTS</div>
+        <div style={{ display:"grid", gap:"0.42rem" }}>
+          <button className="btn" onClick={()=>logHydration(12)} style={{ width:"100%", display:"block", textAlign:"left", borderColor:"#2a3b56", padding:"0.42rem 0.46rem" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:"0.56rem", color:"#dbe7f6", marginBottom:"0.22rem" }}>
+              <span>{Math.round(hydrationOz)} oz logged</span>
+              <span style={{ color:"#8fa5c8" }}>Target {hydrationTargetOz} oz</span>
+            </div>
+            <div style={{ width:"100%", height:10, borderRadius:999, background:"#0f172a", border:"1px solid #243752", overflow:"hidden" }}>
+              <div style={{ width:`${hydrationPct}%`, height:"100%", background: hydrationPct >= 100 ? C.green : C.blue, transition:"width 180ms ease" }} />
+            </div>
+            <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#8fa5c8" }}>Tap to add 12 oz</div>
+          </button>
+          {supplementRows.length > 0 && (
+            <div style={{ display:"grid", gap:"0.3rem" }}>
+              {supplementRows.map((supp, i) => (
+                <div key={`${supp.name}_${i}`} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.35rem", alignItems:"center" }}>
+                    <button className="btn" onClick={()=>toggleSupplementTaken(supp.name)} style={{ width:24, minWidth:24, height:24, padding:0, borderColor:"#2d435f", color:supplementTaken?.[supp.name] ? C.green : "#64748b", background:"transparent", fontSize:"0.62rem" }}>
+                      {supplementTaken?.[supp.name] ? "✓" : ""}
+                    </button>
+                    <div>
+                      <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>{supp.name}</div>
+                      <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.08rem" }}>{supp.instruction}</div>
+                    </div>
+                    <button className="btn" onClick={()=>setOpenSupplementInfo(prev => prev === supp.name ? "" : supp.name)} style={{ fontSize:"0.48rem", padding:"0.12rem 0.34rem", color:"#8fa5c8", borderColor:"#2c3e58" }}>{openSupplementInfo === supp.name ? "Hide" : "Why"}</button>
+                  </div>
+                  {openSupplementInfo === supp.name && (
+                    <div style={{ marginTop:"0.28rem", fontSize:"0.51rem", color:"#9fb2d2", lineHeight:1.55 }}>
+                      {supplementInfoByName[supp.name]?.plain}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.3rem", marginBottom:"0.35rem" }}>
-          {[["followed","followed"],["under_fueled","under"],["over_indulged","over"],["deviated","deviated"]].map(([k,lab]) => (
-            <button key={k} className="btn" onClick={()=>setNutritionCheck(prev=>({
-              ...prev,
-              deviationKind: k,
-              status: k === "followed" ? "on_track" : k === "deviated" ? "decent" : "off_track",
-              issue: k === "followed" ? "" : k === "under_fueled" ? "hunger" : k === "over_indulged" ? "overate" : prev.issue,
-            }))}
-              style={{ fontSize:"0.6rem", borderColor:nutritionCheck.deviationKind===k?C.green:"#1e293b", color:nutritionCheck.deviationKind===k?C.green:"#64748b", background:nutritionCheck.deviationKind===k?`${C.green}12`:"transparent" }}>{lab}</button>
-          ))}
+      </div>
+
+      <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.green+"24" }}>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>QUICK ACTUAL LOGGING</div>
+        <div style={{ display:"grid", gap:"0.4rem" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.48rem 0.52rem" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", flexWrap:"wrap", alignItems:"center" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PRESCRIPTION VS ACTUAL</div>
+              <span style={{ fontSize:"0.48rem", color:nutritionTone.color, background:nutritionTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{comparisonLabel}</span>
+            </div>
+            <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.55 }}>{complianceLine}</div>
+            {actualNutritionToday?.loggedAt && (
+              <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>
+                Logged status: {sanitizeStatusLabel(actualNutritionToday?.quickStatus, "unknown")} • Issue: {sanitizeStatusLabel(actualNutritionToday?.issue, "none")}
+              </div>
+            )}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem" }}>
+            {[["on_track","on track"],["decent","decent"],["off_track","off track"]].map(([k,lab]) => (
+              <button key={k} className="btn" onClick={()=>setNutritionCheck(prev=>({ ...prev, status:k }))}
+                style={{ fontSize:"0.68rem", borderColor:nutritionCheck.status===k?C.blue:"#1e293b", color:nutritionCheck.status===k?C.blue:"#64748b", background:nutritionCheck.status===k?`${C.blue}12`:"transparent" }}>{lab}</button>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.3rem" }}>
+            {[["followed","followed"],["under_fueled","under"],["over_indulged","over"],["deviated","deviated"]].map(([k,lab]) => (
+              <button key={k} className="btn" onClick={()=>setNutritionCheck(prev=>({
+                ...prev,
+                deviationKind: k,
+                status: k === "followed" ? "on_track" : k === "deviated" ? "decent" : "off_track",
+                issue: k === "followed" ? "" : k === "under_fueled" ? "hunger" : k === "over_indulged" ? "overate" : prev.issue,
+              }))}
+                style={{ fontSize:"0.58rem", borderColor:nutritionCheck.deviationKind===k?C.green:"#1e293b", color:nutritionCheck.deviationKind===k?C.green:"#64748b", background:nutritionCheck.deviationKind===k?`${C.green}12`:"transparent" }}>{lab}</button>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.3rem" }}>
+            {[["","none"],["hunger","hunger"],["convenience","convenience"],["travel","travel"]].map(([k,lab]) => (
+              <button key={lab} className="btn" onClick={()=>setNutritionCheck(prev=>({ ...prev, issue:k }))}
+                style={{ fontSize:"0.56rem", borderColor:(nutritionCheck.issue||"")===k?C.amber:"#1e293b", color:(nutritionCheck.issue||"")===k?C.amber:"#64748b", background:(nutritionCheck.issue||"")===k?`${C.amber}12`:"transparent" }}>{lab}</button>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+            <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck(prev=>({ ...prev, note:e.target.value }))} placeholder="Quick note (optional)" />
+            <button className="btn btn-primary" onClick={()=>saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt })} style={{ fontSize:"0.55rem" }}>SAVE</button>
+          </div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Weekly compliance: {weeklyNutritionScore}</div>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.3rem", marginBottom:"0.35rem" }}>
-          {[["","none"],["hunger","hunger"],["convenience","convenience"],["travel","travel"]].map(([k,lab]) => (
-            <button key={lab} className="btn" onClick={()=>setNutritionCheck(prev=>({ ...prev, issue:k }))}
-              style={{ fontSize:"0.58rem", borderColor:(nutritionCheck.issue||"")===k?C.amber:"#1e293b", color:(nutritionCheck.issue||"")===k?C.amber:"#64748b", background:(nutritionCheck.issue||"")===k?`${C.amber}12`:"transparent" }}>{lab}</button>
-          ))}
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
-          <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck(prev=>({ ...prev, note:e.target.value }))} placeholder="Quick note (optional)" />
-          <button className="btn btn-primary" onClick={()=>saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt })} style={{ fontSize:"0.55rem" }}>SAVE</button>
-        </div>
-        <div style={{ marginTop:"0.3rem", fontSize:"0.55rem", color:"#9fb2d2" }}>Weekly nutrition score: {weeklyNutritionScore}</div>
       </div>
     </div>
   );
 }
 
-// ── COACH TAB (REDESIGNED) ──────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬ COACH TAB (REDESIGNED) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, athleteProfile = null, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
@@ -10736,6 +10677,7 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
 
   useEffect(() => {
     const packet = deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
+    validateDeterministicCoachPacketInvariant(packet, "deterministicCoachPacket.status");
     setMessages([{
       role:"assistant",
       text: packet?.coachBrief || packet?.recommendations?.[0] || packet?.notices?.[0] || "Coach ready.",
@@ -10782,10 +10724,10 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
     const deadline = goalState?.deadline || "";
     const daysRemaining = deadline ? Math.max(0, Math.ceil((new Date(deadline) - new Date()) / 86400000)) : "N/A";
     const todayDetails = todayWorkout?.run
-      ? `${todayWorkout.run.t || "Run"} · ${todayWorkout.run.d || "target pending"}`
-      : `${todayWorkout?.type || "session"} · ${todayWorkout?.strengthDuration || todayWorkout?.fallback || "as prescribed"}`;
+      ? `${todayWorkout.run.t || "Run"} Ã‚Â· ${todayWorkout.run.d || "target pending"}`
+      : `${todayWorkout?.type || "session"} Ã‚Â· ${todayWorkout?.strengthDuration || todayWorkout?.fallback || "as prescribed"}`;
     const injury = `${personalization?.injuryPainState?.level || "none"} (${personalization?.injuryPainState?.area || "Achilles"})`;
-    const last5 = Object.entries(logs || {}).sort((a,b)=>a[0].localeCompare(b[0])).slice(-5).map(([,l]) => `${l?.type || "session"} · feel ${l?.feel || 3} · ${l?.checkin?.status || "not_logged"}`).join(" | ") || "No recent sessions";
+    const last5 = Object.entries(logs || {}).sort((a,b)=>a[0].localeCompare(b[0])).slice(-5).map(([,l]) => `${l?.type || "session"} Ã‚Â· feel ${l?.feel || 3} Ã‚Â· ${l?.checkin?.status || "not_logged"}`).join(" | ") || "No recent sessions";
     const last14 = Object.entries(logs || {}).sort((a,b)=>a[0].localeCompare(b[0])).slice(-14);
     const done14 = last14.filter(([,l]) => ["completed_as_planned","completed_modified","partial_completed"].includes(l?.checkin?.status)).length;
     const consistency = `${done14} of ${Math.max(1, last14.length)} sessions`;
@@ -10804,14 +10746,14 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
       personalization?.coachMemory?.simplicityVsVariety || ""
     ].filter(Boolean).join(" | ") || "No memory fields yet";
     const currentMode = personalization?.injuryPainState?.level !== "none" ? "recovery" : failureMode?.mode === "chaotic" ? "reduced_load" : "locked_in";
-    return `You are a personal coach inside a fitness app. You are direct, specific, and never generic. You do not motivate — you decide and explain. You speak like a coach who knows this person well, not like a customer service bot.
+    return `You are a personal coach inside a fitness app. You are direct, specific, and never generic. You do not motivate Ã¢â‚¬â€ you decide and explain. You speak like a coach who knows this person well, not like a customer service bot.
 
 Current user state:
 - Goals: ${primaryGoal} | ${secondaryGoals}
-- Phase: ${coachPhase} · Week ${currentWeek}
+- Phase: ${coachPhase} Ã‚Â· Week ${currentWeek}
 - Weekly intent: ${coachWeekFocus || coachWeekSummary || "Current week plan"}
 - Days to race/deadline: ${daysRemaining}
-- Today's prescription: ${todayWorkout?.label || "Session"} · ${todayDetails}
+- Today's prescription: ${todayWorkout?.label || "Session"} Ã‚Â· ${todayDetails}
 - Achilles status: ${injury}
 - Last 5 sessions: ${last5}
 - Consistency last 2 weeks: ${consistency}
@@ -10830,7 +10772,7 @@ Rules for every response:
 - Always end with one specific action or decision
 - If the question is about injury: give a protocol, not a referral
 - If the question is about missing a session: give a forward direction, not reassurance
-- Reference specific session names, dates, and numbers from context — never speak in generalities`;
+- Reference specific session names, dates, and numbers from context Ã¢â‚¬â€ never speak in generalities`;
   };
 
   const buildQuickPromptMessage = (label) => {
@@ -10854,37 +10796,40 @@ Rules for every response:
 
   const streamCoachResponse = async ({ userMsg, history }) => {
     const deterministic = deterministicCoachPacket({ input: userMsg, todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
+    validateDeterministicCoachPacketInvariant(deterministic, "deterministicCoachPacket.chat");
+    const coachPacketArgs = {
+      dateKey: todayKey,
+      currentWeek,
+      canonicalGoalState: goalState,
+      canonicalUserProfile: userProfile,
+      goals,
+      planDay,
+      planWeek: planDayWeek?.planWeek || null,
+      logs,
+      dailyCheckins,
+      nutritionActualLogs,
+      bodyweights,
+      momentum,
+      expectations,
+      strengthLayer,
+      optimizationLayer,
+      failureMode,
+      readiness: canonicalCoachRecovery,
+      nutritionComparison,
+      arbitration,
+      memoryInsights,
+      coachMemoryContext: compoundingCoachMemory,
+      weekNotes,
+      planAlerts,
+    };
+    validateAiPacketInvariant(coachPacketArgs, "runCoachChatRuntime");
     return runCoachChatRuntime({
       apiKey,
       coachMode,
       userMsg,
       history,
       deterministicText: deterministic?.coachBrief || deterministic?.recommendations?.[0] || deterministic?.notices?.[0] || "Coach update ready.",
-      packetArgs: {
-        dateKey: todayKey,
-        currentWeek,
-        canonicalGoalState: goalState,
-        canonicalUserProfile: userProfile,
-        goals,
-        planDay,
-        planWeek: planDayWeek?.planWeek || null,
-        logs,
-        dailyCheckins,
-        nutritionActualLogs,
-        bodyweights,
-        momentum,
-        expectations,
-        strengthLayer,
-        optimizationLayer,
-        failureMode,
-        readiness: canonicalCoachRecovery,
-        nutritionComparison,
-        arbitration,
-        memoryInsights,
-        coachMemoryContext: compoundingCoachMemory,
-        weekNotes,
-        planAlerts,
-      },
+      packetArgs: coachPacketArgs,
       fetchImpl: fetch,
       onText: (text) => setStreamingText(text),
     });
@@ -11172,144 +11117,207 @@ Rules for every response:
     if (normalized === "llm-stream") return "AI draft from app context";
     return normalized ? normalized.replace(/_/g, " ") : "";
   };
+  const latestAssistantMessage = [...messages].reverse().find((message) => message.role === "assistant") || null;
+  const coachTrust = buildTrustSummary({
+    explicitUserInput: Boolean(latestCheckinEntry || readinessPromptSignal),
+    loggedActuals: Boolean(recentCountableStatuses.length || Object.keys(nutritionActualLogs || {}).length),
+    deviceData: Boolean((Number(latestSleep) > 0) || (Number(personalization?.connectedDevices?.garmin?.trainingReadinessScore || 0) > 0)),
+    inferredHeuristics: true,
+    limitation: latestCheckinEntry ? "" : "Recovery input is limited right now.",
+    stale: Boolean(!latestCheckinEntry && recentCountableStatuses.length === 0),
+  });
+  const decisionTone = buildReviewBadgeTone(
+    coachDecisionMode === "Protect"
+      ? "recovery"
+      : coachDecisionMode === "Simplify" || coachDecisionMode === "Rebuild"
+      ? "changed"
+      : coachDecisionMode === "Push"
+      ? "progression"
+      : "match"
+  );
+  const coachTrustTone = buildReviewBadgeTone(
+    coachTrust.level === "grounded" ? "match" : coachTrust.level === "partial" ? "changed" : "recovery"
+  );
+  const boundaryLine = "Coach can recommend and prepare accepted actions, but state only changes when you explicitly apply a recommendation.";
+  const recentAcceptedAction = (coachActions || []).find((action) => action?.acceptedBy) || null;
 
   return (
     <div className="fi" style={{ display:"grid", gap:"0.75rem" }}>
       <div className="card card-strong card-hero" style={{ borderColor:C.blue+"38" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>COACH SNAPSHOT</div>
-        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55, marginBottom:"0.35rem" }}>{coachProvenance}</div>
-        <div className="coach-copy" style={{ fontSize:"0.62rem", lineHeight:1.7 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.35rem" }}>
+          <div>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.16rem" }}>COACH SUMMARY</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{coachProvenance}</div>
+          </div>
+          <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+            <span style={{ fontSize:"0.48rem", color:decisionTone.color, background:decisionTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachDecisionMode}</span>
+            <span style={{ fontSize:"0.48rem", color:"#8fa5c8", background:"#0f172a", padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachReadiness?.state ? sanitizeStatusLabel(coachReadiness.state, "steady") : "steady"}</span>
+            <span style={{ fontSize:"0.48rem", color:coachTrustTone.color, background:coachTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachTrust.label}</span>
+          </div>
+        </div>
+        <div className="coach-copy" style={{ display:"grid", gap:"0.22rem", fontSize:"0.61rem", lineHeight:1.65 }}>
           <div><span style={{ color:"#94a3b8" }}>Watching:</span> {coachSnapshot.watch}</div>
-          <div><span style={{ color:"#94a3b8" }}>Do today:</span> {coachSnapshot.doToday}</div>
-          <div><span style={{ color:"#94a3b8" }}>Noticed this week:</span> {coachSnapshot.noticed || weeklyNotice}</div>
+          <div><span style={{ color:"#94a3b8" }}>Recommendation:</span> {coachDecision.stance}</div>
+          <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachDecision.why}</div>
+          <div><span style={{ color:"#94a3b8" }}>Next:</span> {coachSnapshot.doToday}</div>
+        </div>
+        <div style={{ marginTop:"0.22rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{coachTrust.summary}</div>
+        <div style={{ marginTop:"0.38rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{boundaryLine}</div>
+      </div>
+
+      <div className="card card-action" style={{ borderColor:C.green+"30" }}>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.32rem" }}>SUGGESTED ACTIONS</div>
+        <div style={{ display:"grid", gap:"0.38rem" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.46rem 0.5rem" }}>
+            <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.55 }}>{coachDecision.stance}</div>
+            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{coachDecision.watch}</div>
+          </div>
+          <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+            {coachDecision.options.slice(0, 2).map((opt, i) => (
+              <button key={`${opt.label}_${i}`} className={`btn ${opt.primary ? "btn-primary" : ""}`} onClick={()=>applyDecisionOption(opt)} style={{ fontSize:"0.56rem" }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LATEST COACH OUTPUT</div>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>{latestAssistantMessage?.text || "Coach update ready."}</div>
+              {latestAssistantMessage?.source && <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.14rem" }}>Source: {formatCoachResponseSource(latestAssistantMessage.source)}</div>}
+            </div>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LAST ACCEPTED CHANGE</div>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>
+                {recentAcceptedAction ? `${sanitizeStatusLabel(recentAcceptedAction.type, "accepted")} by ${sanitizeDisplayText(recentAcceptedAction.acceptedBy || "gate")}` : "No accepted coach action yet."}
+              </div>
+              <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                {recentAcceptedAction ? sanitizeDisplayText(recentAcceptedAction.reason || recentAcceptedAction.rationale || "Accepted action saved.") : boundaryLine}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <details>
-        <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:"#93c5fd", letterSpacing:"0.04em" }}>Go deeper</summary>
-        <div style={{ display:"grid", gap:"0.75rem", marginTop:"0.5rem" }}>
-          <div className="card card-action">
-            <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>CHOOSE</div>
-            <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
-              {coachDecision.options.slice(0, 2).map((opt, i) => (
-                <button key={`${opt.label}_${i}`} className={`btn ${opt.primary ? "btn-primary" : ""}`} onClick={()=>applyDecisionOption(opt)} style={{ fontSize:"0.56rem" }}>
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="card card-subtle">
-            <div className="sect-title" style={{ color:C.purple, marginBottom:"0.3rem" }}>SUNDAY WEEK-IN-REVIEW</div>
-            <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.35rem" }}>
-              {sundayArchive[0]?.paragraph || "This section auto-generates on Sundays and archives each weekly review."}
-            </div>
-            {sundayArchive.length > 0 && (
-              <div style={{ maxHeight:160, overflowY:"auto", border:"1px solid #23344e", borderRadius:9, padding:"0.35rem 0.45rem", display:"grid", gap:"0.28rem", background:"#0f172a" }}>
-                {sundayArchive.map((r, idx) => (
-                  <div key={`${r.date}_${idx}`} style={{ fontSize:"0.54rem", color:"#9fb2d2", lineHeight:1.55 }}>
-                    <span className="mono" style={{ color:"#64748b" }}>{r.date}</span> — {r.paragraph}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <div style={{ fontSize:"0.54rem", color:"#94a3b8", letterSpacing:"0.06em" }}>ASK FOR A QUICK CALL</div>
+      <div className="card" style={{ marginBottom:"0.05rem" }}>
+        <div className="sect-title" style={{ color:C.amber, marginBottom:"0.32rem" }}>COACH INPUT</div>
+        <div style={{ display:"grid", gap:"0.38rem" }}>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Ask for a recommendation or use a quick decision prompt.</div>
           <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" }}>
             {quickPrompts.slice(0, 6).map(q => (
               <button key={q} className="btn" onClick={()=>send(q)} style={{ whiteSpace:"nowrap", fontSize:"0.55rem" }}>{q}</button>
             ))}
           </div>
-
           <div style={{ display:"flex", gap:"0.5rem" }}>
             <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Ask coach for a decision" style={{ flex:1 }} disabled={loading} />
             <button className="btn btn-primary" onClick={()=>send()} disabled={loading} style={{ opacity:loading?0.5:1 }}>Send</button>
           </div>
-
-          <div style={{ display:"grid", gap:"0.35rem" }}>
-            {messages.slice(-20).map((m, idx) => (
-              <div key={`${idx}_${m.role}`} className={m.role === "assistant" ? "coach-fade" : ""} style={{ justifySelf:m.role==="user"?"end":"start", maxWidth:"92%", background:m.role==="user"?"#15263f":"#101b2d", border:m.role==="user"?"1px solid #325178":"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
-                {m.role === "assistant" ? (
-                  <div>
-                    <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap" }}>
-                      {m.text || "Coach update ready."}
-                    </div>
-                    <div style={{ marginTop:"0.25rem", display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.4rem" }}>
-                      <div style={{ display:"grid", gap:"0.08rem" }}>
-                        <div style={{ fontSize:"0.48rem", color:"#64748b" }}>{m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</div>
-                        {m.source && <div style={{ fontSize:"0.44rem", color:"#8fa5c8" }}>Source: {formatCoachResponseSource(m.source)}</div>}
+          <details>
+            <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#8fa5c8" }}>Conversation history</summary>
+            <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.38rem" }}>
+              {messages.slice(-20).map((m, idx) => (
+                <div key={`${idx}_${m.role}`} className={m.role === "assistant" ? "coach-fade" : ""} style={{ justifySelf:m.role==="user"?"end":"start", maxWidth:"92%", background:m.role==="user"?"#15263f":"#101b2d", border:m.role==="user"?"1px solid #325178":"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
+                  {m.role === "assistant" ? (
+                    <div>
+                      <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap" }}>
+                        {m.text || "Coach update ready."}
                       </div>
-                      <div style={{ display:"flex", alignItems:"center", gap:"0.25rem" }}>
-                        <span style={{ fontSize:"0.46rem", color:"#8fa5c8" }}>Was this helpful?</span>
-                        <button className="btn" onClick={()=>setMessages(prev => prev.map((x, i) => i === idx ? { ...x, helpful: true } : x))} style={{ fontSize:"0.46rem", padding:"0.12rem 0.3rem", borderColor:m.helpful===true?C.green+"35":"#2a3f5f", color:m.helpful===true?C.green:"#8fa5c8" }}>👍</button>
-                        <button className="btn" onClick={()=>{
-                          setMessages(prev => prev.map((x, i) => i === idx ? { ...x, helpful: false } : x));
-                          setFeedbackLog(prev => [{ ts: Date.now(), response: m.text || "" }, ...prev].slice(0, 100));
-                        }} style={{ fontSize:"0.46rem", padding:"0.12rem 0.3rem", borderColor:m.helpful===false?C.red+"35":"#2a3f5f", color:m.helpful===false?C.red:"#8fa5c8" }}>👎</button>
+                      <div style={{ marginTop:"0.25rem", display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.4rem" }}>
+                        <div style={{ display:"grid", gap:"0.08rem" }}>
+                          <div style={{ fontSize:"0.48rem", color:"#64748b" }}>{m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</div>
+                          {m.source && <div style={{ fontSize:"0.44rem", color:"#8fa5c8" }}>Source: {formatCoachResponseSource(m.source)}</div>}
+                        </div>
+                        <div style={{ display:"flex", alignItems:"center", gap:"0.25rem" }}>
+                          <span style={{ fontSize:"0.46rem", color:"#8fa5c8" }}>Helpful?</span>
+                          <button className="btn" onClick={()=>setMessages(prev => prev.map((x, i) => i === idx ? { ...x, helpful: true } : x))} style={{ fontSize:"0.46rem", padding:"0.12rem 0.3rem", borderColor:m.helpful===true?C.green+"35":"#2a3f5f", color:m.helpful===true?C.green:"#8fa5c8" }}>Yes</button>
+                          <button className="btn" onClick={()=>{
+                            setMessages(prev => prev.map((x, i) => i === idx ? { ...x, helpful: false } : x));
+                            setFeedbackLog(prev => [{ ts: Date.now(), response: m.text || "" }, ...prev].slice(0, 100));
+                          }} style={{ fontSize:"0.46rem", padding:"0.12rem 0.3rem", borderColor:m.helpful===false?C.red+"35":"#2a3f5f", color:m.helpful===false?C.red:"#8fa5c8" }}>No</button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ) : (
-                  <div>
-                    <div style={{ fontSize:"0.56rem", color:"#a9bddc" }}>{m.text}</div>
-                    <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#64748b" }}>{m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</div>
-                  </div>
-                )}
-              </div>
-            ))}
-            {loading && (
-              <div className="coach-fade" style={{ justifySelf:"start", maxWidth:"92%", background:"#101b2d", border:"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
-                <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap" }}>
-                  Coach is drafting a response…
+                  ) : (
+                    <div>
+                      <div style={{ fontSize:"0.56rem", color:"#a9bddc" }}>{m.text}</div>
+                      <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#64748b" }}>{m.ts ? new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</div>
+                    </div>
+                  )}
                 </div>
+              ))}
+              {loading && (
+                <div className="coach-fade" style={{ justifySelf:"start", maxWidth:"92%", background:"#101b2d", border:"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
+                  <div className="coach-copy" style={{ fontSize:"0.56rem", whiteSpace:"pre-wrap" }}>
+                    Coach is drafting a response...
+                  </div>
+                </div>
+              )}
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:"0.75rem" }}>
+        <details className="card card-subtle" open>
+          <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.blue }}>MEMORY / SETTINGS</summary>
+          <div style={{ paddingTop:"0.55rem", display:"grid", gap:"0.45rem" }}>
+            <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>Coach memory and environment presets shape recommendations, but they do not mutate plan state until you accept an action.</div>
+            <div style={{ background:"#0f172a", border:"1px solid #20314a", borderRadius:9, padding:"0.45rem 0.5rem" }}>
+              <div className="sect-title" style={{ color:C.blue, marginBottom:"0.24rem" }}>ENVIRONMENT PRESETS</div>
+              {["Home","Gym","Travel"].map((mode) => (
+                <div key={mode} style={{ display:"grid", gridTemplateColumns:"58px 1fr 74px", gap:"0.3rem", alignItems:"center", marginBottom:"0.25rem" }}>
+                  <div className="mono" style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>{mode}</div>
+                  <input value={presetDraft[mode].equipment} onChange={e=>setPresetDraft(prev=>({ ...prev, [mode]: { ...prev[mode], equipment:e.target.value } }))} placeholder="equipment list" />
+                  <select value={presetDraft[mode].time} onChange={e=>setPresetDraft(prev=>({ ...prev, [mode]: { ...prev[mode], time:e.target.value } }))} style={{ fontSize:"0.55rem" }}>
+                    {["20","30","45+"].map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+              ))}
+              <button className="btn" onClick={async ()=>{
+                const nextPresets = Object.fromEntries(["Home","Gym","Travel"].map((mode) => [mode, {
+                  equipment: presetDraft[mode].equipment.split(",").map(x => x.trim()).filter(Boolean),
+                  time: presetDraft[mode].time || "30",
+                }]));
+                const updated = mergePersonalization(personalization, { environmentConfig: { ...personalization.environmentConfig, presets: nextPresets } });
+                setPersonalization(updated);
+                await onPersist(updated, coachActions, coachPlanAdjustments, weekNotes, planAlerts);
+              }} style={{ fontSize:"0.53rem", color:C.green, borderColor:C.green+"35" }}>Save presets</button>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+              <select value={coachMode} onChange={e=>setCoachMode(e.target.value)} style={{ fontSize:"0.7rem" }}>
+                <option value="auto">Let coach decide</option><option value="deterministic">Deterministic</option>
+              </select>
+              <input value={apiKey} onChange={e=>{ setApiKey(e.target.value); if (typeof window !== "undefined") safeStorageSet(localStorage, "coach_api_key", e.target.value); }} placeholder="Anthropic key (optional)" style={{ fontSize:"0.68rem" }} />
+            </div>
+            <input value={memoryDraft.failurePatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, failurePatterns:e.target.value })} placeholder="Failure patterns" style={{ fontSize:"0.68rem" }} />
+            <input value={memoryDraft.commonBarriers} onChange={e=>setMemoryDraft({ ...memoryDraft, commonBarriers:e.target.value })} placeholder="Common barriers" style={{ fontSize:"0.68rem" }} />
+            <input value={memoryDraft.preferredFoodPatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, preferredFoodPatterns:e.target.value })} placeholder="Food patterns" style={{ fontSize:"0.68rem" }} />
+            <button className="btn" onClick={async ()=>{
+              const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, failurePatterns: memoryDraft.failurePatterns.split(",").map(x=>x.trim()).filter(Boolean), commonBarriers: memoryDraft.commonBarriers.split(",").map(x=>x.trim()).filter(Boolean), preferredFoodPatterns: memoryDraft.preferredFoodPatterns.split(",").map(x=>x.trim()).filter(Boolean), simplicityVsVariety: memoryDraft.simplicityVsVariety } });
+              setPersonalization(updated);
+              await onPersist(updated, coachActions, coachPlanAdjustments, weekNotes, planAlerts);
+            }} style={{ color:C.green, borderColor:C.green+"35" }}>Save memory</button>
+          </div>
+        </details>
+
+        <details className="card card-subtle" open>
+          <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.purple }}>WEEKLY REVIEW / REFLECTION</summary>
+          <div style={{ paddingTop:"0.55rem", display:"grid", gap:"0.38rem" }}>
+            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.6 }}>
+              {sundayArchive[0]?.paragraph || "This section auto-generates on Sundays and archives each weekly review."}
+            </div>
+            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>{weeklyNotice}</div>
+            {sundayArchive.length > 0 && (
+              <div style={{ maxHeight:170, overflowY:"auto", border:"1px solid #23344e", borderRadius:9, padding:"0.35rem 0.45rem", display:"grid", gap:"0.28rem", background:"#0f172a" }}>
+                {sundayArchive.map((r, idx) => (
+                  <div key={`${r.date}_${idx}`} style={{ fontSize:"0.54rem", color:"#9fb2d2", lineHeight:1.55 }}>
+                    <span className="mono" style={{ color:"#64748b" }}>{r.date}</span> - {r.paragraph}
+                  </div>
+                ))}
               </div>
             )}
           </div>
-        </div>
-      </details>
-
-      {/* ── SETTINGS (collapsed) ── */}
-      <details style={{ marginTop:"0.75rem" }}>
-        <summary style={{ cursor:"pointer", fontSize:"0.72rem", color:"#475569", padding:"0.5rem 0" }}>Coach settings & memory</summary>
-        <div style={{ padding:"0.75rem 0", display:"grid", gap:"0.4rem" }}>
-          <div className="card card-subtle" style={{ padding:"0.55rem" }}>
-            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.25rem" }}>ENVIRONMENT PRESETS (GLOBAL)</div>
-            <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginBottom:"0.3rem" }}>Define Home/Gym/Travel once. All workout prescriptions derive from these presets.</div>
-            {["Home","Gym","Travel"].map((mode) => (
-              <div key={mode} style={{ display:"grid", gridTemplateColumns:"58px 1fr 74px", gap:"0.3rem", alignItems:"center", marginBottom:"0.25rem" }}>
-                <div className="mono" style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>{mode}</div>
-                <input value={presetDraft[mode].equipment} onChange={e=>setPresetDraft(prev=>({ ...prev, [mode]: { ...prev[mode], equipment:e.target.value } }))} placeholder="equipment list" />
-                <select value={presetDraft[mode].time} onChange={e=>setPresetDraft(prev=>({ ...prev, [mode]: { ...prev[mode], time:e.target.value } }))} style={{ fontSize:"0.55rem" }}>
-                  {["20","30","45+"].map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-            ))}
-            <button className="btn" onClick={async ()=>{
-              const nextPresets = Object.fromEntries(["Home","Gym","Travel"].map((mode) => [mode, {
-                equipment: presetDraft[mode].equipment.split(",").map(x => x.trim()).filter(Boolean),
-                time: presetDraft[mode].time || "30",
-              }]));
-              const updated = mergePersonalization(personalization, { environmentConfig: { ...personalization.environmentConfig, presets: nextPresets } });
-              setPersonalization(updated);
-              await onPersist(updated, coachActions, coachPlanAdjustments, weekNotes, planAlerts);
-            }} style={{ fontSize:"0.53rem", color:C.green, borderColor:C.green+"35" }}>Save presets</button>
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
-            <select value={coachMode} onChange={e=>setCoachMode(e.target.value)} style={{ fontSize:"0.78rem" }}>
-              <option value="auto">Let coach decide</option><option value="deterministic">Deterministic</option>
-            </select>
-            <input value={apiKey} onChange={e=>{ setApiKey(e.target.value); if (typeof window !== "undefined") safeStorageSet(localStorage, "coach_api_key", e.target.value); }} placeholder="Anthropic key (optional)" style={{ fontSize:"0.75rem" }} />
-          </div>
-          <input value={memoryDraft.failurePatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, failurePatterns:e.target.value })} placeholder="Failure patterns" style={{ fontSize:"0.78rem" }} />
-          <input value={memoryDraft.commonBarriers} onChange={e=>setMemoryDraft({ ...memoryDraft, commonBarriers:e.target.value })} placeholder="Common barriers" style={{ fontSize:"0.78rem" }} />
-          <input value={memoryDraft.preferredFoodPatterns} onChange={e=>setMemoryDraft({ ...memoryDraft, preferredFoodPatterns:e.target.value })} placeholder="Food patterns" style={{ fontSize:"0.78rem" }} />
-          <button className="btn" onClick={async ()=>{
-            const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, failurePatterns: memoryDraft.failurePatterns.split(",").map(x=>x.trim()).filter(Boolean), commonBarriers: memoryDraft.commonBarriers.split(",").map(x=>x.trim()).filter(Boolean), preferredFoodPatterns: memoryDraft.preferredFoodPatterns.split(",").map(x=>x.trim()).filter(Boolean), simplicityVsVariety: memoryDraft.simplicityVsVariety } });
-            setPersonalization(updated);
-            await onPersist(updated, coachActions, coachPlanAdjustments, weekNotes, planAlerts);
-          }} style={{ color:C.green, borderColor:C.green+"35" }}>Save memory</button>
-        </div>
-      </details>
+        </details>
+      </div>
 
       <style>{`@keyframes pulse{0%,100%{opacity:0.3}50%{opacity:1}}`}</style>
     </div>
@@ -11321,8 +11329,10 @@ function CoachSection({ title, items, color }) {
     <div style={{ background:"#0f172a", borderRadius:8, padding:"8px 12px", border:`1px solid ${color}20` }}>
       <div style={{ fontSize:"0.7rem", color, fontWeight:600, marginBottom:"0.25rem" }}>{title}</div>
       {(items?.length ? items : ["No issues detected."]).map((item, idx) => (
-        <div key={idx} style={{ fontSize:"0.78rem", color:"#cbd5e1", lineHeight:1.6 }}>• {item}</div>
+        <div key={idx} style={{ fontSize:"0.78rem", color:"#cbd5e1", lineHeight:1.6 }}>Ã¢â‚¬Â¢ {item}</div>
       ))}
     </div>
   );
 }
+
+
