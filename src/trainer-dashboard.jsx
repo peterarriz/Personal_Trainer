@@ -1144,6 +1144,17 @@ const buildTrustSummary = ({
   };
 };
 
+const buildReviewBadgeTone = (kind = "", palette = {}) => {
+  const green = palette.green || "#27f59a";
+  const blue = palette.blue || "#60a5fa";
+  const amber = palette.amber || "#f59e0b";
+  const value = String(kind || "").toLowerCase();
+  if (/match|completed_as_planned|on_track|followed|high/.test(value)) return { color: green, bg: green + "14" };
+  if (/modified|partial|changed|deviated|minor/.test(value)) return { color: blue, bg: blue + "14" };
+  if (/skip|miss|unknown|missing|material|low|not_logged/.test(value)) return { color: amber, bg: amber + "14" };
+  return { color: "#94a3b8", bg: "#1e293b" };
+};
+
 // Ã¢â€â‚¬Ã¢â€â‚¬ HELPERS Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const READINESS_SUCCESS_STATUSES = new Set(["completed_as_planned", "completed_modified", "partial_completed"]);
 const toReadinessNumber = (value) => {
@@ -8328,7 +8339,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     : "";
   const todayTrustTone = buildReviewBadgeTone(
     todayTrust.level === "grounded" ? "match" : todayTrust.level === "partial" ? "changed" : "recovery"
-  );
+  , C);
   const rationaleHeadline = normalizeCoachOneLine(primaryAdjustment?.summary || readinessInfluence?.coachLine || conciseFocus);
   const rationaleSupport = normalizeCoachOneLine(primaryAdjustment?.reason || readinessInfluence?.userVisibleLine || shortProvenance);
   const successHeadline = normalizeCoachOneLine(displayWorkout?.success || conciseSuccess || "Complete the session and log it.");
@@ -9241,7 +9252,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   });
   const programTrustTone = buildReviewBadgeTone(
     programTrust.level === "grounded" ? "match" : programTrust.level === "partial" ? "changed" : "recovery"
-  );
+  , C);
   const plannedSessionsThisWeek = getProgramWeekSessions(currentWeek, (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek) || null).length;
   const currentWeekStart = new Date();
   currentWeekStart.setHours(0, 0, 0, 0);
@@ -9768,6 +9779,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       status: actualRecovery?.hydrationSupport?.followed ? "match" : actualRecovery?.status || "",
     };
   };
+  const reviewBadgeTone = (kind = "") => buildReviewBadgeTone(kind, C);
   const selectedDayReview = useMemo(
     () => buildDayReview({
       dateKey: selectedReviewDate,
@@ -9793,13 +9805,6 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       }),
     };
   }, [selectedArchiveReviewTarget, planArchives]);
-  function buildReviewBadgeTone(kind = "") {
-    const value = String(kind || "").toLowerCase();
-    if (/match|completed_as_planned|on_track|followed|high/.test(value)) return { color: C.green, bg: C.green+"14" };
-    if (/modified|partial|changed|deviated|minor/.test(value)) return { color: C.blue, bg: C.blue+"14" };
-    if (/skip|miss|unknown|missing|material|low|not_logged/.test(value)) return { color: C.amber, bg: C.amber+"14" };
-    return { color: "#94a3b8", bg: "#1e293b" };
-  }
   const sanitizeStatusLabel = (value = "", fallback = "Unknown") => {
     const textValue = String(value || "").replaceAll("_", " ").trim();
     return sanitizeDisplayText(textValue || fallback);
@@ -10067,7 +10072,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         palette={C}
         sanitizeDisplayText={sanitizeDisplayText}
         sanitizeStatusLabel={sanitizeStatusLabel}
-        buildReviewBadgeTone={buildReviewBadgeTone}
+        buildReviewBadgeTone={reviewBadgeTone}
         summarizeExecutionDelta={summarizeExecutionDelta}
         formatReviewTimestamp={formatReviewTimestamp}
         buildSessionSummary={buildSessionSummary}
@@ -10158,7 +10163,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         palette={C}
         sanitizeDisplayText={sanitizeDisplayText}
         sanitizeStatusLabel={sanitizeStatusLabel}
-        buildReviewBadgeTone={buildReviewBadgeTone}
+        buildReviewBadgeTone={reviewBadgeTone}
         summarizeExecutionDelta={summarizeExecutionDelta}
         formatReviewTimestamp={formatReviewTimestamp}
         buildSessionSummary={buildSessionSummary}
@@ -10502,8 +10507,8 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
   };
 
-  const nutritionTone = buildReviewBadgeTone(nutritionComparison?.adherence || nutritionComparison?.deviationKind);
-  const targetTone = buildReviewBadgeTone(sessionIntensity === "hard" ? "progression" : recoveryDay ? "recovery" : "match");
+  const nutritionTone = buildReviewBadgeTone(nutritionComparison?.adherence || nutritionComparison?.deviationKind, C);
+  const targetTone = buildReviewBadgeTone(sessionIntensity === "hard" ? "progression" : recoveryDay ? "recovery" : "match", C);
   const comparisonLabel = actualNutritionToday?.loggedAt
     ? `${sanitizeStatusLabel(nutritionComparison?.adherence, "logged")} - ${sanitizeStatusLabel(nutritionComparison?.deviationKind, "matched")}`
     : "Not logged yet";
@@ -11318,10 +11323,10 @@ Rules for every response:
       : coachDecisionMode === "Push"
       ? "progression"
       : "match"
-  );
+  , C);
   const coachTrustTone = buildReviewBadgeTone(
     coachTrust.level === "grounded" ? "match" : coachTrust.level === "partial" ? "changed" : "recovery"
-  );
+  , C);
   const boundaryLine = "Coach can recommend and prepare accepted actions, but state only changes when you explicitly apply a recommendation.";
   const recentAcceptedAction = (coachActions || []).find((action) => action?.acceptedBy) || null;
   const weeklyNutritionCoachLine = weeklyNutritionReview?.coaching?.coachLine || "Weekly nutrition signal is still forming.";
