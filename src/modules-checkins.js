@@ -12,6 +12,13 @@ export const DEFAULT_DAILY_CHECKIN = {
     soreness: "",
     stress: "",
   },
+  actualRecovery: {
+    sleepHours: "",
+    mobilityMinutes: "",
+    tissueWorkMinutes: "",
+    painProtocolCompleted: false,
+    note: "",
+  },
 };
 
 export const CHECKIN_STATUS_OPTIONS = [

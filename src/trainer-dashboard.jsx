@@ -1,10 +1,10 @@
 ﻿import { useState, useEffect, useRef, useMemo } from "react";
-import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
+import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, normalizeGoals, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
 import { createAuthStorageModule, buildStorageStatus, classifyStorageError, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
-import { getGoalContext, normalizeActualNutritionLog, normalizeActualNutritionLogCollection, compareNutritionPrescriptionToActual, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket, mergeActualNutritionLogUpdate } from "./modules-nutrition.js";
-import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, isWithinGracePeriod, resolveEffectiveStatus, resolveActualStatus, buildPlannedDayRecord, comparePlannedDayToActual } from "./modules-checkins.js";
-import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, withConfidenceTone, deterministicCoachPacket } from "./modules-coach-engine.js";
-import { buildWorkoutAdjustmentCoachNote, buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildNutritionCoachBrief, buildCoachChatSystemPrompt, buildPlanAnalysisSystemPrompt, buildTodayWhyNowSentence, buildMacroShiftLine, buildEasierSessionsObservation, buildSkippedQualityDecision, buildLoadSpikeInlineWarning, buildWeeklyConsistencyAnchor, buildStreakSignalResponse, buildBadWeekTriageResponse, buildDiscomfortProtocolResponse, buildCompressedSessionPrescription, buildMinimumEffectiveTravelSession } from "./prompts/coach-text.js";
+import { getGoalContext, normalizeActualNutritionLog, resolveNutritionActualLogStoreCompat, compareNutritionPrescriptionToActual, getPlaceRecommendations, buildGroceryBasket, deriveGroceryExecutionSupport, mergeActualNutritionLogUpdate } from "./modules-nutrition.js";
+import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, resolveEffectiveStatus, resolveActualStatus, buildPlannedDayRecord, comparePlannedDayToActual } from "./modules-checkins.js";
+import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, deterministicCoachPacket } from "./modules-coach-engine.js";
+import { buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildTodayWhyNowSentence, buildMacroShiftLine, buildEasierSessionsObservation, buildSkippedQualityDecision, buildWeeklyConsistencyAnchor, buildBadWeekTriageResponse } from "./prompts/coach-text.js";
 import { SettingsIcon } from "./icons.js";
 import { assembleCanonicalPlanDay, resolvePlanDayStateInputs, resolvePlanDayTimeOfDay } from "./services/plan-day-service.js";
 import { assemblePlanWeekRuntime, resolveCurrentPlanWeekNumber, resolvePlanWeekNumberForDateKey, resolveProgramDisplayHorizon } from "./services/plan-week-service.js";
@@ -30,15 +30,34 @@ import {
 } from "./services/performance-record-service.js";
 import {
   buildPlanReference,
-  createPrescribedDayHistoryEntry,
   getCurrentPrescribedDayRecord,
   getCurrentPrescribedDayRevision,
-  getStableCaptureAtForDate,
   normalizePrescribedDayHistoryEntry,
   PRESCRIBED_DAY_DURABILITY,
   upsertPrescribedDayHistoryEntry,
 } from "./services/prescribed-day-history-service.js";
-import { appendProvenanceSidecar, buildLegacyProvenanceAdjustmentView, buildProvenanceEvent, buildStructuredProvenance, describeProvenanceRecord, normalizeProvenanceEvent, normalizeStructuredProvenance, PROVENANCE_ACTORS } from "./services/provenance-service.js";
+import {
+  buildPersistedPlanWeekReview,
+  getPersistedPlanWeekRecord,
+  listCommittedPlanWeekRecords,
+  upsertPersistedPlanWeekRecord,
+} from "./services/plan-week-persistence-service.js";
+import { buildWeeklyNutritionReview } from "./services/weekly-nutrition-review-service.js";
+import {
+  buildArchivedDayReview,
+  buildArchivedPlanAudit,
+  buildHistoricalWeekAuditEntries,
+} from "./services/history-audit-service.js";
+import {
+  buildLegacyHistoryDisplayLabel,
+  resolveLegacyPlannedDayHistoryEntry,
+} from "./services/legacy-fallback-compat-service.js";
+import { appendProvenanceSidecar, buildProvenanceEvent, describeProvenanceRecord, normalizeProvenanceEvent, PROVENANCE_ACTORS } from "./services/provenance-service.js";
+import {
+  HistoryAuditArchiveSection,
+  HistoryAuditDayReviewCard,
+  HistoryAuditWeekHistorySection,
+} from "./review-audit-components.jsx";
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ PROFILE Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const PROFILE = {
@@ -443,16 +462,12 @@ const inferExerciseBucketV2 = (exerciseName = "") => {
 
 const getWeightIncrementByBucketV2 = (bucket = "default") => (bucket === "lower_body" ? 5 : 2.5);
 
-const getPlanWeekForDateKey = (dateKey = "", planStartDate = "") => {
-  const anchor = planStartDate ? new Date(`${planStartDate}T12:00:00`) : PROFILE.startDate;
-  const dateObj = new Date(`${dateKey}T12:00:00`);
-  if (Number.isNaN(anchor.getTime()) || Number.isNaN(dateObj.getTime())) return 1;
-  const diffWeeks = Math.ceil((dateObj - anchor) / (1000 * 60 * 60 * 24 * 7));
-  return Math.max(1, diffWeeks || 1);
-};
-
 const getPhaseForDateKey = (dateKey = "", planStartDate = "") => {
-  const week = getPlanWeekForDateKey(dateKey, planStartDate);
+  const week = resolvePlanWeekNumberForDateKey({
+    dateKey,
+    planStartDate,
+    fallbackStartDate: PROFILE.startDate,
+  });
   return WEEKS[Math.max(0, Math.min(week - 1, WEEKS.length - 1))]?.phase || "BASE";
 };
 
@@ -975,6 +990,16 @@ const validateActualNutritionLogInvariant = (actualNutritionLog = null, expected
     && assertCanonicalInvariant(typeof actualNutritionLog?.deviationKind === "string", "ActualNutritionLog", "deviationKind should be a string", { origin, deviationKind: actualNutritionLog?.deviationKind });
   return ok;
 };
+const validateActualRecoveryLogInvariant = (actualRecoveryLog = null, expectedDateKey = "", origin = "unknown") => {
+  if (!actualRecoveryLog) return true;
+  const ok =
+    assertCanonicalInvariant(typeof actualRecoveryLog === "object", "ActualRecoveryLog", "value should be an object", { origin, actualRecoveryLog })
+    && assertCanonicalInvariant(String(actualRecoveryLog?.model || "") === "actual_recovery_log_v1", "ActualRecoveryLog", "unexpected model", { origin, model: actualRecoveryLog?.model })
+    && assertCanonicalInvariant(!expectedDateKey || actualRecoveryLog?.dateKey === expectedDateKey, "ActualRecoveryLog", "dateKey does not match expected key", { origin, expectedDateKey, actualDateKey: actualRecoveryLog?.dateKey })
+    && assertCanonicalInvariant(typeof actualRecoveryLog?.hydrationSupport === "object", "ActualRecoveryLog", "hydrationSupport should be present", { origin, actualRecoveryLog })
+    && assertCanonicalInvariant(typeof actualRecoveryLog?.supplementAdherence === "object", "ActualRecoveryLog", "supplementAdherence should be present", { origin, actualRecoveryLog });
+  return ok;
+};
 const validatePlanWeekInvariant = (planWeek = null, origin = "unknown") => {
   if (!planWeek) return true;
   const sessionsByDay = planWeek?.sessionsByDay;
@@ -982,21 +1007,38 @@ const validatePlanWeekInvariant = (planWeek = null, origin = "unknown") => {
     assertCanonicalInvariant(typeof planWeek === "object", "PlanWeek", "value should be an object", { origin, planWeek })
     && assertCanonicalInvariant(Boolean(String(planWeek?.id || "").trim()), "PlanWeek", "id is required", { origin, planWeek })
     && assertCanonicalInvariant(Number.isFinite(Number(planWeek?.absoluteWeek || planWeek?.weekNumber || 0)), "PlanWeek", "absoluteWeek/weekNumber should be numeric", { origin, absoluteWeek: planWeek?.absoluteWeek, weekNumber: planWeek?.weekNumber })
+    && assertCanonicalInvariant(Boolean(planWeek?.programBlock && typeof planWeek.programBlock === "object"), "PlanWeek", "programBlock should be present", { origin, programBlock: planWeek?.programBlock })
     && assertCanonicalInvariant(Boolean(planWeek?.weeklyIntent && typeof planWeek.weeklyIntent === "object"), "PlanWeek", "weeklyIntent should be present", { origin, weeklyIntent: planWeek?.weeklyIntent })
     && assertCanonicalInvariant(Boolean(sessionsByDay && typeof sessionsByDay === "object" && !Array.isArray(sessionsByDay)), "PlanWeek", "sessionsByDay should be an object map", { origin, sessionsByDay });
+  return ok;
+};
+const validatePlanWeekRecordInvariant = (entry = null, expectedWeekKey = "", origin = "unknown") => {
+  if (!entry) return true;
+  const resolvedWeekKey = String(entry?.weekKey || expectedWeekKey || "").trim();
+  const ok =
+    assertCanonicalInvariant(typeof entry === "object", "PlanWeekRecord", "value should be an object", { origin, entry })
+    && assertCanonicalInvariant(String(entry?.model || "") === "plan_week_record", "PlanWeekRecord", "unexpected model", { origin, model: entry?.model })
+    && assertCanonicalInvariant(Number(entry?.historyVersion || 0) >= 1, "PlanWeekRecord", "historyVersion should be present", { origin, historyVersion: entry?.historyVersion })
+    && assertCanonicalInvariant(Boolean(resolvedWeekKey), "PlanWeekRecord", "weekKey is required", { origin, entry })
+    && assertCanonicalInvariant(!expectedWeekKey || entry?.weekKey === expectedWeekKey, "PlanWeekRecord", "weekKey mismatch", { origin, expectedWeekKey, actualWeekKey: entry?.weekKey })
+    && assertCanonicalInvariant(Boolean(entry?.record && typeof entry.record === "object"), "PlanWeekRecord", "record should be present", { origin, entry });
+  validatePlanWeekInvariant(entry?.record || null, `${origin}:record`);
   return ok;
 };
 const validatePlanDayInvariant = (planDay = null, origin = "unknown") => {
   if (!planDay) return true;
   const nutritionActual = planDay?.resolved?.nutrition?.actual || null;
+  const actualRecovery = planDay?.resolved?.recovery?.actual || null;
   const ok =
     assertCanonicalInvariant(typeof planDay === "object", "PlanDay", "value should be an object", { origin, planDay })
     && assertCanonicalInvariant(Boolean(String(planDay?.dateKey || "").trim()), "PlanDay", "dateKey is required", { origin, dateKey: planDay?.dateKey })
     && assertCanonicalInvariant(Boolean(planDay?.base && typeof planDay.base === "object"), "PlanDay", "base branch is required", { origin, base: planDay?.base })
     && assertCanonicalInvariant(Boolean(planDay?.resolved && typeof planDay.resolved === "object"), "PlanDay", "resolved branch is required", { origin, resolved: planDay?.resolved })
     && assertCanonicalInvariant(Boolean(planDay?.resolved?.training || planDay?.base?.training), "PlanDay", "training payload is missing", { origin, planDay })
+    && assertCanonicalInvariant(Boolean(planDay?.week?.programBlock && typeof planDay.week.programBlock === "object"), "PlanDay", "week.programBlock should be present", { origin, week: planDay?.week })
     && assertCanonicalInvariant(Boolean(planDay?.decision && typeof planDay.decision === "object"), "PlanDay", "decision block is required", { origin, decision: planDay?.decision });
   if (nutritionActual) validateActualNutritionLogInvariant(nutritionActual, planDay?.dateKey || "", `${origin}:resolved.nutrition.actual`);
+  if (actualRecovery) validateActualRecoveryLogInvariant(actualRecovery, planDay?.dateKey || "", `${origin}:resolved.recovery.actual`);
   return ok;
 };
 const validatePrescribedDayHistoryInvariant = (entry = null, expectedDateKey = "", origin = "unknown") => {
@@ -1046,11 +1088,15 @@ const validateCanonicalRuntimeStateInvariant = (runtimeState = null, origin = "u
   assertCanonicalInvariant(Boolean(runtimeState?.logs && typeof runtimeState.logs === "object"), "RuntimeState", "logs should be an object map", { origin });
   assertCanonicalInvariant(Array.isArray(runtimeState?.bodyweights), "RuntimeState", "bodyweights should be an array", { origin, bodyweights: runtimeState?.bodyweights });
   assertCanonicalInvariant(Boolean(runtimeState?.plannedDayRecords && typeof runtimeState.plannedDayRecords === "object"), "RuntimeState", "plannedDayRecords should be an object map", { origin });
+  assertCanonicalInvariant(Boolean(runtimeState?.planWeekRecords && typeof runtimeState.planWeekRecords === "object"), "RuntimeState", "planWeekRecords should be an object map", { origin });
   Object.entries(runtimeState?.nutritionActualLogs || {}).slice(0, 40).forEach(([dateKey, actualNutritionLog]) => {
     validateActualNutritionLogInvariant(actualNutritionLog, dateKey, `${origin}:runtime.nutritionActualLogs`);
   });
   Object.entries(runtimeState?.plannedDayRecords || {}).slice(0, 40).forEach(([dateKey, entry]) => {
     validatePrescribedDayHistoryInvariant(entry, dateKey, `${origin}:runtime.plannedDayRecords`);
+  });
+  Object.entries(runtimeState?.planWeekRecords || {}).slice(0, 40).forEach(([weekKey, entry]) => {
+    validatePlanWeekRecordInvariant(entry, weekKey, `${origin}:runtime.planWeekRecords`);
   });
   return true;
 };
@@ -1129,13 +1175,6 @@ const scaleSessionDescriptor = (text = "", fallback = "20-30 min controlled", ra
   });
   return scaled === input ? fallback : scaled;
 };
-const getCurrentWeek = (planStartDate = "") => {
-  const now = new Date();
-  const anchor = planStartDate ? new Date(`${planStartDate}T12:00:00`) : PROFILE.startDate;
-  const diff = (now - anchor) / (1000 * 60 * 60 * 24 * 7);
-  return Math.max(1, Math.ceil(diff));
-};
-
 const getDayOfWeek = () => {
   return new Date().getDay(); // 0=Sun,1=Mon,...,6=Sat
 };
@@ -1680,6 +1719,9 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
 };
 
 const getTodayWorkout = (weekNum, dayNum) => {
+  // FALLBACK_ONLY: this static template helper still powers legacy prescribed-
+  // history reconstruction and older preview/backfill paths. Canonical planning
+  // should flow through PlanDay/PlanWeek when that data exists.
   const week = WEEKS[(weekNum - 1) % WEEKS.length];
   if (!week) return null;
   const zones = PHASE_ZONES[week.phase];
@@ -1943,17 +1985,21 @@ const buildNamedPhaseArc = ({ rollingHorizon = [], goals = [] }) => {
   const labelSet = PHASE_ARC_LABELS[primaryCategory] || PHASE_ARC_LABELS.running;
   const blocks = [];
   for (const h of rollingHorizon) {
-    const phase = h?.template?.phase;
+    const programBlock = h?.planWeek?.programBlock || null;
+    const phase = programBlock?.phase || h?.template?.phase;
     if (!phase) continue;
     const meta = labelSet[phase] || { name: `${phase} Block`, objective: "Execute core plan priorities." };
+    const blockKey = programBlock?.id || phase;
+    const blockName = programBlock?.label || meta.name;
+    const blockObjective = programBlock?.summary || programBlock?.dominantEmphasis?.objective || meta.objective;
     const last = blocks[blocks.length - 1];
-    if (last && last.phase === phase) {
+    if (last && last.key === blockKey) {
       last.endWeek = h.absoluteWeek;
     } else {
-      blocks.push({ phase, startWeek: h.absoluteWeek, endWeek: h.absoluteWeek, name: meta.name, objective: meta.objective });
+      blocks.push({ key: blockKey, phase, startWeek: h.absoluteWeek, endWeek: h.absoluteWeek, name: blockName, objective: blockObjective });
     }
   }
-  return blocks;
+  return blocks.map(({ key, ...block }) => block);
 };
 const safeFetchWithTimeout = async (url, options = {}, timeoutMs = 8500) => {
   const ctrl = new AbortController();
@@ -2633,16 +2679,20 @@ const generateDailyCoachBrief = ({ momentum, todayWorkout, arbitration, injurySt
   };
 };
 
-const generateWeeklyCoachReview = ({ momentum, arbitration, signals, personalization, patterns, learning, nutritionActualLogs, expectations, recalibration }) => ({
+const generateWeeklyCoachReview = ({ momentum, arbitration, signals, personalization, patterns, learning, nutritionActualLogs, weeklyNutritionReview = null, expectations, recalibration }) => ({
   ...(() => {
     const recentNutri = Object.values(nutritionActualLogs || {}).slice(-7);
     const offTrack = recentNutri.filter(n => n.adherence === "low").length;
     const underFueled = recentNutri.filter(n => n.deviationKind === "under_fueled").length;
-    const nutritionLearned = underFueled >= 2
+    const nutritionLearned = weeklyNutritionReview?.adaptation?.shouldAdapt
+      ? weeklyNutritionReview.adaptation.summary
+      : weeklyNutritionReview?.deviationPattern?.dominant === "under_fueled"
+      ? "Nutrition came in under plan multiple times; protect fueling on key days."
+      : underFueled >= 2
       ? "Nutrition came in under plan multiple times; protect fueling on key days."
       : offTrack >= 2
       ? "Nutrition consistency dropped; simplify meals and defaults."
-      : null;
+      : weeklyNutritionReview?.friction?.summary || null;
     return {
   wentWell: momentum.score >= 60 ? "You kept core training momentum." : "You still kept some training touchpoints alive.",
   drifted: momentum.momentumState === "drifting" || momentum.momentumState === "falling off" ? "Execution drifted on consistency and logging rhythm." : "Drift was limited.",
@@ -3295,111 +3345,30 @@ const buildLegacyPlanSnapshot = (plannedDayEntry = null) => {
   };
 };
 
-const buildLegacyPlannedDayRecordFromSnapshot = ({ dateKey = "", snapshot = null } = {}) => {
-  if (!dateKey || !snapshot) return null;
-  const baseLabel = String(snapshot?.baseLabel || snapshot?.resolvedLabel || "Planned session").trim();
-  const resolvedLabel = String(snapshot?.resolvedLabel || snapshot?.baseLabel || baseLabel).trim();
-  return {
-    id: `legacy_snapshot_${dateKey}`,
+const resolvePlannedDayHistoryEntry = ({
+  dateKey = "",
+  existingEntry = null,
+  todayKey = "",
+  todayPlannedDayRecord = null,
+  legacySnapshot = null,
+  allowScheduleFallback = true,
+  planStartDate = "",
+} = {}) => {
+  // LEGACY_COMPAT: older logs and archive-era reviews still need prescribed-day
+  // recovery from legacy snapshots and template-derived schedule history.
+  return resolveLegacyPlannedDayHistoryEntry({
     dateKey,
-    source: "legacy_log_snapshot",
-    week: {},
-    base: {
-      training: baseLabel ? { label: baseLabel, type: "planned_session" } : null,
-      nutrition: null,
-      recovery: null,
-      supplements: null,
-    },
-    resolved: {
-      training: resolvedLabel ? { label: resolvedLabel, type: snapshot?.modifiedFromBase ? "modified_session" : "planned_session" } : null,
-      nutrition: null,
-      recovery: null,
-      supplements: null,
-    },
-    decision: {
-      mode: String(snapshot?.mode || "legacy_snapshot"),
-      modeLabel: String(snapshot?.modeLabel || ""),
-      modifiedFromBase: Boolean(snapshot?.modifiedFromBase),
-    },
-    durability: PRESCRIBED_DAY_DURABILITY.legacyBackfill,
-    provenance: {
-      ...buildStructuredProvenance({
-        keyDrivers: ["legacy prescribed snapshot"],
-        events: [
-          buildProvenanceEvent({
-            actor: PROVENANCE_ACTORS.migration,
-            trigger: "legacy_log_snapshot",
-            mutationType: "migration_backfill",
-            revisionReason: "Recovered from legacy prescribed snapshot.",
-            sourceInputs: ["logs.prescribedPlanSnapshot"],
-            confidence: "medium",
-            timestamp: getStableCaptureAtForDate(dateKey),
-          }),
-        ],
-        summary: "Recovered from legacy prescribed snapshot.",
-      }),
-      adjustments: [],
-    },
-    flags: {
-      isModified: Boolean(snapshot?.modifiedFromBase),
-    },
-  };
-};
-
-const buildLegacyPlannedDayRecordFromWorkout = ({ dateKey = "", weekNumber = 0, workout = null } = {}) => {
-  if (!dateKey || !workout) return null;
-  return {
-    id: `legacy_schedule_${dateKey}`,
-    dateKey,
-    source: "legacy_schedule_helper",
-    week: {
-      number: weekNumber,
-      phase: workout?.week?.phase || workout?.phase || "",
-    },
-    base: {
-      training: cloneStructuredValue(workout),
-      nutrition: workout?.nutri ? { dayType: workout.nutri } : null,
-      recovery: null,
-      supplements: null,
-    },
-    resolved: {
-      training: cloneStructuredValue(workout),
-      nutrition: workout?.nutri ? { dayType: workout.nutri } : null,
-      recovery: null,
-      supplements: null,
-    },
-    decision: {
-      mode: "static_schedule",
-      modeLabel: "Static schedule fallback",
-      modifiedFromBase: false,
-    },
-    durability: PRESCRIBED_DAY_DURABILITY.fallbackDerived,
-    provenance: {
-      ...buildStructuredProvenance({
-        keyDrivers: ["legacy schedule fallback"],
-        events: [
-          buildProvenanceEvent({
-            actor: PROVENANCE_ACTORS.fallback,
-            trigger: "legacy_schedule_helper",
-            mutationType: "fallback_reconstruction",
-            revisionReason: "Recovered from legacy week-template fallback.",
-            sourceInputs: ["week_templates", "getTodayWorkout"],
-            confidence: "low",
-            timestamp: getStableCaptureAtForDate(dateKey),
-            details: {
-              weekNumber,
-            },
-          }),
-        ],
-        summary: "Recovered from legacy week-template fallback.",
-      }),
-      adjustments: [],
-    },
-    flags: {
-      isModified: false,
-      restDay: workout?.type === "rest",
-    },
-  };
+    existingEntry,
+    todayKey,
+    todayPlannedDayRecord,
+    legacySnapshot,
+    allowScheduleFallback,
+    planStartDate,
+    fallbackStartDate: PROFILE.startDate,
+    resolvePlanWeekNumberForDateKey,
+    resolveScheduleWorkout: getTodayWorkout,
+    validateInvariant: validatePrescribedDayHistoryInvariant,
+  });
 };
 
 const getNutritionOverrideDayType = (override = null) => String(override?.dayType || override || "").trim();
@@ -3443,6 +3412,7 @@ export default function TrainerDashboard() {
   const [coachPlanAdjustments, setCoachPlanAdjustments] = useState(DEFAULT_COACH_PLAN_ADJUSTMENTS);
   const [dailyCheckins, setDailyCheckins] = useState({});
   const [plannedDayRecords, setPlannedDayRecords] = useState({});
+  const [planWeekRecords, setPlanWeekRecords] = useState({});
   const [weeklyCheckins, setWeeklyCheckins] = useState({});
   const [nutritionFavorites, setNutritionFavorites] = useState(DEFAULT_NUTRITION_FAVORITES);
   const [nutritionActualLogs, setNutritionActualLogs] = useState({});
@@ -3501,7 +3471,7 @@ export default function TrainerDashboard() {
   const learningLayer = deriveLearningLayer({ dailyCheckins, logs, weeklyCheckins, momentum, personalization, validationLayer, optimizationLayer });
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
-  const planComposer = composeGoalNativePlan({ goals: goalsModel, personalization, momentum, learningLayer, currentWeek, baseWeek });
+  const planComposer = composeGoalNativePlan({ goals: goalsModel, personalization, momentum, learningLayer, currentWeek, baseWeek, weekTemplates: WEEKS });
   const planWeekRuntime = useMemo(() => {
     const runtime = assemblePlanWeekRuntime({
       todayKey,
@@ -3538,6 +3508,54 @@ export default function TrainerDashboard() {
   const currentWeeklyCheckin = planWeekRuntime.currentWeeklyCheckin;
   const currentPlanWeek = planWeekRuntime.currentPlanWeek;
   const currentPlanSession = planWeekRuntime.currentPlanSession;
+  useEffect(() => {
+    if (loading || !currentPlanWeek?.id) return;
+    const { nextRecords, changed } = upsertPersistedPlanWeekRecord({
+      planWeekRecords,
+      planWeek: currentPlanWeek,
+      capturedAt: Date.now(),
+      sourceType: "current_plan_week",
+      weeklyCheckin: currentWeeklyCheckin,
+    });
+    if (!changed) return;
+    setPlanWeekRecords(nextRecords);
+    persistAll(
+      logs,
+      bodyweights,
+      paceOverrides,
+      weekNotes,
+      planAlerts,
+      personalization,
+      coachActions,
+      coachPlanAdjustments,
+      goalsModel,
+      dailyCheckins,
+      weeklyCheckins,
+      nutritionFavorites,
+      nutritionActualLogs,
+      plannedDayRecords,
+      nextRecords
+    );
+  }, [
+    loading,
+    currentPlanWeek,
+    currentWeeklyCheckin,
+    planWeekRecords,
+    logs,
+    bodyweights,
+    paceOverrides,
+    weekNotes,
+    planAlerts,
+    personalization,
+    coachActions,
+    coachPlanAdjustments,
+    goalsModel,
+    dailyCheckins,
+    weeklyCheckins,
+    nutritionFavorites,
+    nutritionActualLogs,
+    plannedDayRecords,
+  ]);
   const todayPlan = generateTodayPlan(
     canonicalUserProfile,
     { logs, todayKey },
@@ -3548,6 +3566,7 @@ export default function TrainerDashboard() {
       injuryLevel: personalization.injuryPainState?.level || "none",
     },
     {
+      programBlock: currentPlanWeek?.programBlock || null,
       weeklyIntent: currentPlanWeek?.weeklyIntent || null,
       planWeek: currentPlanWeek,
       plannedSession: currentPlanSession,
@@ -3565,6 +3584,7 @@ export default function TrainerDashboard() {
           planWeekId: currentPlanWeek?.id || "",
           status: currentPlanWeek?.status || "planned",
           adjusted: Boolean(currentPlanWeek?.adjusted),
+          programBlock: currentPlanWeek?.programBlock || null,
           weeklyIntent: currentPlanWeek?.weeklyIntent || null,
         },
         zones: baseTodayWorkout?.zones,
@@ -3672,6 +3692,7 @@ export default function TrainerDashboard() {
       currentPlanWeek: {
         ...currentPlanWeek,
         architecture: planComposer?.architecture || "",
+        programBlock: planComposer?.programBlock || currentPlanWeek?.programBlock || null,
         blockIntent: planComposer?.blockIntent || null,
       },
       dayOverride,
@@ -3758,6 +3779,8 @@ export default function TrainerDashboard() {
         weekNumber: currentPlanWeek?.weekNumber || currentWeek,
         label: currentPlanWeek?.label || "",
         phase: currentPlanWeek?.phase || baseWeek?.phase || "",
+        programBlockLabel: currentPlanWeek?.programBlock?.label || "",
+        dominantEmphasis: currentPlanWeek?.programBlock?.dominantEmphasis?.label || "",
         status: currentPlanWeek?.status || "planned",
         adjusted: Boolean(currentPlanWeek?.adjusted),
         focus: weekIntent?.focus || "",
@@ -3838,7 +3861,13 @@ export default function TrainerDashboard() {
   ]);
   const dailyBrief = generateDailyCoachBrief({ momentum, todayWorkout: effectiveTodayWorkout, arbitration, injuryState: personalization.injuryPainState, patterns, learning: learningLayer, salvage: salvageLayer });
   const dailyStory = buildUnifiedDailyStory({ todayWorkout: effectiveTodayWorkout, dailyBrief, progress: progressEngine, arbitration, expectations, salvage: salvageLayer, momentum });
-  const weeklyReview = generateWeeklyCoachReview({ momentum, arbitration, signals: computeAdaptiveSignals({ logs, bodyweights, personalization }), personalization, patterns, learning: learningLayer, nutritionActualLogs, expectations, recalibration });
+  const weeklyNutritionReview = useMemo(() => buildWeeklyNutritionReview({
+    anchorDateKey: todayKey,
+    planDay,
+    plannedDayRecords,
+    nutritionActualLogs,
+  }), [todayKey, planDay, plannedDayRecords, nutritionActualLogs]);
+  const weeklyReview = generateWeeklyCoachReview({ momentum, arbitration, signals: computeAdaptiveSignals({ logs, bodyweights, personalization }), personalization, patterns, learning: learningLayer, nutritionActualLogs, weeklyNutritionReview, expectations, recalibration });
   const baseProactiveTriggers = buildProactiveTriggers({ momentum, personalization, goals: goalsModel, learning: learningLayer, nutritionActualLogs, longTermMemory }).filter(t => !dismissedTriggers.includes(t.id));
   const optimizationTrigger = optimizationLayer.experimentation.canExperiment && optimizationLayer.experimentation.pendingExperiment
     ? [{
@@ -4137,6 +4166,7 @@ export default function TrainerDashboard() {
         setCoachPlanAdjustments,
         setDailyCheckins,
         setPlannedDayRecords,
+        setPlanWeekRecords,
         setWeeklyCheckins,
         setNutritionFavorites,
         setNutritionActualLogs,
@@ -4144,7 +4174,7 @@ export default function TrainerDashboard() {
     });
   };
 
-  const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionActualLogs = nutritionActualLogs, newPlannedDayRecords = plannedDayRecords) => {
+  const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionActualLogs = nutritionActualLogs, newPlannedDayRecords = plannedDayRecords, newPlanWeekRecords = planWeekRecords) => {
     const normalizedGoalPayload = normalizeGoals(newGoals || []);
     const runtimeState = buildCanonicalRuntimeState({
       logs: newLogs,
@@ -4158,6 +4188,7 @@ export default function TrainerDashboard() {
       coachPlanAdjustments: newCoachPlanAdjustments,
       dailyCheckins: newDailyCheckins,
       plannedDayRecords: newPlannedDayRecords,
+      planWeekRecords: newPlanWeekRecords,
       weeklyCheckins: newWeeklyCheckins,
       nutritionFavorites: newNutritionFavorites,
       nutritionActualLogs: newNutritionActualLogs,
@@ -4187,6 +4218,7 @@ export default function TrainerDashboard() {
         setCoachPlanAdjustments,
         setDailyCheckins,
         setPlannedDayRecords,
+        setPlanWeekRecords,
         setWeeklyCheckins,
         setNutritionFavorites,
         setNutritionActualLogs,
@@ -4218,53 +4250,23 @@ export default function TrainerDashboard() {
   };
 
   const getPlannedDayHistoryForDate = (dateKey, logEntry = null) => {
-    if (!dateKey) return null;
-    const existingEntry = normalizePrescribedDayHistoryEntry(dateKey, plannedDayRecords?.[dateKey] || null);
-    if (existingEntry) return existingEntry;
-    if (dateKey === todayKey && todayPlannedDayRecord) {
-      return createPrescribedDayHistoryEntry({
-        plannedDayRecord: todayPlannedDayRecord,
-        capturedAt: getStableCaptureAtForDate(dateKey),
-        sourceType: "plan_day_engine",
-        durability: PRESCRIBED_DAY_DURABILITY.durable,
-        reason: "today_plan_capture",
-        validateInvariant: validatePrescribedDayHistoryInvariant,
-      });
-    }
-    const legacySnapshot = buildLegacyPlannedDayRecordFromSnapshot({ dateKey, snapshot: logEntry?.prescribedPlanSnapshot || null });
-    if (legacySnapshot) {
-      return createPrescribedDayHistoryEntry({
-        plannedDayRecord: legacySnapshot,
-        capturedAt: logEntry?.ts || getStableCaptureAtForDate(dateKey),
-        sourceType: "legacy_log_snapshot",
-        durability: PRESCRIBED_DAY_DURABILITY.legacyBackfill,
-        reason: "legacy_snapshot_backfill",
-        validateInvariant: validatePrescribedDayHistoryInvariant,
-      });
-    }
     const hasHistoricalNeed = Boolean(
       logEntry
       || dailyCheckins?.[dateKey]
       || nutritionActualLogs?.[dateKey]
     );
-    if (!hasHistoricalNeed) return null;
-    const dateObj = new Date(`${dateKey}T12:00:00`);
-    if (Number.isNaN(dateObj.getTime())) return null;
-    const week = resolvePlanWeekNumberForDateKey({
+    // LEGACY_COMPAT: history lookup prefers canonical prescribed-day entries,
+    // but still backfills older snapshots/schedule rows for pre-migration dates.
+    return resolvePlannedDayHistoryEntry({
       dateKey,
+      existingEntry: plannedDayRecords?.[dateKey] || null,
+      todayKey,
+      todayPlannedDayRecord,
+      legacySnapshot: logEntry?.prescribedPlanSnapshot
+        ? { ...logEntry.prescribedPlanSnapshot, ts: logEntry?.ts || null }
+        : null,
+      allowScheduleFallback: hasHistoricalNeed,
       planStartDate: canonicalGoalState?.planStartDate || "",
-      fallbackStartDate: PROFILE.startDate,
-    });
-    const workout = getTodayWorkout(week, dateObj.getDay());
-    const fallbackRecord = buildLegacyPlannedDayRecordFromWorkout({ dateKey, weekNumber: week, workout });
-    if (!fallbackRecord) return null;
-    return createPrescribedDayHistoryEntry({
-      plannedDayRecord: fallbackRecord,
-      capturedAt: getStableCaptureAtForDate(dateKey),
-      sourceType: "legacy_schedule_helper",
-      durability: PRESCRIBED_DAY_DURABILITY.fallbackDerived,
-      reason: "schedule_backfill",
-      validateInvariant: validatePrescribedDayHistoryInvariant,
     });
   };
 
@@ -4416,6 +4418,8 @@ export default function TrainerDashboard() {
         return;
       }
       if (nextPlannedDayRecords?.[dateKey]) return;
+      // FALLBACK_ONLY: backfill only when historical context exists and no
+      // canonical prescribed-day record has been committed for that date.
       const backfilledEntry = getPlannedDayHistoryForDate(dateKey, logs?.[dateKey] || null);
       if (backfilledEntry) {
         nextPlannedDayRecords[dateKey] = backfilledEntry;
@@ -4886,7 +4890,18 @@ Keep it plain and specific.`;
   };
 
   const saveDailyCheckin = async (dateKey, checkin) => {
-    const merged = { ...DEFAULT_DAILY_CHECKIN, ...(checkin || {}) };
+    const merged = {
+      ...DEFAULT_DAILY_CHECKIN,
+      ...(checkin || {}),
+      readiness: {
+        ...(DEFAULT_DAILY_CHECKIN.readiness || {}),
+        ...((checkin || {}).readiness || {}),
+      },
+      actualRecovery: {
+        ...(DEFAULT_DAILY_CHECKIN.actualRecovery || {}),
+        ...((checkin || {}).actualRecovery || {}),
+      },
+    };
     const plannedDayHistory = getPlannedDayHistoryForDate(dateKey, logs?.[dateKey] || null);
     const plannedDayRecord = getCurrentPrescribedDayRecord(plannedDayHistory);
     const nextDailyEntry = {
@@ -4899,6 +4914,11 @@ Keep it plain and specific.`;
         note: merged.note || "",
         bodyweight: merged.bodyweight || "",
         readiness: cloneStructuredValue(merged.readiness || {}),
+        sleepHours: merged?.actualRecovery?.sleepHours || "",
+        mobilityMinutes: merged?.actualRecovery?.mobilityMinutes || "",
+        tissueWorkMinutes: merged?.actualRecovery?.tissueWorkMinutes || "",
+        painProtocolCompleted: Boolean(merged?.actualRecovery?.painProtocolCompleted),
+        recoveryNote: merged?.actualRecovery?.note || "",
         loggedAt: Date.now(),
       },
       ts: Date.now(),
@@ -5266,13 +5286,14 @@ Keep it plain and specific.`;
         planAlerts,
         personalization,
         goals: normalizedGoalPayload,
-        coachActions,
-        coachPlanAdjustments,
-        dailyCheckins,
-        plannedDayRecords,
-        weeklyCheckins,
-        nutritionFavorites,
-        nutritionActualLogs,
+      coachActions,
+      coachPlanAdjustments,
+      dailyCheckins,
+      plannedDayRecords,
+      planWeekRecords,
+      weeklyCheckins,
+      nutritionFavorites,
+      nutritionActualLogs,
       }),
       transformPersonalization: (draftPersonalization) => buildPersistedPersonalization(draftPersonalization, normalizedGoalPayload),
     });
@@ -5303,7 +5324,8 @@ Keep it plain and specific.`;
         runtimeState.weeklyCheckins,
         runtimeState.nutritionFavorites,
         runtimeState.nutritionActualLogs,
-        runtimeState.plannedDayRecords
+        runtimeState.plannedDayRecords,
+        runtimeState.planWeekRecords
       );
       setLastSaved("restored + synced");
       setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
@@ -5330,6 +5352,7 @@ Keep it plain and specific.`;
       planArcLabel,
       goalsSnapshot: goalsModel,
       prescribedDayHistory: cloneStructuredValue(plannedDayRecords || {}),
+      planWeekHistory: cloneStructuredValue(planWeekRecords || {}),
       logEntries: Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0])).map(([date, entry]) => ({ date, ...entry })),
     };
     const undoSnapshot = {
@@ -5341,6 +5364,7 @@ Keep it plain and specific.`;
       goals: goalsModel,
       dailyCheckins,
       plannedDayRecords,
+      planWeekRecords,
       weeklyCheckins,
       nutritionFavorites,
       nutritionActualLogs,
@@ -5365,6 +5389,7 @@ Keep it plain and specific.`;
     const resetAlerts = [{ id:`fresh_${Date.now()}`, type:"info", msg:`New plan started ${todayIso}.`, ts: Date.now() }];
     const resetDaily = {};
     const resetPlannedDayRecords = {};
+    const resetPlanWeekRecords = {};
     const resetWeekly = {};
     setLogs(clearedLogs);
     setBodyweights(clearedBodyweights);
@@ -5373,17 +5398,22 @@ Keep it plain and specific.`;
     setPlanAlerts(resetAlerts);
     setDailyCheckins(resetDaily);
     setPlannedDayRecords(resetPlannedDayRecords);
+    setPlanWeekRecords(resetPlanWeekRecords);
     setWeeklyCheckins(resetWeekly);
     setPersonalization(nextPersonalization);
     setStartFreshConfirmOpen(false);
-    await persistAll(clearedLogs, clearedBodyweights, clearedPaceOverrides, clearedWeekNotes, resetAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goalsModel, resetDaily, resetWeekly, nutritionFavorites, nutritionActualLogs, resetPlannedDayRecords);
+    await persistAll(clearedLogs, clearedBodyweights, clearedPaceOverrides, clearedWeekNotes, resetAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goalsModel, resetDaily, resetWeekly, nutritionFavorites, nutritionActualLogs, resetPlannedDayRecords, resetPlanWeekRecords);
   };
 
   const undoStartFresh = async () => {
     const undo = personalization?.planResetUndo;
     if (!undo || Date.now() > Number(undo?.expiresAt || 0) || !undo?.snapshot) return;
     const snap = undo.snapshot;
-    const restoredNutritionActualLogs = snap.nutritionActualLogs || normalizeActualNutritionLogCollection(snap.nutritionFeedback || {});
+    // LEGACY_COMPAT: reset undo snapshots may predate nutritionActualLogs.
+    const restoredNutritionActualLogs = resolveNutritionActualLogStoreCompat({
+      nutritionActualLogs: snap.nutritionActualLogs,
+      legacyNutritionFeedback: snap.nutritionFeedback || {},
+    });
     const restoredPersonalization = mergePersonalization(snap.personalization || personalization, { planResetUndo: null });
     setLogs(snap.logs || {});
     setBodyweights(snap.bodyweights || []);
@@ -5393,13 +5423,14 @@ Keep it plain and specific.`;
     setGoals(normalizeGoals(snap.goals || goalsModel));
     setDailyCheckins(snap.dailyCheckins || {});
     setPlannedDayRecords(snap.plannedDayRecords || {});
+    setPlanWeekRecords(snap.planWeekRecords || {});
     setWeeklyCheckins(snap.weeklyCheckins || {});
     setNutritionFavorites(snap.nutritionFavorites || nutritionFavorites);
     setNutritionActualLogs(restoredNutritionActualLogs);
     setCoachActions(snap.coachActions || coachActions);
     setCoachPlanAdjustments(snap.coachPlanAdjustments || coachPlanAdjustments);
     setPersonalization(restoredPersonalization);
-    await persistAll(snap.logs || {}, snap.bodyweights || [], snap.paceOverrides || {}, snap.weekNotes || {}, snap.planAlerts || [], restoredPersonalization, snap.coachActions || coachActions, snap.coachPlanAdjustments || coachPlanAdjustments, normalizeGoals(snap.goals || goalsModel), snap.dailyCheckins || {}, snap.weeklyCheckins || {}, snap.nutritionFavorites || nutritionFavorites, restoredNutritionActualLogs, snap.plannedDayRecords || {});
+    await persistAll(snap.logs || {}, snap.bodyweights || [], snap.paceOverrides || {}, snap.weekNotes || {}, snap.planAlerts || [], restoredPersonalization, snap.coachActions || coachActions, snap.coachPlanAdjustments || coachPlanAdjustments, normalizeGoals(snap.goals || goalsModel), snap.dailyCheckins || {}, snap.weeklyCheckins || {}, snap.nutritionFavorites || nutritionFavorites, restoredNutritionActualLogs, snap.plannedDayRecords || {}, snap.planWeekRecords || {});
   };
 
   const undoBanner = (() => {
@@ -6002,24 +6033,24 @@ Keep it plain and specific.`;
         Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} todayWorkout={planDay?.resolved?.training} />
+            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} todayWorkout={planDay?.resolved?.training} />
           </ProgramTabErrorBoundary>
         )}
 
         {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
             LOG
         Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
-        {tab === 2 && <LogTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} />}
+        {tab === 2 && <LogTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} />}
 
         {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
             NUTRITION
         Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
-        {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} />}
+        {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} weeklyNutritionReview={weeklyNutritionReview} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} />}
 
         {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
             COACH
         Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
-        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
           setCoachPlanAdjustments(nextCoachPlanAdjustments);
@@ -6033,6 +6064,7 @@ Keep it plain and specific.`;
           const clearedBodyweights = [];
           const clearedDaily = {};
           const clearedPlannedDayRecords = {};
+          const clearedPlanWeekRecords = {};
           const clearedWeekly = {};
           const clearedGoals = normalizeGoals(DEFAULT_MULTI_GOALS);
           const resetPersonalization = mergePersonalization(DEFAULT_PERSONALIZATION, { profile: { ...DEFAULT_PERSONALIZATION.profile, onboardingComplete: false } });
@@ -6040,6 +6072,7 @@ Keep it plain and specific.`;
           setBodyweights(clearedBodyweights);
           setDailyCheckins(clearedDaily);
           setPlannedDayRecords(clearedPlannedDayRecords);
+          setPlanWeekRecords(clearedPlanWeekRecords);
           setWeeklyCheckins(clearedWeekly);
           setGoals(clearedGoals);
           setPersonalization(resetPersonalization);
@@ -6047,7 +6080,7 @@ Keep it plain and specific.`;
           setCoachPlanAdjustments(DEFAULT_COACH_PLAN_ADJUSTMENTS);
           setNutritionFavorites(DEFAULT_NUTRITION_FAVORITES);
           setNutritionActualLogs({});
-          await persistAll(clearedLogs, clearedBodyweights, {}, {}, [], resetPersonalization, [], DEFAULT_COACH_PLAN_ADJUSTMENTS, clearedGoals, clearedDaily, clearedWeekly, DEFAULT_NUTRITION_FAVORITES, {}, clearedPlannedDayRecords);
+          await persistAll(clearedLogs, clearedBodyweights, {}, {}, [], resetPersonalization, [], DEFAULT_COACH_PLAN_ADJUSTMENTS, clearedGoals, clearedDaily, clearedWeekly, DEFAULT_NUTRITION_FAVORITES, {}, clearedPlannedDayRecords, clearedPlanWeekRecords);
         }} onPersist={async (nextPersonalization) => {
           setPersonalization(nextPersonalization);
           await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
@@ -7874,6 +7907,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const userProfile = athleteProfile?.userProfile || {};
   const planDayRecovery = planDay?.resolved?.recovery || null;
+  const planDaySupplements = planDay?.resolved?.supplements || null;
   const planDayLogging = planDay?.resolved?.logging || null;
   const planDayWeek = planDay?.week || null;
   const currentPlanWeek = planDayWeek?.planWeek || null;
@@ -7889,6 +7923,10 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     readiness: {
       ...(DEFAULT_DAILY_CHECKIN.readiness || {}),
       ...((savedPlanDayCheckin || {}).readiness || {}),
+    },
+    actualRecovery: {
+      ...(DEFAULT_DAILY_CHECKIN.actualRecovery || {}),
+      ...((savedPlanDayCheckin || {}).actualRecovery || {}),
     },
   };
   const [checkin, setCheckin] = useState(defaultCheckin);
@@ -7977,6 +8015,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     .replace(/^execute\s*/i, "")
     .split(".")[0];
   const conciseSuccess = (dailyStory?.success || "Complete the session and log it.").split(".")[0];
+  const currentProgramBlock = planDayWeek?.programBlock || null;
   const phase = planDayWeek?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
   const datedLogs = Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0]));
   const todayDate = new Date();
@@ -8281,6 +8320,9 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     limitation: !historicalLogs.length ? "Recent training history is still limited." : "",
     stale: Boolean(garminApiStaleError),
   });
+  const programBlockLine = currentProgramBlock
+    ? `${currentProgramBlock.label}. ${currentProgramBlock.recoveryPosture?.summary || currentProgramBlock.dominantEmphasis?.objective || ""}`.trim()
+    : "";
   const todayTrustTone = buildReviewBadgeTone(
     todayTrust.level === "grounded" ? "match" : todayTrust.level === "partial" ? "changed" : "recovery"
   );
@@ -8300,6 +8342,16 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       ? displayWorkout.extendedFinisher
       : ""
   );
+  const recoveryPrescription = planDayRecovery?.prescription || null;
+  const actualRecovery = planDayRecovery?.actual || null;
+  const recoveryPrescriptionLine = recoveryPrescription?.summary || planDayRecovery?.recoveryLine || "Recovery posture follows the current daily decision.";
+  const recoveryActualLine = actualRecovery?.loggedAt
+    ? actualRecovery.summary
+    : "Recovery actuals have not been logged yet.";
+  const supplementPlanLine = Array.isArray(planDaySupplements?.plan?.items) && planDaySupplements.plan.items.length
+    ? planDaySupplements.plan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
+    : "No supplement plan prescribed today.";
+  const supplementActualLine = planDaySupplements?.actual?.summary || "Supplement adherence will appear after nutrition logging.";
   const tomorrowPreviewText = `${tomorrowWorkout?.label || "Rest"}${tomorrowWorkout?.run ? ` - ${tomorrowWorkout.run.d}` : ""}`;
   const primaryActionSummary = sessionVariant === "short"
     ? "Short version active"
@@ -8354,6 +8406,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           </div>
           <div style={{ fontSize:"0.62rem", color:"#e2e8f0", lineHeight:1.55 }}>{rationaleHeadline}</div>
           {!!rationaleSupport && <div style={{ marginTop:"0.28rem", fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.5 }}>{rationaleSupport}</div>}
+          {!!programBlockLine && <div style={{ marginTop:"0.24rem", fontSize:"0.51rem", color:"#93c5fd", lineHeight:1.5 }}>Block posture: {programBlockLine}</div>}
           <div style={{ marginTop:"0.3rem", fontSize:"0.48rem", color:"#64748b" }}>Source: {readinessSourceLabel}{shortProvenance ? ` - ${shortProvenance}` : ""}</div>
           <div style={{ marginTop:"0.16rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{todayTrust.summary}</div>
         </div>
@@ -8379,6 +8432,12 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           <div style={{ fontSize:"0.62rem", color:"#e2e8f0", lineHeight:1.55 }}>Tomorrow: {tomorrowPreviewText}</div>
           <div style={{ marginTop:"0.28rem", fontSize:"0.52rem", color:"#8fa5c8" }}>{primaryActionSummary}</div>
         </div>
+        <div className="card card-soft" style={{ borderColor:C.blue+"22", background:"#0d1420" }}>
+          <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.38rem" }}>RECOVERY + SUPPLEMENTS</div>
+          <div style={{ fontSize:"0.57rem", color:"#e2e8f0", lineHeight:1.55 }}>{recoveryPrescriptionLine}</div>
+          <div style={{ marginTop:"0.22rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{supplementPlanLine}</div>
+          <div style={{ marginTop:"0.18rem", fontSize:"0.48rem", color:"#64748b", lineHeight:1.5 }}>{recoveryActualLine} {supplementActualLine}</div>
+        </div>
       </div>
 
       <div
@@ -8400,6 +8459,11 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           <span style={{ fontSize:"0.48rem", color:cardColor, background:cardColor+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500, letterSpacing:"0.04em" }}>
             {displayWorkout?.type?.replace(/[+-]/g," + ").toUpperCase() || "REST"}
           </span>
+          {currentProgramBlock?.dominantEmphasis?.label && (
+            <span style={{ fontSize:"0.48rem", color:"#dbeafe", background:"#1d3557", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
+              {currentProgramBlock.dominantEmphasis.label}
+            </span>
+          )}
           <span style={{ fontSize:"0.48rem", color:readinessTone, background:readinessTone+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:600, letterSpacing:"0.04em" }}>
             {readinessBadgeLabel}
           </span>
@@ -8718,6 +8782,39 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
               }
             }} style={{ fontSize:"0.55rem", opacity: (checkin.status === "not_logged" || checkinSaving) ? 0.4 : 1 }}>{checkinSaving ? "SAVING..." : "SAVE"}</button>
           </div>
+          <div style={{ display:"grid", gap:"0.28rem", marginTop:"0.1rem", borderTop:"1px solid #1e293b", paddingTop:"0.35rem" }}>
+            <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Recovery actuals</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.3rem" }}>
+              <input
+                type="number"
+                step="0.5"
+                value={checkin?.actualRecovery?.sleepHours || ""}
+                onChange={e=>setCheckin(c=>({ ...c, actualRecovery: { ...(c?.actualRecovery || {}), sleepHours: e.target.value } }))}
+                placeholder="Sleep hrs"
+              />
+              <input
+                type="number"
+                step="1"
+                value={checkin?.actualRecovery?.mobilityMinutes || ""}
+                onChange={e=>setCheckin(c=>({ ...c, actualRecovery: { ...(c?.actualRecovery || {}), mobilityMinutes: e.target.value } }))}
+                placeholder="Mobility min"
+              />
+              <input
+                type="number"
+                step="1"
+                value={checkin?.actualRecovery?.tissueWorkMinutes || ""}
+                onChange={e=>setCheckin(c=>({ ...c, actualRecovery: { ...(c?.actualRecovery || {}), tissueWorkMinutes: e.target.value } }))}
+                placeholder="Tissue work"
+              />
+              <button
+                className="btn"
+                onClick={()=>setCheckin(c=>({ ...c, actualRecovery: { ...(c?.actualRecovery || {}), painProtocolCompleted: !c?.actualRecovery?.painProtocolCompleted } }))}
+                style={{ fontSize:"0.5rem", color:checkin?.actualRecovery?.painProtocolCompleted ? C.green : "#64748b", borderColor:checkin?.actualRecovery?.painProtocolCompleted ? C.green+"35" : "#1e293b" }}
+              >
+                {checkin?.actualRecovery?.painProtocolCompleted ? "Pain protocol done" : "Pain protocol"}
+              </button>
+            </div>
+          </div>
           {checkinAck && <div role="status" style={{ fontSize:"0.54rem", color:C.green }}>{checkinAck}</div>}
           {hasStrength && (
             <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.2rem", borderTop:"1px solid #1e293b", paddingTop:"0.35rem" }}>
@@ -8941,7 +9038,7 @@ class ProgramTabErrorBoundary extends React.Component {
   }
 }
 
-function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, todayWorkout: legacyTodayWorkout }) {
+function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, todayWorkout: legacyTodayWorkout }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const goalBuckets = athleteProfile?.goalBuckets || {};
@@ -8976,42 +9073,21 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     environmentSelection,
     previewLength: 4,
   }), [rollingHorizon, currentWeek, currentPlanWeek, planDayWeek, goals, planComposer, momentum, learningLayer, weeklyCheckins, failureMode, environmentSelection]);
-  /* legacy fallback moved to plan-week-service
-  const fallbackProgramWeeks = useMemo(() => {
-    return Array.from({ length: 4 }).map((_, idx) => {
-      const absoluteWeek = currentWeek + idx;
-      const template = WEEKS[Math.max(0, Math.min(absoluteWeek - 1, WEEKS.length - 1))] || WEEKS[0];
-      const planWeek = buildPlanWeek({
-        weekNumber: absoluteWeek,
-        template,
-        referenceTemplate: fallbackReferenceTemplate,
-        label: `${template?.phase || "BASE"} Ã‚Â· Week ${absoluteWeek}`,
-        specificity: idx <= 1 ? "high" : idx <= 5 ? "medium" : "directional",
-        kind: "plan",
-        goals,
-        architecture: planComposer?.architecture || "hybrid_performance",
-        blockIntent: planComposer?.blockIntent || null,
-        split: planComposer?.split || null,
-        sessionsByDay: planComposer?.dayTemplates || null,
-        momentum,
-        learningLayer,
-        weeklyCheckin: weeklyCheckins?.[String(absoluteWeek)] || {},
-        failureMode: absoluteWeek === currentWeek ? failureMode : {},
-        environmentSelection: absoluteWeek === currentWeek ? environmentSelection : null,
-        constraints: planComposer?.constraints || [],
-      });
-      return {
-        kind: "plan",
-        slot: idx + 1,
-        absoluteWeek,
-        planWeek,
-        template,
-        weekLabel: planWeek?.label || `${template?.phase || "BASE"} Ã‚Â· Week ${absoluteWeek}`,
-      };
-    });
-  }, [currentPlanWeek, currentWeek, fallbackReferenceTemplate, goals, planComposer, momentum, learningLayer, weeklyCheckins, failureMode, environmentSelection]);
-  */
   const currentWeekModel = currentPlanWeek || planDayWeek?.planWeek || (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek)?.planWeek || null;
+  const committedWeekHistory = useMemo(
+    () => listCommittedPlanWeekRecords(planWeekRecords)
+      .map((entry) => buildPersistedPlanWeekReview({ planWeekRecord: entry, logs, weeklyCheckins, currentWeek }))
+      .filter(Boolean)
+      .filter((entry) => Number(entry?.absoluteWeek || 0) <= Number(currentWeek || 0)),
+    [planWeekRecords, logs, weeklyCheckins, currentWeek]
+  );
+  const currentCommittedWeekRecord = getPersistedPlanWeekRecord({ planWeekRecords, absoluteWeek: currentWeek });
+  const currentCommittedWeekReview = committedWeekHistory.find((entry) => entry?.isCurrentWeek) || buildPersistedPlanWeekReview({
+    planWeekRecord: currentCommittedWeekRecord,
+    logs,
+    weeklyCheckins,
+    currentWeek,
+  });
   const runningGoalActive = Boolean(
     activeTimeBoundGoal?.category === "running" ||
     (goals || []).some((goal) => goal?.active && goal?.category === "running")
@@ -9092,6 +9168,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const primaryCategory = goals.find(g => g.active)?.category || "running";
   const phaseLabels = PHASE_ARC_LABELS[primaryCategory] || PHASE_ARC_LABELS.running;
   const currentTemplate = currentWeekModel?.template || (displayHorizon || []).find(h => h.absoluteWeek === currentWeek)?.template || {};
+  const currentProgramBlock = planDayWeek?.programBlock || currentWeekModel?.programBlock || planComposer?.programBlock || null;
   const currentPhase = planDayWeek?.phase || currentWeekModel?.phase || currentTemplate.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
   const currentWeeklyIntent = planDayWeek?.weeklyIntent || currentWeekModel?.weeklyIntent || (currentWeekModel ? {
     focus: currentWeekModel.focus,
@@ -9105,12 +9182,12 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const dayOfWeek = new Date().getDay();
   const daysLeftInWeek = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
   const daysToShift = nextPhaseBlock ? Math.max(1, ((nextPhaseBlock.startWeek - currentWeek - 1) * 7) + daysLeftInWeek) : null;
-  const phaseShortMeaning = currentWeeklyIntent?.focus || (primaryCategory === "body_comp"
+  const phaseShortMeaning = currentProgramBlock?.dominantEmphasis?.label || currentWeeklyIntent?.focus || (primaryCategory === "body_comp"
     ? "Deficit week"
     : primaryCategory === "strength"
     ? "Strength progression"
     : "Endurance progression");
-  const phaseBanner = `${String(currentPhaseMeta?.name || currentPhase).replace(" Phase", "")} Ã‚Â· ${phaseShortMeaning} Ã‚Â· ${daysToShift ? `transitions in ${daysToShift} days.` : "current block active."}`;
+  const phaseBanner = `${currentProgramBlock?.label || String(currentPhaseMeta?.name || currentPhase).replace(" Phase", "")} Ã‚Â· ${phaseShortMeaning} Ã‚Â· ${daysToShift ? `transitions in ${daysToShift} days.` : "current block active."}`;
   const strengthProgress = deriveStrengthProgressTracker({ logs, goals, strengthLayer });
   const strengthGoalTracking = personalization?.strengthProgression?.tracking || {};
   const displayedStrengthProgress = useMemo(() => {
@@ -9247,11 +9324,13 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const futureWeekRows = (displayHorizon || []).filter((h) => Number(h?.absoluteWeek || 0) > currentWeek);
   const activeGoalsList = (goals || []).filter((goal) => goal?.active);
   const currentWeekLabel = currentWeekRow?.weekLabel || currentWeekModel?.label || `Week ${currentWeek}`;
-  const blockSummaryLine = currentWeekModel?.summary || planComposer?.blockIntent?.narrative || arbitration.allocationNarrative;
+  const blockSummaryLine = currentProgramBlock?.summary || currentWeekModel?.summary || planComposer?.programBlock?.summary || arbitration.allocationNarrative;
+  const committedWeekHistoryPreview = committedWeekHistory.slice(0, 6);
   const hierarchyIntentBits = [
     currentWeeklyIntent?.aggressionLevel ? String(currentWeeklyIntent.aggressionLevel).replaceAll("_", " ") : null,
     currentWeeklyIntent?.recoveryBias ? `recovery ${String(currentWeeklyIntent.recoveryBias).replaceAll("_", " ")}` : null,
     currentWeeklyIntent?.volumePct ? `volume ${currentWeeklyIntent.volumePct}%` : null,
+    currentProgramBlock?.nutritionPosture?.mode ? `nutrition ${String(currentProgramBlock.nutritionPosture.mode).replaceAll("_", " ")}` : null,
     currentWeeklyIntent?.nutritionEmphasis || null,
   ].filter(Boolean);
 
@@ -9274,8 +9353,18 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
               </div>
               <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
                 <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.25rem" }}>CURRENT BLOCK</div>
-                <div style={{ fontSize:"0.72rem", color:C.blue, fontWeight:600, lineHeight:1.2 }}>{currentPhaseMeta.name}</div>
-                <div style={{ fontSize:"0.55rem", color:"#cbd5e1", marginTop:"0.18rem", lineHeight:1.55 }}>{currentPhaseMeta.objective}</div>
+                <div style={{ fontSize:"0.72rem", color:C.blue, fontWeight:600, lineHeight:1.2 }}>{currentProgramBlock?.label || currentPhaseMeta.name}</div>
+                <div style={{ fontSize:"0.55rem", color:"#cbd5e1", marginTop:"0.18rem", lineHeight:1.55 }}>{currentProgramBlock?.dominantEmphasis?.objective || currentPhaseMeta.objective}</div>
+                {currentProgramBlock?.secondaryEmphasis?.label && (
+                  <div style={{ fontSize:"0.52rem", color:"#93c5fd", marginTop:"0.16rem", lineHeight:1.5 }}>
+                    Secondary: {currentProgramBlock.secondaryEmphasis.label}
+                  </div>
+                )}
+                {currentProgramBlock?.recoveryPosture?.summary && (
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>
+                    Recovery posture: {currentProgramBlock.recoveryPosture.summary}
+                  </div>
+                )}
                 <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.24rem" }}>{daysToShift ? `Transition expected in about ${daysToShift} days.` : "Current block remains active in the visible horizon."}</div>
               </div>
               <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
@@ -9293,10 +9382,10 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
               </div>
               <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.75rem 0.8rem" }}>
                 <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>GOAL ALLOCATION</div>
-                <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>Prioritized: {planComposer?.blockIntent?.prioritized || arbitration.goalAllocation.primary}</div>
-                <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>Maintained: {(planComposer?.blockIntent?.maintained || arbitration.goalAllocation.maintained || []).join(" - ") || "None"}</div>
-                <div style={{ fontSize:"0.54rem", color:C.amber, marginTop:"0.16rem", lineHeight:1.5 }}>Minimized: {planComposer?.blockIntent?.minimized || arbitration.goalAllocation.minimized || "None"}</div>
-                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.22rem", lineHeight:1.5 }}>Tradeoff: {arbitration.coachTradeoffLine || arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
+                <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>Prioritized: {currentProgramBlock?.goalAllocation?.prioritized || planComposer?.blockIntent?.prioritized || arbitration.goalAllocation.primary}</div>
+                <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>Maintained: {(currentProgramBlock?.goalAllocation?.maintained || planComposer?.blockIntent?.maintained || arbitration.goalAllocation.maintained || []).join(" - ") || "None"}</div>
+                <div style={{ fontSize:"0.54rem", color:C.amber, marginTop:"0.16rem", lineHeight:1.5 }}>Minimized: {currentProgramBlock?.goalAllocation?.minimized || planComposer?.blockIntent?.minimized || arbitration.goalAllocation.minimized || "None"}</div>
+                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.22rem", lineHeight:1.5 }}>Tradeoff: {currentProgramBlock?.tradeoffs?.[0] || arbitration.coachTradeoffLine || arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
               </div>
             </div>
             <button className="btn" onClick={()=>setPhaseExpanded(v=>!v)} style={{ width:"100%", justifyContent:"space-between", fontSize:"0.55rem", color:"#dbe7f6", borderColor:"#2b3f5e", background:"rgba(9,16,30,0.45)" }}>
@@ -9325,6 +9414,11 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
               <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>CURRENT WEEK DETAIL</div>
               <div style={{ fontSize:"1rem", color:"#f8fafc", fontWeight:650 }}>{currentWeekLabel}</div>
               <div style={{ fontSize:"0.55rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Current committed plan week. Today can still reflect live PlanDay adjustments.</div>
+              <div style={{ fontSize:"0.5rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>
+                {currentCommittedWeekReview
+                  ? `Durable PlanWeek snapshot saved for ${currentCommittedWeekReview.label}. Future horizon rows remain projected until their week becomes current.`
+                  : "Durable week history will populate as each week becomes current. Older data can still fall back to derived week context where no snapshot exists yet."}
+              </div>
               <div style={{ fontSize:"0.5rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>{programTrust.summary}</div>
             </div>
             <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
@@ -9359,6 +9453,10 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
               <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
                 <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PLAN MODE</div>
                 <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{deviceSyncAudit?.planMode || "normal"}</div>
+              </div>
+              <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>DURABILITY</div>
+                <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>{currentCommittedWeekReview ? "committed history" : "live only"}</div>
               </div>
             </div>
           </div>
@@ -9502,6 +9600,49 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
             })}
           </div>
         </section>
+
+        <section className="card card-subtle" style={{ borderColor:C.green+"20", background:"#0d1318" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.7rem" }}>
+            <div>
+              <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>COMMITTED WEEK HISTORY</div>
+              <div style={{ fontSize:"0.58rem", color:"#8fa5c8", lineHeight:1.55 }}>These cards come from durable `PlanWeek` records, not reconstructed template guesses.</div>
+            </div>
+            <div style={{ fontSize:"0.5rem", color:C.green, background:C.green+"14", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>COMMITTED</div>
+          </div>
+
+          {committedWeekHistoryPreview.length === 0 ? (
+            <div style={{ fontSize:"0.55rem", color:"#94a3b8", lineHeight:1.6 }}>
+              No durable week history has been saved yet. The current week will be committed automatically once the canonical `PlanWeek` snapshot is present; older data may still rely on compatibility fallbacks.
+            </div>
+          ) : (
+            <div style={{ display:"grid", gap:"0.5rem" }}>
+              {committedWeekHistoryPreview.map((entry) => {
+                const reviewBits = [
+                  entry?.plannedSessionCount ? `${entry.plannedSessionCount} planned` : null,
+                  entry?.loggedSessionCount ? `${entry.loggedSessionCount} logged` : null,
+                  entry?.weeklyCheckin?.ts ? "weekly check-in saved" : null,
+                ].filter(Boolean);
+                return (
+                  <div key={entry.weekKey} style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.6rem 0.65rem" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap", alignItems:"center" }}>
+                      <div style={{ fontSize:"0.62rem", color:"#e2e8f0" }}>{entry.label}</div>
+                      <div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap", alignItems:"center" }}>
+                        {entry?.isCurrentWeek && <span style={{ fontSize:"0.46rem", color:C.green, background:C.green+"14", padding:"0.12rem 0.35rem", borderRadius:999 }}>current</span>}
+                        <span style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#172233", padding:"0.12rem 0.35rem", borderRadius:999 }}>{String(entry?.status || "planned").replaceAll("_", " ")}</span>
+                      </div>
+                    </div>
+                    <div style={{ fontSize:"0.52rem", color:"#93c5fd", marginTop:"0.14rem", lineHeight:1.5 }}>{entry.focus || entry.summary || "Committed week snapshot"}</div>
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.55 }}>
+                      {entry.startDate && entry.endDate ? `${entry.startDate} to ${entry.endDate}` : "Week window unavailable"}
+                      {reviewBits.length ? ` - ${reviewBits.join(" - ")}` : ""}
+                    </div>
+                    {!!entry.summary && <div style={{ fontSize:"0.5rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.55 }}>{entry.summary}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
       {Object.keys(paceOverrides || {}).length > 0 && (
         <div style={{ marginTop:"0.75rem", padding:"0.6rem 0.8rem", background:"#0d1117", border:`1px solid ${C.amber}30`, borderRadius:8, fontSize:"0.58rem", color:C.amber }}>
@@ -9513,7 +9654,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ LOG TAB (POLISHED) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "" }) {
+function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = {}, planWeekRecords = {}, weeklyCheckins = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "" }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const plannedWorkout = planDay?.base?.training || legacyTodayWorkout;
   const todayPlannedDayRecord = useMemo(() => buildPlannedDayRecord(planDay), [planDay]);
@@ -9533,6 +9674,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   const [detailedOpen, setDetailedOpen] = useState(false);
   const [pendingDeleteDate, setPendingDeleteDate] = useState("");
   const [selectedReviewDate, setSelectedReviewDate] = useState(today);
+  const [selectedArchiveReviewTarget, setSelectedArchiveReviewTarget] = useState({ archiveId: "", dateKey: "" });
   const feelTooltipTimerRef = useRef(null);
 
   const history = Object.entries(logs || {})
@@ -9549,49 +9691,28 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     ])).filter((dateKey) => dateKey && dateKey <= today).sort((a, b) => b.localeCompare(a)),
     [logs, dailyCheckins, plannedDayRecords, nutritionActualLogs, today]
   );
+  const committedWeekReviews = useMemo(
+    () => buildHistoricalWeekAuditEntries({ planWeekRecords, logs, weeklyCheckins, currentWeek })
+      .filter((entry) => Number(entry?.absoluteWeek || 0) <= Number(currentWeek || 0)),
+    [planWeekRecords, logs, weeklyCheckins, currentWeek]
+  );
+  const archivedPlanAudits = useMemo(
+    () => (planArchives || []).map((archive) => buildArchivedPlanAudit({ archive })).filter(Boolean),
+    [planArchives]
+  );
   const toDateKey = (d) => new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split("T")[0];
   const getPlannedHistoryForDate = (dateKey, entry = null) => {
-    if (!dateKey) return null;
-    const existingEntry = normalizePrescribedDayHistoryEntry(dateKey, plannedDayRecords?.[dateKey] || null);
-    if (existingEntry) return existingEntry;
-    if (dateKey === today && todayPlannedDayRecord) {
-      return createPrescribedDayHistoryEntry({
-        plannedDayRecord: todayPlannedDayRecord,
-        capturedAt: getStableCaptureAtForDate(dateKey),
-        sourceType: "plan_day_engine",
-        durability: PRESCRIBED_DAY_DURABILITY.durable,
-        reason: "today_plan_capture",
-        validateInvariant: validatePrescribedDayHistoryInvariant,
-      });
-    }
-    const legacySnapshotRecord = buildLegacyPlannedDayRecordFromSnapshot({ dateKey, snapshot: entry?.prescribedPlanSnapshot || null });
-    if (legacySnapshotRecord) {
-      return createPrescribedDayHistoryEntry({
-        plannedDayRecord: legacySnapshotRecord,
-        capturedAt: entry?.ts || getStableCaptureAtForDate(dateKey),
-        sourceType: "legacy_log_snapshot",
-        durability: PRESCRIBED_DAY_DURABILITY.legacyBackfill,
-        reason: "legacy_snapshot_backfill",
-        validateInvariant: validatePrescribedDayHistoryInvariant,
-      });
-    }
-    const dateObj = new Date(`${dateKey}T12:00:00`);
-    if (Number.isNaN(dateObj.getTime())) return null;
-    const week = resolvePlanWeekNumberForDateKey({
+    // LEGACY_COMPAT: review surfaces still need archived prescribed snapshots
+    // and template-derived rows until older arcs all carry durable day history.
+    return resolvePlannedDayHistoryEntry({
       dateKey,
+      existingEntry: plannedDayRecords?.[dateKey] || null,
+      todayKey: today,
+      todayPlannedDayRecord,
+      legacySnapshot: entry?.prescribedPlanSnapshot
+        ? { ...entry.prescribedPlanSnapshot, ts: entry?.ts || null }
+        : null,
       planStartDate,
-      fallbackStartDate: PROFILE.startDate,
-    });
-    const workout = getTodayWorkout(week, dateObj.getDay());
-    const fallbackRecord = buildLegacyPlannedDayRecordFromWorkout({ dateKey, weekNumber: week, workout });
-    if (!fallbackRecord) return null;
-    return createPrescribedDayHistoryEntry({
-      plannedDayRecord: fallbackRecord,
-      capturedAt: getStableCaptureAtForDate(dateKey),
-      sourceType: "legacy_schedule_helper",
-      durability: PRESCRIBED_DAY_DURABILITY.fallbackDerived,
-      reason: "schedule_backfill",
-      validateInvariant: validatePrescribedDayHistoryInvariant,
     });
   };
   const getPlanComparison = (dateKey, entry = null) => {
@@ -9629,6 +9750,21 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       status: actualNutrition?.deviationKind || "",
     };
   };
+  const buildRecoveryActualSummary = (actualRecovery = null) => {
+    if (!actualRecovery?.loggedAt) {
+      return { label: "Not logged", detail: "Actual recovery has not been logged.", status: "missing" };
+    }
+    return {
+      label: sanitizeDisplayText(actualRecovery?.summary || "Recovery logged"),
+      detail: sanitizeDisplayText(
+        actualRecovery?.hydrationSupport?.summary
+        || actualRecovery?.supplementAdherence?.summary
+        || actualRecovery?.note
+        || "Recovery log saved."
+      ),
+      status: actualRecovery?.hydrationSupport?.followed ? "match" : actualRecovery?.status || "",
+    };
+  };
   const selectedDayReview = useMemo(
     () => buildDayReview({
       dateKey: selectedReviewDate,
@@ -9641,6 +9777,19 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     }),
     [selectedReviewDate, logs, dailyCheckins, plannedDayRecords, nutritionActualLogs, todayPlannedDayRecord]
   );
+  const selectedArchivedDayReview = useMemo(() => {
+    if (!selectedArchiveReviewTarget?.archiveId || !selectedArchiveReviewTarget?.dateKey) return null;
+    const selectedArchive = (planArchives || []).find((archive) => (archive?.id || archive?.archivedAt) === selectedArchiveReviewTarget.archiveId);
+    if (!selectedArchive) return null;
+    return {
+      archiveId: selectedArchiveReviewTarget.archiveId,
+      dateKey: selectedArchiveReviewTarget.dateKey,
+      review: buildArchivedDayReview({
+        archive: selectedArchive,
+        dateKey: selectedArchiveReviewTarget.dateKey,
+      }),
+    };
+  }, [selectedArchiveReviewTarget, planArchives]);
   const buildReviewBadgeTone = (kind = "") => {
     const value = String(kind || "").toLowerCase();
     if (/match|completed_as_planned|on_track|followed|high/.test(value)) return { color: C.green, bg: C.green+"14" };
@@ -9655,10 +9804,32 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   const summarizeExecutionDelta = (comparison = {}) => {
     if (!comparison?.hasPlannedDay) return "No planned day available for comparison.";
     return `${sanitizeStatusLabel(comparison?.completionKind)} - ${sanitizeStatusLabel(comparison?.differenceKind)}`;
-  };  useEffect(() => {
+  };
+  useEffect(() => {
     if (!reviewDateKeys.length) return;
     if (!reviewDateKeys.includes(selectedReviewDate)) setSelectedReviewDate(reviewDateKeys[0]);
   }, [reviewDateKeys, selectedReviewDate]);
+  useEffect(() => {
+    if (!archivedPlanAudits.length) {
+      if (selectedArchiveReviewTarget.archiveId || selectedArchiveReviewTarget.dateKey) {
+        setSelectedArchiveReviewTarget({ archiveId: "", dateKey: "" });
+      }
+      return;
+    }
+    const selectedArchive = archivedPlanAudits.find((archive) => archive.id === selectedArchiveReviewTarget.archiveId);
+    if (selectedArchive?.dayEntries?.some((entry) => entry.dateKey === selectedArchiveReviewTarget.dateKey)) return;
+    const fallbackArchive = archivedPlanAudits.find((archive) => archive.dayEntries.length > 0) || null;
+    if (!fallbackArchive) {
+      if (selectedArchiveReviewTarget.archiveId || selectedArchiveReviewTarget.dateKey) {
+        setSelectedArchiveReviewTarget({ archiveId: "", dateKey: "" });
+      }
+      return;
+    }
+    setSelectedArchiveReviewTarget({
+      archiveId: fallbackArchive.id,
+      dateKey: fallbackArchive.dayEntries[0]?.dateKey || "",
+    });
+  }, [archivedPlanAudits, selectedArchiveReviewTarget]);
   const buildConsistencyWindow = (daysBackStart, daysBackEnd) => {
     const todayBase = new Date();
     todayBase.setHours(0, 0, 0, 0);
@@ -9717,7 +9888,8 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     : (consistencyCurrent.pct || 0) >= 50
     ? "Workable. Key sessions are what matter most."
     : "Execution is the current limiter. Simplified week is active.";
-  const cleanHistorySessionName = (value = "") => sanitizeDisplayText(String(value || "Session").replace(/\s*\([^)]*\)/g, "").replace(/\s{2,}/g, " ").trim() || "Session");
+  // LEGACY_COMPAT: older logs/archive rows may only have helper-derived labels.
+  const cleanHistorySessionName = (value = "") => buildLegacyHistoryDisplayLabel(value, sanitizeDisplayText);
   const openHistoryEntry = (date, log = {}) => {
     const firstExerciseRecord = getExercisePerformanceRecordsForLog(log || {}, { dateKey: date })[0] || null;
     setSelectedReviewDate(date);
@@ -9878,135 +10050,29 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         <div style={{ marginTop:"0.2rem", fontSize:"0.55rem", color:"#64748b" }}>What changed: plan intensity and nutrition guidance adapt directly from this logging pattern.</div>
       </div>
 
-      <div className="card card-soft" style={{ marginBottom:"0.8rem", borderColor:C.blue+"30" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.5rem", marginBottom:"0.4rem", flexWrap:"wrap" }}>
-          <div>
-            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.12rem" }}>DAY REVIEW</div>
-            <div style={{ fontSize:"0.54rem", color:"#94a3b8" }}>Inspect prescription revisions against actual outcome for one day.</div>
-          </div>
+      <HistoryAuditDayReviewCard
+        title="DAY REVIEW"
+        subtitle="Inspect prescription revisions against actual outcome for one day."
+        selector={(
           <select value={selectedReviewDate} onChange={(e)=>setSelectedReviewDate(e.target.value)} style={{ fontSize:"0.54rem", minWidth:150 }}>
             {(reviewDateKeys || []).slice(0, 60).map((dateKey) => (
               <option key={dateKey} value={dateKey}>{dateKey}</option>
             ))}
           </select>
-        </div>
-        {selectedDayReview && (
-          <div style={{ display:"grid", gap:"0.55rem" }}>
-            {(() => {
-              const comparisonTone = buildReviewBadgeTone(selectedDayReview?.comparison?.completionKind || selectedDayReview?.comparison?.differenceKind);
-              const revisionTone = buildReviewBadgeTone((selectedDayReview?.revisions?.length || 0) > 1 ? "changed" : "match");
-              const nutritionTone = buildReviewBadgeTone(selectedDayReview?.actualNutrition?.adherence || selectedDayReview?.actualNutrition?.deviationKind);
-              const planChanged = (selectedDayReview?.revisions?.length || 0) > 1;
-              const executedDifferently = !["completed_as_planned", "matched", "followed"].includes(String(selectedDayReview?.comparison?.completionKind || "").toLowerCase()) || !["matched", "followed", "none"].includes(String(selectedDayReview?.comparison?.differenceKind || "").toLowerCase());
-              return (
-                <>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
-                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.5rem" }}>
-                      <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>REVIEW STATUS</div>
-                      <div style={{ display:"flex", flexWrap:"wrap", gap:"0.28rem", marginTop:"0.18rem" }}>
-                        <span style={{ fontSize:"0.48rem", color:comparisonTone.color, background:comparisonTone.bg, padding:"0.14rem 0.4rem", borderRadius:999 }}>{summarizeExecutionDelta(selectedDayReview?.comparison)}</span>
-                        <span style={{ fontSize:"0.48rem", color:revisionTone.color, background:revisionTone.bg, padding:"0.14rem 0.4rem", borderRadius:999 }}>{planChanged ? "Plan changed" : "Plan stable"}</span>
-                        <span style={{ fontSize:"0.48rem", color:executedDifferently ? C.amber : C.green, background:(executedDifferently ? C.amber : C.green)+"14", padding:"0.14rem 0.4rem", borderRadius:999 }}>{executedDifferently ? "Executed differently" : "Executed as prescribed"}</span>
-                      </div>
-                      <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>{sanitizeDisplayText(selectedDayReview?.comparison?.summary || "Comparison unavailable.")}</div>
-                    </div>
-                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.5rem" }}>
-                      <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PRESCRIPTION STATE</div>
-                      <div style={{ fontSize:"0.6rem", color:"#e2e8f0", marginTop:"0.16rem" }}>Rev {selectedDayReview?.currentRevision?.revisionNumber || 0} of {selectedDayReview?.revisions?.length || 0}</div>
-                      <div style={{ fontSize:"0.51rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>Source: {sanitizeStatusLabel(selectedDayReview?.currentRevision?.sourceType, "unknown")} - {sanitizeStatusLabel(selectedDayReview?.currentRevision?.durability, "unknown")}</div>
-                    </div>
-                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.5rem" }}>
-                      <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>NUTRITION STATUS</div>
-                      <div style={{ display:"inline-flex", fontSize:"0.48rem", color:nutritionTone.color, background:nutritionTone.bg, padding:"0.14rem 0.4rem", borderRadius:999, marginTop:"0.18rem" }}>{sanitizeStatusLabel(selectedDayReview?.actualNutrition?.adherence || selectedDayReview?.actualNutrition?.deviationKind, "Not logged")}</div>
-                      <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>{sanitizeDisplayText(selectedDayReview?.nutritionComparison?.summary || "Nutrition comparison unavailable.")}</div>
-                    </div>
-                  </div>
-
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:"0.45rem" }}>
-                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem" }}>
-                      <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>ORIGINAL PRESCRIPTION</div>
-                      {(() => {
-                        const summary = buildSessionSummary(selectedDayReview?.originalRecord?.resolved?.training || selectedDayReview?.originalRecord?.base?.training || null);
-                        return (
-                          <>
-                            <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{summary.label}</div>
-                            <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
-                            <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem", lineHeight:1.5 }}>{selectedDayReview?.originalRevision ? `${formatReviewTimestamp(selectedDayReview.originalRevision.capturedAt)} - ${sanitizeDisplayText(describeProvenanceRecord(selectedDayReview.originalRevision.provenance || null, selectedDayReview.originalRevision.reason || "initial_capture"))}` : "No original revision available."}</div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem" }}>
-                      <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>LATEST PRESCRIPTION</div>
-                      {(() => {
-                        const summary = buildSessionSummary(selectedDayReview?.currentRecord?.resolved?.training || selectedDayReview?.currentRecord?.base?.training || null);
-                        return (
-                          <>
-                            <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{summary.label}</div>
-                            <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
-                            <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem", lineHeight:1.5 }}>{selectedDayReview?.currentRevision ? `${formatReviewTimestamp(selectedDayReview.currentRevision.capturedAt)} - ${sanitizeDisplayText(describeProvenanceRecord(selectedDayReview.currentRevision.provenance || null, selectedDayReview.currentRevision.reason || "latest_revision"))}` : "No current revision available."}</div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:"0.45rem" }}>
-                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem" }}>
-                      <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.22rem" }}>ACTUAL OUTCOME</div>
-                      <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{sanitizeDisplayText(cleanHistorySessionName(selectedDayReview?.actualLog?.type || selectedDayReview?.comparison?.actualSession?.label || "No workout log"))}</div>
-                      <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{sanitizeDisplayText(selectedDayReview?.actualLog?.notes || selectedDayReview?.comparison?.actualSession?.detail || selectedDayReview?.comparison?.status || "No session detail logged.")}</div>
-                      <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem" }}>Executed: {sanitizeStatusLabel(selectedDayReview?.comparison?.completionKind, "unknown")} - {sanitizeStatusLabel(selectedDayReview?.comparison?.differenceKind, "unknown")}</div>
-                    </div>
-                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem" }}>
-                      <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.18rem" }}>ACTUAL CHECK-IN</div>
-                      <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>{sanitizeDisplayText(selectedDayReview?.actualCheckin?.status || "No check-in saved")}</div>
-                      <div style={{ fontSize:"0.51rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{sanitizeDisplayText(selectedDayReview?.actualCheckin?.note || selectedDayReview?.actualCheckin?.blocker || selectedDayReview?.actualCheckin?.sessionFeel || "No additional context saved.")}</div>
-                    </div>
-                    <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.55rem" }}>
-                      <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.18rem" }}>ACTUAL NUTRITION</div>
-                      {(() => {
-                        const nutritionSummary = buildNutritionActualSummary(selectedDayReview?.actualNutrition);
-                        return (
-                          <>
-                            <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>{sanitizeDisplayText(nutritionSummary.label)}</div>
-                            <div style={{ fontSize:"0.51rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{sanitizeDisplayText(nutritionSummary.detail)}</div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  <details style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.5rem 0.55rem" }} open={selectedDayReview?.revisions?.length > 1}>
-                    <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Revision timeline ({selectedDayReview?.revisions?.length || 0})</summary>
-                    <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.32rem" }}>
-                      {(selectedDayReview?.revisions || []).map((revision) => {
-                        const summary = buildSessionSummary(revision?.record?.resolved?.training || revision?.record?.base?.training || null);
-                        const isOriginal = revision?.revisionNumber === selectedDayReview?.originalRevision?.revisionNumber;
-                        const isCurrent = revision?.revisionNumber === selectedDayReview?.currentRevision?.revisionNumber;
-                        return (
-                          <div key={revision?.revisionId || `${selectedDayReview?.dateKey}_${revision?.revisionNumber}`} style={{ border:"1px solid #182335", borderRadius:8, background:"rgba(8,12,20,0.65)", padding:"0.4rem 0.45rem" }}>
-                            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", flexWrap:"wrap", alignItems:"center" }}>
-                              <div style={{ fontSize:"0.56rem", color:"#e2e8f0" }}>Rev {revision?.revisionNumber || 0}: {summary.label}</div>
-                              <div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap", alignItems:"center" }}>
-                                {isOriginal && <span style={{ fontSize:"0.46rem", color:C.blue, background:C.blue+"14", padding:"0.12rem 0.35rem", borderRadius:999 }}>original</span>}
-                                {isCurrent && <span style={{ fontSize:"0.46rem", color:C.green, background:C.green+"14", padding:"0.12rem 0.35rem", borderRadius:999 }}>latest</span>}
-                                <div style={{ fontSize:"0.48rem", color:"#64748b" }}>{formatReviewTimestamp(revision?.capturedAt)}</div>
-                              </div>
-                            </div>
-                            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.1rem" }}>{summary.detail || summary.type || "No session detail saved."}</div>
-                            <div style={{ fontSize:"0.49rem", color:"#94a3b8", marginTop:"0.14rem", lineHeight:1.5 }}>Plan changed because: {sanitizeDisplayText(revision?.provenanceSummary || revision?.reason || "unknown")} - {sanitizeDisplayText(revision?.sourceType || "unknown")} - {sanitizeDisplayText(revision?.durability || "unknown")}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </details>
-                </>
-              );
-            })()}
-          </div>
         )}
-      </div>
+        review={selectedDayReview}
+        palette={C}
+        sanitizeDisplayText={sanitizeDisplayText}
+        sanitizeStatusLabel={sanitizeStatusLabel}
+        buildReviewBadgeTone={buildReviewBadgeTone}
+        summarizeExecutionDelta={summarizeExecutionDelta}
+        formatReviewTimestamp={formatReviewTimestamp}
+        buildSessionSummary={buildSessionSummary}
+        buildNutritionActualSummary={buildNutritionActualSummary}
+        buildRecoveryActualSummary={buildRecoveryActualSummary}
+        cleanHistorySessionName={cleanHistorySessionName}
+        describeProvenanceRecord={describeProvenanceRecord}
+      />
 
       <div className="card" style={{ marginBottom:"0.8rem" }}>
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.45rem" }}>HISTORY</div>
@@ -10075,58 +10141,29 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         </div>
       </div>
 
-      <details className="card" style={{ marginBottom:"0.8rem" }}>
-        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:"#94a3b8", letterSpacing:"0.06em" }}>PREVIOUS PLANS</summary>
-        <div style={{ marginTop:"0.45rem", display:"grid", gap:"0.4rem" }}>
-          {planArchives.length === 0 && (
-            <div style={{ fontSize:"0.55rem", color:"#64748b" }}>No archived plans yet.</div>
-          )}
-          {planArchives.map((arc) => (
-            <div key={arc.id || arc.archivedAt} style={{ border:"1px solid #20314a", borderRadius:8, background:"#0f172a", padding:"0.45rem 0.5rem" }}>
-              <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>{arc.planArcLabel || "Previous plan arc"}</div>
-              <div style={{ fontSize:"0.5rem", color:"#7f94b3", marginTop:"0.1rem" }}>Archived {arc.archivedAt ? new Date(arc.archivedAt).toLocaleString() : "unknown"}</div>
-              {Object.keys(arc?.prescribedDayHistory || {}).length > 0 && (
-                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.1rem" }}>
-                  {Object.keys(arc.prescribedDayHistory || {}).length} prescribed-day snapshots archived.
-                </div>
-              )}
-              <div style={{ marginTop:"0.2rem", display:"grid", gap:"0.18rem" }}>
-                {(() => {
-                  const archivedHistory = arc?.prescribedDayHistory || {};
-                  const logPreview = (arc.logEntries || []).slice(0, 80).map((entry, idx) => {
-                    const historyEntry = normalizePrescribedDayHistoryEntry(entry?.date || "", archivedHistory?.[entry?.date] || null);
-                    const plannedRecord = getCurrentPrescribedDayRecord(historyEntry) || buildLegacyPlannedDayRecordFromSnapshot({ dateKey: entry?.date || "", snapshot: entry?.prescribedPlanSnapshot || null });
-                    const plannedLabel = plannedRecord?.resolved?.training?.label || plannedRecord?.base?.training?.label || "";
-                    const revisionCount = Array.isArray(historyEntry?.revisions) ? historyEntry.revisions.length : 0;
-                    return (
-                      <div key={`${arc.id || "arc"}_history_${entry.date || idx}`} style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>
-                        ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {entry.date}: {plannedLabel ? `planned ${sanitizeDisplayText(plannedLabel)} ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ ` : ""}{sanitizeDisplayText(entry.type || "Session")}{entry.notes ? ` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ${sanitizeDisplayText(entry.notes)}` : ""}{revisionCount > 1 ? ` (${revisionCount} revisions)` : ""}
-                      </div>
-                    );
-                  });
-                  if (logPreview.length > 0) return logPreview;
-                  return Object.entries(archivedHistory || {}).slice(0, 40).map(([dateKey, historyEntry]) => {
-                    const normalized = normalizePrescribedDayHistoryEntry(dateKey, historyEntry);
-                    const plannedRecord = getCurrentPrescribedDayRecord(normalized);
-                    const plannedLabel = plannedRecord?.resolved?.training?.label || plannedRecord?.base?.training?.label || "Planned session";
-                    const revisionCount = Array.isArray(normalized?.revisions) ? normalized.revisions.length : 0;
-                    return (
-                      <div key={`${arc.id || "arc"}_history_${dateKey}`} style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>
-                        ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ {dateKey}: planned {sanitizeDisplayText(plannedLabel)}{revisionCount > 1 ? ` (${revisionCount} revisions)` : ""}
-                      </div>
-                    );
-                  });
-                })()}
-                {false && (arc.logEntries || []).slice(0, 80).map((entry, idx) => (
-                  <div key={`${arc.id || "arc"}_${entry.date || idx}`} style={{ fontSize:"0.52rem", color:"#9fb2d2" }}>
-                    Ã¢â‚¬Â¢ {entry.date}: {sanitizeDisplayText(entry.type || "Session")} {entry.notes ? `Ã¢â‚¬â€ ${sanitizeDisplayText(entry.notes)}` : ""}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </details>
+      <HistoryAuditWeekHistorySection
+        title="COMMITTED WEEK HISTORY"
+        entries={committedWeekReviews}
+        emptyState="No durable `PlanWeek` history has been saved yet. Older data can still rely on prescribed-day history and weekly check-ins until committed week snapshots are available."
+        palette={C}
+      />
+
+      <HistoryAuditArchiveSection
+        archives={archivedPlanAudits}
+        selectedArchiveReview={selectedArchivedDayReview}
+        onSelectArchiveDay={setSelectedArchiveReviewTarget}
+        palette={C}
+        sanitizeDisplayText={sanitizeDisplayText}
+        sanitizeStatusLabel={sanitizeStatusLabel}
+        buildReviewBadgeTone={buildReviewBadgeTone}
+        summarizeExecutionDelta={summarizeExecutionDelta}
+        formatReviewTimestamp={formatReviewTimestamp}
+        buildSessionSummary={buildSessionSummary}
+        buildNutritionActualSummary={buildNutritionActualSummary}
+        buildRecoveryActualSummary={buildRecoveryActualSummary}
+        cleanHistorySessionName={cleanHistorySessionName}
+        describeProvenanceRecord={describeProvenanceRecord}
+      />
     </div>
   );
 }
@@ -10184,7 +10221,7 @@ const buildLocationAwareOrderSuggestion = ({ nearby = [] }) => {
 };
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ NUTRITION TAB (REDESIGNED) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, logs, personalization, athleteProfile = null, momentum, bodyweights, learningLayer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFavorites, saveNutritionFavorites, saveNutritionActualLog }) {
+function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, logs, personalization, athleteProfile = null, momentum, bodyweights, learningLayer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFavorites, weeklyNutritionReview = null, saveNutritionFavorites, saveNutritionActualLog }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
@@ -10289,16 +10326,6 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const shoppingDay = Number(favorites?.shoppingDay ?? 0);
   const todayDow = new Date().getDay();
   const showSundayGrocerySection = todayDow === shoppingDay || todayDow === ((shoppingDay + 6) % 7);
-  const weeklyNutritionScore = (() => {
-    const days = Array.from({ length: 7 }).map((_, idx) => {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - idx);
-      return d.toISOString().split("T")[0];
-    });
-    const onPlan = days.filter((k) => ["high", "partial"].includes(nutritionActualLogs?.[k]?.adherence || "")).length;
-    return `${onPlan} of 7 days on plan`;
-  })();
   const defaultSupplements = [
     { key: "Creatine", name: "Creatine", defaultTiming: "with breakfast", defaultDose: "5g", product: "Thorne Creatine Monohydrate" },
     { key: "Protein", name: "Protein", defaultTiming: "post-workout", defaultDose: "1 scoop", product: "Transparent Labs 100% Grass-Fed Whey" },
@@ -10393,6 +10420,35 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
       actualNutritionToday?.loggedAt ? "your logged nutrition today" : null,
     ],
     limitation: actualNutritionToday?.loggedAt ? "" : "Today's intake log is limited.",
+  });
+  const recoveryPrescription = planDay?.resolved?.recovery?.prescription || null;
+  const supplementPlan = planDay?.resolved?.supplements?.plan || null;
+  const supplementPrescriptionLine = Array.isArray(supplementPlan?.items) && supplementPlan.items.length
+    ? supplementPlan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
+    : "No explicit supplement plan stored for today.";
+  const hydrationSupportLine = recoveryPrescription?.hydrationSupport?.summary || "Hydration support follows today's nutrition target.";
+  const weeklyNutritionHeadline = weeklyNutritionReview?.coaching?.headline || "Weekly nutrition review will populate as actual logs accumulate.";
+  const weeklyPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned-vs-actual nutrition remains separate.";
+  const weeklyAdherenceLine = weeklyNutritionReview?.adherence?.summary || "Adherence trend is still forming.";
+  const weeklyHydrationLine = weeklyNutritionReview?.hydration?.summary || "Hydration consistency is still forming.";
+  const weeklySupplementLine = weeklyNutritionReview?.supplements?.summary || "Supplement adherence is still forming.";
+  const weeklyFrictionLine = weeklyNutritionReview?.friction?.summary || "No recurring nutrition friction yet.";
+  const weeklyAdaptationLine = weeklyNutritionReview?.adaptation?.summary || "Hold the current weekly nutrition structure.";
+  const weeklyTopCauses = Array.isArray(weeklyNutritionReview?.friction?.topCauses)
+    ? weeklyNutritionReview.friction.topCauses.slice(0, 2)
+    : [];
+  const groceryExecutionSupport = deriveGroceryExecutionSupport({
+    nutritionLayer,
+    realWorldNutrition,
+    weeklyNutritionReview,
+    favorites,
+    localFoodContext,
+    savedLocation,
+    dayType,
+    travelMode: Boolean(nutritionLayer?.travelMode),
+    recoveryDay,
+    hardDay,
+    strengthDay,
   });
   useEffect(() => {
     if (!actualNutritionToday?.loggedAt) return;
@@ -10539,6 +10595,86 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
         </div>
       </div>
 
+      <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.green+"24" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.32rem" }}>
+          <div>
+            <div className="sect-title" style={{ color:C.green, marginBottom:"0.14rem" }}>GROCERY EXECUTION SUPPORT</div>
+            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>{groceryExecutionSupport.summary}</div>
+          </div>
+          <span style={{ fontSize:"0.48rem", color:C.green, background:C.green+"14", padding:"0.16rem 0.42rem", borderRadius:999 }}>
+            {sanitizeStatusLabel(groceryExecutionSupport.basketType, "support")}
+          </span>
+        </div>
+        <div style={{ display:"grid", gap:"0.38rem" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.46rem 0.5rem" }}>
+            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{groceryExecutionSupport.title}</div>
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{groceryExecutionSupport.anchorPrompt}</div>
+            <div style={{ fontSize:"0.48rem", color:"#64748b", marginTop:"0.14rem", lineHeight:1.5 }}>{groceryExecutionSupport.optionalityLine}</div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>TODAY'S BASKET</div>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
+                {sanitizeDisplayText(groceryExecutionSupport.preferredStore || store)}
+              </div>
+              <div style={{ marginTop:"0.14rem", display:"grid", gap:"0.16rem" }}>
+                {(groceryExecutionSupport.basket?.items || []).slice(0, 8).map((item, idx) => (
+                  <div key={`grocery_item_${idx}`} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                    {idx + 1}. {sanitizeDisplayText(item)}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LOW-FRICTION ANCHORS</div>
+              <div style={{ marginTop:"0.14rem", display:"grid", gap:"0.16rem" }}>
+                {(groceryExecutionSupport.mealAnchors || []).slice(0, 4).map((anchor, idx) => (
+                  <div key={`grocery_anchor_${idx}`} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                    {idx + 1}. {sanitizeDisplayText(anchor)}
+                  </div>
+                ))}
+                {(!groceryExecutionSupport.mealAnchors || groceryExecutionSupport.mealAnchors.length === 0) && (
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>No saved anchors yet. Use today's breakfast and lunch structure as the first two anchors.</div>
+                )}
+              </div>
+            </div>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>CONVENIENCE MOVES</div>
+              <div style={{ marginTop:"0.14rem", display:"grid", gap:"0.16rem" }}>
+                {(groceryExecutionSupport.convenienceOptions || []).slice(0, 3).map((option, idx) => (
+                  <div key={`grocery_option_${idx}`} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                    {idx + 1}. {sanitizeDisplayText(option)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>CONTEXT</div>
+            <div style={{ fontSize:"0.52rem", color:"#dbe7f6", marginTop:"0.12rem", lineHeight:1.5 }}>{groceryExecutionSupport.weeklyExecutionLine}</div>
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{groceryExecutionSupport.locationContextLine}</div>
+            <div style={{ fontSize:"0.48rem", color:"#64748b", marginTop:"0.12rem", lineHeight:1.5 }}>{groceryExecutionSupport.honestyLine}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.blue+"24" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>RECOVERY + SUPPLEMENT PRESCRIPTION</div>
+        <div style={{ display:"grid", gap:"0.34rem" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>RECOVERY</div>
+            <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>
+              {recoveryPrescription?.summary || "Recovery posture is attached to today's PlanDay."}
+            </div>
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{hydrationSupportLine}</div>
+          </div>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>SUPPLEMENTS</div>
+            <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>{supplementPrescriptionLine}</div>
+          </div>
+        </div>
+      </div>
+
       <div className="card" style={{ marginBottom:"0.8rem" }}>
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>HYDRATION / SUPPLEMENTS</div>
         <div style={{ display:"grid", gap:"0.42rem" }}>
@@ -10575,6 +10711,50 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.amber+"26" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.32rem" }}>
+          <div>
+            <div className="sect-title" style={{ color:C.amber, marginBottom:"0.14rem" }}>WEEKLY NUTRITION REVIEW</div>
+            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyPlannedVsActualLine}</div>
+          </div>
+          <span style={{ fontSize:"0.48rem", color:"#fbbf24", background:"#2b2007", padding:"0.16rem 0.42rem", borderRadius:999 }}>
+            {sanitizeStatusLabel(weeklyNutritionReview?.adherence?.trend?.label, "limited")}
+          </span>
+        </div>
+        <div style={{ display:"grid", gap:"0.38rem" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.46rem 0.5rem" }}>
+            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{weeklyNutritionHeadline}</div>
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>{weeklyAdaptationLine}</div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>ADHERENCE</div>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>{weeklyAdherenceLine}</div>
+            </div>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>HYDRATION</div>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>{weeklyHydrationLine}</div>
+            </div>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>SUPPLEMENTS</div>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>{weeklySupplementLine}</div>
+            </div>
+          </div>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>FRICTION / DEVIATION</div>
+            <div style={{ fontSize:"0.53rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>
+              {weeklyNutritionReview?.deviationPattern?.summary || "No strong deviation pattern showed up."}
+            </div>
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{weeklyFrictionLine}</div>
+            {weeklyTopCauses.length > 0 && (
+              <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.14rem" }}>
+                Top causes: {weeklyTopCauses.map((cause) => `${cause.label} (${cause.count})`).join(" • ")}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -10620,7 +10800,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
             <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck(prev=>({ ...prev, note:e.target.value }))} placeholder="Quick note (optional)" />
             <button className="btn btn-primary" onClick={()=>saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt })} style={{ fontSize:"0.55rem" }}>SAVE</button>
           </div>
-          <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Weekly compliance: {weeklyNutritionScore}</div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>{weeklyPlannedVsActualLine}</div>
         </div>
       </div>
     </div>
@@ -10628,7 +10808,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ COACH TAB (REDESIGNED) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, athleteProfile = null, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
+function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, athleteProfile = null, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, weeklyNutritionReview = null, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const goalState = athleteProfile?.goalState || {};
@@ -10637,6 +10817,7 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
   const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
   const planDayWeek = planDay?.week || null;
   const canonicalCoachRecovery = planDay?.resolved?.recovery || null;
+  const canonicalCoachSupplements = planDay?.resolved?.supplements || null;
   const todayKey = new Date().toISOString().split("T")[0];
   const nutritionActual = planDay?.resolved?.nutrition?.actual || nutritionActualLogs?.[todayKey] || normalizeActualNutritionLog({ dateKey: todayKey, feedback: {} });
   const nutritionComparison = planDay?.resolved?.nutrition?.comparison || compareNutritionPrescriptionToActual({
@@ -11140,6 +11321,13 @@ Rules for every response:
   );
   const boundaryLine = "Coach can recommend and prepare accepted actions, but state only changes when you explicitly apply a recommendation.";
   const recentAcceptedAction = (coachActions || []).find((action) => action?.acceptedBy) || null;
+  const weeklyNutritionCoachLine = weeklyNutritionReview?.coaching?.coachLine || "Weekly nutrition signal is still forming.";
+  const weeklyNutritionPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned-vs-actual nutrition remains separate.";
+  const weeklyNutritionActionLine = weeklyNutritionReview?.adaptation?.actions?.[0] || "Keep logging intake and hydration so future nutrition changes stay deterministic.";
+  const recoveryPrescriptionLine = canonicalCoachRecovery?.prescription?.summary || canonicalCoachRecovery?.recoveryLine || "Recovery posture is attached to today's decision.";
+  const supplementCoachLine = Array.isArray(canonicalCoachSupplements?.plan?.items) && canonicalCoachSupplements.plan.items.length
+    ? canonicalCoachSupplements.plan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
+    : "No explicit supplement plan stored for today.";
 
   return (
     <div className="fi" style={{ display:"grid", gap:"0.75rem" }}>
@@ -11194,6 +11382,36 @@ Rules for every response:
                 {recentAcceptedAction ? sanitizeDisplayText(recentAcceptedAction.reason || recentAcceptedAction.rationale || "Accepted action saved.") : boundaryLine}
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ borderColor:C.amber+"26" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.32rem" }}>
+          <div>
+            <div className="sect-title" style={{ color:C.amber, marginBottom:"0.14rem" }}>NUTRITION THIS WEEK</div>
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyNutritionPlannedVsActualLine}</div>
+          </div>
+          <span style={{ fontSize:"0.48rem", color:"#fbbf24", background:"#2b2007", padding:"0.16rem 0.42rem", borderRadius:999 }}>
+            {sanitizeStatusLabel(weeklyNutritionReview?.adaptation?.mode, "hold")}
+          </span>
+        </div>
+        <div style={{ display:"grid", gap:"0.3rem" }}>
+          <div style={{ fontSize:"0.57rem", color:"#dbe7f6", lineHeight:1.55 }}>{weeklyNutritionCoachLine}</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyNutritionReview?.adaptation?.support || "Nutrition review stays descriptive until the signal is strong enough to support deterministic change."}</div>
+          <div style={{ fontSize:"0.51rem", color:"#c7d5ea", lineHeight:1.5 }}>Next practical move: {weeklyNutritionActionLine}</div>
+        </div>
+      </div>
+
+      <div className="card" style={{ borderColor:C.blue+"24" }}>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.28rem" }}>RECOVERY + SUPPLEMENTS TODAY</div>
+        <div style={{ display:"grid", gap:"0.24rem" }}>
+          <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{recoveryPrescriptionLine}</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{supplementCoachLine}</div>
+          <div style={{ fontSize:"0.48rem", color:"#64748b", lineHeight:1.5 }}>
+            {canonicalCoachRecovery?.actual?.loggedAt
+              ? canonicalCoachRecovery.actual.summary
+              : "Recovery actuals will update after check-in and nutrition logging."}
           </div>
         </div>
       </div>

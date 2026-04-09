@@ -1,11 +1,24 @@
 import { comparePlannedDayToActual } from "../modules-checkins.js";
 import { normalizeActualNutritionLog, compareNutritionPrescriptionToActual } from "../modules-nutrition.js";
 import { describeProvenanceRecord, normalizeStructuredProvenance } from "./provenance-service.js";
+import { normalizeActualRecoveryLog } from "./recovery-supplement-service.js";
 
 const getNutritionPrescriptionForRecord = (record = null) => (
   record?.resolved?.nutrition?.prescription
   || record?.resolved?.nutrition
   || record?.base?.nutrition
+  || null
+);
+
+const getRecoveryPrescriptionForRecord = (record = null) => (
+  record?.resolved?.recovery?.prescription
+  || record?.base?.recovery?.prescription
+  || null
+);
+
+const getSupplementPlanForRecord = (record = null) => (
+  record?.resolved?.supplements?.plan
+  || record?.base?.supplements?.plan
   || null
 );
 
@@ -66,6 +79,13 @@ export const buildDayReview = ({
     nutritionPrescription: getNutritionPrescriptionForRecord(currentRecord),
     actualNutritionLog: actualNutrition,
   });
+  const actualRecovery = normalizeActualRecoveryLog({
+    dateKey,
+    dailyCheckin: actualCheckin,
+    nutritionActualLog: actualNutrition,
+    recoveryPrescription: getRecoveryPrescriptionForRecord(currentRecord),
+    supplementPlan: getSupplementPlanForRecord(currentRecord),
+  });
   const latestPrescription = currentRecord?.resolved?.training || currentRecord?.base?.training || null;
   const originalPrescription = originalRecord?.resolved?.training || originalRecord?.base?.training || null;
   const plannedHistoryProvenance = normalizeStructuredProvenance(plannedHistory?.provenance || currentRecord?.provenance || null);
@@ -97,6 +117,7 @@ export const buildDayReview = ({
     actualWorkout: actualLog,
     actualCheckin,
     actualNutrition,
+    actualRecovery,
     comparison,
     nutritionComparison,
     reviewStatus: classifyDayReviewStatus(comparison),

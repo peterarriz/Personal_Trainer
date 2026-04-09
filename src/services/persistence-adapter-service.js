@@ -1,5 +1,6 @@
-import { normalizeActualNutritionLogCollection } from "../modules-nutrition.js";
+import { resolveNutritionActualLogStoreCompat } from "../modules-nutrition.js";
 import { normalizePerformanceLogsCollection } from "./performance-record-service.js";
+import { normalizePersistedPlanWeekRecordMap } from "./plan-week-persistence-service.js";
 
 export const PERSISTED_TRAINER_DATA_VERSION = 6;
 export const PERSISTENCE_CONTRACT_VERSION = "runtime_storage_v1";
@@ -44,6 +45,7 @@ export const buildCanonicalRuntimeState = ({
   coachPlanAdjustments = DEFAULT_COACH_PLAN_ADJUSTMENTS,
   dailyCheckins = {},
   plannedDayRecords = {},
+  planWeekRecords = {},
   weeklyCheckins = {},
   nutritionFavorites = DEFAULT_NUTRITION_FAVORITES,
   nutritionActualLogs = {},
@@ -59,6 +61,7 @@ export const buildCanonicalRuntimeState = ({
   coachPlanAdjustments: clonePersistenceValue(coachPlanAdjustments || DEFAULT_COACH_PLAN_ADJUSTMENTS),
   dailyCheckins: clonePersistenceValue(dailyCheckins || {}),
   plannedDayRecords: clonePersistenceValue(plannedDayRecords || {}),
+  planWeekRecords: normalizePersistedPlanWeekRecordMap(clonePersistenceValue(planWeekRecords || {})),
   weeklyCheckins: clonePersistenceValue(weeklyCheckins || {}),
   nutritionFavorites: clonePersistenceValue(nutritionFavorites || DEFAULT_NUTRITION_FAVORITES),
   nutritionActualLogs: clonePersistenceValue(nutritionActualLogs || {}),
@@ -87,6 +90,7 @@ export const buildPersistedTrainerPayload = ({
     coachPlanAdjustments: state.coachPlanAdjustments,
     dailyCheckins: state.dailyCheckins,
     plannedDayRecords: state.plannedDayRecords,
+    planWeekRecords: state.planWeekRecords,
     weeklyCheckins: state.weeklyCheckins,
     nutritionFavorites: state.nutritionFavorites,
     nutritionActualLogs: state.nutritionActualLogs,
@@ -112,14 +116,18 @@ export const buildCanonicalRuntimeStateFromStorage = ({
   const safePersonalization = typeof mergePersonalization === "function"
     ? mergePersonalization(DEFAULT_PERSONALIZATION, payload?.personalization || {})
     : clonePersistenceValue(payload?.personalization || DEFAULT_PERSONALIZATION || {});
-  const hasNormalizedNutritionActualStore = Boolean(
-    payload
-    && typeof payload === "object"
-    && Object.prototype.hasOwnProperty.call(payload, "nutritionActualLogs")
-  );
-  const normalizedNutritionActualLogs = hasNormalizedNutritionActualStore
-    ? clonePersistenceValue(payload?.nutritionActualLogs || {})
-    : normalizeActualNutritionLogCollection(payload?.nutritionFeedback || {});
+  // LEGACY_COMPAT: storage may still contain nutritionFeedback from pre-
+  // normalization saves. New runtime state should only carry nutritionActualLogs.
+  const normalizedNutritionActualLogs = resolveNutritionActualLogStoreCompat({
+    nutritionActualLogs: (
+      payload
+      && typeof payload === "object"
+      && Object.prototype.hasOwnProperty.call(payload, "nutritionActualLogs")
+    )
+      ? payload?.nutritionActualLogs
+      : null,
+    legacyNutritionFeedback: payload?.nutritionFeedback || {},
+  });
 
   return buildCanonicalRuntimeState({
     logs: payload?.logs || {},
@@ -133,6 +141,7 @@ export const buildCanonicalRuntimeStateFromStorage = ({
     coachPlanAdjustments: payload?.coachPlanAdjustments || DEFAULT_COACH_PLAN_ADJUSTMENTS,
     dailyCheckins: payload?.dailyCheckins || {},
     plannedDayRecords: payload?.plannedDayRecords || {},
+    planWeekRecords: payload?.planWeekRecords || {},
     weeklyCheckins: payload?.weeklyCheckins || {},
     nutritionFavorites: payload?.nutritionFavorites || DEFAULT_NUTRITION_FAVORITES,
     nutritionActualLogs: normalizedNutritionActualLogs,
@@ -155,6 +164,7 @@ export const applyCanonicalRuntimeStateSetters = ({
   if (typeof setters.setCoachPlanAdjustments === "function") setters.setCoachPlanAdjustments(runtimeState.coachPlanAdjustments || DEFAULT_COACH_PLAN_ADJUSTMENTS);
   if (typeof setters.setDailyCheckins === "function") setters.setDailyCheckins(runtimeState.dailyCheckins || {});
   if (typeof setters.setPlannedDayRecords === "function") setters.setPlannedDayRecords(runtimeState.plannedDayRecords || {});
+  if (typeof setters.setPlanWeekRecords === "function") setters.setPlanWeekRecords(runtimeState.planWeekRecords || {});
   if (typeof setters.setWeeklyCheckins === "function") setters.setWeeklyCheckins(runtimeState.weeklyCheckins || {});
   if (typeof setters.setNutritionFavorites === "function") setters.setNutritionFavorites(runtimeState.nutritionFavorites || DEFAULT_NUTRITION_FAVORITES);
   if (typeof setters.setNutritionActualLogs === "function") setters.setNutritionActualLogs(runtimeState.nutritionActualLogs || {});
