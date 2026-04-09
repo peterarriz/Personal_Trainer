@@ -1,3 +1,11 @@
+import {
+  applyCanonicalRuntimeStateSetters,
+  buildCanonicalRuntimeStateFromStorage,
+  buildPersistedTrainerPayload,
+  DEFAULT_COACH_PLAN_ADJUSTMENTS,
+  DEFAULT_NUTRITION_FAVORITES,
+} from "./services/persistence-adapter-service.js";
+
 export const SB_ROW = "trainer_v1";
 export const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
 export const AUTH_CACHE_KEY = "trainer_auth_session_v1";
@@ -101,7 +109,7 @@ export const normalizeSession = (session, fallback = null) => {
   };
 };
 
-export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePersonalization, DEFAULT_PERSONALIZATION, DEFAULT_MULTI_GOALS }) {
+export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePersonalization, normalizeGoals, DEFAULT_PERSONALIZATION, DEFAULT_MULTI_GOALS }) {
   const rawSupabaseUrl = (typeof window !== "undefined" ? (window.__SUPABASE_URL || "") : "").trim();
   const SB_URL = rawSupabaseUrl.replace(/\/+$/, "");
   const SB_KEY = (typeof window !== "undefined" ? (window.__SUPABASE_ANON_KEY || "") : "").trim();
@@ -517,33 +525,54 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     if (!res.ok) throw new Error("Load failed " + res.status + ": " + await res.text());
     const rows = await res.json();
     if (rows && rows.length > 0 && rows[0].data) {
-      const d = rows[0].data;
-      if (!d || typeof d !== "object" || Array.isArray(d)) throw new Error(AUTH_DATA_INCOMPATIBLE);
       try {
-        if (d.logs) setters.setLogs(d.logs);
-        if (d.bw) setters.setBodyweights(d.bw);
-        if (d.paceOverrides) setters.setPaceOverrides(d.paceOverrides);
-        if (d.weekNotes) setters.setWeekNotes(d.weekNotes);
-        if (d.planAlerts) setters.setPlanAlerts(d.planAlerts);
-        if (d.personalization) setters.setPersonalization(mergePersonalization(DEFAULT_PERSONALIZATION, d.personalization));
-        if (d.goals) setters.setGoals(d.goals);
-        if (d.coachActions) setters.setCoachActions(d.coachActions);
-        if (d.coachPlanAdjustments) setters.setCoachPlanAdjustments(d.coachPlanAdjustments);
-        if (d.dailyCheckins) setters.setDailyCheckins(d.dailyCheckins);
-        if (d.plannedDayRecords) setters.setPlannedDayRecords(d.plannedDayRecords);
-        if (d.weeklyCheckins) setters.setWeeklyCheckins(d.weeklyCheckins);
-        if (d.nutritionFavorites) setters.setNutritionFavorites(d.nutritionFavorites);
-        if (d.nutritionFeedback) setters.setNutritionFeedback(d.nutritionFeedback);
+        const runtimeState = buildCanonicalRuntimeStateFromStorage({
+          storedPayload: rows[0].data,
+          mergePersonalization,
+          DEFAULT_PERSONALIZATION,
+          normalizeGoals,
+          DEFAULT_MULTI_GOALS,
+        });
+        applyCanonicalRuntimeStateSetters({
+          runtimeState,
+          setters,
+        });
       } catch (e) {
         logDiag("cloud.load.data_incompatible", e?.message || "unknown");
         throw new Error(AUTH_DATA_INCOMPATIBLE);
       }
     } else {
       const cache = localLoad();
-      if (cache?.v) {
-        await sbSave({ payload: cache, authSession: sessionUsed || normalized, setAuthSession });
+      if (cache && typeof cache === "object") {
+        const cachedRuntimeState = buildCanonicalRuntimeStateFromStorage({
+          storedPayload: cache,
+          mergePersonalization,
+          DEFAULT_PERSONALIZATION,
+          normalizeGoals,
+          DEFAULT_MULTI_GOALS,
+        });
+        await sbSave({
+          payload: buildPersistedTrainerPayload({ runtimeState: cachedRuntimeState }),
+          authSession: sessionUsed || normalized,
+          setAuthSession,
+        });
       } else {
-        await persistAll({}, [], {}, {}, [], DEFAULT_PERSONALIZATION, [], { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} }, DEFAULT_MULTI_GOALS, {}, {}, { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] }, {}, {});
+        await persistAll(
+          {},
+          [],
+          {},
+          {},
+          [],
+          DEFAULT_PERSONALIZATION,
+          [],
+          DEFAULT_COACH_PLAN_ADJUSTMENTS,
+          DEFAULT_MULTI_GOALS,
+          {},
+          {},
+          DEFAULT_NUTRITION_FAVORITES,
+          {},
+          {}
+        );
       }
     }
   };

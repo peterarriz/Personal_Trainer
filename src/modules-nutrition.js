@@ -243,14 +243,67 @@ export const normalizeActualNutritionLog = ({ dateKey = "", feedback = {}, planR
   };
 };
 
-export const normalizeActualNutritionLogCollection = (nutritionFeedback = {}) => (
+export const normalizeActualNutritionLogCollection = (legacyNutritionFeedback = {}) => (
   Object.fromEntries(
-    Object.entries(nutritionFeedback || {}).map(([dateKey, feedback]) => [
+    Object.entries(legacyNutritionFeedback || {}).map(([dateKey, feedback]) => [
       dateKey,
       normalizeActualNutritionLog({ dateKey, feedback }),
     ])
   )
 );
+
+export const buildLegacyNutritionFeedbackFromActualLog = (actualNutritionLog = null) => {
+  if (!actualNutritionLog || typeof actualNutritionLog !== "object") return {};
+  const normalized = normalizeActualNutritionLog({
+    dateKey: actualNutritionLog?.dateKey || "",
+    feedback: actualNutritionLog,
+  });
+  return {
+    status: normalized.quickStatus || "",
+    issue: normalized.issue || "",
+    note: normalized.note || "",
+    deviationKind: normalized.deviationKind || "",
+    hydrationOz: Number(normalized.hydrationOz || 0),
+    hydrationTargetOz: Number(normalized.hydrationTargetOz || 0),
+    hydrationNudgedAt: normalized.hydration?.nudgedAt || null,
+    supplementTaken: normalized.supplements?.takenMap || {},
+    planReference: clonePlainValueNutrition(normalized.planReference || null),
+    actualNutrition: clonePlainValueNutrition(normalized),
+    actualNutritionLog: clonePlainValueNutrition(normalized),
+    ts: Number(normalized.loggedAt || Date.now()) || Date.now(),
+  };
+};
+
+export const buildLegacyNutritionFeedbackCollectionFromActualLogs = (nutritionActualLogs = {}) => (
+  Object.fromEntries(
+    Object.entries(nutritionActualLogs || {}).map(([dateKey, actualNutritionLog]) => [
+      dateKey,
+      buildLegacyNutritionFeedbackFromActualLog({
+        ...(actualNutritionLog || {}),
+        dateKey: actualNutritionLog?.dateKey || dateKey,
+      }),
+    ])
+  )
+);
+
+export const mergeActualNutritionLogUpdate = ({
+  dateKey = "",
+  previousLog = null,
+  feedback = {},
+  planReference = null,
+} = {}) => {
+  const previousLegacy = buildLegacyNutritionFeedbackFromActualLog(previousLog);
+  return normalizeActualNutritionLog({
+    dateKey,
+    feedback: {
+      ...previousLegacy,
+      ...(feedback || {}),
+      planReference,
+      ts: Date.now(),
+    },
+    planReference,
+  });
+};
 
 export const compareNutritionPrescriptionToActual = ({ nutritionPrescription = null, actualNutritionLog = null } = {}) => {
   const actual = actualNutritionLog ? normalizeActualNutritionLog({ dateKey: actualNutritionLog?.dateKey || "", feedback: actualNutritionLog }) : null;
@@ -298,12 +351,13 @@ export const compareNutritionPrescriptionToActual = ({ nutritionPrescription = n
   };
 };
 
-export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, nutritionActualLogs, coachPlanAdjustments, salvageLayer, failureMode }) => {
+export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, personalization, bodyweights, learningLayer, nutritionActualLogs, legacyNutritionFeedback, coachPlanAdjustments, salvageLayer, failureMode }) => {
   const todayKey = new Date().toISOString().split("T")[0];
   const schedule = personalization?.environmentConfig?.schedule || [];
   const isScheduledTravelDate = schedule.some(s => s?.mode === "Travel" && s?.startDate && s?.endDate && todayKey >= s.startDate && todayKey <= s.endDate);
   const environmentMode = isScheduledTravelDate ? "travel" : (personalization.travelState.environmentMode || "home");
-  const dayTypeOverride = coachPlanAdjustments?.nutritionOverrides?.[new Date().toISOString().split("T")[0]];
+  const rawDayTypeOverride = coachPlanAdjustments?.nutritionOverrides?.[new Date().toISOString().split("T")[0]];
+  const dayTypeOverride = rawDayTypeOverride?.dayType || rawDayTypeOverride || "";
   const mappedDay = dayTypeOverride || mapWorkoutToNutritionDayType(todayWorkout, environmentMode);
   const travelMode = environmentMode.includes("travel") || isScheduledTravelDate || personalization?.travelState?.isTravelWeek;
   const dayType = travelMode
@@ -349,7 +403,11 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
 
   const recentBW = (bodyweights || []).slice(-10).map(x => Number(x.w)).filter(Boolean);
   const bwTrend = recentBW.length >= 2 ? recentBW[recentBW.length - 1] - recentBW[0] : 0;
-  const recentFeedback = Object.values(nutritionActualLogs || normalizeActualNutritionLogCollection(nutritionFeedback || {})).slice(-10);
+  const recentFeedback = Object.values(
+    (nutritionActualLogs && Object.keys(nutritionActualLogs).length)
+      ? nutritionActualLogs
+      : normalizeActualNutritionLogCollection(legacyNutritionFeedback || {})
+  ).slice(-10);
   const hungerHits = recentFeedback.filter(f => f.deviationKind === "under_fueled" || f.issue === "hunger").length;
   const offTrackHits = recentFeedback.filter(f => f.adherence === "low" || f.quickStatus === "off_track").length;
 

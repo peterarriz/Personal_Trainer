@@ -1,105 +1,22 @@
+import {
+  deriveCanonicalAthleteState as deriveCanonicalGoalProfileState,
+  getActiveTimeBoundGoal,
+  getGoalBuckets,
+  inferGoalType,
+  normalizeGoalObject,
+  normalizeGoals,
+} from "./services/canonical-athlete-service.js";
+import {
+  buildLegacyProvenanceAdjustmentView,
+  buildProvenanceEvent,
+  buildStructuredProvenance,
+  PROVENANCE_ACTORS,
+} from "./services/provenance-service.js";
+
+export { deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
+
 export const DEFAULT_PLANNING_HORIZON_WEEKS = 12;
 export const RECOVERY_BLOCK_WEEKS = 2;
-
-export const inferGoalType = (goal = {}) => {
-  if (goal?.type === "time_bound" || goal?.type === "ongoing") return goal.type;
-  return goal?.targetDate ? "time_bound" : "ongoing";
-};
-
-export const normalizeGoalObject = (goal = {}, idx = 0) => {
-  const type = inferGoalType(goal);
-  const tracking = goal?.tracking || (type === "ongoing"
-    ? {
-        mode: goal?.category === "body_comp" ? "weekly_checkin" : goal?.category === "strength" ? "logged_lifts" : "progress_tracker",
-        unit: goal?.category === "body_comp" ? "lb" : goal?.category === "strength" ? "lb" : "",
-      }
-    : { mode: "deadline" });
-  return {
-    id: goal?.id || `goal_${idx + 1}`,
-    name: goal?.name || "Goal",
-    category: goal?.category || "running",
-    priority: Number(goal?.priority || (idx + 1)),
-    targetDate: goal?.targetDate || "",
-    measurableTarget: goal?.measurableTarget || "",
-    active: goal?.active !== false,
-    ...goal,
-    type,
-    tracking,
-  };
-};
-
-export const normalizeGoals = (goals = []) => (goals || []).map((g, idx) => normalizeGoalObject(g, idx));
-
-export const getGoalBuckets = (goals = []) => {
-  const normalized = normalizeGoals(goals);
-  const active = normalized.filter(g => g.active).sort((a, b) => a.priority - b.priority);
-  const timeBound = active.filter(g => g.type === "time_bound");
-  const ongoing = active.filter(g => g.type === "ongoing");
-  return { normalized, active, timeBound, ongoing };
-};
-
-export const daysUntil = (dateStr) => {
-  if (!dateStr) return 9999;
-  const t = new Date(`${dateStr}T12:00:00`).getTime();
-  if (Number.isNaN(t)) return 9999;
-  return Math.floor((t - Date.now()) / 86400000);
-};
-
-export const getActiveTimeBoundGoal = (goals = []) => {
-  const { timeBound } = getGoalBuckets(goals);
-  return (timeBound || [])
-    .map(g => ({ ...g, days: daysUntil(g.targetDate) }))
-    .filter(g => Number.isFinite(g.days))
-    .sort((a, b) => a.days - b.days)[0] || null;
-};
-
-const CATEGORY_TO_PRIMARY_GOAL = {
-  body_comp: "fat_loss",
-  strength: "muscle_gain",
-  running: "endurance",
-  injury_prevention: "general_fitness",
-  general_fitness: "general_fitness",
-};
-
-const dedupeStrings = (values = []) => (
-  Array.from(new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean)))
-);
-
-export const deriveCanonicalGoalProfileState = ({ goals = [], personalization = {} } = {}) => {
-  const normalizedGoals = normalizeGoals(goals);
-  const goalBuckets = getGoalBuckets(normalizedGoals);
-  const activeTimeBoundGoal = getActiveTimeBoundGoal(goalBuckets.active);
-  const primaryGoal = goalBuckets.active[0] || null;
-  const storedUserProfile = personalization?.userGoalProfile || {};
-  const storedGoalState = personalization?.goalState || {};
-  const priorityOrder = goalBuckets.active.map((goal) => goal?.name).filter(Boolean);
-  const primaryGoalKey = storedUserProfile?.primary_goal
-    || CATEGORY_TO_PRIMARY_GOAL[primaryGoal?.category]
-    || "general_fitness";
-
-  return {
-    goals: normalizedGoals,
-    goalBuckets,
-    activeTimeBoundGoal,
-    primaryGoal,
-    userProfile: {
-      primary_goal: primaryGoalKey,
-      experience_level: storedUserProfile?.experience_level || "beginner",
-      days_per_week: Math.max(2, Number(storedUserProfile?.days_per_week || 3) || 3),
-      session_length: storedUserProfile?.session_length || "30",
-      equipment_access: dedupeStrings(storedUserProfile?.equipment_access || []),
-      constraints: dedupeStrings(storedUserProfile?.constraints || []),
-    },
-    goalState: {
-      ...storedGoalState,
-      primaryGoal: primaryGoal?.name || storedGoalState?.primaryGoal || "",
-      priority: primaryGoal?.category || storedGoalState?.priority || "undecided",
-      priorityOrder: priorityOrder.length ? priorityOrder.join(" > ") : (storedGoalState?.priorityOrder || ""),
-      deadline: activeTimeBoundGoal?.targetDate || storedGoalState?.deadline || "",
-      planStartDate: storedGoalState?.planStartDate || "",
-    },
-  };
-};
 
 const clonePlainValue = (value) => {
   if (value == null) return value;
@@ -469,20 +386,21 @@ export const buildPlanWeek = ({
  *   flags,
  * }
  */
-export const buildCanonicalPlanDay = ({
-  dateKey = "",
-  dayOfWeek = 0,
-  currentWeek = 1,
-  baseWeek = {},
-  basePlannedDay = null,
-  resolvedDay = null,
-  todayPlan = null,
-  readiness = null,
-  nutrition = {},
-  adjustments = {},
-  context = {},
-  logging = {},
-} = {}) => {
+export const buildCanonicalPlanDay = (args = {}) => {
+  const {
+    dateKey = "",
+    dayOfWeek = 0,
+    currentWeek = 1,
+    baseWeek = {},
+    basePlannedDay = null,
+    resolvedDay = null,
+    todayPlan = null,
+    readiness = null,
+    nutrition = {},
+    adjustments = {},
+    context = {},
+    logging = {},
+  } = args;
   const baseTraining = clonePlainValue(basePlannedDay || {});
   const resolvedTraining = clonePlainValue(resolvedDay || basePlannedDay || {});
   const planWeek = clonePlainValue(context?.planWeek || null);
@@ -517,56 +435,114 @@ export const buildCanonicalPlanDay = ({
   const baseSignature = normalizeTrainingSignature(baseTraining);
   const resolvedSignature = normalizeTrainingSignature(resolvedTraining);
   const comparisonModified = baseSignature !== resolvedSignature;
+  const provenanceTimestamp = Date.now();
 
-  const adjustmentRecords = [
-    dayOverride ? {
-      type: "day_override",
-      actor: "coach",
-      reason: String(dayOverride?.reason || "day override").replace(/_/g, " "),
-      source: "coachPlanAdjustments.dayOverrides",
-    } : null,
-    nutritionOverride ? {
-      type: "nutrition_override",
-      actor: "coach",
-      reason: String(nutritionOverride).replace(/_/g, " "),
-      source: "coachPlanAdjustments.nutritionOverrides",
-    } : null,
-    injuryRule?.mods?.length ? {
-      type: "injury_rule",
-      actor: "deterministic_engine",
-      reason: injuryRule.mods.join("; "),
-      source: "injuryRule",
-    } : null,
-    failureMode?.mode && failureMode.mode !== "normal" ? {
-      type: "failure_mode",
-      actor: "deterministic_engine",
-      reason: String(failureMode.mode).replace(/_/g, " "),
-      source: "failureMode",
-    } : null,
-    garminReadiness?.mode ? {
-      type: "device_readiness",
-      actor: "deterministic_engine",
-      reason: `garmin readiness ${String(garminReadiness.mode).replace(/_/g, " ")}`,
-      source: "garminReadiness",
-    } : null,
-    deviceSyncAudit?.planMode && deviceSyncAudit.planMode !== "normal" ? {
-      type: "device_sync",
-      actor: "deterministic_engine",
-      reason: String(deviceSyncAudit.reason || `device plan mode ${deviceSyncAudit.planMode}`).trim(),
-      source: "deviceSyncAudit",
-    } : null,
-    environmentSelection?.scope === "today" ? {
-      type: "environment_override",
-      actor: "user",
-      reason: `${String(environmentSelection?.mode || "custom")} mode for today`,
-      source: "environmentSelection",
-    } : null,
-    readinessState?.state && readinessState.state !== "steady" ? {
-      type: "readiness_adjustment",
-      actor: "deterministic_engine",
-      reason: readinessState?.userVisibleLine || readinessState?.stateLabel || readinessState?.state,
-      source: "readiness",
-    } : null,
+  const adjustmentEvents = [
+    dayOverride ? buildProvenanceEvent({
+      actor: dayOverride?.provenance?.actor || PROVENANCE_ACTORS.user,
+      trigger: "day_override",
+      mutationType: "daily_override",
+      revisionReason: String(dayOverride?.reason || "day override").replace(/_/g, " "),
+      sourceInputs: dayOverride?.provenance?.sourceInputs || ["coachPlanAdjustments.dayOverrides"],
+      confidence: dayOverride?.provenance?.confidence || "high",
+      timestamp: dayOverride?.provenance?.timestamp || provenanceTimestamp,
+      details: {
+        mode: dayOverride?.type || "",
+        sourcePath: "coachPlanAdjustments.dayOverrides",
+      },
+    }) : null,
+    nutritionOverride ? buildProvenanceEvent({
+      actor: nutritionOverride?.provenance?.actor || PROVENANCE_ACTORS.user,
+      trigger: "nutrition_override",
+      mutationType: "nutrition_override",
+      revisionReason: String(nutritionOverride?.reason || nutritionOverride?.dayType || nutritionOverride).replace(/_/g, " "),
+      sourceInputs: nutritionOverride?.provenance?.sourceInputs || ["coachPlanAdjustments.nutritionOverrides"],
+      confidence: nutritionOverride?.provenance?.confidence || "high",
+      timestamp: nutritionOverride?.provenance?.timestamp || provenanceTimestamp,
+      details: {
+        dayType: nutritionOverride?.dayType || nutritionOverride,
+        sourcePath: "coachPlanAdjustments.nutritionOverrides",
+      },
+    }) : null,
+    injuryRule?.mods?.length ? buildProvenanceEvent({
+      actor: PROVENANCE_ACTORS.deterministicEngine,
+      trigger: "injury_rule",
+      mutationType: "protective_adjustment",
+      revisionReason: injuryRule.mods.join("; "),
+      sourceInputs: ["injuryPainState", "buildInjuryRuleResult"],
+      confidence: "high",
+      timestamp: provenanceTimestamp,
+      details: {
+        modifications: clonePlainValue(injuryRule.mods || []),
+      },
+    }) : null,
+    failureMode?.mode && failureMode.mode !== "normal" ? buildProvenanceEvent({
+      actor: PROVENANCE_ACTORS.deterministicEngine,
+      trigger: "failure_mode",
+      mutationType: "compliance_hardening",
+      revisionReason: String(failureMode.mode).replace(/_/g, " "),
+      sourceInputs: ["failureMode", "momentum", "logs"],
+      confidence: "high",
+      timestamp: provenanceTimestamp,
+      details: {
+        mode: failureMode.mode,
+      },
+    }) : null,
+    garminReadiness?.mode ? buildProvenanceEvent({
+      actor: PROVENANCE_ACTORS.deterministicEngine,
+      trigger: "device_readiness",
+      mutationType: "readiness_adjustment",
+      revisionReason: `garmin readiness ${String(garminReadiness.mode).replace(/_/g, " ")}`,
+      sourceInputs: ["garminReadiness", "connectedDevices.garmin"],
+      confidence: "medium",
+      timestamp: provenanceTimestamp,
+      details: {
+        mode: garminReadiness.mode,
+      },
+    }) : null,
+    deviceSyncAudit?.planMode && deviceSyncAudit.planMode !== "normal" ? buildProvenanceEvent({
+      actor: PROVENANCE_ACTORS.deterministicEngine,
+      trigger: "device_sync",
+      mutationType: "device_fallback",
+      revisionReason: String(deviceSyncAudit.reason || `device plan mode ${deviceSyncAudit.planMode}`).trim(),
+      sourceInputs: ["deviceSyncAudit", "connectedDevices"],
+      confidence: "medium",
+      timestamp: provenanceTimestamp,
+      details: {
+        planMode: deviceSyncAudit.planMode,
+      },
+    }) : null,
+    environmentSelection?.scope === "today" ? buildProvenanceEvent({
+      actor: PROVENANCE_ACTORS.user,
+      trigger: "environment_override",
+      mutationType: "daily_override",
+      revisionReason: `${String(environmentSelection?.mode || "custom")} mode for today`,
+      sourceInputs: ["environmentSelection", "environmentConfig.todayOverride"],
+      confidence: "high",
+      timestamp: provenanceTimestamp,
+      details: {
+        scope: environmentSelection?.scope || "",
+        mode: environmentSelection?.mode || "",
+      },
+    }) : null,
+    readinessState?.state && readinessState.state !== "steady" ? buildProvenanceEvent({
+      actor: PROVENANCE_ACTORS.deterministicEngine,
+      trigger: "readiness_adjustment",
+      mutationType: "readiness_adjustment",
+      revisionReason: readinessState?.userVisibleLine || readinessState?.stateLabel || readinessState?.state,
+      sourceInputs: [
+        "dailyCheckins",
+        "recent_session_history",
+        readinessState?.metrics?.hasTodayRecoveryInput ? "today_readiness_input" : "",
+        readinessState?.source || "readiness_engine",
+      ],
+      confidence: "high",
+      timestamp: provenanceTimestamp,
+      details: {
+        state: readinessState?.state || "",
+        source: readinessState?.source || "deterministic_engine",
+      },
+    }) : null,
   ].filter(Boolean);
 
   const keyDrivers = dedupeStrings([
@@ -583,7 +559,7 @@ export const buildCanonicalPlanDay = ({
     environmentSelection?.mode ? `${String(environmentSelection.mode).toLowerCase()} environment` : "",
   ]).slice(0, 6);
 
-  const modifiedFromBase = comparisonModified || adjustmentRecords.length > 0;
+  const modifiedFromBase = comparisonModified || adjustmentEvents.length > 0;
   const decisionMode = readinessState?.state
     || resolvedTraining?.readinessState
     || (modifiedFromBase ? "adjusted" : "planned");
@@ -677,14 +653,40 @@ export const buildCanonicalPlanDay = ({
       mode: decisionMode,
       modeLabel: decisionModeLabel,
       confidence: null,
-      source: readinessState?.source || (adjustmentRecords[0]?.source || "deterministic_engine"),
+      source: readinessState?.source || (adjustmentEvents[0]?.trigger || "deterministic_engine"),
       inputDriven: Boolean(readinessState?.inputDriven),
       modifiedFromBase,
     },
     provenance: {
+      ...buildStructuredProvenance({
+        keyDrivers,
+        events: [
+          buildProvenanceEvent({
+            actor: PROVENANCE_ACTORS.deterministicEngine,
+            trigger: "plan_day_resolution",
+            mutationType: "plan_day_resolution",
+            revisionReason: modifiedFromBase ? "resolved daily recommendation differs from base plan" : "resolved daily recommendation matches base plan",
+            sourceInputs: [
+              "weeklyIntent",
+              "todayPlan",
+              "basePlannedDay",
+              "readiness",
+              "nutrition",
+            ],
+            confidence: "high",
+            timestamp: provenanceTimestamp,
+            details: {
+              modifiedFromBase,
+              decisionMode,
+            },
+          }),
+          ...adjustmentEvents,
+        ],
+        summary: buildPlanDaySummary(keyDrivers, modifiedFromBase),
+      }),
       keyDrivers,
-      adjustments: adjustmentRecords,
       summary: buildPlanDaySummary(keyDrivers, modifiedFromBase),
+      adjustments: buildLegacyProvenanceAdjustmentView(adjustmentEvents),
     },
     flags: {
       isModified: modifiedFromBase,
@@ -1022,17 +1024,17 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
 /**
  * generateTodayPlan — deterministic engine that decides today's workout.
  *
- * @param {Object} userProfile - personalization.userGoalProfile
- *   { primary_goal, experience_level, days_per_week, session_length, equipment_access, constraints }
+ * @param {Object} userProfile - canonical user profile
+ *   { primaryGoalKey, experienceLevel, daysPerWeek, sessionLength, equipmentAccess, constraints }
  * @param {Object} recentActivity - { logs: { [dateKey]: { date, type, feel, notes } }, todayKey: "YYYY-MM-DD" }
  * @param {Object} fatigueSignals - { fatigueScore (0-10), trend: "improving"|"stable"|"worsening", momentum: string, injuryLevel: string }
  * @returns {{ type, duration, intensity, label, reason }}
  */
 export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigueSignals = {}, planningContext = {}) => {
-  const goal = userProfile.primary_goal || "general_fitness";
-  const experience = userProfile.experience_level || "beginner";
-  const targetDays = userProfile.days_per_week || 3;
-  const sessionLen = userProfile.session_length || "30";
+  const goal = userProfile.primaryGoalKey || userProfile.primary_goal || "general_fitness";
+  const experience = userProfile.experienceLevel || userProfile.experience_level || "beginner";
+  const targetDays = userProfile.daysPerWeek || userProfile.days_per_week || 3;
+  const sessionLen = userProfile.sessionLength || userProfile.session_length || "30";
   let duration = SESSION_DURATIONS[sessionLen] || 30;
   const hasConstraints = (userProfile.constraints || []).length > 0;
 

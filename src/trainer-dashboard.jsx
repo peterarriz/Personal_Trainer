@@ -1,12 +1,27 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, getHorizonAnchor, buildPlanWeek, buildRollingHorizonWeeks, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal, generateTodayPlan, deriveCanonicalGoalProfileState, buildCanonicalPlanDay } from "./modules-planning.js";
+import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, normalizeGoals, getGoalBuckets, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
 import { createAuthStorageModule, buildStorageStatus, classifyStorageError, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
-import { getGoalContext, deriveAdaptiveNutrition, deriveRealWorldNutritionEngine, normalizeActualNutritionLog, normalizeActualNutritionLogCollection, compareNutritionPrescriptionToActual, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket } from "./modules-nutrition.js";
+import { getGoalContext, normalizeActualNutritionLog, normalizeActualNutritionLogCollection, compareNutritionPrescriptionToActual, LOCAL_PLACE_TEMPLATES, getPlaceRecommendations, buildGroceryBasket, mergeActualNutritionLogUpdate } from "./modules-nutrition.js";
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, CHECKIN_BLOCKER_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, isWithinGracePeriod, resolveEffectiveStatus, resolveActualStatus, buildPlannedDayRecord, comparePlannedDayToActual } from "./modules-checkins.js";
-import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, withConfidenceTone, deterministicCoachPacket, applyCoachActionMutation, acceptCoachActionProposal } from "./modules-coach-engine.js";
-import { AI_PACKET_INTENTS, buildAiStatePacket, parseAiJsonObjectFromText, acceptAiPlanAnalysisProposal, buildCoachAiSystemPrompt, buildPlanAnalysisAiSystemPrompt } from "./modules-ai-state.js";
+import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, withConfidenceTone, deterministicCoachPacket } from "./modules-coach-engine.js";
 import { buildWorkoutAdjustmentCoachNote, buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildNutritionCoachBrief, buildCoachChatSystemPrompt, buildPlanAnalysisSystemPrompt, buildTodayWhyNowSentence, buildMacroShiftLine, buildEasierSessionsObservation, buildSkippedQualityDecision, buildLoadSpikeInlineWarning, buildWeeklyConsistencyAnchor, buildStreakSignalResponse, buildBadWeekTriageResponse, buildDiscomfortProtocolResponse, buildCompressedSessionPrescription, buildMinimumEffectiveTravelSession } from "./prompts/coach-text.js";
 import { SettingsIcon } from "./icons.js";
+import { assembleCanonicalPlanDay, resolvePlanDayStateInputs, resolvePlanDayTimeOfDay } from "./services/plan-day-service.js";
+import { assemblePlanWeekRuntime, resolveCurrentPlanWeekNumber, resolvePlanWeekNumberForDateKey, resolveProgramDisplayHorizon } from "./services/plan-week-service.js";
+import { buildDayReview, buildDayReviewComparison, classifyDayReviewStatus } from "./services/day-review-service.js";
+import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
+import { deriveCanonicalAthleteState, withLegacyGoalProfileCompatibility } from "./services/canonical-athlete-service.js";
+import {
+  applyCanonicalRuntimeStateSetters,
+  buildCanonicalRuntimeState,
+  buildCanonicalRuntimeStateFromStorage,
+  buildPersistedTrainerPayload,
+  DEFAULT_COACH_PLAN_ADJUSTMENTS,
+  DEFAULT_NUTRITION_FAVORITES,
+  exportRuntimeStateAsBase64,
+  importRuntimeStateFromBase64,
+} from "./services/persistence-adapter-service.js";
+import { appendProvenanceSidecar, buildLegacyProvenanceAdjustmentView, buildProvenanceEvent, buildStructuredProvenance, describeProvenanceRecord, normalizeProvenanceEvent, normalizeStructuredProvenance, PROVENANCE_ACTORS } from "./services/provenance-service.js";
 
 // ── PROFILE ──────────────────────────────────────────────────────────────────
 const PROFILE = {
@@ -246,7 +261,7 @@ const parseLiftGoalWeights = (goals = []) => {
   return tracked;
 };
 
-const deriveProgressiveOverloadAdjustments = ({ logs = {}, todayWorkout = {}, checkin = {}, personalization = {}, currentPhase = "BASE", goals = [] }) => {
+const deriveProgressiveOverloadAdjustments = ({ logs = {}, todayWorkout = {}, checkin = {}, personalization = {}, currentPhase = "BASE", goals = [], goalState = {} }) => {
   const dated = Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0]));
   const historyByExercise = {};
   dated.forEach(([date, entry]) => {
@@ -263,7 +278,7 @@ const deriveProgressiveOverloadAdjustments = ({ logs = {}, todayWorkout = {}, ch
   const isBuild = phaseMode === "build";
   const injuryActive = (personalization?.injuryPainState?.level || "none") !== "none";
   const activeTimedGoal = getActiveTimeBoundGoal(goals);
-  const deadlineDate = activeTimedGoal?.targetDate || personalization?.goalState?.deadline || "";
+  const deadlineDate = activeTimedGoal?.targetDate || goalState?.deadline || "";
   const daysToGoal = deadlineDate
     ? Math.max(0, Math.ceil((new Date(deadlineDate).getTime() - Date.now()) / 86400000))
     : null;
@@ -545,7 +560,7 @@ const buildExercisePerformanceRowsForStorage = (dateKey = "", performance = []) 
     }))
 );
 
-const deriveProgressiveOverloadAdjustmentsV2 = ({ logs = {}, performance = [], personalization = {}, currentPhase = "BASE", goals = [], sessionDateKey = "" }) => {
+const deriveProgressiveOverloadAdjustmentsV2 = ({ logs = {}, performance = [], personalization = {}, currentPhase = "BASE", goals = [], goalState = {}, sessionDateKey = "" }) => {
   const historyByExercise = buildStrengthHistoryByExercise(logs);
   const phaseMode = resolvePhaseMode({ currentPhase, goals });
   const allowSetAddition = phaseMode === "build" || phaseMode === "maintain";
@@ -691,7 +706,7 @@ const deriveProgressiveOverloadAdjustmentsV2 = ({ logs = {}, performance = [], p
       : null;
     const projectedDate = weeksToGoal !== null ? toDateKey(Date.now() + (weeksToGoal * 7 * 86400000)) : "";
     const activeTimedGoal = getActiveTimeBoundGoal(goals);
-    const deadlineDate = String(activeTimedGoal?.targetDate || personalization?.goalState?.deadline || "").trim();
+    const deadlineDate = String(activeTimedGoal?.targetDate || goalState?.deadline || "").trim();
     const deadlineConflict = Boolean(projectedDate && deadlineDate && projectedDate > deadlineDate);
     const trackingKey = liftKey || exerciseKey;
     nextTracking[trackingKey] = {
@@ -999,7 +1014,7 @@ const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().spl
   };
 
   const todayTs = new Date(`${todayKey}T12:00:00`).getTime();
-  const targetDays = Math.max(2, Number(userProfile?.days_per_week) || 3);
+  const targetDays = Math.max(2, Number(userProfile?.daysPerWeek || userProfile?.days_per_week) || 3);
   const allDates = Array.from(new Set([...(Object.keys(logs || {})), ...(Object.keys(dailyCheckins || {}))]));
   const recentRows = allDates
     .filter((dateKey) => {
@@ -1249,7 +1264,7 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
   };
 
   const todayTs = new Date(`${todayKey}T12:00:00`).getTime();
-  const targetDays = Math.max(2, Number(userProfile?.days_per_week || 3) || 3);
+  const targetDays = Math.max(2, Number(userProfile?.daysPerWeek || userProfile?.days_per_week || 3) || 3);
   const allDates = Array.from(new Set([...(Object.keys(logs || {})), ...(Object.keys(dailyCheckins || {}))]))
     .filter(Boolean)
     .sort((a, b) => b.localeCompare(a));
@@ -1820,6 +1835,7 @@ const DEFAULT_USER_GOAL_PROFILE = {
 };
 
 const DEFAULT_PERSONALIZATION = {
+  // Deprecated runtime input. Canonical athlete state is derived in canonical-athlete-service.js.
   userGoalProfile: { ...DEFAULT_USER_GOAL_PROFILE },
   profile: {
     name: "Athlete",
@@ -1835,6 +1851,7 @@ const DEFAULT_PERSONALIZATION = {
     likelyAdherencePattern: "unknown",
     injurySensitivity: "",
   },
+  // Deprecated runtime input. Persisted for backward compatibility until canonical goal-state persistence exists.
   goalState: {
     primaryGoal: "",
     priority: "undecided",
@@ -1982,6 +1999,8 @@ const PERSONALIZATION_ACTIONS = {
 const mergePersonalization = (base, patch) => ({
   ...base,
   ...patch,
+  userGoalProfile: { ...(base.userGoalProfile || DEFAULT_PERSONALIZATION.userGoalProfile), ...(patch?.userGoalProfile || {}) },
+  goalState: { ...(base.goalState || DEFAULT_PERSONALIZATION.goalState), ...(patch?.goalState || {}) },
   injuryPainState: { ...base.injuryPainState, ...(patch?.injuryPainState || {}), achilles: { ...base.injuryPainState.achilles, ...(patch?.injuryPainState?.achilles || {}) } },
   travelState: { ...base.travelState, ...(patch?.travelState || {}) },
   environmentConfig: {
@@ -2405,9 +2424,9 @@ const getMomentumEngineState = ({ logs, bodyweights, personalization }) => {
   return { score, momentumState, coachMode: finalCoachMode, inconsistencyRisk, likelyAdherencePattern, completionRate, logGapDays, fatigueNotes };
 };
 
-const buildProactiveTriggers = ({ momentum, personalization, goals, learning, nutritionFeedback, longTermMemory }) => {
+const buildProactiveTriggers = ({ momentum, personalization, goals, learning, nutritionActualLogs, longTermMemory }) => {
   const triggers = [];
-  const actualNutritionLogs = Object.values(normalizeActualNutritionLogCollection(nutritionFeedback || {}));
+  const actualNutritionLogs = Object.values(nutritionActualLogs || {});
   const dropFast = (longTermMemory || []).some(m => m.key === "drops_after_3_4_days" && m.confidence === "high");
   if (momentum.momentumState === "drifting") triggers.push({ id:"drift", msg:"Drift detected — want a simplified version of this week?", actionLabel:"Simplify week", actionType:"REDUCE_WEEKLY_VOLUME", payload:{ pct: 12 }, priority:85 });
   if (momentum.momentumState === "falling off") triggers.push({ id:"reset", msg:"Momentum has dipped — want a compressed reset week to make execution easier?", actionLabel:"Activate reset", actionType:"ACTIVATE_SALVAGE", payload:{}, priority:95 });
@@ -2467,9 +2486,9 @@ const generateDailyCoachBrief = ({ momentum, todayWorkout, arbitration, injurySt
   };
 };
 
-const generateWeeklyCoachReview = ({ momentum, arbitration, signals, personalization, patterns, learning, nutritionFeedback, expectations, recalibration }) => ({
+const generateWeeklyCoachReview = ({ momentum, arbitration, signals, personalization, patterns, learning, nutritionActualLogs, expectations, recalibration }) => ({
   ...(() => {
-    const recentNutri = Object.values(normalizeActualNutritionLogCollection(nutritionFeedback || {})).slice(-7);
+    const recentNutri = Object.values(nutritionActualLogs || {}).slice(-7);
     const offTrack = recentNutri.filter(n => n.adherence === "low").length;
     const underFueled = recentNutri.filter(n => n.deviationKind === "under_fueled").length;
     const nutritionLearned = underFueled >= 2
@@ -2604,11 +2623,11 @@ const deriveBehaviorLoop = ({ dailyCheckins, logs, momentum, salvageLayer }) => 
   };
 };
 
-const deriveLongTermMemoryLayer = ({ logs, dailyCheckins, weeklyCheckins, nutritionFeedback, validationLayer, previousMemory = [] }) => {
+const deriveLongTermMemoryLayer = ({ logs, dailyCheckins, weeklyCheckins, nutritionActualLogs, validationLayer, previousMemory = [] }) => {
   const entries = Object.entries(logs || {}).sort((a,b)=>a[0].localeCompare(b[0]));
   const checkins = Object.entries(dailyCheckins || {}).sort((a,b)=>a[0].localeCompare(b[0]));
   const weekly = Object.values(weeklyCheckins || {});
-  const nutrition = Object.values(normalizeActualNutritionLogCollection(nutritionFeedback || {}));
+  const nutrition = Object.values(nutritionActualLogs || {});
   const last28Logs = entries.slice(-28).map(([,l])=>l || {});
   const last28Checkins = checkins.slice(-28).map(([,c])=>c || {});
 
@@ -2888,7 +2907,7 @@ const parseSessionMinutes = (log) => {
   return m ? Number(m[1]) : null;
 };
 
-const derivePersonalOptimizationLayer = ({ logs, dailyCheckins, nutritionFeedback, coachActions, validationLayer }) => {
+const derivePersonalOptimizationLayer = ({ logs, dailyCheckins, nutritionActualLogs, coachActions, validationLayer }) => {
   const logEntries = Object.entries(logs || {}).sort((a, b) => a[0].localeCompare(b[0]));
   const last42 = logEntries.slice(-42).map(([, l]) => l || {});
   const checkinEntries = Object.entries(dailyCheckins || {}).sort((a, b) => a[0].localeCompare(b[0]));
@@ -2906,7 +2925,7 @@ const derivePersonalOptimizationLayer = ({ logs, dailyCheckins, nutritionFeedbac
   const avgMinutes = durations.length ? Math.round(durations.reduce((s, n) => s + n, 0) / durations.length) : 35;
   const optimalSessionLength = avgMinutes <= 35 ? "25-40 min" : avgMinutes <= 50 ? "35-50 min" : "45-60 min";
 
-  const recentNutrition = Object.values(normalizeActualNutritionLogCollection(nutritionFeedback || {})).slice(-21);
+  const recentNutrition = Object.values(nutritionActualLogs || {}).slice(-21);
   const hunger = recentNutrition.filter(n => n.deviationKind === "under_fueled" || n.issue === "hunger").length;
   const offTrack = recentNutrition.filter(n => n.adherence === "low").length;
   const optimalDeficitRange = hunger >= 2 || offTrack >= 4 ? "minimal deficit (0-150 kcal)" : "moderate deficit (120-250 kcal)";
@@ -3106,7 +3125,7 @@ const cloneStructuredValue = (value) => {
   }
 };
 
-const PRESCRIBED_DAY_HISTORY_VERSION = 1;
+const PRESCRIBED_DAY_HISTORY_VERSION = 2;
 const PRESCRIBED_DAY_DURABILITY = {
   durable: "durable",
   legacyBackfill: "legacy_backfill",
@@ -3122,6 +3141,147 @@ const stripPlannedRecordMetadata = (record = null) => {
   return next;
 };
 
+const normalizeRevisionText = (value = "") => String(value || "")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, " ")
+  .trim();
+
+const collectPatternNumbers = (text = "", regex = /$^/) => {
+  const values = [];
+  String(text || "").replace(regex, (_, numeric) => {
+    const parsed = Number(numeric);
+    if (Number.isFinite(parsed)) values.push(parsed);
+    return _;
+  });
+  return values;
+};
+
+const sumPatternNumbers = (text = "", regex = /$^/) => (
+  collectPatternNumbers(text, regex).reduce((sum, value) => sum + value, 0)
+);
+
+const extractRunStructureMetrics = (training = null) => {
+  const run = training?.run || null;
+  const detail = String(run?.d || training?.strengthDuration || training?.fallback || "").trim();
+  const totalMinutes = sumPatternNumbers(detail, /(\d+(?:\.\d+)?)\s*min\b/gi);
+  const totalMiles = sumPatternNumbers(detail, /(\d+(?:\.\d+)?)\s*(?:mi|mile|miles)\b/gi);
+  return {
+    runType: normalizeRevisionText(run?.t || ""),
+    detailKey: normalizeRevisionText(detail),
+    totalMinutes: totalMinutes > 0 ? totalMinutes : null,
+    totalMiles: totalMiles > 0 ? Number(totalMiles.toFixed(2)) : null,
+    strengthTrack: normalizeRevisionText(training?.strengthTrack || ""),
+  };
+};
+
+const extractNutritionMaterialMetrics = (nutrition = null) => {
+  const prescription = nutrition?.prescription || nutrition || {};
+  const targets = prescription?.targets || prescription || {};
+  const metric = (value, precision = 0) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Number(numeric.toFixed(precision)) : null;
+  };
+  return {
+    dayType: normalizeRevisionText(nutrition?.dayType || prescription?.dayType || ""),
+    calories: metric(targets?.cal || targets?.calories || prescription?.cal || prescription?.calories || null),
+    protein: metric(targets?.p || targets?.protein || prescription?.p || prescription?.protein || null),
+    carbs: metric(targets?.c || targets?.carbs || prescription?.c || prescription?.carbs || null),
+    fat: metric(targets?.f || targets?.fat || prescription?.f || prescription?.fat || null),
+    hydrationOz: metric(targets?.hydrationTargetOz || prescription?.hydrationTargetOz || null),
+  };
+};
+
+const extractRecoveryMaterialMetrics = (recovery = null) => ({
+  state: normalizeRevisionText(recovery?.state || recovery?.mode || ""),
+  recommendation: normalizeRevisionText(recovery?.prescription?.recommendation || recovery?.recommendation || recovery?.recoveryLine || ""),
+  intensityGuidance: normalizeRevisionText(recovery?.prescription?.intensityGuidance || ""),
+  success: normalizeRevisionText(recovery?.prescription?.success || recovery?.success || ""),
+});
+
+const extractExplicitUserAdjustmentKey = (plannedDayRecord = null) => (
+  Array.isArray(plannedDayRecord?.provenance?.events)
+    ? plannedDayRecord.provenance.events
+      .filter((event) => event?.actor === PROVENANCE_ACTORS.user)
+      .map((event) => [
+        normalizeRevisionText(event?.trigger || ""),
+        normalizeRevisionText(event?.mutationType || ""),
+        normalizeRevisionText(event?.revisionReason || ""),
+      ].filter(Boolean).join(":"))
+      .filter(Boolean)
+      .join("|")
+    : ""
+);
+
+const buildMaterialPlannedDaySnapshot = (plannedDayRecord = null) => {
+  if (!plannedDayRecord?.dateKey) return null;
+  const resolvedTraining = plannedDayRecord?.resolved?.training || plannedDayRecord?.base?.training || null;
+  const baseTraining = plannedDayRecord?.base?.training || null;
+  return {
+    dateKey: plannedDayRecord.dateKey,
+    sessionType: normalizeRevisionText(resolvedTraining?.type || baseTraining?.type || ""),
+    sessionLabel: normalizeRevisionText(resolvedTraining?.label || baseTraining?.label || ""),
+    sessionIdentity: normalizeRevisionText([
+      resolvedTraining?.label || baseTraining?.label || "",
+      resolvedTraining?.type || baseTraining?.type || "",
+      resolvedTraining?.strengthTrack || baseTraining?.strengthTrack || "",
+      resolvedTraining?.run?.t || baseTraining?.run?.t || "",
+    ].filter(Boolean).join(" ")),
+    runStructure: extractRunStructureMetrics(resolvedTraining || baseTraining || null),
+    readinessState: normalizeRevisionText(
+      plannedDayRecord?.resolved?.recovery?.state
+      || resolvedTraining?.readinessState
+      || plannedDayRecord?.decision?.mode
+      || ""
+    ),
+    decisionMode: normalizeRevisionText(plannedDayRecord?.decision?.mode || ""),
+    nutrition: extractNutritionMaterialMetrics(plannedDayRecord?.resolved?.nutrition || plannedDayRecord?.base?.nutrition || null),
+    recovery: extractRecoveryMaterialMetrics(plannedDayRecord?.resolved?.recovery || plannedDayRecord?.base?.recovery || null),
+    explicitUserAdjustmentKey: extractExplicitUserAdjustmentKey(plannedDayRecord),
+  };
+};
+
+const hasDifferenceAtThreshold = (currentValue, nextValue, threshold = 1) => {
+  if (!Number.isFinite(currentValue) || !Number.isFinite(nextValue)) return false;
+  return Math.abs(Number(nextValue) - Number(currentValue)) >= threshold;
+};
+
+// Prescribed-day revisions should only capture meaningful prescription movement.
+// Same-day recomputations are ignored unless one of these changes materially:
+// - session identity/type
+// - run duration >= 5 min or distance >= 0.5 mi
+// - readiness/intensity state
+// - nutrition day type or macros (>= 100 kcal or >= 15g macro, >= 12 oz hydration)
+// - recovery prescription text/state
+// - explicit user-approved adjustment provenance
+const hasMaterialPlannedDayChange = (currentRecord = null, nextRecord = null) => {
+  const current = buildMaterialPlannedDaySnapshot(currentRecord);
+  const next = buildMaterialPlannedDaySnapshot(nextRecord);
+  if (!current || !next) return current !== next;
+  if (current.sessionType !== next.sessionType) return true;
+  if (current.sessionIdentity !== next.sessionIdentity || current.sessionLabel !== next.sessionLabel) return true;
+  if (current.runStructure?.runType !== next.runStructure?.runType) return true;
+  if (hasDifferenceAtThreshold(current.runStructure?.totalMinutes, next.runStructure?.totalMinutes, 5)) return true;
+  if (hasDifferenceAtThreshold(current.runStructure?.totalMiles, next.runStructure?.totalMiles, 0.5)) return true;
+  if (
+    current.runStructure?.detailKey !== next.runStructure?.detailKey
+    && !Number.isFinite(current.runStructure?.totalMinutes)
+    && !Number.isFinite(next.runStructure?.totalMinutes)
+    && !Number.isFinite(current.runStructure?.totalMiles)
+    && !Number.isFinite(next.runStructure?.totalMiles)
+  ) return true;
+  if (current.runStructure?.strengthTrack !== next.runStructure?.strengthTrack) return true;
+  if (current.readinessState !== next.readinessState || current.decisionMode !== next.decisionMode) return true;
+  if (current.nutrition?.dayType !== next.nutrition?.dayType) return true;
+  if (hasDifferenceAtThreshold(current.nutrition?.calories, next.nutrition?.calories, 100)) return true;
+  if (hasDifferenceAtThreshold(current.nutrition?.protein, next.nutrition?.protein, 15)) return true;
+  if (hasDifferenceAtThreshold(current.nutrition?.carbs, next.nutrition?.carbs, 15)) return true;
+  if (hasDifferenceAtThreshold(current.nutrition?.fat, next.nutrition?.fat, 15)) return true;
+  if (hasDifferenceAtThreshold(current.nutrition?.hydrationOz, next.nutrition?.hydrationOz, 12)) return true;
+  if (JSON.stringify(current.recovery || {}) !== JSON.stringify(next.recovery || {})) return true;
+  if (current.explicitUserAdjustmentKey !== next.explicitUserAdjustmentKey) return true;
+  return false;
+};
+
 const getStableCaptureAtForDate = (dateKey = "") => {
   const parsed = new Date(`${dateKey}T12:00:00`).getTime();
   return Number.isNaN(parsed) ? Date.now() : parsed;
@@ -3134,6 +3294,42 @@ const isPrescribedDayHistoryEntry = (entry = null) => Boolean(
   && Number(entry.historyVersion || 0) >= 1
 );
 
+const inferProvenanceActorFromDurability = (durability = "", sourceType = "") => {
+  if (durability === PRESCRIBED_DAY_DURABILITY.legacyBackfill) return PROVENANCE_ACTORS.migration;
+  if (durability === PRESCRIBED_DAY_DURABILITY.fallbackDerived) return PROVENANCE_ACTORS.fallback;
+  if (/ai/i.test(sourceType || "")) return PROVENANCE_ACTORS.aiInterpretation;
+  return PROVENANCE_ACTORS.deterministicEngine;
+};
+
+const buildPrescribedRevisionProvenance = ({
+  sourceType = "plan_day_engine",
+  durability = PRESCRIBED_DAY_DURABILITY.durable,
+  reason = "daily_decision_capture",
+  capturedAt = Date.now(),
+  plannedDayRecord = null,
+} = {}) => {
+  const actor = inferProvenanceActorFromDurability(durability, sourceType);
+  return buildProvenanceEvent({
+    actor,
+    trigger: sourceType || "plan_day_engine",
+    mutationType: "prescribed_day_revision",
+    revisionReason: String(reason || "daily_decision_capture").replace(/_/g, " "),
+    sourceInputs: [
+      sourceType || "plan_day_engine",
+      durability || PRESCRIBED_DAY_DURABILITY.durable,
+      plannedDayRecord?.provenance?.summary ? "plan_day_provenance" : "",
+    ],
+    confidence: actor === PROVENANCE_ACTORS.fallback ? "low" : actor === PROVENANCE_ACTORS.migration ? "medium" : "high",
+    timestamp: capturedAt,
+    details: {
+      sourceType,
+      durability,
+      planDayId: plannedDayRecord?.id || "",
+      decisionMode: plannedDayRecord?.decision?.mode || "",
+    },
+  });
+};
+
 const getCurrentPrescribedDayRevision = (entry = null) => {
   if (!entry) return null;
   if (!isPrescribedDayHistoryEntry(entry)) {
@@ -3144,6 +3340,17 @@ const getCurrentPrescribedDayRevision = (entry = null) => {
       durability: entry?.durability || (entry?.source === "legacy_schedule_helper" ? PRESCRIBED_DAY_DURABILITY.fallbackDerived : PRESCRIBED_DAY_DURABILITY.durable),
       sourceType: entry?.source || "legacy_single_snapshot",
       reason: entry?.reason || "legacy_single_snapshot",
+      provenance: normalizeProvenanceEvent(entry?.provenance || null, {
+        actor: inferProvenanceActorFromDurability(entry?.durability, entry?.source),
+        trigger: entry?.source || "legacy_single_snapshot",
+        mutationType: "prescribed_day_revision",
+        revisionReason: entry?.reason || "legacy_single_snapshot",
+        sourceInputs: [entry?.source || "legacy_single_snapshot"],
+        timestamp: entry?.capturedAt || entry?.updatedAt || Date.now(),
+        details: {
+          durability: entry?.durability || PRESCRIBED_DAY_DURABILITY.durable,
+        },
+      }),
       record: entry,
     } : null;
   }
@@ -3174,6 +3381,13 @@ const buildPrescribedDayRevision = ({
     sourceType,
     durability,
     reason,
+    provenance: buildPrescribedRevisionProvenance({
+      sourceType,
+      durability,
+      reason,
+      capturedAt,
+      plannedDayRecord,
+    }),
     record: {
       ...cloneStructuredValue(plannedDayRecord),
       capturedAt,
@@ -3207,6 +3421,11 @@ const createPrescribedDayHistoryEntry = ({
     lastCapturedAt: capturedAt,
     currentRevisionId: revision.revisionId,
     revisions: [revision],
+    provenance: buildStructuredProvenance({
+      keyDrivers: plannedDayRecord?.provenance?.keyDrivers || [],
+      events: [revision.provenance],
+      summary: plannedDayRecord?.provenance?.summary || revision?.reason || "",
+    }),
   };
 };
 
@@ -3224,6 +3443,17 @@ const normalizePrescribedDayHistoryEntry = (dateKey = "", entry = null) => {
           sourceType: revision?.sourceType || record?.source || "plan_day_engine",
           durability: revision?.durability || record?.durability || (record?.source === "legacy_schedule_helper" ? PRESCRIBED_DAY_DURABILITY.fallbackDerived : PRESCRIBED_DAY_DURABILITY.durable),
           reason: revision?.reason || "history_normalized",
+          provenance: normalizeProvenanceEvent(revision?.provenance || record?.provenance || null, {
+            actor: inferProvenanceActorFromDurability(revision?.durability || record?.durability, revision?.sourceType || record?.source),
+            trigger: revision?.sourceType || record?.source || "plan_day_engine",
+            mutationType: "prescribed_day_revision",
+            revisionReason: revision?.reason || "history_normalized",
+            sourceInputs: [revision?.sourceType || record?.source || "plan_day_engine"],
+            timestamp: revision?.capturedAt || entry?.lastCapturedAt || Date.now(),
+            details: {
+              durability: revision?.durability || record?.durability || PRESCRIBED_DAY_DURABILITY.durable,
+            },
+          }),
           record: {
             ...cloneStructuredValue(record),
             capturedAt: record?.capturedAt || revision?.capturedAt || entry?.lastCapturedAt || Date.now(),
@@ -3243,6 +3473,11 @@ const normalizePrescribedDayHistoryEntry = (dateKey = "", entry = null) => {
       lastCapturedAt: entry?.lastCapturedAt || currentRevision?.capturedAt || Date.now(),
       currentRevisionId: currentRevision?.revisionId || revisions[revisions.length - 1]?.revisionId,
       revisions,
+      provenance: buildStructuredProvenance({
+        keyDrivers: currentRevision?.record?.provenance?.keyDrivers || entry?.provenance?.keyDrivers || [],
+        events: revisions.map((revision) => revision?.provenance).filter(Boolean),
+        summary: currentRevision?.record?.provenance?.summary || entry?.provenance?.summary || currentRevision?.reason || "",
+      }),
     };
   }
   const capturedAt = entry?.capturedAt || entry?.updatedAt || Date.now();
@@ -3275,7 +3510,7 @@ const upsertPrescribedDayHistoryEntry = ({
   const currentRecord = getCurrentPrescribedDayRecord(normalizedExisting);
   const currentComparable = JSON.stringify(stripPlannedRecordMetadata(currentRecord) || null);
   const nextComparable = JSON.stringify(stripPlannedRecordMetadata(plannedDayRecord) || null);
-  if (currentComparable === nextComparable) {
+  if (currentComparable === nextComparable || !hasMaterialPlannedDayChange(currentRecord, plannedDayRecord)) {
     return {
       nextEntry: normalizedExisting,
       changed: !isPrescribedDayHistoryEntry(existingEntry),
@@ -3297,6 +3532,11 @@ const upsertPrescribedDayHistoryEntry = ({
       lastCapturedAt: capturedAt,
       currentRevisionId: nextRevision.revisionId,
       revisions: nextRevisions,
+      provenance: buildStructuredProvenance({
+        keyDrivers: plannedDayRecord?.provenance?.keyDrivers || normalizedExisting?.provenance?.keyDrivers || [],
+        events: nextRevisions.map((revision) => revision?.provenance).filter(Boolean),
+        summary: plannedDayRecord?.provenance?.summary || normalizedExisting?.provenance?.summary || nextRevision?.reason || "",
+      }),
     },
     changed: true,
   };
@@ -3317,6 +3557,17 @@ const buildPlanReference = (plannedDayEntry = null) => {
     revisionId: revision?.revisionId || "",
     revisionNumber: Number(revision?.revisionNumber || 1),
     durability: revision?.durability || plannedDayRecord?.durability || PRESCRIBED_DAY_DURABILITY.durable,
+    provenance: normalizeProvenanceEvent(revision?.provenance || plannedDayRecord?.provenance || null, {
+      actor: inferProvenanceActorFromDurability(revision?.durability || plannedDayRecord?.durability, revision?.sourceType || plannedDayRecord?.source),
+      trigger: revision?.sourceType || plannedDayRecord?.source || "planned_day_record",
+      mutationType: "plan_reference",
+      revisionReason: revision?.reason || "",
+      sourceInputs: ["plannedDayRecords"],
+      timestamp: revision?.capturedAt || plannedDayRecord?.updatedAt || Date.now(),
+      details: {
+        decisionMode: plannedDayRecord?.decision?.mode || "",
+      },
+    }),
   };
 };
 
@@ -3361,9 +3612,22 @@ const buildLegacyPlannedDayRecordFromSnapshot = ({ dateKey = "", snapshot = null
     },
     durability: PRESCRIBED_DAY_DURABILITY.legacyBackfill,
     provenance: {
-      keyDrivers: [],
+      ...buildStructuredProvenance({
+        keyDrivers: ["legacy prescribed snapshot"],
+        events: [
+          buildProvenanceEvent({
+            actor: PROVENANCE_ACTORS.migration,
+            trigger: "legacy_log_snapshot",
+            mutationType: "migration_backfill",
+            revisionReason: "Recovered from legacy prescribed snapshot.",
+            sourceInputs: ["logs.prescribedPlanSnapshot"],
+            confidence: "medium",
+            timestamp: getStableCaptureAtForDate(dateKey),
+          }),
+        ],
+        summary: "Recovered from legacy prescribed snapshot.",
+      }),
       adjustments: [],
-      summary: "Recovered from legacy prescribed snapshot.",
     },
     flags: {
       isModified: Boolean(snapshot?.modifiedFromBase),
@@ -3400,9 +3664,25 @@ const buildLegacyPlannedDayRecordFromWorkout = ({ dateKey = "", weekNumber = 0, 
     },
     durability: PRESCRIBED_DAY_DURABILITY.fallbackDerived,
     provenance: {
-      keyDrivers: [],
+      ...buildStructuredProvenance({
+        keyDrivers: ["legacy schedule fallback"],
+        events: [
+          buildProvenanceEvent({
+            actor: PROVENANCE_ACTORS.fallback,
+            trigger: "legacy_schedule_helper",
+            mutationType: "fallback_reconstruction",
+            revisionReason: "Recovered from legacy week-template fallback.",
+            sourceInputs: ["week_templates", "getTodayWorkout"],
+            confidence: "low",
+            timestamp: getStableCaptureAtForDate(dateKey),
+            details: {
+              weekNumber,
+            },
+          }),
+        ],
+        summary: "Recovered from legacy week-template fallback.",
+      }),
       adjustments: [],
-      summary: "Recovered from legacy week-template fallback.",
     },
     flags: {
       isModified: false,
@@ -3410,6 +3690,28 @@ const buildLegacyPlannedDayRecordFromWorkout = ({ dateKey = "", weekNumber = 0, 
     },
   };
 };
+
+const getNutritionOverrideDayType = (override = null) => String(override?.dayType || override || "").trim();
+
+const buildAdjustmentProvenance = ({
+  actor = PROVENANCE_ACTORS.user,
+  trigger = "manual_override",
+  mutationType = "state_update",
+  revisionReason = "",
+  sourceInputs = [],
+  confidence = "high",
+  timestamp = Date.now(),
+  details = {},
+} = {}) => buildProvenanceEvent({
+  actor,
+  trigger,
+  mutationType,
+  revisionReason,
+  sourceInputs,
+  confidence,
+  timestamp,
+  details,
+});
 
 export default function TrainerDashboard() {
   const [tab, setTab] = useState(() => {
@@ -3427,12 +3729,12 @@ export default function TrainerDashboard() {
   const [personalization, setPersonalization] = useState(DEFAULT_PERSONALIZATION);
   const [goals, setGoals] = useState(DEFAULT_MULTI_GOALS);
   const [coachActions, setCoachActions] = useState([]);
-  const [coachPlanAdjustments, setCoachPlanAdjustments] = useState({ dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} });
+  const [coachPlanAdjustments, setCoachPlanAdjustments] = useState(DEFAULT_COACH_PLAN_ADJUSTMENTS);
   const [dailyCheckins, setDailyCheckins] = useState({});
   const [plannedDayRecords, setPlannedDayRecords] = useState({});
   const [weeklyCheckins, setWeeklyCheckins] = useState({});
-  const [nutritionFavorites, setNutritionFavorites] = useState({ restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] });
-  const [nutritionFeedback, setNutritionFeedback] = useState({});
+  const [nutritionFavorites, setNutritionFavorites] = useState(DEFAULT_NUTRITION_FAVORITES);
+  const [nutritionActualLogs, setNutritionActualLogs] = useState({});
   const [analyzing, setAnalyzing] = useState(false);
   const [storageStatus, setStorageStatus] = useState(() => buildStorageStatus({ mode: "syncing", label: "SYNCING", reason: STORAGE_STATUS_REASONS.unknown, detail: "Cloud sync is initializing." }));
   const [lastSaved, setLastSaved] = useState(null);
@@ -3457,32 +3759,26 @@ export default function TrainerDashboard() {
   const [showAppleHealthFirstLaunch, setShowAppleHealthFirstLaunch] = useState(false);
   const DEBUG_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
   const logDiag = (...args) => { if (DEBUG_MODE) console.log("[trainer-debug]", ...args); };
-  const nutritionActualLogs = useMemo(
-    () => normalizeActualNutritionLogCollection(nutritionFeedback || {}),
-    [nutritionFeedback]
-  );
-  const canonicalGoalProfile = useMemo(
-    () => deriveCanonicalGoalProfileState({ goals, personalization }),
+  const canonicalAthlete = useMemo(
+    () => deriveCanonicalAthleteState({ goals, personalization, profileDefaults: PROFILE }),
     [goals, personalization]
   );
-  const goalsModel = canonicalGoalProfile.goals;
-  const goalBuckets = canonicalGoalProfile.goalBuckets;
-  const activeTimeBoundGoal = canonicalGoalProfile.activeTimeBoundGoal;
-  const canonicalUserProfile = canonicalGoalProfile.userProfile;
-  const canonicalGoalState = canonicalGoalProfile.goalState;
+  const goalsModel = canonicalAthlete.goals;
+  const goalBuckets = canonicalAthlete.goalBuckets;
+  const activeTimeBoundGoal = canonicalAthlete.activeTimeBoundGoal;
+  const canonicalUserProfile = canonicalAthlete.userProfile;
+  const canonicalGoalState = canonicalAthlete.goalState;
 
   const today = new Date();
-  const currentWeek = getCurrentWeek(canonicalGoalState?.planStartDate || "");
+  const currentWeek = resolveCurrentPlanWeekNumber({
+    planStartDate: canonicalGoalState?.planStartDate || "",
+    fallbackStartDate: PROFILE.startDate,
+    now: today,
+  });
   const dayOfWeek = getDayOfWeek();
   const baseTodayWorkout = getTodayWorkout(currentWeek, dayOfWeek);
   const baseWeek = WEEKS[(currentWeek - 1) % WEEKS.length] || WEEKS[0];
   const todayKey = new Date().toISOString().split("T")[0];
-  const getWeekForDateKey = (dateKey) => {
-    const anchor = canonicalGoalState?.planStartDate ? new Date(`${canonicalGoalState.planStartDate}T12:00:00`) : PROFILE.startDate;
-    const dateObj = new Date(`${dateKey}T12:00:00`);
-    const diffWeeks = Math.ceil((dateObj - anchor) / (1000 * 60 * 60 * 24 * 7));
-    return Math.max(1, diffWeeks);
-  };
   const dismissedTriggerStorageKey = `dismissed_triggers_${todayKey}`;
   const dayOverride = coachPlanAdjustments.dayOverrides?.[todayKey];
   const nutritionOverride = coachPlanAdjustments.nutritionOverrides?.[todayKey];
@@ -3490,55 +3786,43 @@ export default function TrainerDashboard() {
   const momentum = getMomentumEngineState({ logs, bodyweights, personalization });
   const patterns = detectBehaviorPatterns({ logs, bodyweights, personalization });
   const validationLayer = deriveClosedLoopValidationLayer({ coachActions, logs, dailyCheckins });
-  const optimizationLayer = derivePersonalOptimizationLayer({ logs, dailyCheckins, nutritionFeedback, coachActions, validationLayer });
+  const optimizationLayer = derivePersonalOptimizationLayer({ logs, dailyCheckins, nutritionActualLogs, coachActions, validationLayer });
   const learningLayer = deriveLearningLayer({ dailyCheckins, logs, weeklyCheckins, momentum, personalization, validationLayer, optimizationLayer });
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
   const planComposer = composeGoalNativePlan({ goals: goalsModel, personalization, momentum, learningLayer, currentWeek, baseWeek });
-  const currentWeeklyCheckin = weeklyCheckins?.[String(currentWeek)] || {};
-  const currentPlanWeek = useMemo(() => {
-    const weekStart = new Date(`${todayKey}T12:00:00`);
-    const weekStartDay = weekStart.getDay();
-    const mondayShift = weekStartDay === 0 ? -6 : 1 - weekStartDay;
-    weekStart.setDate(weekStart.getDate() + mondayShift);
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekEnd.getDate() + 6);
-    return buildPlanWeek({
-      weekNumber: currentWeek,
-      template: baseWeek,
-      referenceTemplate: baseWeek,
-      label: `${baseWeek?.phase || "BASE"} - Week ${currentWeek}`,
-      specificity: "high",
-      kind: "plan",
-      startDate: weekStart.toISOString().split("T")[0],
-      endDate: weekEnd.toISOString().split("T")[0],
-      goals: goalsModel,
-      architecture: planComposer?.architecture || "hybrid_performance",
-      blockIntent: planComposer?.blockIntent || null,
-      split: planComposer?.split || null,
-      sessionsByDay: planComposer?.dayTemplates || null,
-      momentum,
-      learningLayer,
-      weeklyCheckin: currentWeeklyCheckin,
-      coachPlanAdjustments,
-      failureMode,
-      environmentSelection,
-      constraints: planComposer?.constraints || [],
-    });
-  }, [
+  const planWeekRuntime = useMemo(() => assemblePlanWeekRuntime({
     todayKey,
     currentWeek,
+    dayOfWeek,
+    goals: goalsModel,
     baseWeek,
-    goalsModel,
+    weekTemplates: WEEKS,
     planComposer,
     momentum,
     learningLayer,
-    currentWeeklyCheckin,
+    weeklyCheckins,
+    coachPlanAdjustments,
+    failureMode,
+    environmentSelection,
+    horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS,
+  }), [
+    todayKey,
+    currentWeek,
+    dayOfWeek,
+    goalsModel,
+    baseWeek,
+    planComposer,
+    momentum,
+    learningLayer,
+    weeklyCheckins,
     coachPlanAdjustments,
     failureMode,
     environmentSelection,
   ]);
-  const currentPlanSession = currentPlanWeek?.sessionsByDay?.[dayOfWeek] || planComposer?.dayTemplates?.[dayOfWeek] || null;
+  const currentWeeklyCheckin = planWeekRuntime.currentWeeklyCheckin;
+  const currentPlanWeek = planWeekRuntime.currentPlanWeek;
+  const currentPlanSession = planWeekRuntime.currentPlanSession;
   const todayPlan = generateTodayPlan(
     canonicalUserProfile,
     { logs, todayKey },
@@ -3554,34 +3838,9 @@ export default function TrainerDashboard() {
       plannedSession: currentPlanSession,
     }
   );
-  const rollingHorizonBase = buildRollingHorizonWeeks({
-    currentWeek,
-    horizonWeeks: DEFAULT_PLANNING_HORIZON_WEEKS,
-    goals: goalsModel,
-    weekTemplates: WEEKS,
-    architecture: planComposer?.architecture || "hybrid_performance",
-    blockIntent: planComposer?.blockIntent || null,
-    split: planComposer?.split || null,
-    sessionsByDay: planComposer?.dayTemplates || null,
-    referenceTemplate: baseWeek,
-    momentum,
-    learningLayer,
-    weeklyCheckins,
-    coachPlanAdjustments,
-    failureMode,
-    environmentSelection,
-    constraints: planComposer?.constraints || [],
-  });
-  const rollingHorizon = useMemo(
-    () => (rollingHorizonBase || []).map((row) => (
-      row?.kind === "plan" && row?.absoluteWeek === currentWeek && currentPlanWeek
-        ? { ...row, planWeek: currentPlanWeek, weekLabel: currentPlanWeek.label, template: currentPlanWeek.template || row.template }
-        : row
-    )),
-    [rollingHorizonBase, currentWeek, currentPlanWeek]
-  );
-  const horizonAnchor = getHorizonAnchor(goalsModel, DEFAULT_PLANNING_HORIZON_WEEKS);
-  const hasStructuredProfile = Boolean(canonicalUserProfile?.primary_goal);
+  const rollingHorizon = planWeekRuntime.rollingHorizon;
+  const horizonAnchor = planWeekRuntime.horizonAnchor;
+  const hasStructuredProfile = Boolean(canonicalUserProfile?.primaryGoalKey);
   const goalNativeBase = currentPlanSession
     ? {
         ...baseTodayWorkout,
@@ -3618,11 +3877,11 @@ export default function TrainerDashboard() {
       logs,
       dailyCheckins,
       weeklyCheckins,
-      nutritionFeedback,
+      nutritionActualLogs,
       validationLayer,
       previousMemory: personalization?.coachMemory?.longTermMemory || []
     }),
-    [logs, dailyCheckins, weeklyCheckins, nutritionFeedback, validationLayer]
+    [logs, dailyCheckins, weeklyCheckins, nutritionActualLogs, validationLayer]
   );
   const memoryInsights = longTermMemory.filter(m => m.confidence === "high").slice(0, 4);
   const compoundingCoachMemory = deriveCompoundingCoachMemory({ dailyCheckins, weeklyCheckins, personalization, momentum });
@@ -3654,9 +3913,16 @@ export default function TrainerDashboard() {
   if (todayWorkoutHardened?.type === "rest" && Number(todaySummary?.steps || 0) > 0) {
     todayWorkoutHardened.environmentNote = `${todayWorkoutHardened.environmentNote ? `${todayWorkoutHardened.environmentNote} ` : ""}Today steps: ${todaySummary.steps}. Keep rest day movement easy.`;
   }
-  const savedTodayCheckin = dailyCheckins?.[todayKey] || logs?.[todayKey]?.checkin || {};
-  const savedTodayStatus = resolveEffectiveStatus(savedTodayCheckin, todayKey);
-  const savedReadinessPromptSignal = coachPlanAdjustments?.extra?.readinessSignals?.[todayKey] || null;
+  const planDayTimeOfDay = resolvePlanDayTimeOfDay({ hours: today.getHours() });
+  const planDayStateInputs = useMemo(() => resolvePlanDayStateInputs({
+    dateKey: todayKey,
+    logs,
+    dailyCheckins,
+    nutritionActualLogs,
+    coachPlanAdjustments,
+  }), [todayKey, logs, dailyCheckins, nutritionActualLogs, coachPlanAdjustments]);
+  const savedTodayCheckin = planDayStateInputs.dailyCheckin;
+  const savedReadinessPromptSignal = planDayStateInputs.readinessPromptSignal;
   const sharedReadinessInfluence = deriveDeterministicReadinessState({
     todayKey,
     checkin: savedTodayCheckin,
@@ -3668,92 +3934,77 @@ export default function TrainerDashboard() {
     momentum,
     userProfile: canonicalUserProfile,
   });
-  const effectiveTodayWorkout = sharedReadinessInfluence?.adjustedWorkout || todayWorkoutHardened;
-  const nutritionLayer = deriveAdaptiveNutrition({ todayWorkout: effectiveTodayWorkout, goals: goalsModel, momentum, personalization, bodyweights, learningLayer, nutritionFeedback, nutritionActualLogs, coachPlanAdjustments, salvageLayer, failureMode });
-  const todayActualNutritionLog = nutritionActualLogs?.[todayKey] || null;
-  const realWorldNutrition = deriveRealWorldNutritionEngine({
-    location: personalization?.localFoodContext?.city || personalization?.localFoodContext?.locationLabel || (personalization?.connectedDevices?.location?.status === "granted" ? "Nearby area" : ""),
-    dayType: nutritionLayer.dayType,
-    goalContext: getGoalContext(goalsModel),
-    nutritionLayer,
-    momentum,
-    favorites: nutritionFavorites,
-    travelMode: personalization.travelState.isTravelWeek || (personalization.travelState.environmentMode || "").includes("travel"),
-    learningLayer,
-    timeOfDay: today.getHours() < 12 ? "morning" : today.getHours() < 18 ? "afternoon" : "evening",
-    loggedIntake: todayActualNutritionLog
-  });
-  const nutritionComparison = compareNutritionPrescriptionToActual({
-    nutritionPrescription: nutritionLayer,
-    actualNutritionLog: todayActualNutritionLog,
-  });
-  const planDay = useMemo(() => buildCanonicalPlanDay({
+  const planDayBundle = useMemo(() => assembleCanonicalPlanDay({
     dateKey: todayKey,
     dayOfWeek,
     currentWeek,
     baseWeek,
     basePlannedDay: goalNativeWorkout,
-    resolvedDay: effectiveTodayWorkout,
+    resolvedTrainingCandidate: todayWorkoutHardened,
     todayPlan,
-    readiness: sharedReadinessInfluence,
-    nutrition: {
-      prescription: nutritionLayer,
-      reality: realWorldNutrition,
-      actual: todayActualNutritionLog,
-      comparison: nutritionComparison,
-    },
-    adjustments: {
-      dayOverride,
-      nutritionOverride,
-      environmentSelection,
-      injuryRule,
-      failureMode,
-      garminReadiness,
-      deviceSyncAudit,
-    },
-    context: {
+    readinessInfluence: sharedReadinessInfluence,
+    goals: goalsModel,
+    momentum,
+    personalization,
+    bodyweights,
+    learningLayer,
+    nutritionActualLogs,
+    coachPlanAdjustments,
+    salvageLayer,
+    failureMode,
+    nutritionFavorites,
+    currentPlanWeek: {
+      ...currentPlanWeek,
       architecture: planComposer?.architecture || "",
       blockIntent: planComposer?.blockIntent || null,
-      weeklyIntent: currentPlanWeek?.weeklyIntent || null,
-      planWeek: currentPlanWeek,
-      supplementPlan: nutritionFavorites?.supplementStack || [],
     },
-    logging: {
-      dailyCheckin: savedTodayCheckin,
-      sessionLog: logs?.[todayKey] || null,
-      nutritionLog: todayActualNutritionLog,
-      supplementLog: todayActualNutritionLog?.supplements?.takenMap || null,
-      sessionStatus: savedTodayStatus,
-    },
+    dayOverride,
+    nutritionOverride,
+    environmentSelection,
+    injuryRule,
+    garminReadiness,
+    deviceSyncAudit,
+    logs,
+    dailyCheckins,
+    stateInputs: planDayStateInputs,
+    timeOfDay: planDayTimeOfDay,
   }), [
     todayKey,
     dayOfWeek,
     currentWeek,
     baseWeek,
     goalNativeWorkout,
-    effectiveTodayWorkout,
+    todayWorkoutHardened,
     todayPlan,
     sharedReadinessInfluence,
-    nutritionLayer,
-    todayActualNutritionLog,
-    realWorldNutrition,
-    nutritionComparison,
+    goalsModel,
+    momentum,
+    personalization,
+    bodyweights,
+    learningLayer,
+    nutritionActualLogs,
+    coachPlanAdjustments,
+    salvageLayer,
+    failureMode,
+    nutritionFavorites,
     dayOverride,
     nutritionOverride,
     environmentSelection,
     injuryRule,
-    failureMode,
     garminReadiness,
     deviceSyncAudit,
     planComposer,
     currentPlanWeek,
-    nutritionFavorites,
-    savedTodayCheckin,
     logs,
-    nutritionFeedback,
-    nutritionActualLogs,
-    savedTodayStatus,
+    dailyCheckins,
+    planDayStateInputs,
+    planDayTimeOfDay,
   ]);
+  const planDay = planDayBundle.planDay;
+  const effectiveTodayWorkout = planDayBundle.effectiveTraining;
+  const nutritionLayer = planDayBundle.nutritionLayer;
+  const realWorldNutrition = planDayBundle.realWorldNutrition;
+  const nutritionComparison = planDayBundle.nutritionComparison;
   const todayPlannedDayRecord = useMemo(() => buildPlannedDayRecord(planDay), [planDay]);
   const runtimeDebugSnapshot = useMemo(() => {
     const weekIntent = currentPlanWeek?.weeklyIntent || {};
@@ -3867,8 +4118,8 @@ export default function TrainerDashboard() {
   ]);
   const dailyBrief = generateDailyCoachBrief({ momentum, todayWorkout: effectiveTodayWorkout, arbitration, injuryState: personalization.injuryPainState, patterns, learning: learningLayer, salvage: salvageLayer });
   const dailyStory = buildUnifiedDailyStory({ todayWorkout: effectiveTodayWorkout, dailyBrief, progress: progressEngine, arbitration, expectations, salvage: salvageLayer, momentum });
-  const weeklyReview = generateWeeklyCoachReview({ momentum, arbitration, signals: computeAdaptiveSignals({ logs, bodyweights, personalization }), personalization, patterns, learning: learningLayer, nutritionFeedback, expectations, recalibration });
-  const baseProactiveTriggers = buildProactiveTriggers({ momentum, personalization, goals: goalsModel, learning: learningLayer, nutritionFeedback, longTermMemory }).filter(t => !dismissedTriggers.includes(t.id));
+  const weeklyReview = generateWeeklyCoachReview({ momentum, arbitration, signals: computeAdaptiveSignals({ logs, bodyweights, personalization }), personalization, patterns, learning: learningLayer, nutritionActualLogs, expectations, recalibration });
+  const baseProactiveTriggers = buildProactiveTriggers({ momentum, personalization, goals: goalsModel, learning: learningLayer, nutritionActualLogs, longTermMemory }).filter(t => !dismissedTriggers.includes(t.id));
   const optimizationTrigger = optimizationLayer.experimentation.canExperiment && optimizationLayer.experimentation.pendingExperiment
     ? [{
       id: "opt_micro",
@@ -3918,7 +4169,7 @@ export default function TrainerDashboard() {
     if (prev === next) return;
     const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, longTermMemory } });
     setPersonalization(updated);
-    persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   }, [longTermMemory]);
 
   useEffect(() => {
@@ -3928,7 +4179,7 @@ export default function TrainerDashboard() {
     if (prev === next) return;
     const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, compounding: compoundingCoachMemory } });
     setPersonalization(updated);
-    persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   }, [compoundingCoachMemory?.summaryLine, compoundingCoachMemory?.preferredMotivationStyle, compoundingCoachMemory?.injuryHistory?.join("|"), compoundingCoachMemory?.recurringBreakdowns?.map(r => `${r.week}:${r.why}`).join("|")]);
 
   const setInjuryState = async (level, area = personalization.injuryPainState.area) => {
@@ -3995,22 +4246,50 @@ export default function TrainerDashboard() {
       },
     });
     setPersonalization(updated);
-    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   };
 
   const applyDayContextOverride = async (contextKey) => {
     const cfg = DAY_CONTEXT_OVERRIDES[contextKey];
     if (!cfg) return;
+    const appliedAt = Date.now();
+    const overrideReason = String(contextKey || "day_context_override").replaceAll("_", " ");
+    const dayOverrideProvenance = buildAdjustmentProvenance({
+      actor: PROVENANCE_ACTORS.user,
+      trigger: "day_context_override",
+      mutationType: "daily_override",
+      revisionReason: overrideReason,
+      sourceInputs: ["TodayTab", "DAY_CONTEXT_OVERRIDES"],
+      timestamp: appliedAt,
+      details: {
+        dateKey: todayKey,
+        contextKey,
+        trainingType: cfg.type || "",
+      },
+    });
+    const nutritionOverrideProvenance = buildAdjustmentProvenance({
+      actor: PROVENANCE_ACTORS.user,
+      trigger: "day_context_override",
+      mutationType: "nutrition_override",
+      revisionReason: `nutrition set to ${String(cfg.nutri || "").replaceAll("_", " ")}`,
+      sourceInputs: ["TodayTab", "DAY_CONTEXT_OVERRIDES"],
+      timestamp: appliedAt,
+      details: {
+        dateKey: todayKey,
+        contextKey,
+        dayType: cfg.nutri || "",
+      },
+    });
     const nextAdjustments = {
       ...coachPlanAdjustments,
-      dayOverrides: { ...(coachPlanAdjustments.dayOverrides || {}), [todayKey]: { label: cfg.label, type: cfg.type, reason: contextKey, minDay: true, fallback: cfg.fallback, success: cfg.success, injuryAdjusted: false } },
-      nutritionOverrides: { ...(coachPlanAdjustments.nutritionOverrides || {}), [todayKey]: cfg.nutri },
+      dayOverrides: { ...(coachPlanAdjustments.dayOverrides || {}), [todayKey]: { label: cfg.label, type: cfg.type, reason: contextKey, minDay: true, fallback: cfg.fallback, success: cfg.success, injuryAdjusted: false, provenance: dayOverrideProvenance } },
+      nutritionOverrides: { ...(coachPlanAdjustments.nutritionOverrides || {}), [todayKey]: { dayType: cfg.nutri, reason: contextKey, provenance: nutritionOverrideProvenance } },
       extra: { ...(coachPlanAdjustments.extra || {}), dayContext: { ...((coachPlanAdjustments.extra || {}).dayContext || {}), [todayKey]: contextKey } }
     };
     const nextNotes = { ...weekNotes, [currentWeek]: `Day override applied (${contextKey.replaceAll("_"," ")}).` };
     setCoachPlanAdjustments(nextAdjustments);
     setWeekNotes(nextNotes);
-    await persistAll(logs, bodyweights, paceOverrides, nextNotes, planAlerts, personalization, coachActions, nextAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    await persistAll(logs, bodyweights, paceOverrides, nextNotes, planAlerts, personalization, coachActions, nextAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   };
 
   const shiftTodayWorkout = async ({ daysForward = 1, mode = "replace" } = {}) => {
@@ -4020,24 +4299,63 @@ export default function TrainerDashboard() {
     const previousAdjustments = coachPlanAdjustments;
     const previousNotes = weekNotes;
     const existingTomorrow = coachPlanAdjustments?.dayOverrides?.[toKey];
-    const shiftedSession = { ...todayWorkoutBase, label: `${todayWorkoutBase?.label || "Session"} (Shifted)`, shiftedFrom: todayKey, coachOverride: true };
+    const shiftedAt = Date.now();
+    const shiftedSessionProvenance = buildAdjustmentProvenance({
+      actor: PROVENANCE_ACTORS.user,
+      trigger: "schedule_shift",
+      mutationType: "daily_override",
+      revisionReason: `Session shifted from ${todayKey} to ${toKey}.`,
+      sourceInputs: ["TodayTab", "shiftTodayWorkout"],
+      timestamp: shiftedAt,
+      details: {
+        fromDateKey: todayKey,
+        toDateKey: toKey,
+        mode,
+      },
+    });
+    const shiftedSession = { ...todayWorkoutBase, label: `${todayWorkoutBase?.label || "Session"} (Shifted)`, shiftedFrom: todayKey, coachOverride: true, provenance: shiftedSessionProvenance };
     const tomorrowPayload = mode === "add_second" && existingTomorrow
-      ? { ...existingTomorrow, secondSession: shiftedSession, label: `${existingTomorrow.label || "Session"} + 2nd session` }
+      ? { ...existingTomorrow, secondSession: shiftedSession, label: `${existingTomorrow.label || "Session"} + 2nd session`, provenance: normalizeProvenanceEvent(existingTomorrow?.provenance || shiftedSessionProvenance, { trigger: "schedule_shift" }) }
       : shiftedSession;
+    const recoveryOverrideProvenance = buildAdjustmentProvenance({
+      actor: PROVENANCE_ACTORS.user,
+      trigger: "schedule_shift",
+      mutationType: "daily_override",
+      revisionReason: `Recovery day inserted after shifting session to ${toKey}.`,
+      sourceInputs: ["TodayTab", "shiftTodayWorkout"],
+      timestamp: shiftedAt,
+      details: {
+        fromDateKey: todayKey,
+        toDateKey: toKey,
+        mode,
+      },
+    });
+    const nutritionOverrideProvenance = buildAdjustmentProvenance({
+      actor: PROVENANCE_ACTORS.user,
+      trigger: "schedule_shift",
+      mutationType: "nutrition_override",
+      revisionReason: "Nutrition day downgraded to easy run after schedule shift.",
+      sourceInputs: ["TodayTab", "shiftTodayWorkout"],
+      timestamp: shiftedAt,
+      details: {
+        dateKey: todayKey,
+        dayType: "easyRun",
+      },
+    });
     const nextAdjustments = {
       ...coachPlanAdjustments,
       dayOverrides: {
         ...(coachPlanAdjustments.dayOverrides || {}),
         [toKey]: tomorrowPayload,
-        [todayKey]: { label: `${todayWorkoutBase?.label || "Session"} moved to ${toKey}`, type: "rest", reason: "schedule_shift", minDay: true, fallback: `${todayWorkoutBase?.label || "Session"} moved to tomorrow`, success: "Session moved. Recovery day auto-inserted." }
+        [todayKey]: { label: `${todayWorkoutBase?.label || "Session"} moved to ${toKey}`, type: "rest", reason: "schedule_shift", minDay: true, fallback: `${todayWorkoutBase?.label || "Session"} moved to tomorrow`, success: "Session moved. Recovery day auto-inserted.", provenance: recoveryOverrideProvenance }
       },
-      nutritionOverrides: { ...(coachPlanAdjustments.nutritionOverrides || {}), [todayKey]: "easyRun" },
+      nutritionOverrides: { ...(coachPlanAdjustments.nutritionOverrides || {}), [todayKey]: { dayType: "easyRun", reason: "schedule_shift", provenance: nutritionOverrideProvenance } },
       extra: { ...(coachPlanAdjustments.extra || {}), scheduleFlex: true }
     };
     const nextNotes = { ...weekNotes, [currentWeek]: `Workout shifted from ${todayKey} to ${toKey}${mode === "add_second" ? " as second session" : ""}.` };
     setCoachPlanAdjustments(nextAdjustments);
     setWeekNotes(nextNotes);
-    await persistAll(logs, bodyweights, paceOverrides, nextNotes, planAlerts, personalization, coachActions, nextAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    await persistAll(logs, bodyweights, paceOverrides, nextNotes, planAlerts, personalization, coachActions, nextAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
     return { previousAdjustments, previousNotes };
   };
 
@@ -4045,7 +4363,7 @@ export default function TrainerDashboard() {
     if (!previousAdjustments || !previousNotes) return;
     setCoachPlanAdjustments(previousAdjustments);
     setWeekNotes(previousNotes);
-    await persistAll(logs, bodyweights, paceOverrides, previousNotes, planAlerts, personalization, coachActions, previousAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    await persistAll(logs, bodyweights, paceOverrides, previousNotes, planAlerts, personalization, coachActions, previousAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   };
 
   // ── SUPABASE STORAGE ─────────────────────────────────────────────────────
@@ -4053,6 +4371,7 @@ export default function TrainerDashboard() {
     safeFetchWithTimeout,
     logDiag,
     mergePersonalization,
+    normalizeGoals,
     DEFAULT_PERSONALIZATION,
     DEFAULT_MULTI_GOALS,
   }), []);
@@ -4071,9 +4390,62 @@ export default function TrainerDashboard() {
     await authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
   };
 
-  const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionFeedback = nutritionFeedback, newPlannedDayRecords = plannedDayRecords) => {
+  const buildPersistedPersonalization = (draftPersonalization = personalization, draftGoals = goals) => {
+    const canonicalForPersist = deriveCanonicalAthleteState({
+      goals: draftGoals,
+      personalization: draftPersonalization,
+      profileDefaults: PROFILE,
+    });
+    return withLegacyGoalProfileCompatibility({
+      personalization: draftPersonalization,
+      canonicalAthlete: canonicalForPersist,
+    });
+  };
+
+  const applyCanonicalRuntimeState = (runtimeState) => {
+    applyCanonicalRuntimeStateSetters({
+      runtimeState,
+      setters: {
+        setLogs,
+        setBodyweights,
+        setPaceOverrides,
+        setWeekNotes,
+        setPlanAlerts,
+        setPersonalization,
+        setGoals,
+        setCoachActions,
+        setCoachPlanAdjustments,
+        setDailyCheckins,
+        setPlannedDayRecords,
+        setWeeklyCheckins,
+        setNutritionFavorites,
+        setNutritionActualLogs,
+      },
+    });
+  };
+
+  const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionActualLogs = nutritionActualLogs, newPlannedDayRecords = plannedDayRecords) => {
     const normalizedGoalPayload = normalizeGoals(newGoals || []);
-    const payload = { logs: newLogs, bw: newBW, paceOverrides: newOvr, weekNotes: newNotes, planAlerts: newAlerts, personalization: newPersonalization, goals: normalizedGoalPayload, coachActions: newCoachActions, coachPlanAdjustments: newCoachPlanAdjustments, dailyCheckins: newDailyCheckins, plannedDayRecords: newPlannedDayRecords, weeklyCheckins: newWeeklyCheckins, nutritionFavorites: newNutritionFavorites, nutritionFeedback: newNutritionFeedback, v: 6, ts: Date.now() };
+    const runtimeState = buildCanonicalRuntimeState({
+      logs: newLogs,
+      bodyweights: newBW,
+      paceOverrides: newOvr,
+      weekNotes: newNotes,
+      planAlerts: newAlerts,
+      personalization: newPersonalization,
+      goals: normalizedGoalPayload,
+      coachActions: newCoachActions,
+      coachPlanAdjustments: newCoachPlanAdjustments,
+      dailyCheckins: newDailyCheckins,
+      plannedDayRecords: newPlannedDayRecords,
+      weeklyCheckins: newWeeklyCheckins,
+      nutritionFavorites: newNutritionFavorites,
+      nutritionActualLogs: newNutritionActualLogs,
+    });
+    const payload = buildPersistedTrainerPayload({
+      runtimeState,
+      transformPersonalization: (draftPersonalization) => buildPersistedPersonalization(draftPersonalization, normalizedGoalPayload),
+    });
     if (authSession?.user?.id) markLocalMutation();
     await authStorage.persistAll({ payload, authSession, setStorageStatus, setAuthSession });
   };
@@ -4096,7 +4468,7 @@ export default function TrainerDashboard() {
         setPlannedDayRecords,
         setWeeklyCheckins,
         setNutritionFavorites,
-        setNutritionFeedback,
+        setNutritionActualLogs,
       },
       persistAll,
     });
@@ -4150,12 +4522,16 @@ export default function TrainerDashboard() {
     const hasHistoricalNeed = Boolean(
       logEntry
       || dailyCheckins?.[dateKey]
-      || nutritionFeedback?.[dateKey]
+      || nutritionActualLogs?.[dateKey]
     );
     if (!hasHistoricalNeed) return null;
     const dateObj = new Date(`${dateKey}T12:00:00`);
     if (Number.isNaN(dateObj.getTime())) return null;
-    const week = getWeekForDateKey(dateKey);
+    const week = resolvePlanWeekNumberForDateKey({
+      dateKey,
+      planStartDate: canonicalGoalState?.planStartDate || "",
+      fallbackStartDate: PROFILE.startDate,
+    });
     const workout = getTodayWorkout(week, dateObj.getDay());
     const fallbackRecord = buildLegacyPlannedDayRecordFromWorkout({ dateKey, weekNumber: week, workout });
     if (!fallbackRecord) return null;
@@ -4272,7 +4648,7 @@ export default function TrainerDashboard() {
       todayKey,
       ...Object.keys(logs || {}),
       ...Object.keys(dailyCheckins || {}),
-      ...Object.keys(nutritionFeedback || {}),
+      ...Object.keys(nutritionActualLogs || {}),
       ...Object.keys(plannedDayRecords || {}),
     ].filter(Boolean))).sort((a, b) => a.localeCompare(b));
     let changed = false;
@@ -4317,7 +4693,7 @@ export default function TrainerDashboard() {
 
     if (!changed) return;
     setPlannedDayRecords(nextPlannedDayRecords);
-    persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback, nextPlannedDayRecords);
+    persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs, nextPlannedDayRecords);
   }, [
     loading,
     todayKey,
@@ -4325,7 +4701,7 @@ export default function TrainerDashboard() {
     plannedDayRecords,
     logs,
     dailyCheckins,
-    nutritionFeedback,
+    nutritionActualLogs,
     bodyweights,
     paceOverrides,
     weekNotes,
@@ -4416,7 +4792,14 @@ export default function TrainerDashboard() {
         const cache = localLoad();
         if (cache) {
           try {
-            await importData(btoa(unescape(encodeURIComponent(JSON.stringify(cache)))));
+            const cachedRuntimeState = buildCanonicalRuntimeStateFromStorage({
+              storedPayload: cache,
+              mergePersonalization,
+              DEFAULT_PERSONALIZATION,
+              normalizeGoals,
+              DEFAULT_MULTI_GOALS,
+            });
+            applyCanonicalRuntimeState(cachedRuntimeState);
           } catch (cacheErr) {
             logDiag("local cache import fallback failed", cacheErr?.message || "unknown");
           }
@@ -4567,7 +4950,7 @@ export default function TrainerDashboard() {
     historyRelabelAppliedRef.current = true;
     if (changed <= 0) return;
     setLogs(nextLogs);
-    persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   }, [loading, logs]);
 
   useEffect(() => {
@@ -4575,7 +4958,7 @@ export default function TrainerDashboard() {
       skipNextGoalsPersistRef.current = false;
       return;
     }
-    if (!loading) persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    if (!loading) persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   }, [goals]);
 
   useEffect(() => {
@@ -4605,7 +4988,7 @@ export default function TrainerDashboard() {
       };
       const updated = mergePersonalization(personalization, { coachMemory: { ...personalization.coachMemory, lastSundayPushWeek: weekTag } });
       setPersonalization(updated);
-      await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+      await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
     })();
   }, [loading, currentWeek, personalization?.coachMemory?.lastSundayPushWeek]);
 
@@ -4638,7 +5021,7 @@ export default function TrainerDashboard() {
     }
     setPersonalization(derived);
     try {
-      await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+      await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
       if (changedDateKey) await syncSessionLogShadowRow(changedDateKey, changedLog || null);
       setLastSaved(new Date().toLocaleTimeString());
     } catch(e) { logDiag("saveLogs fallback", e.message); setStorageStatus(classifyStorageError(e)); }
@@ -4652,13 +5035,13 @@ export default function TrainerDashboard() {
     const derived = mergePersonalization(derivedBase, { profile: { ...derivedBase.profile, inconsistencyRisk: m.inconsistencyRisk, currentMomentumState: m.momentumState, likelyAdherencePattern: m.likelyAdherencePattern } });
     setPersonalization(derived);
     try {
-      await persistAll(logs, arr, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+      await persistAll(logs, arr, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
       setLastSaved(new Date().toLocaleTimeString());
     } catch(e) { logDiag("saveBodyweights fallback", e.message); setStorageStatus(classifyStorageError(e)); }
   };
 
   const savePlanState = async (newOvr, newNotes, newAlerts) => {
-    try { await persistAll(logs, bodyweights, newOvr, newNotes, newAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback); } catch(e) {}
+    try { await persistAll(logs, bodyweights, newOvr, newNotes, newAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs); } catch(e) {}
   };
 
   const syncExercisePerformanceRows = async (dateKey, performance = []) => {
@@ -4734,6 +5117,7 @@ Keep it plain and specific.`;
       personalization: basePersonalization,
       currentPhase,
       goals,
+      goalState: canonicalGoalState,
       sessionDateKey: dateKey,
     });
 
@@ -4850,6 +5234,7 @@ Keep it plain and specific.`;
         personalization,
         currentPhase,
         goals,
+        goalState: canonicalGoalState,
       });
       if (updates.length > 0) {
         const tomorrow = new Date(`${dateKey}T12:00:00`);
@@ -4921,7 +5306,7 @@ Keep it plain and specific.`;
     setDailyCheckins(nextDaily);
     setLogs(nextLogs);
     setPersonalization(nextPersonalization);
-    await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, nextDaily, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, nextDaily, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
     if (linkedLog) await syncSessionLogShadowRow(dateKey, linkedLog);
   };
 
@@ -4930,47 +5315,30 @@ Keep it plain and specific.`;
     const nextAlerts = [{ id:`weekly_${Date.now()}`, type:"info", msg:"Weekly reflection saved — nice follow-through." }, ...planAlerts].slice(0, 12);
     setWeeklyCheckins(nextWeekly);
     setPlanAlerts(nextAlerts);
-    await persistAll(logs, bodyweights, paceOverrides, weekNotes, nextAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, nextWeekly, nutritionFavorites, nutritionFeedback);
+    await persistAll(logs, bodyweights, paceOverrides, weekNotes, nextAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, nextWeekly, nutritionFavorites, nutritionActualLogs);
   };
 
   const saveNutritionFavorites = async (nextFavorites) => {
     setNutritionFavorites(nextFavorites);
-    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nextFavorites, nutritionFeedback);
+    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nextFavorites, nutritionActualLogs);
   };
 
-  const saveNutritionFeedback = async (dateKey, feedback) => {
+  const saveNutritionActualLog = async (dateKey, feedback) => {
     const plannedDayHistory = getPlannedDayHistoryForDate(dateKey, logs?.[dateKey] || null);
     const plannedDayRecord = getCurrentPrescribedDayRecord(plannedDayHistory);
     const planReference = buildPlanReference(plannedDayHistory || plannedDayRecord);
-    const actualNutrition = normalizeActualNutritionLog({
+    const actualNutrition = mergeActualNutritionLogUpdate({
       dateKey,
-      feedback: {
-        ...(nutritionFeedback?.[dateKey] || {}),
-        ...(feedback || {}),
-        planReference,
-      },
+      previousLog: nutritionActualLogs?.[dateKey] || null,
+      feedback,
       planReference,
     });
-    const nextFeedback = {
-      ...nutritionFeedback,
-      [dateKey]: {
-        ...(nutritionFeedback?.[dateKey] || {}),
-        ...(feedback || {}),
-        status: actualNutrition.quickStatus || feedback?.status || "",
-        issue: actualNutrition.issue || feedback?.issue || "",
-        note: actualNutrition.note || feedback?.note || "",
-        deviationKind: actualNutrition.deviationKind || feedback?.deviationKind || "",
-        hydrationOz: Number(actualNutrition.hydrationOz || 0),
-        hydrationTargetOz: Number(actualNutrition.hydrationTargetOz || 0),
-        supplementTaken: actualNutrition.supplements?.takenMap || {},
-        planReference,
-        actualNutrition,
-        actualNutritionLog: actualNutrition,
-        ts: Date.now(),
-      }
+    const nextActualLogs = {
+      ...nutritionActualLogs,
+      [dateKey]: actualNutrition,
     };
-    setNutritionFeedback(nextFeedback);
-    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nextFeedback);
+    setNutritionActualLogs(nextActualLogs);
+    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nextActualLogs);
   };
 
   useEffect(() => {
@@ -4989,7 +5357,7 @@ Keep it plain and specific.`;
       },
     });
     setPersonalization(nextPersonalization);
-    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   };
 
   const requestAppleHealthPermissions = async () => {
@@ -5015,9 +5383,31 @@ Keep it plain and specific.`;
     const clampedStress = Math.max(1, Math.min(5, Number(stress) || 3));
     const cleanBlocker = String(blocker || "none").toLowerCase().trim() || "none";
     const confidence = Math.max(1, Math.min(5, Math.round((clampedEnergy + (6 - clampedStress)) / 2)));
+    const appliedAt = Date.now();
     const nextWeekly = {
       ...weeklyCheckins,
-      [String(currentWeek)]: { energy: clampedEnergy, stress: clampedStress, confidence, blocker: cleanBlocker, source: "sunday_push", ts: Date.now() }
+      [String(currentWeek)]: {
+        energy: clampedEnergy,
+        stress: clampedStress,
+        confidence,
+        blocker: cleanBlocker,
+        source: "sunday_push",
+        ts: appliedAt,
+        provenance: buildAdjustmentProvenance({
+          actor: PROVENANCE_ACTORS.user,
+          trigger: "sunday_push_checkin",
+          mutationType: "weekly_checkin",
+          revisionReason: `Sunday push check-in saved with blocker ${cleanBlocker}.`,
+          sourceInputs: ["SundayPush", "weeklyCheckins"],
+          timestamp: appliedAt,
+          details: {
+            week: currentWeek,
+            blocker: cleanBlocker,
+            energy: clampedEnergy,
+            stress: clampedStress,
+          },
+        }),
+      }
     };
     const requiresDeload = clampedEnergy <= 2 || clampedStress >= 4 || ["time", "travel", "recovery"].includes(cleanBlocker);
     const nextAdjustments = requiresDeload
@@ -5029,23 +5419,57 @@ Keep it plain and specific.`;
             ...(coachPlanAdjustments.weekVolumePct || {}),
             [String(currentWeek + 1)]: Math.min(Number(coachPlanAdjustments?.weekVolumePct?.[String(currentWeek + 1)] || 100), 88),
           },
-          extra: { ...(coachPlanAdjustments.extra || {}), sundayPushAppliedAt: Date.now(), sundayPushBlocker: cleanBlocker },
+          extra: appendProvenanceSidecar(
+            { ...(coachPlanAdjustments.extra || {}), sundayPushAppliedAt: appliedAt, sundayPushBlocker: cleanBlocker },
+            "weekVolumeByWeek",
+            String(currentWeek + 1),
+            buildAdjustmentProvenance({
+              actor: PROVENANCE_ACTORS.deterministicEngine,
+              trigger: "sunday_push_checkin",
+              mutationType: "weekly_volume_adjustment",
+              revisionReason: "Next week volume capped from Sunday push recovery risk.",
+              sourceInputs: ["weeklyCheckins", "SundayPush"],
+              timestamp: appliedAt,
+              details: {
+                week: currentWeek + 1,
+                blocker: cleanBlocker,
+              },
+            })
+          ),
         }
       : coachPlanAdjustments;
     const nextAlerts = [{ id:`sunday_push_${Date.now()}`, type:"info", msg:"Weekly coach push check-in received. Plan updated silently." }, ...planAlerts].slice(0, 12);
     setWeeklyCheckins(nextWeekly);
     setPlanAlerts(nextAlerts);
     if (requiresDeload) setCoachPlanAdjustments(nextAdjustments);
-    await persistAll(logs, bodyweights, paceOverrides, weekNotes, nextAlerts, personalization, coachActions, nextAdjustments, goals, dailyCheckins, nextWeekly, nutritionFavorites, nutritionFeedback);
+    await persistAll(logs, bodyweights, paceOverrides, weekNotes, nextAlerts, personalization, coachActions, nextAdjustments, goals, dailyCheckins, nextWeekly, nutritionFavorites, nutritionActualLogs);
   };
 
   const applyProactiveNudge = async (trigger) => {
     const dateKey = new Date().toISOString().split("T")[0];
+    const appliedAt = Date.now();
+    const nudgeProvenance = buildAdjustmentProvenance({
+      actor: PROVENANCE_ACTORS.deterministicEngine,
+      trigger: trigger?.id || trigger?.actionType || "proactive_nudge",
+      mutationType: "proactive_adjustment",
+      revisionReason: trigger?.msg || String(trigger?.actionType || "proactive_nudge").replaceAll("_", " "),
+      sourceInputs: [
+        "proactiveTriggers",
+        trigger?.source || "coach_engine",
+      ],
+      confidence: trigger?.score >= 80 ? "high" : "medium",
+      timestamp: appliedAt,
+      details: {
+        actionType: trigger?.actionType || "",
+        score: Number(trigger?.score || 0) || null,
+      },
+    });
     let nextAdjustments = { ...coachPlanAdjustments, dayOverrides: { ...(coachPlanAdjustments.dayOverrides || {}) }, nutritionOverrides: { ...(coachPlanAdjustments.nutritionOverrides || {}) }, weekVolumePct: { ...(coachPlanAdjustments.weekVolumePct || {}) }, extra: { ...(coachPlanAdjustments.extra || {}) } };
     let nextPersonalization = personalization;
     let nextWeekNotes = { ...weekNotes };
     if (trigger.actionType === "REDUCE_WEEKLY_VOLUME") {
       nextAdjustments.weekVolumePct[currentWeek] = 100 - (trigger.payload?.pct || 10);
+      nextAdjustments.extra = appendProvenanceSidecar(nextAdjustments.extra, "weekVolumeByWeek", currentWeek, nudgeProvenance);
       nextWeekNotes[currentWeek] = `Proactive nudge applied: week volume reduced by ${trigger.payload?.pct || 10}%.`;
     }
     if (trigger.actionType === "PROGRESS_STRENGTH_EMPHASIS") nextAdjustments.extra.strengthEmphasisWeeks = trigger.payload?.weeks || 1;
@@ -5055,71 +5479,85 @@ Keep it plain and specific.`;
     if (trigger.actionType === "SIMPLIFY_MEALS_THIS_WEEK") nextAdjustments.extra.defaultMealStructureDays = trigger.payload?.days || 3;
     if (trigger.actionType === "SWITCH_TRAVEL_NUTRITION_MODE") {
       nextAdjustments.extra.travelNutritionMode = true;
-      nextAdjustments.nutritionOverrides[dateKey] = "travelRun";
+      nextAdjustments.nutritionOverrides[dateKey] = { dayType: "travelRun", reason: trigger?.msg || "travel_nutrition_mode", provenance: nudgeProvenance };
     }
     if (trigger.actionType === "SWITCH_ENV_MODE") {
       nextPersonalization = mergePersonalization(nextPersonalization, { travelState: { ...nextPersonalization.travelState, environmentMode: trigger.payload?.mode || "home" } });
     }
     if (trigger.actionType === "ACTIVATE_SALVAGE") {
       nextAdjustments.weekVolumePct[currentWeek] = 80;
+      nextAdjustments.extra = appendProvenanceSidecar(nextAdjustments.extra, "weekVolumeByWeek", currentWeek, nudgeProvenance);
       nextAdjustments.extra.mealSimplicityMode = true;
       nextWeekNotes[currentWeek] = "Proactive nudge applied: salvage compression (core sessions only).";
     }
     const nextCoachActions = [{
-      id:`nudge_${Date.now()}`,
-      ts: Date.now(),
+      id:`nudge_${appliedAt}`,
+      ts: appliedAt,
       type: trigger.actionType,
       payload: trigger.payload || {},
       source: trigger.source === "optimization" ? "optimization_experiment" : "proactive_nudge",
       reason: trigger.msg || "proactive trigger",
-      triggerReason: trigger.id || "trigger"
+      triggerReason: trigger.id || "trigger",
+      provenance: nudgeProvenance,
     }, ...coachActions].slice(0, 80);
     setCoachActions(nextCoachActions);
     setCoachPlanAdjustments(nextAdjustments);
     setPersonalization(nextPersonalization);
     setWeekNotes(nextWeekNotes);
     setDismissedTriggers(prev => [...prev, trigger.id]);
-    await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, planAlerts, nextPersonalization, nextCoachActions, nextAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, planAlerts, nextPersonalization, nextCoachActions, nextAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   };
 
   const exportData = () => {
-    const payload = { logs, bw: bodyweights, paceOverrides, weekNotes, planAlerts, personalization, goals, coachActions, coachPlanAdjustments, dailyCheckins, plannedDayRecords, weeklyCheckins, nutritionFavorites, nutritionFeedback, v: 6, ts: Date.now() };
-    return btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+    const normalizedGoalPayload = normalizeGoals(goals || []);
+    return exportRuntimeStateAsBase64({
+      runtimeState: buildCanonicalRuntimeState({
+        logs,
+        bodyweights,
+        paceOverrides,
+        weekNotes,
+        planAlerts,
+        personalization,
+        goals: normalizedGoalPayload,
+        coachActions,
+        coachPlanAdjustments,
+        dailyCheckins,
+        plannedDayRecords,
+        weeklyCheckins,
+        nutritionFavorites,
+        nutritionActualLogs,
+      }),
+      transformPersonalization: (draftPersonalization) => buildPersistedPersonalization(draftPersonalization, normalizedGoalPayload),
+    });
   };
 
   const importData = async (str) => {
     try {
-      const payload = JSON.parse(decodeURIComponent(escape(atob(str.trim()))));
-      const newLogs = payload.logs || {};
-      const newBW = payload.bw || [];
-      const newOvr = payload.paceOverrides || {};
-      const newNotes = payload.weekNotes || {};
-      const newAlerts = payload.planAlerts || [];
-      const newPersonalization = mergePersonalization(DEFAULT_PERSONALIZATION, payload.personalization || {});
-      const newGoals = normalizeGoals(payload.goals || DEFAULT_MULTI_GOALS);
-      const newCoachActions = payload.coachActions || [];
-      const newCoachPlanAdjustments = payload.coachPlanAdjustments || { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} };
-      const newDailyCheckins = payload.dailyCheckins || {};
-      const newPlannedDayRecords = payload.plannedDayRecords || {};
-      const newWeeklyCheckins = payload.weeklyCheckins || {};
-      const newNutritionFavorites = payload.nutritionFavorites || { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] };
-      const newNutritionFeedback = payload.nutritionFeedback || {};
-      setLogs(newLogs);
-      setBodyweights(newBW);
-      setPaceOverrides(newOvr);
-      setWeekNotes(newNotes);
-      setPlanAlerts(newAlerts);
-      setPersonalization(newPersonalization);
-      setGoals(newGoals);
-      setCoachActions(newCoachActions);
-      setCoachPlanAdjustments(newCoachPlanAdjustments);
-      setDailyCheckins(newDailyCheckins);
-      setPlannedDayRecords(newPlannedDayRecords);
-      setWeeklyCheckins(newWeeklyCheckins);
-      setNutritionFavorites(newNutritionFavorites);
-      setNutritionFeedback(newNutritionFeedback);
+      const runtimeState = importRuntimeStateFromBase64({
+        encoded: str,
+        mergePersonalization,
+        DEFAULT_PERSONALIZATION,
+        normalizeGoals,
+        DEFAULT_MULTI_GOALS,
+      });
+      applyCanonicalRuntimeState(runtimeState);
       // Push restored data to Supabase immediately
-      await persistAll(newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization, newCoachActions, newCoachPlanAdjustments, newGoals, newDailyCheckins, newWeeklyCheckins, newNutritionFavorites, newNutritionFeedback, newPlannedDayRecords);
+      await persistAll(
+        runtimeState.logs,
+        runtimeState.bodyweights,
+        runtimeState.paceOverrides,
+        runtimeState.weekNotes,
+        runtimeState.planAlerts,
+        runtimeState.personalization,
+        runtimeState.coachActions,
+        runtimeState.coachPlanAdjustments,
+        runtimeState.goals,
+        runtimeState.dailyCheckins,
+        runtimeState.weeklyCheckins,
+        runtimeState.nutritionFavorites,
+        runtimeState.nutritionActualLogs,
+        runtimeState.plannedDayRecords
+      );
       setLastSaved("restored + synced");
       setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
       return true;
@@ -5138,7 +5576,7 @@ Keep it plain and specific.`;
   const startFreshPlan = async () => {
     const todayIso = new Date().toISOString().split("T")[0];
     const undoExpiresAt = Date.now() + (7 * 24 * 60 * 60 * 1000);
-    const planArcLabel = `${personalization?.goalState?.planStartDate || "Unknown start"} → ${todayIso}`;
+    const planArcLabel = `${canonicalGoalState?.planStartDate || "Unknown start"} → ${todayIso}`;
     const archiveEntry = {
       id: `archive_${Date.now()}`,
       archivedAt: new Date().toISOString(),
@@ -5158,16 +5596,20 @@ Keep it plain and specific.`;
       plannedDayRecords,
       weeklyCheckins,
       nutritionFavorites,
-      nutritionFeedback,
+      nutritionActualLogs,
       coachActions,
       coachPlanAdjustments,
       personalization,
     };
-    const nextPersonalization = mergePersonalization(personalization, {
+    const nextPersonalizationBase = mergePersonalization(personalization, {
       profile: { ...personalization.profile, onboardingComplete: false },
-      goalState: { ...personalization.goalState, planStartDate: todayIso },
       planArchives: [archiveEntry, ...(personalization?.planArchives || [])].slice(0, 12),
       planResetUndo: { startedAt: Date.now(), startedDate: todayIso, expiresAt: undoExpiresAt, snapshot: undoSnapshot },
+    });
+    const nextPersonalization = withLegacyGoalProfileCompatibility({
+      personalization: nextPersonalizationBase,
+      canonicalAthlete,
+      goalStateOverrides: { planStartDate: todayIso },
     });
     const clearedLogs = {};
     const clearedBodyweights = [];
@@ -5187,13 +5629,14 @@ Keep it plain and specific.`;
     setWeeklyCheckins(resetWeekly);
     setPersonalization(nextPersonalization);
     setStartFreshConfirmOpen(false);
-    await persistAll(clearedLogs, clearedBodyweights, clearedPaceOverrides, clearedWeekNotes, resetAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goalsModel, resetDaily, resetWeekly, nutritionFavorites, nutritionFeedback, resetPlannedDayRecords);
+    await persistAll(clearedLogs, clearedBodyweights, clearedPaceOverrides, clearedWeekNotes, resetAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goalsModel, resetDaily, resetWeekly, nutritionFavorites, nutritionActualLogs, resetPlannedDayRecords);
   };
 
   const undoStartFresh = async () => {
     const undo = personalization?.planResetUndo;
     if (!undo || Date.now() > Number(undo?.expiresAt || 0) || !undo?.snapshot) return;
     const snap = undo.snapshot;
+    const restoredNutritionActualLogs = snap.nutritionActualLogs || normalizeActualNutritionLogCollection(snap.nutritionFeedback || {});
     const restoredPersonalization = mergePersonalization(snap.personalization || personalization, { planResetUndo: null });
     setLogs(snap.logs || {});
     setBodyweights(snap.bodyweights || []);
@@ -5205,11 +5648,11 @@ Keep it plain and specific.`;
     setPlannedDayRecords(snap.plannedDayRecords || {});
     setWeeklyCheckins(snap.weeklyCheckins || {});
     setNutritionFavorites(snap.nutritionFavorites || nutritionFavorites);
-    setNutritionFeedback(snap.nutritionFeedback || nutritionFeedback);
+    setNutritionActualLogs(restoredNutritionActualLogs);
     setCoachActions(snap.coachActions || coachActions);
     setCoachPlanAdjustments(snap.coachPlanAdjustments || coachPlanAdjustments);
     setPersonalization(restoredPersonalization);
-    await persistAll(snap.logs || {}, snap.bodyweights || [], snap.paceOverrides || {}, snap.weekNotes || {}, snap.planAlerts || [], restoredPersonalization, snap.coachActions || coachActions, snap.coachPlanAdjustments || coachPlanAdjustments, normalizeGoals(snap.goals || goalsModel), snap.dailyCheckins || {}, snap.weeklyCheckins || {}, snap.nutritionFavorites || nutritionFavorites, snap.nutritionFeedback || nutritionFeedback, snap.plannedDayRecords || {});
+    await persistAll(snap.logs || {}, snap.bodyweights || [], snap.paceOverrides || {}, snap.weekNotes || {}, snap.planAlerts || [], restoredPersonalization, snap.coachActions || coachActions, snap.coachPlanAdjustments || coachPlanAdjustments, normalizeGoals(snap.goals || goalsModel), snap.dailyCheckins || {}, snap.weeklyCheckins || {}, snap.nutritionFavorites || nutritionFavorites, restoredNutritionActualLogs, snap.plannedDayRecords || {});
   };
 
   const undoBanner = (() => {
@@ -5228,7 +5671,11 @@ Keep it plain and specific.`;
   // ── AI PLAN ANALYSIS ──────────────────────────────────────────────────────
   // Fires after every log save. Compares actual vs prescribed, detects patterns,
   // returns JSON modifications to apply to the plan.
-  const getAnthropicKey = () => (typeof window !== "undefined" ? (safeStorageGet(localStorage, "coach_api_key", "") || safeStorageGet(localStorage, "anthropic_api_key", "")) : "");
+  // TODO(ai-runtime): Remaining ad hoc AI payload paths are tracked in
+  // `AI_RUNTIME_TODO_PATHS` and still use this thin text helper until unified.
+  const getAnthropicKey = () => (typeof window !== "undefined"
+    ? resolveStoredAiApiKey({ safeStorageGet, storageLike: localStorage })
+    : "");
   const callAnthropic = async ({ system, user, maxTokens = 800 }) => {
     const key = getAnthropicKey();
     if (!key) return null;
@@ -5258,9 +5705,10 @@ Keep it plain and specific.`;
   const analyzePlan = async (newLogs) => {
     setAnalyzing(true);
     try {
-      const analysisPacket = buildAiStatePacket({
-        intent: AI_PACKET_INTENTS.planAnalysis,
-        input: "Analyze recent prescribed-vs-actual training and propose plan adjustments.",
+      const analysisResult = await runPlanAnalysisRuntime({
+        apiKey: getAnthropicKey(),
+        safeFetchWithTimeout,
+        packetArgs: {
         dateKey: todayKey,
         currentWeek,
         canonicalGoalState,
@@ -5284,28 +5732,23 @@ Keep it plain and specific.`;
         weekNotes,
         paceOverrides,
         planAlerts,
+        },
       });
-      const systemPrompt = buildPlanAnalysisAiSystemPrompt({ statePacket: analysisPacket });
-
-      const text = await callAnthropic({ system: systemPrompt, user: "Analyze the typed AI state packet and return a JSON proposal only.", maxTokens: 800 });
-      if (!text) {
-        setAnalyzing(false);
-        return;
-      }
-
-      const proposal = parseAiJsonObjectFromText(text);
-      if (!proposal) {
+      if (!analysisResult.ok && analysisResult.status === "invalid_json") {
         logDiag("Plan analysis degraded: invalid JSON proposal");
         setAnalyzing(false);
         return;
       }
-      const acceptance = acceptAiPlanAnalysisProposal({ proposal, statePacket: analysisPacket });
-      if (acceptance.rejected.length > 0) {
-        logDiag("AI plan proposal rejected parts:", acceptance.rejected.join("; "));
+      if (!analysisResult.ok) {
+        setAnalyzing(false);
+        return;
       }
-      const result = acceptance.accepted;
+      if (analysisResult.rejected.length > 0) {
+        logDiag("AI plan proposal rejected parts:", analysisResult.rejected.join("; "));
+      }
+      const result = analysisResult.accepted;
 
-      if (result.noChange || !acceptance.hasChanges) {
+      if (!analysisResult.hasChanges || result?.noChange) {
         setAnalyzing(false);
         return;
       }
@@ -5469,7 +5912,7 @@ Keep it plain and specific.`;
     if (injuryText && !/nothing current|none|nope|healthy/i.test(injuryText)) {
       constraints.push(injuryText);
     }
-    const userGoalProfile = {
+    const compatibilityUserProfile = {
       primary_goal: primaryGoalKey,
       experience_level: experienceLevel,
       days_per_week: trainingDays,
@@ -5527,8 +5970,19 @@ Keep it plain and specific.`;
       normalizedEquipment.length ? `Equipment: ${normalizedEquipment.join(", ")}` : null,
       `Coaching preference: ${coachingStyle}`,
     ].filter(Boolean);
-    const nextPersonalization = mergePersonalization(personalization, {
-      userGoalProfile,
+    const onboardingGoalState = {
+      primaryGoal,
+      priority: primaryCategory,
+      priorityOrder: primaryGoalLabel,
+      deadline: "",
+      planStartDate: todayKey,
+      milestones: {
+        day30: "Lock in a repeatable week and establish a truthful baseline.",
+        day60: "Build workload around recovery and show measurable progress.",
+        day90: "Push the prioritized goal with enough momentum to matter.",
+      },
+    };
+    const nextPersonalizationBase = mergePersonalization(personalization, {
       profile: {
         ...personalization.profile,
         onboardingComplete: true,
@@ -5542,19 +5996,6 @@ Keep it plain and specific.`;
           ...(personalization.settings?.trainingPreferences || DEFAULT_PERSONALIZATION.settings.trainingPreferences),
           defaultEnvironment: trainingLocation,
           intensityPreference,
-        },
-      },
-      goalState: {
-        ...personalization.goalState,
-        primaryGoal,
-        priority: primaryCategory,
-        priorityOrder: primaryGoalLabel,
-        deadline: "",
-        planStartDate: todayKey,
-        milestones: {
-          day30: "Lock in a repeatable week and establish a truthful baseline.",
-          day60: "Build workload around recovery and show measurable progress.",
-          day90: "Push the prioritized goal with enough momentum to matter.",
         },
       },
       injuryPainState: {
@@ -5600,10 +6041,20 @@ Keep it plain and specific.`;
         ].slice(-40),
       },
     });
+    const nextPersonalization = withLegacyGoalProfileCompatibility({
+      personalization: nextPersonalizationBase,
+      canonicalAthlete: deriveCanonicalAthleteState({
+        goals: refreshedGoals,
+        personalization: nextPersonalizationBase,
+        profileDefaults: PROFILE,
+      }),
+      userProfileOverrides: compatibilityUserProfile,
+      goalStateOverrides: onboardingGoalState,
+    });
     setPersonalization(nextPersonalization);
     setGoals(refreshedGoals);
     setTab(0);
-    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, refreshedGoals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, refreshedGoals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   };
 
   return (
@@ -5771,14 +6222,14 @@ Keep it plain and specific.`;
         {/* ══════════════════════════════════════════════════════════
             TODAY
         ══════════════════════════════════════════════════════════ */}
-        {tab === 0 && <TodayTab planDay={planDay} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} goals={goalsModel} userProfile={canonicalUserProfile} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} loading={loading} storageStatus={storageStatus} authError={authError} />}
+        {tab === 0 && <TodayTab planDay={planDay} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} loading={loading} storageStatus={storageStatus} authError={authError} />}
 
         {/* ══════════════════════════════════════════════════════════
             PROGRAM
         ══════════════════════════════════════════════════════════ */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} goals={goalsModel} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} goalBuckets={goalBuckets} activeTimeBoundGoal={activeTimeBoundGoal} deviceSyncAudit={deviceSyncAudit} todayWorkout={planDay?.resolved?.training} />
+            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} todayWorkout={planDay?.resolved?.training} />
           </ProgramTabErrorBoundary>
         )}
 
@@ -5790,18 +6241,18 @@ Keep it plain and specific.`;
         {/* ══════════════════════════════════════════════════════════
             NUTRITION
         ══════════════════════════════════════════════════════════ */}
-        {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} goals={goalsModel} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} nutritionFeedback={nutritionFeedback} saveNutritionFeedback={saveNutritionFeedback} />}
+        {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} />}
 
         {/* ══════════════════════════════════════════════════════════
             COACH
         ══════════════════════════════════════════════════════════ */}
-        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} goalState={canonicalGoalState} userProfile={canonicalUserProfile} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFeedback={nutritionFeedback} goals={goalsModel} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
           setCoachPlanAdjustments(nextCoachPlanAdjustments);
           setWeekNotes(nextWeekNotes);
           setPlanAlerts(nextPlanAlerts);
-          await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+          await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
 
         {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} deviceSyncAudit={deviceSyncAudit} onDeleteAccount={async ()=>{
@@ -5820,13 +6271,13 @@ Keep it plain and specific.`;
           setGoals(clearedGoals);
           setPersonalization(resetPersonalization);
           setCoachActions([]);
-          setCoachPlanAdjustments({ dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} });
-          setNutritionFavorites({ restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] });
-          setNutritionFeedback({});
-          await persistAll(clearedLogs, clearedBodyweights, {}, {}, [], resetPersonalization, [], { dayOverrides: {}, nutritionOverrides: {}, weekVolumePct: {}, extra: {} }, clearedGoals, clearedDaily, clearedWeekly, { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] }, {}, clearedPlannedDayRecords);
+          setCoachPlanAdjustments(DEFAULT_COACH_PLAN_ADJUSTMENTS);
+          setNutritionFavorites(DEFAULT_NUTRITION_FAVORITES);
+          setNutritionActualLogs({});
+          await persistAll(clearedLogs, clearedBodyweights, {}, {}, [], resetPersonalization, [], DEFAULT_COACH_PLAN_ADJUSTMENTS, clearedGoals, clearedDaily, clearedWeekly, DEFAULT_NUTRITION_FAVORITES, {}, clearedPlannedDayRecords);
         }} onPersist={async (nextPersonalization) => {
           setPersonalization(nextPersonalization);
-          await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionFeedback);
+          await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
         {showAppleHealthFirstLaunch && (
           <div style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:56, padding:"1rem" }}>
@@ -7468,8 +7919,9 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
 }
 
 // ── TODAY TAB ─────────────────────────────────────────────────────────────────
-function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, goals, userProfile, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, loading, storageStatus, authError }) {
+function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, loading, storageStatus, authError }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
+  const userProfile = athleteProfile?.userProfile || {};
   const planDayRecovery = planDay?.resolved?.recovery || null;
   const planDayLogging = planDay?.resolved?.logging || null;
   const planDayWeek = planDay?.week || null;
@@ -7791,26 +8243,29 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     }
     if (activeDayOverride) {
       const reason = String(activeDayOverride?.reason || "session adjustment").toLowerCase();
+      const provenanceReason = describeProvenanceRecord(activeDayOverride?.provenance || null, reason.replaceAll("_", " "));
       const isSwap = /shift|move|swap/.test(reason) || /moved/.test(String(activeDayOverride?.label || "").toLowerCase());
       cards.push({
         id: `day_override_${todayKey}_${reason}`,
         icon: isSwap ? "🔁" : "⚡",
         type: isSwap ? "session_swap" : "session_mod",
         impact: isSwap ? 75 : 90,
-        summary: normalizeCoachOneLine(activeDayOverride?.coachOneLine || activeDayOverride?.fallback || `${isSwap ? "Session moved in schedule today" : "Session structure adjusted today"} — ${reason.replaceAll("_", " ")}.`),
+        summary: normalizeCoachOneLine(activeDayOverride?.coachOneLine || activeDayOverride?.fallback || `${isSwap ? "Session moved in schedule today" : "Session structure adjusted today"} - ${provenanceReason}.`),
         detail: activeDayOverride?.explain || "",
-        reason: reason.replaceAll("_", " "),
+        reason: provenanceReason,
       });
     }
     if (activeNutritionOverride) {
+      const nutritionDayType = getNutritionOverrideDayType(activeNutritionOverride);
+      const nutritionReason = describeProvenanceRecord(activeNutritionOverride?.provenance || null, String(activeNutritionOverride?.reason || nutritionDayType || "nutrition override").replaceAll("_", " "));
       cards.push({
-        id: `nutrition_${todayKey}_${String(activeNutritionOverride)}`,
+        id: `nutrition_${todayKey}_${nutritionDayType || "override"}`,
         icon: "💧",
         type: "nutrition_mod",
         impact: 60,
-        summary: normalizeCoachOneLine(`Nutrition target set to ${String(activeNutritionOverride).replaceAll("_", " ")} today.`),
+        summary: normalizeCoachOneLine(`Nutrition target set to ${String(nutritionDayType || "custom").replaceAll("_", " ")} today.`),
         detail: "",
-        reason: String(activeNutritionOverride).replaceAll("_", " "),
+        reason: nutritionReason,
       });
     }
     return cards
@@ -8478,8 +8933,12 @@ class ProgramTabErrorBoundary extends React.Component {
   }
 }
 
-function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, personalization, goals, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, goalBuckets, activeTimeBoundGoal, deviceSyncAudit, todayWorkout: legacyTodayWorkout }) {
+function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, todayWorkout: legacyTodayWorkout }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
+  const goals = athleteProfile?.goals || [];
+  const goalBuckets = athleteProfile?.goalBuckets || {};
+  const activeTimeBoundGoal = athleteProfile?.activeTimeBoundGoal || null;
+  const goalState = athleteProfile?.goalState || {};
   const planDayWeek = planDay?.week || null;
   const [openWeek, setOpenWeek] = useState(currentWeek);
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
@@ -8495,7 +8954,21 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
   const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon : [];
-  const fallbackReferenceTemplate = currentPlanWeek?.template || planDayWeek?.planWeek?.template || WEEKS[Math.max(0, Math.min(currentWeek - 1, WEEKS.length - 1))] || WEEKS[0];
+  const displayHorizon = useMemo(() => resolveProgramDisplayHorizon({
+    rollingHorizon,
+    currentWeek,
+    currentPlanWeek: currentPlanWeek || planDayWeek?.planWeek || null,
+    weekTemplates: WEEKS,
+    goals,
+    planComposer,
+    momentum,
+    learningLayer,
+    weeklyCheckins,
+    failureMode,
+    environmentSelection,
+    previewLength: 4,
+  }), [rollingHorizon, currentWeek, currentPlanWeek, planDayWeek, goals, planComposer, momentum, learningLayer, weeklyCheckins, failureMode, environmentSelection]);
+  /* legacy fallback moved to plan-week-service
   const fallbackProgramWeeks = useMemo(() => {
     return Array.from({ length: 4 }).map((_, idx) => {
       const absoluteWeek = currentWeek + idx;
@@ -8529,7 +9002,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
       };
     });
   }, [currentPlanWeek, currentWeek, fallbackReferenceTemplate, goals, planComposer, momentum, learningLayer, weeklyCheckins, failureMode, environmentSelection]);
-  const displayHorizon = safeRollingHorizon.length > 0 ? safeRollingHorizon : fallbackProgramWeeks;
+  */
   const currentWeekModel = currentPlanWeek || planDayWeek?.planWeek || (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek)?.planWeek || null;
   const runningGoalActive = Boolean(
     activeTimeBoundGoal?.category === "running" ||
@@ -8837,9 +9310,9 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
           </div>
         )}
         <div style={{ fontSize:"0.58rem", color:C.amber, marginTop:"0.25rem" }}>Tradeoff: {arbitration.coachTradeoffLine || arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
-        {personalization?.goalState?.milestones && (
+        {goalState?.milestones && (
           <div style={{ marginTop:"0.3rem", fontSize:"0.55rem", color:"#9eb2cf", lineHeight:1.6 }}>
-            30d: {personalization.goalState.milestones.day30} · 60d: {personalization.goalState.milestones.day60} · 90d: {personalization.goalState.milestones.day90}
+            30d: {goalState.milestones.day30} · 60d: {goalState.milestones.day60} · 90d: {goalState.milestones.day90}
           </div>
         )}
         <div style={{ marginTop:"0.45rem", display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.3rem", alignItems:"center" }}>
@@ -9130,12 +9603,6 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     [logs, dailyCheckins, plannedDayRecords, nutritionActualLogs, today]
   );
   const toDateKey = (d) => new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split("T")[0];
-  const getWeekForDateKey = (dateKey) => {
-    const anchor = planStartDate ? new Date(`${planStartDate}T12:00:00`) : PROFILE.startDate;
-    const dateObj = new Date(`${dateKey}T12:00:00`);
-    const diffWeeks = Math.ceil((dateObj - anchor) / (1000 * 60 * 60 * 24 * 7));
-    return Math.max(1, diffWeeks);
-  };
   const getPlannedHistoryForDate = (dateKey, entry = null) => {
     if (!dateKey) return null;
     const existingEntry = normalizePrescribedDayHistoryEntry(dateKey, plannedDayRecords?.[dateKey] || null);
@@ -9161,7 +9628,11 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     }
     const dateObj = new Date(`${dateKey}T12:00:00`);
     if (Number.isNaN(dateObj.getTime())) return null;
-    const week = getWeekForDateKey(dateKey);
+    const week = resolvePlanWeekNumberForDateKey({
+      dateKey,
+      planStartDate,
+      fallbackStartDate: PROFILE.startDate,
+    });
     const workout = getTodayWorkout(week, dateObj.getDay());
     const fallbackRecord = buildLegacyPlannedDayRecordFromWorkout({ dateKey, weekNumber: week, workout });
     if (!fallbackRecord) return null;
@@ -9173,28 +9644,17 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       reason: "schedule_backfill",
     });
   };
-  const getPlannedRecordForDate = (dateKey, entry = null) => getCurrentPrescribedDayRecord(
-    getPlannedHistoryForDate(dateKey, entry)
-  );
   const getPlanComparison = (dateKey, entry = null) => {
     if (entry?.comparison?.completionKind) return entry.comparison;
-    return comparePlannedDayToActual({
-      plannedDayRecord: getPlannedRecordForDate(dateKey, entry),
-      actualLog: entry || {},
-      dailyCheckin: dailyCheckins?.[dateKey] || {},
+    return buildDayReviewComparison({
       dateKey,
+      actualLog: entry || {},
+      actualCheckin: dailyCheckins?.[dateKey] || {},
+      plannedDayRecord: getCurrentPrescribedDayRecord(getPlannedHistoryForDate(dateKey, entry)),
     });
   };
   const classifyStatus = (dateKey, entry) => {
-    const comparison = getPlanComparison(dateKey, entry);
-    if (comparison.completionKind === "as_prescribed") return "completed_as_planned";
-    if (comparison.completionKind === "modified") return "completed_modified";
-    if (comparison.completionKind === "custom_session") return "custom_session";
-    if (comparison.completionKind === "skipped") return "skipped";
-    if (comparison.differenceKind === "not_logged_over_48h") return "not_logged_over_48h";
-    if (comparison.differenceKind === "pending") return "not_logged_under_48h";
-    if (!comparison.expectedSession) return "recovery_day";
-    return "not_logged_under_48h";
+    return classifyDayReviewStatus(getPlanComparison(dateKey, entry));
   };
   const formatReviewTimestamp = (value) => {
     if (!value) return "unknown";
@@ -9209,7 +9669,6 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       type: sanitizeDisplayText(String(training?.type || "").replaceAll("-", " ")),
     };
   };
-  const getNutritionPrescriptionForRecord = (record = null) => record?.resolved?.nutrition?.prescription || record?.resolved?.nutrition || record?.base?.nutrition || null;
   const buildNutritionActualSummary = (actualNutrition = null) => {
     if (!actualNutrition?.loggedAt) {
       return { label: "Not logged", detail: "Actual nutrition has not been logged.", status: "missing" };
@@ -9220,39 +9679,16 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       status: actualNutrition?.deviationKind || "",
     };
   };
-  const buildSelectedDayReview = (dateKey = "") => {
-    if (!dateKey) return null;
-    const actualLog = logs?.[dateKey] || {};
-    const plannedHistory = getPlannedHistoryForDate(dateKey, actualLog);
-    const revisions = Array.isArray(plannedHistory?.revisions) ? plannedHistory.revisions : [];
-    const currentRevision = getCurrentPrescribedDayRevision(plannedHistory);
-    const originalRevision = revisions[0] || currentRevision || null;
-    const currentRecord = currentRevision?.record || null;
-    const originalRecord = originalRevision?.record || null;
-    const actualCheckin = dailyCheckins?.[dateKey] || actualLog?.checkin || {};
-    const actualNutrition = nutritionActualLogs?.[dateKey] || normalizeActualNutritionLog({ dateKey, feedback: {} });
-    const comparison = getPlanComparison(dateKey, actualLog);
-    const nutritionComparison = compareNutritionPrescriptionToActual({
-      nutritionPrescription: getNutritionPrescriptionForRecord(currentRecord),
-      actualNutritionLog: actualNutrition,
-    });
-    return {
-      dateKey,
-      plannedHistory,
-      revisions,
-      currentRevision,
-      originalRevision,
-      originalRecord,
-      currentRecord,
-      actualLog,
-      actualCheckin,
-      actualNutrition,
-      comparison,
-      nutritionComparison,
-    };
-  };
   const selectedDayReview = useMemo(
-    () => buildSelectedDayReview(selectedReviewDate),
+    () => buildDayReview({
+      dateKey: selectedReviewDate,
+      logs,
+      dailyCheckins,
+      nutritionActualLogs,
+      resolvePrescribedHistory: getPlannedHistoryForDate,
+      getCurrentPrescribedDayRevision,
+      getCurrentPrescribedDayRecord,
+    }),
     [selectedReviewDate, logs, dailyCheckins, plannedDayRecords, nutritionActualLogs, todayPlannedDayRecord]
   );
   useEffect(() => {
@@ -9527,7 +9963,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
                       <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{summary.label}</div>
                       <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
                       <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem" }}>
-                        {selectedDayReview?.originalRevision ? `${formatReviewTimestamp(selectedDayReview.originalRevision.capturedAt)} · ${sanitizeDisplayText(selectedDayReview.originalRevision.reason || "initial_capture")}` : "No original revision available."}
+                        {selectedDayReview?.originalRevision ? `${formatReviewTimestamp(selectedDayReview.originalRevision.capturedAt)} · ${sanitizeDisplayText(describeProvenanceRecord(selectedDayReview.originalRevision.provenance || null, selectedDayReview.originalRevision.reason || "initial_capture"))}` : "No original revision available."}
                       </div>
                     </>
                   );
@@ -9542,7 +9978,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
                       <div style={{ fontSize:"0.6rem", color:"#e2e8f0" }}>{summary.label}</div>
                       <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
                       <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.18rem" }}>
-                        {selectedDayReview?.currentRevision ? `${formatReviewTimestamp(selectedDayReview.currentRevision.capturedAt)} · ${sanitizeDisplayText(selectedDayReview.currentRevision.reason || "latest_revision")}` : "No current revision available."}
+                        {selectedDayReview?.currentRevision ? `${formatReviewTimestamp(selectedDayReview.currentRevision.capturedAt)} · ${sanitizeDisplayText(describeProvenanceRecord(selectedDayReview.currentRevision.provenance || null, selectedDayReview.currentRevision.reason || "latest_revision"))}` : "No current revision available."}
                       </div>
                     </>
                   );
@@ -9575,7 +10011,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
                       </div>
                       <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.08rem" }}>{summary.detail || summary.type || "No session detail saved."}</div>
                       <div style={{ fontSize:"0.49rem", color:"#94a3b8", marginTop:"0.12rem" }}>
-                        Reason: {sanitizeDisplayText(revision?.reason || "unknown")} · Source: {sanitizeDisplayText(revision?.sourceType || "unknown")} · Durability: {sanitizeDisplayText(revision?.durability || "unknown")}
+                        Reason: {sanitizeDisplayText(revision?.provenanceSummary || revision?.reason || "unknown")} · Source: {sanitizeDisplayText(revision?.sourceType || "unknown")} · Durability: {sanitizeDisplayText(revision?.durability || "unknown")}
                       </div>
                     </div>
                   );
@@ -9784,8 +10220,9 @@ const buildLocationAwareOrderSuggestion = ({ nearby = [] }) => {
 };
 
 // ── NUTRITION TAB (REDESIGNED) ──────────────────────────────────────────────
-function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, logs, personalization, goals, momentum, bodyweights, learningLayer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFavorites, saveNutritionFavorites, nutritionFeedback, saveNutritionFeedback }) {
+function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, logs, personalization, athleteProfile = null, momentum, bodyweights, learningLayer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFavorites, saveNutritionFavorites, saveNutritionActualLog }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
+  const goals = athleteProfile?.goals || [];
   const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
   const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
   const planDayWeek = planDay?.week || null;
@@ -9793,7 +10230,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const savedLocation = personalization?.connectedDevices?.location || {};
   const resolvedLocationLabel = localFoodContext.city || localFoodContext.locationLabel || (savedLocation?.status === "granted" ? "Nearby area" : "Chicago");
   const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || "Trader Joe's");
-  const favorites = nutritionFavorites || { restaurants: [], groceries: [], safeMeals: [], travelMeals: [], defaultMeals: [] };
+  const favorites = nutritionFavorites || DEFAULT_NUTRITION_FAVORITES;
   const [nutritionCheck, setNutritionCheck] = useState({ status: "on_track", deviationKind: "followed", issue: "", note: "" });
   const [lastKey, setLastKey] = useState("");
   const [showNutritionWhy, setShowNutritionWhy] = useState(false);
@@ -9978,8 +10415,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   });
 
   const todayKey = new Date().toISOString().split("T")[0];
-  const legacyNutritionActual = nutritionFeedback?.[todayKey];
-  const actualNutritionToday = planDay?.resolved?.nutrition?.actual || nutritionActualLogs?.[todayKey] || normalizeActualNutritionLog({ dateKey: todayKey, feedback: legacyNutritionActual || {} });
+  const actualNutritionToday = planDay?.resolved?.nutrition?.actual || nutritionActualLogs?.[todayKey] || normalizeActualNutritionLog({ dateKey: todayKey, feedback: {} });
   const nutritionComparison = planDay?.resolved?.nutrition?.comparison || compareNutritionPrescriptionToActual({
     nutritionPrescription: nutritionLayer,
     actualNutritionLog: actualNutritionToday,
@@ -10012,7 +10448,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     setShowHydrationNudge(true);
     const nudgedAt = Date.now();
     setHydrationNudgedAt(nudgedAt);
-    saveNutritionFeedback(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt: nudgedAt });
+    saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt: nudgedAt });
   }, [hydrationPct, hydrationNudgedAt, showHydrationNudge, todayKey]);
   const requestFridgeMeal = () => {
     const reply = deriveFridgeCoachMealSuggestion({ fridgeInput, dayType });
@@ -10021,12 +10457,12 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const logHydration = async (oz = 12) => {
     const nextOz = Math.min(hydrationTargetOz, (hydrationOz || 0) + oz);
     setHydrationOz(nextOz);
-    await saveNutritionFeedback(todayKey, { ...nutritionCheck, hydrationOz: nextOz, hydrationTargetOz, hydrationNudgedAt });
+    await saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz: nextOz, hydrationTargetOz, hydrationNudgedAt });
   };
   const toggleSupplementTaken = async (name) => {
     const nextTaken = { ...supplementTaken, [name]: !supplementTaken?.[name] };
     setSupplementTaken(nextTaken);
-    await saveNutritionFeedback(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken: nextTaken });
+    await saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken: nextTaken });
   };
   const addCustomSupplement = async () => {
     if (!newSupplementName.trim() || !newSupplementTiming.trim()) return;
@@ -10242,7 +10678,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
           <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck(prev=>({ ...prev, note:e.target.value }))} placeholder="Quick note (optional)" />
-          <button className="btn btn-primary" onClick={()=>saveNutritionFeedback(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt })} style={{ fontSize:"0.55rem" }}>SAVE</button>
+          <button className="btn btn-primary" onClick={()=>saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt })} style={{ fontSize:"0.55rem" }}>SAVE</button>
         </div>
         <div style={{ marginTop:"0.3rem", fontSize:"0.55rem", color:"#9fb2d2" }}>Weekly nutrition score: {weeklyNutritionScore}</div>
       </div>
@@ -10251,73 +10687,21 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
 }
 
 // ── COACH TAB (REDESIGNED) ──────────────────────────────────────────────────
-function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, goalState, userProfile, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFeedback, goals = [], setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
+function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, athleteProfile = null, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
+  const goals = athleteProfile?.goals || [];
+  const goalState = athleteProfile?.goalState || {};
+  const userProfile = athleteProfile?.userProfile || {};
   const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
   const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
   const planDayWeek = planDay?.week || null;
   const canonicalCoachRecovery = planDay?.resolved?.recovery || null;
   const todayKey = new Date().toISOString().split("T")[0];
-  const nutritionActual = planDay?.resolved?.nutrition?.actual || nutritionActualLogs?.[todayKey] || normalizeActualNutritionLog({ dateKey: todayKey, feedback: nutritionFeedback?.[todayKey] || {} });
+  const nutritionActual = planDay?.resolved?.nutrition?.actual || nutritionActualLogs?.[todayKey] || normalizeActualNutritionLog({ dateKey: todayKey, feedback: {} });
   const nutritionComparison = planDay?.resolved?.nutrition?.comparison || compareNutritionPrescriptionToActual({
     nutritionPrescription: nutritionLayer,
     actualNutritionLog: nutritionActual,
   });
-  const coachAiStatePacket = useMemo(() => buildAiStatePacket({
-    intent: AI_PACKET_INTENTS.coachChat,
-    input: "",
-    dateKey: todayKey,
-    currentWeek,
-    canonicalGoalState: goalState,
-    canonicalUserProfile: userProfile,
-    goals,
-    planDay,
-    planWeek: planDayWeek?.planWeek || null,
-    logs,
-    dailyCheckins,
-    nutritionActualLogs,
-    bodyweights,
-    momentum,
-    expectations,
-    strengthLayer,
-    optimizationLayer,
-    failureMode,
-    readiness: canonicalCoachRecovery,
-    nutritionComparison,
-    arbitration,
-    memoryInsights,
-    coachMemoryContext: compoundingCoachMemory,
-    weekNotes,
-    planAlerts,
-  }), [
-    todayKey,
-    currentWeek,
-    goalState,
-    userProfile,
-    goals,
-    planDay,
-    planDayWeek,
-    logs,
-    dailyCheckins,
-    nutritionActualLogs,
-    bodyweights,
-    momentum,
-    expectations,
-    strengthLayer,
-    optimizationLayer,
-    failureMode,
-    canonicalCoachRecovery,
-    nutritionComparison,
-    arbitration,
-    memoryInsights,
-    compoundingCoachMemory,
-    weekNotes,
-    planAlerts,
-  ]);
-  const coachAiSystemPrompt = useMemo(
-    () => buildCoachAiSystemPrompt({ statePacket: coachAiStatePacket }),
-    [coachAiStatePacket]
-  );
   const coachPhase = planDayWeek?.phase || todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
   const coachWeekFocus = planDayWeek?.weeklyIntent?.focus || planDayWeek?.planWeek?.weeklyIntent?.focus || "";
   const coachWeekSummary = planDayWeek?.summary || planDayWeek?.planWeek?.summary || "";
@@ -10333,7 +10717,9 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
     simplicityVsVariety: personalization.coachMemory.simplicityVsVariety || "",
     preferredFoodPatterns: (personalization.coachMemory.preferredFoodPatterns || []).join(", "),
   });
-  const [apiKey, setApiKey] = useState(typeof window !== "undefined" ? safeStorageGet(localStorage, "coach_api_key", "") : "");
+  const [apiKey, setApiKey] = useState(typeof window !== "undefined"
+    ? resolveStoredAiApiKey({ safeStorageGet, storageLike: localStorage })
+    : "");
   const [coachMode, setCoachMode] = useState("auto");
   const [feedbackLog, setFeedbackLog] = useState(() => {
     try { return JSON.parse(safeStorageGet(localStorage, "coach_feedback_log", "[]") || "[]"); } catch { return []; }
@@ -10359,33 +10745,28 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
     }]);
   }, []);
 
-  const applyCoachAction = (action, runtime) => applyCoachActionMutation({ action, runtime, currentWeek, todayWorkout, mergePersonalization, buildInjuryRuleResult });
-
   const commitAction = async (action) => {
-    const acceptedProposal = acceptCoachActionProposal({ action, proposalSource: action?.proposalSource || action?.source || "coach_surface" });
-    if (!acceptedProposal?.accepted) {
+    const commitResult = coordinateCoachActionCommit({
+      action,
+      runtime: { adjustments: coachPlanAdjustments, weekNotes, planAlerts, personalization },
+      currentWeek,
+      todayWorkout,
+      mergePersonalization,
+      buildInjuryRuleResult,
+      existingCoachActions: coachActions,
+    });
+    if (!commitResult.ok) {
       setMessages((prev) => [...prev, {
         role: "assistant",
-        text: "That suggestion was rejected by the deterministic acceptance gate, so no plan state changed.",
+        text: commitResult.ui.message,
         source: "deterministic",
         ts: Date.now(),
         helpful: null,
       }].slice(-20));
       return;
     }
-    const acceptedAction = acceptedProposal.accepted;
-    const runtime = { adjustments: coachPlanAdjustments, weekNotes, planAlerts, personalization };
-    const mutation = applyCoachAction(acceptedAction, runtime);
-    const nextActions = [{
-      ...acceptedAction,
-      id:`coach_act_${Date.now()}`,
-      ts: Date.now(),
-      source: "coach_confirmed",
-      proposalSource: acceptedAction.proposalSource || "coach_surface",
-      acceptedBy: acceptedAction.acceptedBy || "deterministic_gate",
-      acceptancePolicy: acceptedAction.acceptancePolicy || "acceptance_only",
-      reason: acceptedAction.rationale || acceptedAction.payload?.reason || "coach-confirmed",
-    }, ...coachActions].slice(0, 60);
+    const mutation = commitResult.mutation;
+    const nextActions = commitResult.nextActions;
     setCoachActions(nextActions);
     setCoachPlanAdjustments(mutation.adjustments);
     setWeekNotes(mutation.weekNotes);
@@ -10473,84 +10854,75 @@ Rules for every response:
 
   const streamCoachResponse = async ({ userMsg, history }) => {
     const deterministic = deterministicCoachPacket({ input: userMsg, todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
-    if (coachMode === "deterministic" || !apiKey) return { text: deterministic?.coachBrief || deterministic?.recommendations?.[0] || deterministic?.notices?.[0] || "Coach update ready.", source: "deterministic" };
-
-    const payload = {
-      model: "claude-3-5-haiku-latest",
-      max_tokens: 450,
-      stream: true,
-      system: coachAiSystemPrompt,
-      messages: history,
-    };
-    let attempts = 0;
-    while (attempts < 2) {
-      attempts += 1;
-      const ctrl = new AbortController();
-      let firstChunk = false;
-      const firstWordTimer = setTimeout(() => { if (!firstChunk) ctrl.abort(); }, 1000);
-      try {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-          body: JSON.stringify(payload),
-          signal: ctrl.signal,
-        });
-        if (!res.ok || !res.body) throw new Error("stream_unavailable");
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let fullText = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const events = buffer.split("\n\n");
-          buffer = events.pop() || "";
-          for (const evt of events) {
-            const dataLine = evt.split("\n").find((l) => l.startsWith("data: "));
-            if (!dataLine) continue;
-            const data = dataLine.slice(6).trim();
-            if (data === "[DONE]") continue;
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed?.delta?.text || parsed?.content_block?.text || "";
-              if (!delta) continue;
-              firstChunk = true;
-              clearTimeout(firstWordTimer);
-              fullText += delta;
-              setStreamingText(fullText);
-            } catch {}
-          }
-        }
-        clearTimeout(firstWordTimer);
-        return { text: fullText.trim() || (deterministic?.coachBrief || "Execute today with control."), source: "llm-stream" };
-      } catch (e) {
-        clearTimeout(firstWordTimer);
-        if (attempts >= 2) {
-          return { text: deterministic?.coachBrief || deterministic?.recommendations?.[0] || "Execute today with control.", source: "deterministic-fallback" };
-        }
-      }
-    }
-    return { text: deterministic?.coachBrief || "Execute today with control.", source: "deterministic-fallback" };
+    return runCoachChatRuntime({
+      apiKey,
+      coachMode,
+      userMsg,
+      history,
+      deterministicText: deterministic?.coachBrief || deterministic?.recommendations?.[0] || deterministic?.notices?.[0] || "Coach update ready.",
+      packetArgs: {
+        dateKey: todayKey,
+        currentWeek,
+        canonicalGoalState: goalState,
+        canonicalUserProfile: userProfile,
+        goals,
+        planDay,
+        planWeek: planDayWeek?.planWeek || null,
+        logs,
+        dailyCheckins,
+        nutritionActualLogs,
+        bodyweights,
+        momentum,
+        expectations,
+        strengthLayer,
+        optimizationLayer,
+        failureMode,
+        readiness: canonicalCoachRecovery,
+        nutritionComparison,
+        arbitration,
+        memoryInsights,
+        coachMemoryContext: compoundingCoachMemory,
+        weekNotes,
+        planAlerts,
+      },
+      fetchImpl: fetch,
+      onText: (text) => setStreamingText(text),
+    });
   };
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, pendingActions, loading]);
 
   const persistReadinessPromptSignal = async (label) => {
+    const updatedAt = Date.now();
     const signalMap = {
-      "I feel amazing this week": { state: "push", label, source: "coach_quick_prompt", updatedAt: Date.now() },
-      "I want to push harder": { state: "push", label, source: "coach_quick_prompt", updatedAt: Date.now() },
-      "I slept badly": { state: "recover", label, source: "coach_quick_prompt", updatedAt: Date.now() },
+      "I feel amazing this week": { state: "push", label, source: "coach_quick_prompt", updatedAt },
+      "I want to push harder": { state: "push", label, source: "coach_quick_prompt", updatedAt },
+      "I slept badly": { state: "recover", label, source: "coach_quick_prompt", updatedAt },
     };
     const nextSignal = signalMap[label];
     if (!nextSignal) return;
+    const signalProvenance = buildAdjustmentProvenance({
+      actor: PROVENANCE_ACTORS.user,
+      trigger: "coach_quick_prompt",
+      mutationType: "readiness_signal",
+      revisionReason: label,
+      sourceInputs: ["CoachTab", "quick_readiness_prompt"],
+      timestamp: updatedAt,
+      details: {
+        dateKey: todayKey,
+        state: nextSignal.state,
+      },
+    });
     const nextAdjustments = {
       ...coachPlanAdjustments,
       extra: {
         ...(coachPlanAdjustments?.extra || {}),
         readinessSignals: {
           ...(coachPlanAdjustments?.extra?.readinessSignals || {}),
-          [todayKey]: nextSignal,
+          [todayKey]: {
+            ...nextSignal,
+            provenance: signalProvenance,
+          },
         },
       },
     };

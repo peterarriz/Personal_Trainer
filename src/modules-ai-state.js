@@ -1,3 +1,5 @@
+import { buildProvenanceEvent, PROVENANCE_ACTORS } from "./services/provenance-service.js";
+
 export const AI_PACKET_VERSION = "2026-04-v1";
 
 export const AI_PACKET_INTENTS = {
@@ -279,6 +281,7 @@ export const buildAiStatePacket = ({
       provenance: clonePlainValueAiState({
         summary: compactDay?.provenance?.summary || "",
         keyDrivers: compactDay?.provenance?.keyDrivers || [],
+        events: compactDay?.provenance?.events || [],
       }),
       memory: clonePlainValueAiState({
         insights: (memoryInsights || []).slice(0, 4),
@@ -362,11 +365,30 @@ export const acceptAiPlanAnalysisProposal = ({ proposal = null, statePacket = nu
   const rejected = [];
   const currentWeek = Number(statePacket?.scope?.currentWeek || 1) || 1;
   const allowedPhases = new Set((statePacket?.planningContext?.availablePacePhases || []).filter(Boolean));
+  const acceptedAt = Date.now();
+  const proposalProvenance = buildProvenanceEvent({
+    actor: PROVENANCE_ACTORS.aiInterpretation,
+    trigger: "plan_analysis",
+    mutationType: "ai_proposal_acceptance",
+    revisionReason: "AI plan-analysis proposal accepted by deterministic gate.",
+    sourceInputs: [
+      "typed_ai_state_packet",
+      statePacket?.intent || AI_PACKET_INTENTS.planAnalysis,
+      statePacket?.version || AI_PACKET_VERSION,
+    ],
+    confidence: "medium",
+    timestamp: acceptedAt,
+    details: {
+      packetVersion: statePacket?.version || AI_PACKET_VERSION,
+      packetIntent: statePacket?.intent || AI_PACKET_INTENTS.planAnalysis,
+    },
+  });
   const accepted = {
     noChange: Boolean(proposal?.noChange),
     paceAdjustments: {},
     weekNotes: {},
     alerts: [],
+    provenance: proposalProvenance,
   };
 
   if (!proposal || typeof proposal !== "object") {
@@ -414,6 +436,23 @@ export const acceptAiPlanAnalysisProposal = ({ proposal = null, statePacket = nu
       acceptedBy: "deterministic_gate",
       packetVersion: statePacket?.version || AI_PACKET_VERSION,
       packetIntent: statePacket?.intent || AI_PACKET_INTENTS.planAnalysis,
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.aiInterpretation,
+        trigger: "plan_analysis_alert",
+        mutationType: "plan_alert",
+        revisionReason: msg,
+        sourceInputs: [
+          "typed_ai_state_packet",
+          type,
+        ],
+        confidence: "medium",
+        timestamp: acceptedAt,
+        details: {
+          packetVersion: statePacket?.version || AI_PACKET_VERSION,
+          packetIntent: statePacket?.intent || AI_PACKET_INTENTS.planAnalysis,
+          alertType: type,
+        },
+      }),
     });
   });
 

@@ -1,3 +1,5 @@
+import { appendProvenanceSidecar, buildProvenanceEvent, PROVENANCE_ACTORS } from "./services/provenance-service.js";
+
 export const COACH_TOOL_ACTIONS = {
   SET_PAIN_STATE: "SET_PAIN_STATE",
   CLEAR_PAIN_STATE: "CLEAR_PAIN_STATE",
@@ -392,6 +394,10 @@ const cloneUnsupportedPayload = (payload = {}) => {
   }
 };
 
+const inferCoachProposalActor = (proposalSource = "") => (
+  /ai|llm/i.test(String(proposalSource || "")) ? PROVENANCE_ACTORS.aiInterpretation : PROVENANCE_ACTORS.deterministicEngine
+);
+
 export const acceptCoachActionProposal = ({ action = null, allowedActions = Object.values(COACH_TOOL_ACTIONS), proposalSource = "coach_surface" } = {}) => {
   if (!action || typeof action !== "object") {
     return { accepted: null, rejected: ["action_missing"] };
@@ -404,14 +410,35 @@ export const acceptCoachActionProposal = ({ action = null, allowedActions = Obje
   if (payload == null) {
     return { accepted: null, rejected: [`action_payload_invalid:${type}`] };
   }
+  const acceptedAt = Date.now();
+  const normalizedProposalSource = sanitizeText(action?.proposalSource || proposalSource, 40) || proposalSource;
+  const rationale = sanitizeText(action?.rationale || action?.reason || action?.payload?.reason || "", 160);
   return {
     accepted: {
       type,
       payload,
-      rationale: sanitizeText(action?.rationale || action?.reason || action?.payload?.reason || "", 160),
-      proposalSource: sanitizeText(action?.proposalSource || proposalSource, 40) || proposalSource,
+      rationale,
+      proposalSource: normalizedProposalSource,
       acceptedBy: "deterministic_gate",
       acceptancePolicy: "acceptance_only",
+      provenance: buildProvenanceEvent({
+        actor: inferCoachProposalActor(normalizedProposalSource),
+        trigger: normalizedProposalSource || "coach_surface",
+        mutationType: "coach_action_acceptance",
+        revisionReason: rationale || `Accepted coach action ${type.replace(/_/g, " ").toLowerCase()}.`,
+        sourceInputs: [
+          "coach_action_proposal",
+          type,
+          normalizedProposalSource || "coach_surface",
+        ],
+        confidence: "medium",
+        timestamp: acceptedAt,
+        details: {
+          actionType: type,
+          acceptedBy: "deterministic_gate",
+          acceptancePolicy: "acceptance_only",
+        },
+      }),
     },
     rejected: [],
   };
@@ -422,9 +449,31 @@ export const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWo
   let nextWeekNotes = { ...runtime.weekNotes };
   let nextAlerts = [...runtime.planAlerts];
   let nextPersonalization = runtime.personalization;
+  const mutationAt = Date.now();
+  const actionProvenance = buildProvenanceEvent(action?.provenance || {
+    actor: inferCoachProposalActor(action?.proposalSource || action?.source || "coach_surface"),
+    trigger: action?.proposalSource || action?.source || "coach_surface",
+    mutationType: "coach_action_acceptance",
+    revisionReason: action?.rationale || action?.payload?.reason || action?.reason || action?.type || "coach action",
+    sourceInputs: [
+      "coach_action_proposal",
+      action?.type || "unknown",
+    ],
+    confidence: "medium",
+    timestamp: mutationAt,
+    details: {
+      actionType: action?.type || "",
+    },
+  });
 
   if (action.type === COACH_TOOL_ACTIONS.SWAP_TODAY_RECOVERY) {
-    nextAdjustments.dayOverrides[dateKey] = { label: "Recovery Day Override", type: "rest", reason: action.payload.reason, nutri: "rest" };
+    nextAdjustments.dayOverrides[dateKey] = {
+      label: "Recovery Day Override",
+      type: "rest",
+      reason: action.payload.reason,
+      nutri: "rest",
+      provenance: actionProvenance,
+    };
     nextAlerts = [{ id:`coach_${Date.now()}`, type:"warning", msg:"Coach swapped today to recovery based on risk signals." }, ...nextAlerts].slice(0, 10);
   }
   if (action.type === COACH_TOOL_ACTIONS.SET_PAIN_STATE) {
@@ -448,6 +497,7 @@ export const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWo
   }
   if (action.type === COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME) {
     nextAdjustments.weekVolumePct[currentWeek] = 100 - (action.payload.pct || 10);
+    nextAdjustments.extra = appendProvenanceSidecar(nextAdjustments.extra, "weekVolumeByWeek", currentWeek, actionProvenance);
     nextWeekNotes[currentWeek] = `Coach reduced this week volume by ${action.payload.pct || 10}% for recovery control.`;
   }
   if (action.type === COACH_TOOL_ACTIONS.CONVERT_RUN_TO_LOW_IMPACT || action.type === COACH_TOOL_ACTIONS.REPLACE_SPEED_EASY) {
@@ -458,7 +508,11 @@ export const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWo
     nextPersonalization = mergePersonalization(nextPersonalization, { injuryPainState: { ...nextPersonalization.injuryPainState, achilles: { ...nextPersonalization.injuryPainState.achilles, status: "watch", painScore: Math.max(2, nextPersonalization.injuryPainState.achilles.painScore) } } });
   }
   if (action.type === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) {
-    nextAdjustments.nutritionOverrides[dateKey] = action.payload.dayType;
+    nextAdjustments.nutritionOverrides[dateKey] = {
+      dayType: action.payload.dayType,
+      reason: action.payload.reason || action.rationale || "coach_action",
+      provenance: actionProvenance,
+    };
   }
   if (action.type === COACH_TOOL_ACTIONS.INCREASE_PRELONGRUN_CARBS) {
     nextAdjustments.extra.preLongRunCarbBonus = action.payload.grams || 30;
@@ -466,7 +520,11 @@ export const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWo
   }
   if (action.type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS) {
     nextPersonalization = mergePersonalization(nextPersonalization, { travelState: { ...nextPersonalization.travelState, isTravelWeek: true, access: "hotel" } });
-    nextAdjustments.nutritionOverrides[dateKey] = "travelRun";
+    nextAdjustments.nutritionOverrides[dateKey] = {
+      dayType: "travelRun",
+      reason: action.payload.reason || action.rationale || "travel_meal_switch",
+      provenance: actionProvenance,
+    };
   }
   if (action.type === COACH_TOOL_ACTIONS.MOVE_LONG_RUN) {
     nextWeekNotes[action.payload.week || currentWeek] = `Coach moved long run to ${action.payload.toDay || "Sunday"} this week.`;
@@ -474,6 +532,7 @@ export const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWo
   if (action.type === COACH_TOOL_ACTIONS.INSERT_DELOAD_WEEK) {
     nextWeekNotes[action.payload.week] = "Coach inserted deload intent: reduce volume + cap intensity this week.";
     nextAdjustments.weekVolumePct[action.payload.week] = 85;
+    nextAdjustments.extra = appendProvenanceSidecar(nextAdjustments.extra, "weekVolumeByWeek", action.payload.week, actionProvenance);
   }
   if (action.type === COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS) {
     nextWeekNotes[currentWeek] = "Coach emphasized strength progression for next 2 weeks (pressing priority).";
@@ -501,7 +560,11 @@ export const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWo
   }
   if (action.type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE) {
     nextAdjustments.extra.travelNutritionMode = true;
-    nextAdjustments.nutritionOverrides[dateKey] = "travelRun";
+    nextAdjustments.nutritionOverrides[dateKey] = {
+      dayType: "travelRun",
+      reason: action.payload.reason || action.rationale || "travel_nutrition_mode",
+      provenance: actionProvenance,
+    };
     nextWeekNotes[currentWeek] = "Coach switched nutrition strategy to travel mode.";
   }
   if (action.type === COACH_TOOL_ACTIONS.USE_DEFAULT_MEAL_STRUCTURE_3_DAYS) {
