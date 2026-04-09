@@ -359,6 +359,455 @@ const __modules = {
 ); exports.dedupeStrings = dedupeStrings;
 
   },
+  "src/services/canonical-athlete-service.js": function(require, module, exports) {
+"use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }var _collectionutilsjs = require('../utils/collection-utils.js');
+
+ const CANONICAL_ATHLETE_VERSION = "2026-04-athlete-v1"; exports.CANONICAL_ATHLETE_VERSION = CANONICAL_ATHLETE_VERSION;
+
+ const LEGACY_GOAL_PROFILE_PATHS = [
+  "goals",
+  "personalization.userGoalProfile",
+  "personalization.goalState",
+]; exports.LEGACY_GOAL_PROFILE_PATHS = LEGACY_GOAL_PROFILE_PATHS;
+
+const CATEGORY_TO_PRIMARY_GOAL = {
+  body_comp: "fat_loss",
+  strength: "muscle_gain",
+  running: "endurance",
+  injury_prevention: "general_fitness",
+  general_fitness: "general_fitness",
+};
+
+const DEFAULT_CANONICAL_USER_PROFILE = {
+  name: "Athlete",
+  primaryGoalKey: "general_fitness",
+  experienceLevel: "beginner",
+  fitnessLevel: "unknown",
+  daysPerWeek: 3,
+  sessionLength: "30",
+  equipmentAccess: [],
+  constraints: [],
+  scheduleConstraints: [],
+  preferences: {
+    coachingTone: "adaptive",
+    trainingStyle: "",
+    goalMix: "",
+    preferredEnvironments: [],
+    defaultEnvironment: "Home",
+    intensityPreference: "Standard",
+    nutritionStyle: "",
+    preferredMeals: [],
+  },
+};
+
+const DEFAULT_CANONICAL_GOAL_STATE = {
+  primaryGoal: "",
+  primaryGoalCategory: "undecided",
+  priority: "undecided",
+  priorityOrder: "",
+  deadline: "",
+  planStartDate: "",
+  milestones: null,
+  confidence: 0,
+};
+
+const pickFirstNonEmpty = (...values) => {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+};
+
+const clampMinInt = (value, fallback = 3, min = 2) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.round(numeric));
+};
+
+ const inferGoalType = (goal = {}) => {
+  if (_optionalChain([goal, 'optionalAccess', _ => _.type]) === "time_bound" || _optionalChain([goal, 'optionalAccess', _2 => _2.type]) === "ongoing") return goal.type;
+  return _optionalChain([goal, 'optionalAccess', _3 => _3.targetDate]) ? "time_bound" : "ongoing";
+}; exports.inferGoalType = inferGoalType;
+
+ const normalizeGoalObject = (goal = {}, idx = 0) => {
+  const type = exports.inferGoalType.call(void 0, goal);
+  const tracking = _optionalChain([goal, 'optionalAccess', _4 => _4.tracking]) || (type === "ongoing"
+    ? {
+        mode: _optionalChain([goal, 'optionalAccess', _5 => _5.category]) === "body_comp" ? "weekly_checkin" : _optionalChain([goal, 'optionalAccess', _6 => _6.category]) === "strength" ? "logged_lifts" : "progress_tracker",
+        unit: _optionalChain([goal, 'optionalAccess', _7 => _7.category]) === "body_comp" ? "lb" : _optionalChain([goal, 'optionalAccess', _8 => _8.category]) === "strength" ? "lb" : "",
+      }
+    : { mode: "deadline" });
+
+  return {
+    id: _optionalChain([goal, 'optionalAccess', _9 => _9.id]) || `goal_${idx + 1}`,
+    name: _optionalChain([goal, 'optionalAccess', _10 => _10.name]) || "Goal",
+    category: _optionalChain([goal, 'optionalAccess', _11 => _11.category]) || "running",
+    priority: Number(_optionalChain([goal, 'optionalAccess', _12 => _12.priority]) || (idx + 1)),
+    targetDate: _optionalChain([goal, 'optionalAccess', _13 => _13.targetDate]) || "",
+    measurableTarget: _optionalChain([goal, 'optionalAccess', _14 => _14.measurableTarget]) || "",
+    active: _optionalChain([goal, 'optionalAccess', _15 => _15.active]) !== false,
+    ...goal,
+    type,
+    tracking,
+  };
+}; exports.normalizeGoalObject = normalizeGoalObject;
+
+ const normalizeGoals = (goals = []) => (goals || []).map((goal, idx) => exports.normalizeGoalObject.call(void 0, goal, idx)); exports.normalizeGoals = normalizeGoals;
+
+ const daysUntil = (dateStr) => {
+  if (!dateStr) return 9999;
+  const target = new Date(`${dateStr}T12:00:00`).getTime();
+  if (Number.isNaN(target)) return 9999;
+  return Math.floor((target - Date.now()) / 86400000);
+}; exports.daysUntil = daysUntil;
+
+ const getGoalBuckets = (goals = []) => {
+  const normalized = exports.normalizeGoals.call(void 0, goals);
+  const active = normalized.filter((goal) => goal.active).sort((a, b) => a.priority - b.priority);
+  const timeBound = active.filter((goal) => goal.type === "time_bound");
+  const ongoing = active.filter((goal) => goal.type === "ongoing");
+  return { normalized, active, timeBound, ongoing };
+}; exports.getGoalBuckets = getGoalBuckets;
+
+ const getActiveTimeBoundGoal = (goals = []) => {
+  const { timeBound } = exports.getGoalBuckets.call(void 0, goals);
+  return (timeBound || [])
+    .map((goal) => ({ ...goal, days: exports.daysUntil.call(void 0, goal.targetDate) }))
+    .filter((goal) => Number.isFinite(goal.days))
+    .sort((a, b) => a.days - b.days)[0] || null;
+}; exports.getActiveTimeBoundGoal = getActiveTimeBoundGoal;
+
+const buildCanonicalUserProfile = ({
+  primaryGoal,
+  personalization = {},
+  legacyUserProfile = {},
+  profileDefaults = {},
+} = {}) => {
+  const profile = _optionalChain([personalization, 'optionalAccess', _16 => _16.profile]) || {};
+  const settings = _optionalChain([personalization, 'optionalAccess', _17 => _17.settings]) || {};
+  const trainingPreferences = _optionalChain([settings, 'optionalAccess', _18 => _18.trainingPreferences]) || {};
+  const nutritionPreferenceState = _optionalChain([personalization, 'optionalAccess', _19 => _19.nutritionPreferenceState]) || {};
+  const environmentConfig = _optionalChain([personalization, 'optionalAccess', _20 => _20.environmentConfig]) || {};
+  const coachMemory = _optionalChain([personalization, 'optionalAccess', _21 => _21.coachMemory]) || {};
+  const homePresetEquipment = _optionalChain([environmentConfig, 'optionalAccess', _22 => _22.presets, 'optionalAccess', _23 => _23.Home, 'optionalAccess', _24 => _24.equipment]) || [];
+
+  return {
+    ...DEFAULT_CANONICAL_USER_PROFILE,
+    name: pickFirstNonEmpty(_optionalChain([profile, 'optionalAccess', _25 => _25.name]), _optionalChain([profileDefaults, 'optionalAccess', _26 => _26.name]), DEFAULT_CANONICAL_USER_PROFILE.name),
+    primaryGoalKey: _optionalChain([legacyUserProfile, 'optionalAccess', _27 => _27.primary_goal])
+      || CATEGORY_TO_PRIMARY_GOAL[_optionalChain([primaryGoal, 'optionalAccess', _28 => _28.category])]
+      || DEFAULT_CANONICAL_USER_PROFILE.primaryGoalKey,
+    experienceLevel: pickFirstNonEmpty(
+      _optionalChain([legacyUserProfile, 'optionalAccess', _29 => _29.experience_level]),
+      _optionalChain([profile, 'optionalAccess', _30 => _30.estimatedFitnessLevel]),
+      DEFAULT_CANONICAL_USER_PROFILE.experienceLevel
+    ),
+    fitnessLevel: pickFirstNonEmpty(
+      _optionalChain([personalization, 'optionalAccess', _31 => _31.fitnessSignals, 'optionalAccess', _32 => _32.fitnessLevel]),
+      _optionalChain([profile, 'optionalAccess', _33 => _33.fitnessLevel]),
+      _optionalChain([profile, 'optionalAccess', _34 => _34.estimatedFitnessLevel]),
+      DEFAULT_CANONICAL_USER_PROFILE.fitnessLevel
+    ),
+    daysPerWeek: clampMinInt(_optionalChain([legacyUserProfile, 'optionalAccess', _35 => _35.days_per_week]), DEFAULT_CANONICAL_USER_PROFILE.daysPerWeek),
+    sessionLength: pickFirstNonEmpty(
+      _optionalChain([legacyUserProfile, 'optionalAccess', _36 => _36.session_length]),
+      _optionalChain([environmentConfig, 'optionalAccess', _37 => _37.base, 'optionalAccess', _38 => _38.time]),
+      DEFAULT_CANONICAL_USER_PROFILE.sessionLength
+    ),
+    equipmentAccess: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([legacyUserProfile, 'optionalAccess', _39 => _39.equipment_access]) || homePresetEquipment),
+    constraints: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([legacyUserProfile, 'optionalAccess', _40 => _40.constraints]) || []),
+    scheduleConstraints: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([coachMemory, 'optionalAccess', _41 => _41.scheduleConstraints]) || []),
+    preferences: {
+      coachingTone: pickFirstNonEmpty(_optionalChain([profile, 'optionalAccess', _42 => _42.preferredCoachingTone]), DEFAULT_CANONICAL_USER_PROFILE.preferences.coachingTone),
+      trainingStyle: pickFirstNonEmpty(_optionalChain([profile, 'optionalAccess', _43 => _43.preferredTrainingStyle]), DEFAULT_CANONICAL_USER_PROFILE.preferences.trainingStyle),
+      goalMix: pickFirstNonEmpty(_optionalChain([profile, 'optionalAccess', _44 => _44.goalMix]), DEFAULT_CANONICAL_USER_PROFILE.preferences.goalMix),
+      preferredEnvironments: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([profile, 'optionalAccess', _45 => _45.preferredEnvironments]) || []),
+      defaultEnvironment: pickFirstNonEmpty(
+        _optionalChain([trainingPreferences, 'optionalAccess', _46 => _46.defaultEnvironment]),
+        _optionalChain([environmentConfig, 'optionalAccess', _47 => _47.defaultMode]),
+        DEFAULT_CANONICAL_USER_PROFILE.preferences.defaultEnvironment
+      ),
+      intensityPreference: pickFirstNonEmpty(
+        _optionalChain([trainingPreferences, 'optionalAccess', _48 => _48.intensityPreference]),
+        DEFAULT_CANONICAL_USER_PROFILE.preferences.intensityPreference
+      ),
+      nutritionStyle: pickFirstNonEmpty(
+        _optionalChain([nutritionPreferenceState, 'optionalAccess', _49 => _49.style]),
+        DEFAULT_CANONICAL_USER_PROFILE.preferences.nutritionStyle
+      ),
+      preferredMeals: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([nutritionPreferenceState, 'optionalAccess', _50 => _50.preferredMeals]) || []),
+    },
+  };
+};
+
+const buildCanonicalGoalState = ({
+  primaryGoal = null,
+  activeTimeBoundGoal = null,
+  goalBuckets = {},
+  personalization = {},
+} = {}) => {
+  const storedGoalState = _optionalChain([personalization, 'optionalAccess', _51 => _51.goalState]) || {};
+  const priorityOrder = (_optionalChain([goalBuckets, 'optionalAccess', _52 => _52.active]) || []).map((goal) => _optionalChain([goal, 'optionalAccess', _53 => _53.name])).filter(Boolean);
+
+  return {
+    ...DEFAULT_CANONICAL_GOAL_STATE,
+    ...storedGoalState,
+    primaryGoal: _optionalChain([primaryGoal, 'optionalAccess', _54 => _54.name]) || _optionalChain([storedGoalState, 'optionalAccess', _55 => _55.primaryGoal]) || DEFAULT_CANONICAL_GOAL_STATE.primaryGoal,
+    primaryGoalCategory: _optionalChain([primaryGoal, 'optionalAccess', _56 => _56.category]) || _optionalChain([storedGoalState, 'optionalAccess', _57 => _57.priority]) || DEFAULT_CANONICAL_GOAL_STATE.primaryGoalCategory,
+    priority: _optionalChain([primaryGoal, 'optionalAccess', _58 => _58.category]) || _optionalChain([storedGoalState, 'optionalAccess', _59 => _59.priority]) || DEFAULT_CANONICAL_GOAL_STATE.priority,
+    priorityOrder: priorityOrder.length ? priorityOrder.join(" > ") : (_optionalChain([storedGoalState, 'optionalAccess', _60 => _60.priorityOrder]) || DEFAULT_CANONICAL_GOAL_STATE.priorityOrder),
+    deadline: _optionalChain([activeTimeBoundGoal, 'optionalAccess', _61 => _61.targetDate]) || _optionalChain([storedGoalState, 'optionalAccess', _62 => _62.deadline]) || DEFAULT_CANONICAL_GOAL_STATE.deadline,
+    planStartDate: _optionalChain([storedGoalState, 'optionalAccess', _63 => _63.planStartDate]) || DEFAULT_CANONICAL_GOAL_STATE.planStartDate,
+    milestones: _optionalChain([storedGoalState, 'optionalAccess', _64 => _64.milestones]) || DEFAULT_CANONICAL_GOAL_STATE.milestones,
+    confidence: Number.isFinite(Number(_optionalChain([storedGoalState, 'optionalAccess', _65 => _65.confidence])))
+      ? Number(storedGoalState.confidence)
+      : DEFAULT_CANONICAL_GOAL_STATE.confidence,
+  };
+};
+
+ const deriveCanonicalAthleteState = ({
+  goals = [],
+  personalization = {},
+  profileDefaults = {},
+} = {}) => {
+  const normalizedGoals = exports.normalizeGoals.call(void 0, goals);
+  const goalBuckets = exports.getGoalBuckets.call(void 0, normalizedGoals);
+  const activeTimeBoundGoal = exports.getActiveTimeBoundGoal.call(void 0, goalBuckets.active);
+  const primaryGoal = goalBuckets.active[0] || null;
+  const legacyUserProfile = _optionalChain([personalization, 'optionalAccess', _66 => _66.userGoalProfile]) || {};
+  const userProfile = buildCanonicalUserProfile({
+    primaryGoal,
+    personalization,
+    legacyUserProfile,
+    profileDefaults,
+  });
+  const goalState = buildCanonicalGoalState({
+    primaryGoal,
+    activeTimeBoundGoal,
+    goalBuckets,
+    personalization,
+  });
+
+  return {
+    version: exports.CANONICAL_ATHLETE_VERSION,
+    goals: normalizedGoals,
+    goalBuckets,
+    activeTimeBoundGoal,
+    primaryGoal,
+    userProfile,
+    goalState,
+    legacyCompatibility: {
+      deprecatedInputPaths: [...exports.LEGACY_GOAL_PROFILE_PATHS],
+    },
+  };
+}; exports.deriveCanonicalAthleteState = deriveCanonicalAthleteState;
+
+ const buildLegacyGoalProfileCompatibilityFields = ({
+  canonicalAthlete = null,
+  personalization = {},
+  userProfileOverrides = {},
+  goalStateOverrides = {},
+} = {}) => {
+  const canonicalUserProfile = _optionalChain([canonicalAthlete, 'optionalAccess', _67 => _67.userProfile]) || DEFAULT_CANONICAL_USER_PROFILE;
+  const canonicalGoalState = _optionalChain([canonicalAthlete, 'optionalAccess', _68 => _68.goalState]) || DEFAULT_CANONICAL_GOAL_STATE;
+  const existingUserGoalProfile = _optionalChain([personalization, 'optionalAccess', _69 => _69.userGoalProfile]) || {};
+  const existingGoalState = _optionalChain([personalization, 'optionalAccess', _70 => _70.goalState]) || {};
+
+  return {
+    userGoalProfile: {
+      ...existingUserGoalProfile,
+      primary_goal: _optionalChain([canonicalUserProfile, 'optionalAccess', _71 => _71.primaryGoalKey]) || _optionalChain([existingUserGoalProfile, 'optionalAccess', _72 => _72.primary_goal]) || "",
+      experience_level: _optionalChain([canonicalUserProfile, 'optionalAccess', _73 => _73.experienceLevel]) || _optionalChain([existingUserGoalProfile, 'optionalAccess', _74 => _74.experience_level]) || DEFAULT_CANONICAL_USER_PROFILE.experienceLevel,
+      days_per_week: clampMinInt(
+        _optionalChain([canonicalUserProfile, 'optionalAccess', _75 => _75.daysPerWeek]),
+        _optionalChain([existingUserGoalProfile, 'optionalAccess', _76 => _76.days_per_week]) || DEFAULT_CANONICAL_USER_PROFILE.daysPerWeek
+      ),
+      session_length: _optionalChain([canonicalUserProfile, 'optionalAccess', _77 => _77.sessionLength]) || _optionalChain([existingUserGoalProfile, 'optionalAccess', _78 => _78.session_length]) || DEFAULT_CANONICAL_USER_PROFILE.sessionLength,
+      equipment_access: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([canonicalUserProfile, 'optionalAccess', _79 => _79.equipmentAccess]) || _optionalChain([existingUserGoalProfile, 'optionalAccess', _80 => _80.equipment_access]) || []),
+      constraints: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([canonicalUserProfile, 'optionalAccess', _81 => _81.constraints]) || _optionalChain([existingUserGoalProfile, 'optionalAccess', _82 => _82.constraints]) || []),
+      ...userProfileOverrides,
+    },
+    goalState: {
+      ...existingGoalState,
+      primaryGoal: _optionalChain([canonicalGoalState, 'optionalAccess', _83 => _83.primaryGoal]) || _optionalChain([existingGoalState, 'optionalAccess', _84 => _84.primaryGoal]) || "",
+      priority: _optionalChain([canonicalGoalState, 'optionalAccess', _85 => _85.priority]) || _optionalChain([existingGoalState, 'optionalAccess', _86 => _86.priority]) || DEFAULT_CANONICAL_GOAL_STATE.priority,
+      priorityOrder: _optionalChain([canonicalGoalState, 'optionalAccess', _87 => _87.priorityOrder]) || _optionalChain([existingGoalState, 'optionalAccess', _88 => _88.priorityOrder]) || DEFAULT_CANONICAL_GOAL_STATE.priorityOrder,
+      deadline: _optionalChain([canonicalGoalState, 'optionalAccess', _89 => _89.deadline]) || _optionalChain([existingGoalState, 'optionalAccess', _90 => _90.deadline]) || DEFAULT_CANONICAL_GOAL_STATE.deadline,
+      planStartDate: _optionalChain([canonicalGoalState, 'optionalAccess', _91 => _91.planStartDate]) || _optionalChain([existingGoalState, 'optionalAccess', _92 => _92.planStartDate]) || DEFAULT_CANONICAL_GOAL_STATE.planStartDate,
+      milestones: _optionalChain([canonicalGoalState, 'optionalAccess', _93 => _93.milestones]) || _optionalChain([existingGoalState, 'optionalAccess', _94 => _94.milestones]) || DEFAULT_CANONICAL_GOAL_STATE.milestones,
+      confidence: Number.isFinite(Number(_optionalChain([canonicalGoalState, 'optionalAccess', _95 => _95.confidence])))
+        ? Number(canonicalGoalState.confidence)
+        : (Number.isFinite(Number(_optionalChain([existingGoalState, 'optionalAccess', _96 => _96.confidence]))) ? Number(existingGoalState.confidence) : DEFAULT_CANONICAL_GOAL_STATE.confidence),
+      ...goalStateOverrides,
+    },
+  };
+}; exports.buildLegacyGoalProfileCompatibilityFields = buildLegacyGoalProfileCompatibilityFields;
+
+ const withLegacyGoalProfileCompatibility = ({
+  personalization = {},
+  canonicalAthlete = null,
+  userProfileOverrides = {},
+  goalStateOverrides = {},
+} = {}) => {
+  const compatibilityFields = exports.buildLegacyGoalProfileCompatibilityFields.call(void 0, {
+    canonicalAthlete,
+    personalization,
+    userProfileOverrides,
+    goalStateOverrides,
+  });
+
+  return {
+    ...personalization,
+    ...compatibilityFields,
+  };
+}; exports.withLegacyGoalProfileCompatibility = withLegacyGoalProfileCompatibility;
+
+  },
+  "src/services/provenance-service.js": function(require, module, exports) {
+"use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }var _collectionutilsjs = require('../utils/collection-utils.js');
+
+ const PROVENANCE_VERSION = 1; exports.PROVENANCE_VERSION = PROVENANCE_VERSION;
+
+ const PROVENANCE_ACTORS = {
+  user: "user",
+  deterministicEngine: "deterministic_engine",
+  aiInterpretation: "ai_interpretation",
+  migration: "migration",
+  fallback: "fallback",
+}; exports.PROVENANCE_ACTORS = PROVENANCE_ACTORS;
+
+const VALID_ACTORS = new Set(Object.values(exports.PROVENANCE_ACTORS));
+const VALID_CONFIDENCE_LEVELS = new Set(["low", "medium", "high"]);
+
+const clonePlainValue = (value) => {
+  if (value == null) return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (e) {
+    return value;
+  }
+};
+
+const sanitizeText = (value = "", maxLength = 200) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+
+ const buildProvenanceEvent = ({
+  actor = exports.PROVENANCE_ACTORS.deterministicEngine,
+  trigger = "",
+  mutationType = "",
+  revisionReason = "",
+  sourceInputs = [],
+  confidence = null,
+  timestamp = Date.now(),
+  details = {},
+} = {}) => ({
+  version: exports.PROVENANCE_VERSION,
+  actor: VALID_ACTORS.has(actor) ? actor : exports.PROVENANCE_ACTORS.deterministicEngine,
+  trigger: sanitizeText(trigger, 80) || "unknown_trigger",
+  mutationType: sanitizeText(mutationType, 80) || "state_update",
+  revisionReason: sanitizeText(revisionReason, 120) || "",
+  sourceInputs: _collectionutilsjs.dedupeStrings.call(void 0, (sourceInputs || []).map((value) => sanitizeText(value, 120))).slice(0, 8),
+  confidence: VALID_CONFIDENCE_LEVELS.has(confidence) ? confidence : null,
+  timestamp: Number(timestamp) || Date.now(),
+  details: clonePlainValue(details || {}),
+}); exports.buildProvenanceEvent = buildProvenanceEvent;
+
+ const normalizeProvenanceEvent = (event = null, fallbacks = {}) => {
+  if (!event || typeof event !== "object") {
+    return exports.buildProvenanceEvent.call(void 0, fallbacks);
+  }
+  return exports.buildProvenanceEvent.call(void 0, {
+    actor: _optionalChain([event, 'optionalAccess', _ => _.actor]) || _optionalChain([fallbacks, 'optionalAccess', _2 => _2.actor]),
+    trigger: _optionalChain([event, 'optionalAccess', _3 => _3.trigger]) || _optionalChain([fallbacks, 'optionalAccess', _4 => _4.trigger]),
+    mutationType: _optionalChain([event, 'optionalAccess', _5 => _5.mutationType]) || _optionalChain([fallbacks, 'optionalAccess', _6 => _6.mutationType]),
+    revisionReason: _optionalChain([event, 'optionalAccess', _7 => _7.revisionReason]) || _optionalChain([event, 'optionalAccess', _8 => _8.reason]) || _optionalChain([fallbacks, 'optionalAccess', _9 => _9.revisionReason]),
+    sourceInputs: _optionalChain([event, 'optionalAccess', _10 => _10.sourceInputs]) || _optionalChain([fallbacks, 'optionalAccess', _11 => _11.sourceInputs]) || [],
+    confidence: _optionalChain([event, 'optionalAccess', _12 => _12.confidence]) || _optionalChain([fallbacks, 'optionalAccess', _13 => _13.confidence]) || null,
+    timestamp: _optionalChain([event, 'optionalAccess', _14 => _14.timestamp]) || _optionalChain([event, 'optionalAccess', _15 => _15.capturedAt]) || _optionalChain([event, 'optionalAccess', _16 => _16.updatedAt]) || _optionalChain([fallbacks, 'optionalAccess', _17 => _17.timestamp]) || Date.now(),
+    details: {
+      ...(clonePlainValue(_optionalChain([event, 'optionalAccess', _18 => _18.details]) || {}) || {}),
+      ...(clonePlainValue(_optionalChain([fallbacks, 'optionalAccess', _19 => _19.details]) || {}) || {}),
+    },
+  });
+}; exports.normalizeProvenanceEvent = normalizeProvenanceEvent;
+
+ const buildProvenanceSummary = ({ keyDrivers = [], events = [], fallbackSummary = "" } = {}) => {
+  const driverText = _collectionutilsjs.dedupeStrings.call(void 0, (keyDrivers || []).map((value) => sanitizeText(value, 120))).slice(0, 3);
+  if (driverText.length > 0) {
+    return `Based on ${driverText.join(", ")}.`;
+  }
+  const primaryEvent = (events || []).find(Boolean) || null;
+  if (_optionalChain([primaryEvent, 'optionalAccess', _20 => _20.revisionReason])) {
+    return sanitizeText(primaryEvent.revisionReason, 200);
+  }
+  return sanitizeText(fallbackSummary, 200);
+}; exports.buildProvenanceSummary = buildProvenanceSummary;
+
+ const buildStructuredProvenance = ({
+  keyDrivers = [],
+  events = [],
+  summary = "",
+} = {}) => {
+  const normalizedEvents = (events || []).map((event) => exports.normalizeProvenanceEvent.call(void 0, event)).filter(Boolean);
+  const normalizedDrivers = _collectionutilsjs.dedupeStrings.call(void 0, (keyDrivers || []).map((value) => sanitizeText(value, 120))).slice(0, 8);
+  const updatedAt = normalizedEvents.reduce((max, event) => Math.max(max, Number(_optionalChain([event, 'optionalAccess', _21 => _21.timestamp]) || 0) || 0), 0) || Date.now();
+
+  return {
+    version: exports.PROVENANCE_VERSION,
+    summary: exports.buildProvenanceSummary.call(void 0, { keyDrivers: normalizedDrivers, events: normalizedEvents, fallbackSummary: summary }),
+    keyDrivers: normalizedDrivers,
+    events: normalizedEvents,
+    updatedAt,
+  };
+}; exports.buildStructuredProvenance = buildStructuredProvenance;
+
+ const normalizeStructuredProvenance = (provenance = null, fallbacks = {}) => {
+  if (_optionalChain([provenance, 'optionalAccess', _22 => _22.version]) === exports.PROVENANCE_VERSION && Array.isArray(_optionalChain([provenance, 'optionalAccess', _23 => _23.events]))) {
+    return exports.buildStructuredProvenance.call(void 0, {
+      keyDrivers: _optionalChain([provenance, 'optionalAccess', _24 => _24.keyDrivers]) || [],
+      events: _optionalChain([provenance, 'optionalAccess', _25 => _25.events]) || [],
+      summary: _optionalChain([provenance, 'optionalAccess', _26 => _26.summary]) || "",
+    });
+  }
+  const fallbackEvents = Array.isArray(_optionalChain([fallbacks, 'optionalAccess', _27 => _27.events])) ? fallbacks.events : [];
+  const legacyEvents = Array.isArray(_optionalChain([provenance, 'optionalAccess', _28 => _28.events]))
+    ? provenance.events
+    : provenance
+    ? [exports.normalizeProvenanceEvent.call(void 0, provenance, fallbacks)]
+    : [];
+  return exports.buildStructuredProvenance.call(void 0, {
+    keyDrivers: _optionalChain([provenance, 'optionalAccess', _29 => _29.keyDrivers]) || _optionalChain([fallbacks, 'optionalAccess', _30 => _30.keyDrivers]) || [],
+    events: [...legacyEvents, ...fallbackEvents].filter(Boolean),
+    summary: _optionalChain([provenance, 'optionalAccess', _31 => _31.summary]) || _optionalChain([fallbacks, 'optionalAccess', _32 => _32.summary]) || "",
+  });
+}; exports.normalizeStructuredProvenance = normalizeStructuredProvenance;
+
+ const buildLegacyProvenanceAdjustmentView = (events = []) => (
+  (events || []).map((event) => ({
+    type: _optionalChain([event, 'optionalAccess', _33 => _33.trigger]) || "unknown_trigger",
+    actor: _optionalChain([event, 'optionalAccess', _34 => _34.actor]) || exports.PROVENANCE_ACTORS.deterministicEngine,
+    reason: _optionalChain([event, 'optionalAccess', _35 => _35.revisionReason]) || "",
+    sourceInputs: clonePlainValue(_optionalChain([event, 'optionalAccess', _36 => _36.sourceInputs]) || []),
+    mutationType: _optionalChain([event, 'optionalAccess', _37 => _37.mutationType]) || "",
+    timestamp: _optionalChain([event, 'optionalAccess', _38 => _38.timestamp]) || Date.now(),
+  }))
+); exports.buildLegacyProvenanceAdjustmentView = buildLegacyProvenanceAdjustmentView;
+
+ const appendProvenanceSidecar = (container = {}, bucket = "", key = "", provenance = null) => ({
+  ...(container || {}),
+  provenance: {
+    ...((container || {}).provenance || {}),
+    [bucket]: {
+      ...(_optionalChain([((container || {}).provenance || {}), 'optionalAccess', _39 => _39[bucket]]) || {}),
+      [String(key || "")]: provenance,
+    },
+  },
+}); exports.appendProvenanceSidecar = appendProvenanceSidecar;
+
+ const describeProvenanceRecord = (provenance = null, fallbackSummary = "") => (
+  _optionalChain([exports.normalizeStructuredProvenance.call(void 0, provenance, { summary: fallbackSummary }), 'optionalAccess', _40 => _40.summary]) || sanitizeText(fallbackSummary, 200)
+); exports.describeProvenanceRecord = describeProvenanceRecord;
+
+  },
   "src/modules-planning.js": function(require, module, exports) {
 "use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _nullishCoalesce(lhs, rhsFn) { if (lhs != null) { return lhs; } else { return rhsFn(); } } function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
 
@@ -1566,654 +2015,6 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
 }; exports.generateTodayPlan = generateTodayPlan;
 
   },
-  "src/modules-auth-storage.js": function(require, module, exports) {
-"use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _nullishCoalesce(lhs, rhsFn) { if (lhs != null) { return lhs; } else { return rhsFn(); } } function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
-
-
-
-
-
-var _persistenceadapterservicejs = require('./services/persistence-adapter-service.js');
-
- const SB_ROW = "trainer_v1"; exports.SB_ROW = SB_ROW;
- const LOCAL_CACHE_KEY = "trainer_local_cache_v4"; exports.LOCAL_CACHE_KEY = LOCAL_CACHE_KEY;
- const AUTH_CACHE_KEY = "trainer_auth_session_v1"; exports.AUTH_CACHE_KEY = AUTH_CACHE_KEY;
- const AUTH_REQUIRED = "AUTH_REQUIRED"; exports.AUTH_REQUIRED = AUTH_REQUIRED;
- const AUTH_TRANSIENT = "AUTH_TRANSIENT"; exports.AUTH_TRANSIENT = AUTH_TRANSIENT;
- const AUTH_PROVIDER_UNAVAILABLE = "AUTH_PROVIDER_UNAVAILABLE"; exports.AUTH_PROVIDER_UNAVAILABLE = AUTH_PROVIDER_UNAVAILABLE;
- const AUTH_DATA_INCOMPATIBLE = "AUTH_DATA_INCOMPATIBLE"; exports.AUTH_DATA_INCOMPATIBLE = AUTH_DATA_INCOMPATIBLE;
-
- const STORAGE_STATUS_REASONS = {
-  notSignedIn: "not_signed_in",
-  signedOut: "signed_out",
-  authRequired: "auth_required",
-  transient: "sync_temporarily_failed",
-  providerUnavailable: "provider_unavailable",
-  dataIncompatible: "data_incompatible",
-  synced: "synced",
-  unknown: "unknown",
-}; exports.STORAGE_STATUS_REASONS = STORAGE_STATUS_REASONS;
-
- const buildStorageStatus = ({
-  mode = "local",
-  label = "LOCAL MODE",
-  reason = exports.STORAGE_STATUS_REASONS.unknown,
-  detail = "",
-} = {}) => ({
-  mode,
-  label,
-  reason,
-  detail,
-}); exports.buildStorageStatus = buildStorageStatus;
-
- const classifyStorageError = (error) => {
-  const message = String(_optionalChain([error, 'optionalAccess', _ => _.message]) || error || "");
-  if (message === exports.AUTH_REQUIRED) {
-    return exports.buildStorageStatus.call(void 0, {
-      mode: "local",
-      label: "SIGN IN REQUIRED",
-      reason: exports.STORAGE_STATUS_REASONS.authRequired,
-      detail: "Your session expired or is no longer valid. Sign in again to resume cloud sync.",
-    });
-  }
-  if (message === exports.AUTH_TRANSIENT) {
-    return exports.buildStorageStatus.call(void 0, {
-      mode: "local",
-      label: "SYNC RETRYING",
-      reason: exports.STORAGE_STATUS_REASONS.transient,
-      detail: "Cloud sync failed temporarily. Local changes are still being kept safely.",
-    });
-  }
-  if (message === exports.AUTH_PROVIDER_UNAVAILABLE || /Missing Supabase|Malformed Supabase|anon key|Supabase URL/i.test(message)) {
-    return exports.buildStorageStatus.call(void 0, {
-      mode: "local",
-      label: "PROVIDER ERROR",
-      reason: exports.STORAGE_STATUS_REASONS.providerUnavailable,
-      detail: "Cloud sync provider is unavailable or misconfigured.",
-    });
-  }
-  if (message === exports.AUTH_DATA_INCOMPATIBLE || /data payload invalid|Cannot read properties|Unexpected token|JSON/i.test(message)) {
-    return exports.buildStorageStatus.call(void 0, {
-      mode: "local",
-      label: "DATA ERROR",
-      reason: exports.STORAGE_STATUS_REASONS.dataIncompatible,
-      detail: "Cloud data could not be read safely, so the app is using local data.",
-    });
-  }
-  return exports.buildStorageStatus.call(void 0, {
-    mode: "local",
-    label: "LOCAL MODE",
-    reason: exports.STORAGE_STATUS_REASONS.transient,
-    detail: "Cloud sync failed and the app safely fell back to local data.",
-  });
-}; exports.classifyStorageError = classifyStorageError;
-
- const decodeJwtPayload = (token) => {
-  try {
-    const [, payload = ""] = String(token || "").split(".");
-    if (!payload) return null;
-    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-    const json = atob(padded);
-    return JSON.parse(json);
-  } catch (e2) {
-    return null;
-  }
-}; exports.decodeJwtPayload = decodeJwtPayload;
-
- const getTokenExpiryMs = (token) => {
-  const payload = exports.decodeJwtPayload.call(void 0, token);
-  if (!_optionalChain([payload, 'optionalAccess', _2 => _2.exp])) return null;
-  return Number(payload.exp) * 1000;
-}; exports.getTokenExpiryMs = getTokenExpiryMs;
-
- const normalizeSession = (session, fallback = null) => {
-  if (!_optionalChain([session, 'optionalAccess', _3 => _3.access_token]) || !(_optionalChain([session, 'optionalAccess', _4 => _4.user, 'optionalAccess', _5 => _5.id]) || _optionalChain([fallback, 'optionalAccess', _6 => _6.user, 'optionalAccess', _7 => _7.id]))) return null;
-  const expiresAt = exports.getTokenExpiryMs.call(void 0, session.access_token) || Number(session.expires_at || 0) * 1000 || null;
-  return {
-    access_token: session.access_token,
-    refresh_token: session.refresh_token || _optionalChain([fallback, 'optionalAccess', _8 => _8.refresh_token]) || "",
-    user: session.user || _optionalChain([fallback, 'optionalAccess', _9 => _9.user]) || null,
-    expires_at: expiresAt ? Math.floor(expiresAt / 1000) : null,
-  };
-}; exports.normalizeSession = normalizeSession;
-
- function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePersonalization, normalizeGoals, DEFAULT_PERSONALIZATION, DEFAULT_MULTI_GOALS }) {
-  const rawSupabaseUrl = (typeof window !== "undefined" ? (window.__SUPABASE_URL || "") : "").trim();
-  const SB_URL = rawSupabaseUrl.replace(/\/+$/, "");
-  const SB_KEY = (typeof window !== "undefined" ? (window.__SUPABASE_ANON_KEY || "") : "").trim();
-  let hasValidSupabaseUrl = false;
-  try {
-    const parsed = new URL(SB_URL || "https://invalid.local");
-    hasValidSupabaseUrl = parsed.protocol === "https:" && !!parsed.hostname;
-  } catch (e3) {
-    hasValidSupabaseUrl = false;
-  }
-  const SB_CONFIG_ERROR = !SB_URL
-    ? "Missing Supabase URL. Set VITE_SUPABASE_URL."
-    : !hasValidSupabaseUrl
-    ? `Malformed Supabase URL: ${SB_URL}`
-    : !SB_KEY
-    ? "Missing Supabase anon key. Set VITE_SUPABASE_ANON_KEY."
-    : "";
-
-  const sbH = { "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + SB_KEY };
-  const sbUserHeaders = (token) => ({ "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + token });
-
-  const localLoad = () => {
-    try {
-      const raw = localStorage.getItem(exports.LOCAL_CACHE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e4) { return null; }
-  };
-
-  const localSave = (payload) => {
-    try { localStorage.setItem(exports.LOCAL_CACHE_KEY, JSON.stringify(payload)); } catch (e5) {}
-  };
-
-  const loadAuthSession = () => {
-    try {
-      const raw = localStorage.getItem(exports.AUTH_CACHE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e6) { return null; }
-  };
-
-  const saveAuthSession = (session) => {
-    try { localStorage.setItem(exports.AUTH_CACHE_KEY, JSON.stringify(session || null)); } catch (e7) {}
-  };
-  const authRequest = async (path, options = {}) => {
-    if (SB_CONFIG_ERROR) throw new Error(exports.AUTH_PROVIDER_UNAVAILABLE);
-    const res = await safeFetchWithTimeout(`${SB_URL}/auth/v1/${path}`, {
-      ...options,
-      headers: { "Content-Type": "application/json", "apikey": SB_KEY, ...(options.headers || {}) }
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.status === 204 ? {} : res.json();
-  };
-
-  const refreshSession = async (refreshToken, fallbackSession = null) => {
-    if (!refreshToken) return null;
-    try {
-      const data = await authRequest("token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: refreshToken }) });
-      const normalized = exports.normalizeSession.call(void 0, { ...data, refresh_token: _optionalChain([data, 'optionalAccess', _10 => _10.refresh_token]) || refreshToken }, fallbackSession);
-      if (!_optionalChain([normalized, 'optionalAccess', _11 => _11.access_token]) || !_optionalChain([normalized, 'optionalAccess', _12 => _12.user, 'optionalAccess', _13 => _13.id])) return null;
-      return normalized;
-    } catch (e) {
-      logDiag("auth.refresh.failed", _optionalChain([e, 'optionalAccess', _14 => _14.message]) || "unknown");
-      return null;
-    }
-  };
-
-  const ensureValidSession = async (session, { reason = "unspecified" } = {}) => {
-    const normalized = exports.normalizeSession.call(void 0, session);
-    if (!_optionalChain([normalized, 'optionalAccess', _15 => _15.access_token]) || !_optionalChain([normalized, 'optionalAccess', _16 => _16.user, 'optionalAccess', _17 => _17.id])) {
-      logDiag("auth.ensure.missing", reason);
-      return { session: null, status: "missing" };
-    }
-    const now = Date.now();
-    const expiresAtMs = normalized.expires_at ? Number(normalized.expires_at) * 1000 : exports.getTokenExpiryMs.call(void 0, normalized.access_token);
-    if (expiresAtMs && expiresAtMs - now > 120000) {
-      return { session: normalized, status: "ok" };
-    }
-    if (!_optionalChain([normalized, 'optionalAccess', _18 => _18.refresh_token])) {
-      logDiag("auth.ensure.no_refresh", reason);
-      return { session: null, status: "refresh_missing" };
-    }
-    try {
-      const refreshed = await refreshSession(normalized.refresh_token, normalized);
-      if (_optionalChain([refreshed, 'optionalAccess', _19 => _19.access_token])) {
-        logDiag("auth.ensure.refreshed", reason);
-        return { session: exports.normalizeSession.call(void 0, refreshed, normalized), status: "refreshed" };
-      }
-      logDiag("auth.ensure.refresh_failed", reason);
-      return { session: null, status: "refresh_failed" };
-    } catch (e) {
-      logDiag("auth.ensure.transient", reason, _optionalChain([e, 'optionalAccess', _20 => _20.message]) || "unknown");
-      return { session: normalized, status: "transient" };
-    }
-  };
-
-  const handleSignIn = async ({ authEmail, authPassword, setAuthError, setAuthSession }) => {
-    setAuthError("");
-    try {
-      const data = await authRequest("token?grant_type=password", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
-      const session = exports.normalizeSession.call(void 0, data);
-      if (!_optionalChain([session, 'optionalAccess', _21 => _21.access_token]) || !_optionalChain([session, 'optionalAccess', _22 => _22.user, 'optionalAccess', _23 => _23.id])) throw new Error("Invalid auth response");
-      setAuthSession(session);
-      saveAuthSession(session);
-      logDiag("auth.signin.success", session.user.id);
-    } catch (e) {
-      if (_optionalChain([e, 'optionalAccess', _24 => _24.message]) === exports.AUTH_PROVIDER_UNAVAILABLE) {
-        setAuthError("Cloud auth provider is unavailable or misconfigured.");
-        return;
-      }
-      setAuthError("Sign in failed. Check email/password.");
-    }
-  };
-
-  const handleSignUp = async ({ authEmail, authPassword, setAuthError, setAuthSession }) => {
-    setAuthError("");
-    try {
-      const data = await authRequest("signup", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
-      if (_optionalChain([data, 'optionalAccess', _25 => _25.access_token]) && _optionalChain([data, 'optionalAccess', _26 => _26.user])) {
-        const session = exports.normalizeSession.call(void 0, data);
-        setAuthSession(session);
-        saveAuthSession(session);
-      } else {
-        setAuthError("Account created. Confirm email, then sign in.");
-      }
-    } catch (e) {
-      if (_optionalChain([e, 'optionalAccess', _27 => _27.message]) === exports.AUTH_PROVIDER_UNAVAILABLE) {
-        setAuthError("Cloud auth provider is unavailable or misconfigured.");
-        return;
-      }
-      setAuthError("Sign up failed.");
-    }
-  };
-
-  const handleSignOut = async ({ authSession, setAuthSession, setStorageStatus }) => {
-    try {
-      if (_optionalChain([authSession, 'optionalAccess', _28 => _28.access_token])) {
-        await authRequest("logout", { method: "POST", headers: { "Authorization": `Bearer ${authSession.access_token}` } });
-      }
-    } catch (e8) {}
-    setAuthSession(null);
-    saveAuthSession(null);
-    setStorageStatus(exports.buildStorageStatus.call(void 0, {
-      mode: "local",
-      label: "SIGNED OUT",
-      reason: exports.STORAGE_STATUS_REASONS.signedOut,
-      detail: "You are signed out, so cloud sync is paused until you sign back in.",
-    }));
-  };
-
-  const withFreshSession = async ({ authSession, setAuthSession, reason }) => {
-    const ensured = await ensureValidSession(authSession, { reason });
-    const validSession = _optionalChain([ensured, 'optionalAccess', _29 => _29.session]) || null;
-    if (_optionalChain([ensured, 'optionalAccess', _30 => _30.status]) === "refreshed" && _optionalChain([validSession, 'optionalAccess', _31 => _31.access_token]) !== _optionalChain([authSession, 'optionalAccess', _32 => _32.access_token])) {
-      if (setAuthSession) setAuthSession(validSession);
-      saveAuthSession(validSession);
-    }
-    return { ensured, validSession };
-  };
-
-  const authFetchWithRetry = async ({ path, method = "GET", body, authSession, setAuthSession, reason = "rest_call" }) => {
-    if (SB_CONFIG_ERROR) throw new Error(exports.AUTH_PROVIDER_UNAVAILABLE);
-    const { ensured, validSession } = await withFreshSession({ authSession, setAuthSession, reason });
-    if (!_optionalChain([validSession, 'optionalAccess', _33 => _33.user, 'optionalAccess', _34 => _34.id]) || !_optionalChain([validSession, 'optionalAccess', _35 => _35.access_token])) {
-      if (_optionalChain([ensured, 'optionalAccess', _36 => _36.status]) === "transient") throw new Error(exports.AUTH_TRANSIENT);
-      throw new Error(exports.AUTH_REQUIRED);
-    }
-    const request = async (sessionToUse) => safeFetchWithTimeout(`${SB_URL}/rest/v1/${path}`, {
-      method,
-      headers: { ...sbUserHeaders(sessionToUse.access_token), ...(method !== "GET" ? { "Prefer": "resolution=merge-duplicates" } : {}) },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
-    let res = await request(validSession);
-    if (res.status !== 401) return { res, sessionUsed: validSession };
-    logDiag("auth.rest.401", reason);
-    if (!_optionalChain([validSession, 'optionalAccess', _37 => _37.refresh_token])) throw new Error(exports.AUTH_REQUIRED);
-    const refreshed = await refreshSession(validSession.refresh_token, validSession);
-    if (!_optionalChain([refreshed, 'optionalAccess', _38 => _38.access_token])) throw new Error(exports.AUTH_REQUIRED);
-    if (setAuthSession) setAuthSession(refreshed);
-    saveAuthSession(refreshed);
-    res = await request(refreshed);
-    return { res, sessionUsed: refreshed };
-  };
-
-  const toFiniteNumber = (value) => {
-    if (value === "" || value === null || value === undefined) return null;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-
-  const toFiniteInteger = (value) => {
-    const parsed = toFiniteNumber(value);
-    return parsed === null ? null : Math.round(parsed);
-  };
-
-  const toJsonDate = (value) => {
-    const dateKey = String(value || "").split("T")[0];
-    return /^\d{4}-\d{2}-\d{2}$/.test(dateKey) ? dateKey : null;
-  };
-
-  const encodeCoachMemoryField = (value) => {
-    try {
-      return JSON.stringify(_nullishCoalesce(value, () => ( null)));
-    } catch (e9) {
-      return JSON.stringify(null);
-    }
-  };
-
-  const normalizeGoalRow = (goal = {}, idx = 0) => {
-    const targetValue = toFiniteNumber(_optionalChain([goal, 'optionalAccess', _39 => _39.targetValue]));
-    const currentValue = toFiniteNumber(_optionalChain([goal, 'optionalAccess', _40 => _40.currentValue]));
-    return {
-      id: _optionalChain([goal, 'optionalAccess', _41 => _41.id]) || undefined,
-      type: _optionalChain([goal, 'optionalAccess', _42 => _42.type]) || (_optionalChain([goal, 'optionalAccess', _43 => _43.targetDate]) ? "time_bound" : "ongoing"),
-      category: _optionalChain([goal, 'optionalAccess', _44 => _44.category]) || "running",
-      title: String(_optionalChain([goal, 'optionalAccess', _45 => _45.title]) || _optionalChain([goal, 'optionalAccess', _46 => _46.name]) || `Goal ${idx + 1}`),
-      target_value: targetValue,
-      current_value: currentValue,
-      target_date: toJsonDate(_optionalChain([goal, 'optionalAccess', _47 => _47.targetDate])),
-      priority: toFiniteInteger(_optionalChain([goal, 'optionalAccess', _48 => _48.priority])) || (idx + 1),
-      status: _optionalChain([goal, 'optionalAccess', _49 => _49.active]) === false ? "archived" : String(_optionalChain([goal, 'optionalAccess', _50 => _50.status]) || "active"),
-    };
-  };
-
-  const syncExercisePerformanceForDate = async ({ dateKey, rows = [], authSession, setAuthSession }) => {
-    const normalized = exports.normalizeSession.call(void 0, authSession);
-    const userId = _optionalChain([normalized, 'optionalAccess', _51 => _51.user, 'optionalAccess', _52 => _52.id]) || _optionalChain([authSession, 'optionalAccess', _53 => _53.user, 'optionalAccess', _54 => _54.id]);
-    const safeDateKey = toJsonDate(dateKey);
-    if (!userId || !safeDateKey) throw new Error(exports.AUTH_REQUIRED);
-
-    const sanitizedRows = (rows || []).map((row) => ({
-      user_id: userId,
-      exercise_name: String(_optionalChain([row, 'optionalAccess', _55 => _55.exercise_name]) || _optionalChain([row, 'optionalAccess', _56 => _56.exercise]) || "").trim(),
-      date: safeDateKey,
-      prescribed_weight: toFiniteNumber(_optionalChain([row, 'optionalAccess', _57 => _57.prescribed_weight])),
-      actual_weight: toFiniteNumber(_optionalChain([row, 'optionalAccess', _58 => _58.actual_weight])),
-      prescribed_reps: toFiniteInteger(_optionalChain([row, 'optionalAccess', _59 => _59.prescribed_reps])),
-      actual_reps: toFiniteInteger(_optionalChain([row, 'optionalAccess', _60 => _60.actual_reps])),
-      prescribed_sets: toFiniteInteger(_optionalChain([row, 'optionalAccess', _61 => _61.prescribed_sets])),
-      actual_sets: toFiniteInteger(_optionalChain([row, 'optionalAccess', _62 => _62.actual_sets])),
-      band_tension: _optionalChain([row, 'optionalAccess', _63 => _63.band_tension]) ? String(row.band_tension) : null,
-      bodyweight_only: Boolean(_optionalChain([row, 'optionalAccess', _64 => _64.bodyweight_only])),
-      feel_this_session: toFiniteInteger(_optionalChain([row, 'optionalAccess', _65 => _65.feel_this_session])),
-    })).filter((row) => row.exercise_name);
-
-    const { res: deleteRes } = await authFetchWithRetry({
-      path: `exercise_performance?user_id=eq.${userId}&date=eq.${safeDateKey}`,
-      method: "DELETE",
-      authSession,
-      setAuthSession,
-      reason: "sync_exercise_performance_delete",
-    });
-    if (!deleteRes.ok) throw new Error("Exercise performance delete failed");
-    if (!sanitizedRows.length) return;
-
-    const { res } = await authFetchWithRetry({
-      path: "exercise_performance",
-      method: "POST",
-      body: sanitizedRows,
-      authSession,
-      setAuthSession,
-      reason: "sync_exercise_performance_upsert",
-    });
-    if (!res.ok) throw new Error("Exercise performance upsert failed");
-  };
-
-  const syncSessionLogForDate = async ({ dateKey, entry = null, authSession, setAuthSession }) => {
-    const normalized = exports.normalizeSession.call(void 0, authSession);
-    const userId = _optionalChain([normalized, 'optionalAccess', _66 => _66.user, 'optionalAccess', _67 => _67.id]) || _optionalChain([authSession, 'optionalAccess', _68 => _68.user, 'optionalAccess', _69 => _69.id]);
-    const safeDateKey = toJsonDate(dateKey);
-    if (!userId || !safeDateKey) throw new Error(exports.AUTH_REQUIRED);
-
-    const { res: deleteRes } = await authFetchWithRetry({
-      path: `session_logs?user_id=eq.${userId}&date=eq.${safeDateKey}`,
-      method: "DELETE",
-      authSession,
-      setAuthSession,
-      reason: "sync_session_log_delete",
-    });
-    if (!deleteRes.ok) throw new Error("Session log delete failed");
-    if (!entry) return;
-
-    const sessionLogRow = {
-      user_id: userId,
-      date: safeDateKey,
-      completion_status: _optionalChain([entry, 'optionalAccess', _70 => _70.actualSession, 'optionalAccess', _71 => _71.status]) ? String(entry.actualSession.status) : (_optionalChain([entry, 'optionalAccess', _72 => _72.checkin, 'optionalAccess', _73 => _73.status]) ? String(entry.checkin.status) : null),
-      feel_rating: toFiniteInteger(_nullishCoalesce(_optionalChain([entry, 'optionalAccess', _74 => _74.feel]), () => ( _optionalChain([entry, 'optionalAccess', _75 => _75.checkin, 'optionalAccess', _76 => _76.feelRating])))),
-      note: _optionalChain([entry, 'optionalAccess', _77 => _77.notes]) ? String(entry.notes) : null,
-      distance_mi: toFiniteNumber(_optionalChain([entry, 'optionalAccess', _78 => _78.miles])),
-      duration_min: toFiniteNumber(_optionalChain([entry, 'optionalAccess', _79 => _79.runTime])),
-      avg_hr: toFiniteInteger(_optionalChain([entry, 'optionalAccess', _80 => _80.healthMetrics, 'optionalAccess', _81 => _81.avgHr])),
-      exercises: Array.isArray(_optionalChain([entry, 'optionalAccess', _82 => _82.strengthPerformance])) ? entry.strengthPerformance : [],
-    };
-
-    const { res } = await authFetchWithRetry({
-      path: "session_logs",
-      method: "POST",
-      body: sessionLogRow,
-      authSession,
-      setAuthSession,
-      reason: "sync_session_log_upsert",
-    });
-    if (!res.ok) throw new Error("Session log upsert failed");
-  };
-
-  const syncGoals = async ({ goals = [], authSession, setAuthSession }) => {
-    const normalized = exports.normalizeSession.call(void 0, authSession);
-    const userId = _optionalChain([normalized, 'optionalAccess', _83 => _83.user, 'optionalAccess', _84 => _84.id]) || _optionalChain([authSession, 'optionalAccess', _85 => _85.user, 'optionalAccess', _86 => _86.id]);
-    if (!userId) throw new Error(exports.AUTH_REQUIRED);
-
-    const { res: deleteRes } = await authFetchWithRetry({
-      path: `goals?user_id=eq.${userId}`,
-      method: "DELETE",
-      authSession,
-      setAuthSession,
-      reason: "sync_goals_delete",
-    });
-    if (!deleteRes.ok) throw new Error("Goals reset failed");
-
-    const normalizedGoals = (goals || []).map((goal, idx) => ({
-      user_id: userId,
-      ...normalizeGoalRow(goal, idx),
-    })).filter((goal) => goal.title);
-
-    if (!normalizedGoals.length) return;
-
-    const { res } = await authFetchWithRetry({
-      path: "goals",
-      method: "POST",
-      body: normalizedGoals,
-      authSession,
-      setAuthSession,
-      reason: "sync_goals_insert",
-    });
-    if (!res.ok) throw new Error("Goals insert failed");
-  };
-
-  const syncCoachMemory = async ({ personalization = {}, authSession, setAuthSession }) => {
-    const normalized = exports.normalizeSession.call(void 0, authSession);
-    const userId = _optionalChain([normalized, 'optionalAccess', _87 => _87.user, 'optionalAccess', _88 => _88.id]) || _optionalChain([authSession, 'optionalAccess', _89 => _89.user, 'optionalAccess', _90 => _90.id]);
-    if (!userId) throw new Error(exports.AUTH_REQUIRED);
-
-    const memory = _optionalChain([personalization, 'optionalAccess', _91 => _91.coachMemory]) || {};
-    const row = {
-      user_id: userId,
-      field_1: encodeCoachMemoryField({
-        wins: _optionalChain([memory, 'optionalAccess', _92 => _92.wins]) || [],
-        constraints: _optionalChain([memory, 'optionalAccess', _93 => _93.constraints]) || [],
-        failurePatterns: _optionalChain([memory, 'optionalAccess', _94 => _94.failurePatterns]) || [],
-        commonBarriers: _optionalChain([memory, 'optionalAccess', _95 => _95.commonBarriers]) || [],
-        preferredFoodPatterns: _optionalChain([memory, 'optionalAccess', _96 => _96.preferredFoodPatterns]) || [],
-      }),
-      field_2: encodeCoachMemoryField({
-        longTermMemory: _optionalChain([memory, 'optionalAccess', _97 => _97.longTermMemory]) || [],
-        compounding: _optionalChain([memory, 'optionalAccess', _98 => _98.compounding]) || {},
-        sundayReviews: _optionalChain([memory, 'optionalAccess', _99 => _99.sundayReviews]) || [],
-      }),
-      field_3: encodeCoachMemoryField({
-        pushResponse: _optionalChain([memory, 'optionalAccess', _100 => _100.pushResponse]) || "",
-        protectResponse: _optionalChain([memory, 'optionalAccess', _101 => _101.protectResponse]) || "",
-        scheduleConstraints: _optionalChain([memory, 'optionalAccess', _102 => _102.scheduleConstraints]) || [],
-        simplicityVsVariety: _optionalChain([memory, 'optionalAccess', _103 => _103.simplicityVsVariety]) || "",
-        lastAdjustment: _optionalChain([memory, 'optionalAccess', _104 => _104.lastAdjustment]) || "",
-        lastSundayPushWeek: _optionalChain([memory, 'optionalAccess', _105 => _105.lastSundayPushWeek]) || "",
-      }),
-    };
-
-    const { res: deleteRes } = await authFetchWithRetry({
-      path: `coach_memory?user_id=eq.${userId}`,
-      method: "DELETE",
-      authSession,
-      setAuthSession,
-      reason: "sync_coach_memory_delete",
-    });
-    if (!deleteRes.ok) throw new Error("Coach memory reset failed");
-
-    const { res } = await authFetchWithRetry({
-      path: "coach_memory",
-      method: "POST",
-      body: row,
-      authSession,
-      setAuthSession,
-      reason: "sync_coach_memory_insert",
-    });
-    if (!res.ok) throw new Error("Coach memory insert failed");
-  };
-
-  const sbSave = async ({ payload, authSession, setAuthSession }) => {
-    const normalized = exports.normalizeSession.call(void 0, authSession);
-    const userId = _optionalChain([normalized, 'optionalAccess', _106 => _106.user, 'optionalAccess', _107 => _107.id]) || _optionalChain([authSession, 'optionalAccess', _108 => _108.user, 'optionalAccess', _109 => _109.id]);
-    if (!userId) throw new Error(exports.AUTH_REQUIRED);
-    const body = { id: `${exports.SB_ROW}_${userId}`, user_id: userId, data: payload, updated_at: new Date().toISOString() };
-    const { res } = await authFetchWithRetry({
-      path: "trainer_data",
-      method: "POST",
-      body,
-      authSession,
-      setAuthSession,
-      reason: "sb_save",
-    });
-    if (!res.ok) throw new Error("Save failed " + res.status + ": " + await res.text());
-  };
-
-  const sbLoad = async ({ authSession, setters, persistAll, setAuthSession }) => {
-    const normalized = exports.normalizeSession.call(void 0, authSession);
-    const userId = _optionalChain([normalized, 'optionalAccess', _110 => _110.user, 'optionalAccess', _111 => _111.id]) || _optionalChain([authSession, 'optionalAccess', _112 => _112.user, 'optionalAccess', _113 => _113.id]);
-    if (!userId) throw new Error(exports.AUTH_REQUIRED);
-    const { res, sessionUsed } = await authFetchWithRetry({
-      path: "trainer_data?user_id=eq." + userId,
-      method: "GET",
-      authSession,
-      setAuthSession,
-      reason: "sb_load",
-    });
-    if (!res.ok) throw new Error("Load failed " + res.status + ": " + await res.text());
-    const rows = await res.json();
-    if (rows && rows.length > 0 && rows[0].data) {
-      try {
-        const runtimeState = _persistenceadapterservicejs.buildCanonicalRuntimeStateFromStorage.call(void 0, {
-          storedPayload: rows[0].data,
-          mergePersonalization,
-          DEFAULT_PERSONALIZATION,
-          normalizeGoals,
-          DEFAULT_MULTI_GOALS,
-        });
-        _persistenceadapterservicejs.applyCanonicalRuntimeStateSetters.call(void 0, {
-          runtimeState,
-          setters,
-        });
-      } catch (e) {
-        logDiag("cloud.load.data_incompatible", _optionalChain([e, 'optionalAccess', _114 => _114.message]) || "unknown");
-        throw new Error(exports.AUTH_DATA_INCOMPATIBLE);
-      }
-    } else {
-      const cache = localLoad();
-      if (cache && typeof cache === "object") {
-        const cachedRuntimeState = _persistenceadapterservicejs.buildCanonicalRuntimeStateFromStorage.call(void 0, {
-          storedPayload: cache,
-          mergePersonalization,
-          DEFAULT_PERSONALIZATION,
-          normalizeGoals,
-          DEFAULT_MULTI_GOALS,
-        });
-        await sbSave({
-          payload: _persistenceadapterservicejs.buildPersistedTrainerPayload.call(void 0, { runtimeState: cachedRuntimeState }),
-          authSession: sessionUsed || normalized,
-          setAuthSession,
-        });
-      } else {
-        await persistAll(
-          {},
-          [],
-          {},
-          {},
-          [],
-          DEFAULT_PERSONALIZATION,
-          [],
-          _persistenceadapterservicejs.DEFAULT_COACH_PLAN_ADJUSTMENTS,
-          DEFAULT_MULTI_GOALS,
-          {},
-          {},
-          _persistenceadapterservicejs.DEFAULT_NUTRITION_FAVORITES,
-          {},
-          {}
-        );
-      }
-    }
-  };
-
-  const persistAll = async ({
-    payload,
-    authSession,
-    setStorageStatus,
-    setAuthSession,
-  }) => {
-    localSave(payload);
-    if (!_optionalChain([authSession, 'optionalAccess', _115 => _115.user, 'optionalAccess', _116 => _116.id])) {
-      setStorageStatus(exports.buildStorageStatus.call(void 0, {
-        mode: "local",
-        label: "NOT SIGNED IN",
-        reason: exports.STORAGE_STATUS_REASONS.notSignedIn,
-        detail: "You are using local data because no signed-in cloud session is active.",
-      }));
-      return;
-    }
-    try {
-      await sbSave({ payload, authSession, setAuthSession });
-      try {
-        await syncGoals({ goals: _optionalChain([payload, 'optionalAccess', _117 => _117.goals]) || [], authSession, setAuthSession });
-      } catch (e) {
-        logDiag("goals sync failed", _optionalChain([e, 'optionalAccess', _118 => _118.message]) || "unknown");
-      }
-      try {
-        await syncCoachMemory({ personalization: _optionalChain([payload, 'optionalAccess', _119 => _119.personalization]) || DEFAULT_PERSONALIZATION, authSession, setAuthSession });
-      } catch (e) {
-        logDiag("coach memory sync failed", _optionalChain([e, 'optionalAccess', _120 => _120.message]) || "unknown");
-      }
-      setStorageStatus(exports.buildStorageStatus.call(void 0, {
-        mode: "cloud",
-        label: "SYNCED",
-        reason: exports.STORAGE_STATUS_REASONS.synced,
-        detail: "Cloud sync is working normally.",
-      }));
-    } catch (e) {
-      if (_optionalChain([e, 'optionalAccess', _121 => _121.message]) === exports.AUTH_TRANSIENT) {
-        logDiag("cloud.save.transient", "falling back to local while preserving session");
-      }
-      logDiag("Cloud save failed, local fallback active:", e.message);
-      setStorageStatus(exports.classifyStorageError.call(void 0, e));
-    }
-  };
-
-  return {
-    SB_URL,
-    SB_KEY,
-    SB_CONFIG_ERROR,
-    sbH,
-    localLoad,
-    localSave,
-    loadAuthSession,
-    saveAuthSession,
-    authRequest,
-    ensureValidSession,
-    handleSignIn,
-    handleSignUp,
-    handleSignOut,
-    sbLoad,
-    sbSave,
-    syncExercisePerformanceForDate,
-    syncSessionLogForDate,
-    syncGoals,
-    syncCoachMemory,
-    persistAll,
-  };
-} exports.createAuthStorageModule = createAuthStorageModule;
-
-  },
   "src/modules-nutrition.js": function(require, module, exports) {
 "use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _nullishCoalesce(lhs, rhsFn) { if (lhs != null) { return lhs; } else { return rhsFn(); } } function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; } const NUTRITION = {
   longRun:   { cal: 2900, p: 190, c: 320, f: 70, label: "Long Run Day" },
@@ -2925,6 +2726,841 @@ const mapDeviationKindToLegacyStatus = (deviationKind = "", fallbackStatus = "")
   const coachLine = `Coach suggestion: ${meal}. Keep portions centered on your target and protein-first.`;
   return { meal, coachLine, items };
 }; exports.deriveFridgeCoachMealSuggestion = deriveFridgeCoachMealSuggestion;
+
+  },
+  "src/services/persistence-adapter-service.js": function(require, module, exports) {
+"use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }var _modulesnutritionjs = require('../modules-nutrition.js');
+
+ const PERSISTED_TRAINER_DATA_VERSION = 6; exports.PERSISTED_TRAINER_DATA_VERSION = PERSISTED_TRAINER_DATA_VERSION;
+ const PERSISTENCE_CONTRACT_VERSION = "runtime_storage_v1"; exports.PERSISTENCE_CONTRACT_VERSION = PERSISTENCE_CONTRACT_VERSION;
+
+ const DEFAULT_COACH_PLAN_ADJUSTMENTS = {
+  dayOverrides: {},
+  nutritionOverrides: {},
+  weekVolumePct: {},
+  extra: {},
+}; exports.DEFAULT_COACH_PLAN_ADJUSTMENTS = DEFAULT_COACH_PLAN_ADJUSTMENTS;
+
+ const DEFAULT_NUTRITION_FAVORITES = {
+  restaurants: [],
+  groceries: [],
+  safeMeals: [],
+  travelMeals: [],
+  defaultMeals: [],
+}; exports.DEFAULT_NUTRITION_FAVORITES = DEFAULT_NUTRITION_FAVORITES;
+
+const clonePersistenceValue = (value) => {
+  if (value == null) return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (e) {
+    return value;
+  }
+};
+
+const decodeBase64Json = (encoded = "") => JSON.parse(decodeURIComponent(escape(atob(String(encoded || "").trim()))));
+
+const encodeBase64Json = (value = {}) => btoa(unescape(encodeURIComponent(JSON.stringify(value))));
+
+ const buildCanonicalRuntimeState = ({
+  logs = {},
+  bodyweights = [],
+  paceOverrides = {},
+  weekNotes = {},
+  planAlerts = [],
+  personalization = {},
+  goals = [],
+  coachActions = [],
+  coachPlanAdjustments = exports.DEFAULT_COACH_PLAN_ADJUSTMENTS,
+  dailyCheckins = {},
+  plannedDayRecords = {},
+  weeklyCheckins = {},
+  nutritionFavorites = exports.DEFAULT_NUTRITION_FAVORITES,
+  nutritionActualLogs = {},
+} = {}) => ({
+  logs: clonePersistenceValue(logs || {}),
+  bodyweights: clonePersistenceValue(bodyweights || []),
+  paceOverrides: clonePersistenceValue(paceOverrides || {}),
+  weekNotes: clonePersistenceValue(weekNotes || {}),
+  planAlerts: clonePersistenceValue(planAlerts || []),
+  personalization: clonePersistenceValue(personalization || {}),
+  goals: clonePersistenceValue(goals || []),
+  coachActions: clonePersistenceValue(coachActions || []),
+  coachPlanAdjustments: clonePersistenceValue(coachPlanAdjustments || exports.DEFAULT_COACH_PLAN_ADJUSTMENTS),
+  dailyCheckins: clonePersistenceValue(dailyCheckins || {}),
+  plannedDayRecords: clonePersistenceValue(plannedDayRecords || {}),
+  weeklyCheckins: clonePersistenceValue(weeklyCheckins || {}),
+  nutritionFavorites: clonePersistenceValue(nutritionFavorites || exports.DEFAULT_NUTRITION_FAVORITES),
+  nutritionActualLogs: clonePersistenceValue(nutritionActualLogs || {}),
+}); exports.buildCanonicalRuntimeState = buildCanonicalRuntimeState;
+
+ const buildPersistedTrainerPayload = ({
+  runtimeState = {},
+  transformPersonalization = null,
+  timestamp = Date.now(),
+} = {}) => {
+  // This is the anti-drift boundary: runtime state in, storage blob out.
+  const state = exports.buildCanonicalRuntimeState.call(void 0, runtimeState);
+  const safePersonalization = typeof transformPersonalization === "function"
+    ? transformPersonalization(state.personalization)
+    : state.personalization;
+
+  return {
+    logs: state.logs,
+    bw: state.bodyweights,
+    paceOverrides: state.paceOverrides,
+    weekNotes: state.weekNotes,
+    planAlerts: state.planAlerts,
+    personalization: clonePersistenceValue(safePersonalization || {}),
+    goals: state.goals,
+    coachActions: state.coachActions,
+    coachPlanAdjustments: state.coachPlanAdjustments,
+    dailyCheckins: state.dailyCheckins,
+    plannedDayRecords: state.plannedDayRecords,
+    weeklyCheckins: state.weeklyCheckins,
+    nutritionFavorites: state.nutritionFavorites,
+    nutritionActualLogs: state.nutritionActualLogs,
+    v: exports.PERSISTED_TRAINER_DATA_VERSION,
+    contractVersion: exports.PERSISTENCE_CONTRACT_VERSION,
+    ts: Number(timestamp) || Date.now(),
+  };
+}; exports.buildPersistedTrainerPayload = buildPersistedTrainerPayload;
+
+ const buildCanonicalRuntimeStateFromStorage = ({
+  storedPayload = {},
+  mergePersonalization,
+  DEFAULT_PERSONALIZATION = {},
+  normalizeGoals,
+  DEFAULT_MULTI_GOALS = [],
+} = {}) => {
+  const payload = _optionalChain([storedPayload, 'optionalAccess', _ => _.data]) && typeof storedPayload.data === "object"
+    ? storedPayload.data
+    : storedPayload;
+  const safeGoals = typeof normalizeGoals === "function"
+    ? normalizeGoals(_optionalChain([payload, 'optionalAccess', _2 => _2.goals]) || DEFAULT_MULTI_GOALS)
+    : clonePersistenceValue(_optionalChain([payload, 'optionalAccess', _3 => _3.goals]) || DEFAULT_MULTI_GOALS || []);
+  const safePersonalization = typeof mergePersonalization === "function"
+    ? mergePersonalization(DEFAULT_PERSONALIZATION, _optionalChain([payload, 'optionalAccess', _4 => _4.personalization]) || {})
+    : clonePersistenceValue(_optionalChain([payload, 'optionalAccess', _5 => _5.personalization]) || DEFAULT_PERSONALIZATION || {});
+  const hasNormalizedNutritionActualStore = Boolean(
+    payload
+    && typeof payload === "object"
+    && Object.prototype.hasOwnProperty.call(payload, "nutritionActualLogs")
+  );
+  const normalizedNutritionActualLogs = hasNormalizedNutritionActualStore
+    ? clonePersistenceValue(_optionalChain([payload, 'optionalAccess', _6 => _6.nutritionActualLogs]) || {})
+    : _modulesnutritionjs.normalizeActualNutritionLogCollection.call(void 0, _optionalChain([payload, 'optionalAccess', _7 => _7.nutritionFeedback]) || {});
+
+  return exports.buildCanonicalRuntimeState.call(void 0, {
+    logs: _optionalChain([payload, 'optionalAccess', _8 => _8.logs]) || {},
+    bodyweights: _optionalChain([payload, 'optionalAccess', _9 => _9.bw]) || _optionalChain([payload, 'optionalAccess', _10 => _10.bodyweights]) || [],
+    paceOverrides: _optionalChain([payload, 'optionalAccess', _11 => _11.paceOverrides]) || {},
+    weekNotes: _optionalChain([payload, 'optionalAccess', _12 => _12.weekNotes]) || {},
+    planAlerts: _optionalChain([payload, 'optionalAccess', _13 => _13.planAlerts]) || [],
+    personalization: safePersonalization,
+    goals: safeGoals,
+    coachActions: _optionalChain([payload, 'optionalAccess', _14 => _14.coachActions]) || [],
+    coachPlanAdjustments: _optionalChain([payload, 'optionalAccess', _15 => _15.coachPlanAdjustments]) || exports.DEFAULT_COACH_PLAN_ADJUSTMENTS,
+    dailyCheckins: _optionalChain([payload, 'optionalAccess', _16 => _16.dailyCheckins]) || {},
+    plannedDayRecords: _optionalChain([payload, 'optionalAccess', _17 => _17.plannedDayRecords]) || {},
+    weeklyCheckins: _optionalChain([payload, 'optionalAccess', _18 => _18.weeklyCheckins]) || {},
+    nutritionFavorites: _optionalChain([payload, 'optionalAccess', _19 => _19.nutritionFavorites]) || exports.DEFAULT_NUTRITION_FAVORITES,
+    nutritionActualLogs: normalizedNutritionActualLogs,
+  });
+}; exports.buildCanonicalRuntimeStateFromStorage = buildCanonicalRuntimeStateFromStorage;
+
+ const applyCanonicalRuntimeStateSetters = ({
+  runtimeState = {},
+  setters = {},
+} = {}) => {
+  if (!runtimeState || typeof runtimeState !== "object") return;
+  if (typeof setters.setLogs === "function") setters.setLogs(runtimeState.logs || {});
+  if (typeof setters.setBodyweights === "function") setters.setBodyweights(runtimeState.bodyweights || []);
+  if (typeof setters.setPaceOverrides === "function") setters.setPaceOverrides(runtimeState.paceOverrides || {});
+  if (typeof setters.setWeekNotes === "function") setters.setWeekNotes(runtimeState.weekNotes || {});
+  if (typeof setters.setPlanAlerts === "function") setters.setPlanAlerts(runtimeState.planAlerts || []);
+  if (typeof setters.setPersonalization === "function") setters.setPersonalization(runtimeState.personalization || {});
+  if (typeof setters.setGoals === "function") setters.setGoals(runtimeState.goals || []);
+  if (typeof setters.setCoachActions === "function") setters.setCoachActions(runtimeState.coachActions || []);
+  if (typeof setters.setCoachPlanAdjustments === "function") setters.setCoachPlanAdjustments(runtimeState.coachPlanAdjustments || exports.DEFAULT_COACH_PLAN_ADJUSTMENTS);
+  if (typeof setters.setDailyCheckins === "function") setters.setDailyCheckins(runtimeState.dailyCheckins || {});
+  if (typeof setters.setPlannedDayRecords === "function") setters.setPlannedDayRecords(runtimeState.plannedDayRecords || {});
+  if (typeof setters.setWeeklyCheckins === "function") setters.setWeeklyCheckins(runtimeState.weeklyCheckins || {});
+  if (typeof setters.setNutritionFavorites === "function") setters.setNutritionFavorites(runtimeState.nutritionFavorites || exports.DEFAULT_NUTRITION_FAVORITES);
+  if (typeof setters.setNutritionActualLogs === "function") setters.setNutritionActualLogs(runtimeState.nutritionActualLogs || {});
+}; exports.applyCanonicalRuntimeStateSetters = applyCanonicalRuntimeStateSetters;
+
+ const exportRuntimeStateAsBase64 = ({
+  runtimeState = {},
+  transformPersonalization = null,
+} = {}) => encodeBase64Json(
+  exports.buildPersistedTrainerPayload.call(void 0, {
+    runtimeState,
+    transformPersonalization,
+  })
+); exports.exportRuntimeStateAsBase64 = exportRuntimeStateAsBase64;
+
+ const importRuntimeStateFromBase64 = ({
+  encoded = "",
+  mergePersonalization,
+  DEFAULT_PERSONALIZATION = {},
+  normalizeGoals,
+  DEFAULT_MULTI_GOALS = [],
+} = {}) => exports.buildCanonicalRuntimeStateFromStorage.call(void 0, {
+  storedPayload: decodeBase64Json(encoded),
+  mergePersonalization,
+  DEFAULT_PERSONALIZATION,
+  normalizeGoals,
+  DEFAULT_MULTI_GOALS,
+}); exports.importRuntimeStateFromBase64 = importRuntimeStateFromBase64;
+
+  },
+  "src/modules-auth-storage.js": function(require, module, exports) {
+"use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _nullishCoalesce(lhs, rhsFn) { if (lhs != null) { return lhs; } else { return rhsFn(); } } function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
+
+
+
+
+
+var _persistenceadapterservicejs = require('./services/persistence-adapter-service.js');
+
+ const SB_ROW = "trainer_v1"; exports.SB_ROW = SB_ROW;
+ const LOCAL_CACHE_KEY = "trainer_local_cache_v4"; exports.LOCAL_CACHE_KEY = LOCAL_CACHE_KEY;
+ const AUTH_CACHE_KEY = "trainer_auth_session_v1"; exports.AUTH_CACHE_KEY = AUTH_CACHE_KEY;
+ const AUTH_REQUIRED = "AUTH_REQUIRED"; exports.AUTH_REQUIRED = AUTH_REQUIRED;
+ const AUTH_TRANSIENT = "AUTH_TRANSIENT"; exports.AUTH_TRANSIENT = AUTH_TRANSIENT;
+ const AUTH_PROVIDER_UNAVAILABLE = "AUTH_PROVIDER_UNAVAILABLE"; exports.AUTH_PROVIDER_UNAVAILABLE = AUTH_PROVIDER_UNAVAILABLE;
+ const AUTH_DATA_INCOMPATIBLE = "AUTH_DATA_INCOMPATIBLE"; exports.AUTH_DATA_INCOMPATIBLE = AUTH_DATA_INCOMPATIBLE;
+
+ const STORAGE_STATUS_REASONS = {
+  notSignedIn: "not_signed_in",
+  signedOut: "signed_out",
+  authRequired: "auth_required",
+  transient: "sync_temporarily_failed",
+  providerUnavailable: "provider_unavailable",
+  dataIncompatible: "data_incompatible",
+  synced: "synced",
+  unknown: "unknown",
+}; exports.STORAGE_STATUS_REASONS = STORAGE_STATUS_REASONS;
+
+ const buildStorageStatus = ({
+  mode = "local",
+  label = "LOCAL MODE",
+  reason = exports.STORAGE_STATUS_REASONS.unknown,
+  detail = "",
+} = {}) => ({
+  mode,
+  label,
+  reason,
+  detail,
+}); exports.buildStorageStatus = buildStorageStatus;
+
+ const classifyStorageError = (error) => {
+  const message = String(_optionalChain([error, 'optionalAccess', _ => _.message]) || error || "");
+  if (message === exports.AUTH_REQUIRED) {
+    return exports.buildStorageStatus.call(void 0, {
+      mode: "local",
+      label: "SIGN IN REQUIRED",
+      reason: exports.STORAGE_STATUS_REASONS.authRequired,
+      detail: "Your session expired or is no longer valid. Sign in again to resume cloud sync.",
+    });
+  }
+  if (message === exports.AUTH_TRANSIENT) {
+    return exports.buildStorageStatus.call(void 0, {
+      mode: "local",
+      label: "SYNC RETRYING",
+      reason: exports.STORAGE_STATUS_REASONS.transient,
+      detail: "Cloud sync failed temporarily. Local changes are still being kept safely.",
+    });
+  }
+  if (message === exports.AUTH_PROVIDER_UNAVAILABLE || /Missing Supabase|Malformed Supabase|anon key|Supabase URL/i.test(message)) {
+    return exports.buildStorageStatus.call(void 0, {
+      mode: "local",
+      label: "PROVIDER ERROR",
+      reason: exports.STORAGE_STATUS_REASONS.providerUnavailable,
+      detail: "Cloud sync provider is unavailable or misconfigured.",
+    });
+  }
+  if (message === exports.AUTH_DATA_INCOMPATIBLE || /data payload invalid|Cannot read properties|Unexpected token|JSON/i.test(message)) {
+    return exports.buildStorageStatus.call(void 0, {
+      mode: "local",
+      label: "DATA ERROR",
+      reason: exports.STORAGE_STATUS_REASONS.dataIncompatible,
+      detail: "Cloud data could not be read safely, so the app is using local data.",
+    });
+  }
+  return exports.buildStorageStatus.call(void 0, {
+    mode: "local",
+    label: "LOCAL MODE",
+    reason: exports.STORAGE_STATUS_REASONS.transient,
+    detail: "Cloud sync failed and the app safely fell back to local data.",
+  });
+}; exports.classifyStorageError = classifyStorageError;
+
+ const decodeJwtPayload = (token) => {
+  try {
+    const [, payload = ""] = String(token || "").split(".");
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const json = atob(padded);
+    return JSON.parse(json);
+  } catch (e2) {
+    return null;
+  }
+}; exports.decodeJwtPayload = decodeJwtPayload;
+
+ const getTokenExpiryMs = (token) => {
+  const payload = exports.decodeJwtPayload.call(void 0, token);
+  if (!_optionalChain([payload, 'optionalAccess', _2 => _2.exp])) return null;
+  return Number(payload.exp) * 1000;
+}; exports.getTokenExpiryMs = getTokenExpiryMs;
+
+ const normalizeSession = (session, fallback = null) => {
+  if (!_optionalChain([session, 'optionalAccess', _3 => _3.access_token]) || !(_optionalChain([session, 'optionalAccess', _4 => _4.user, 'optionalAccess', _5 => _5.id]) || _optionalChain([fallback, 'optionalAccess', _6 => _6.user, 'optionalAccess', _7 => _7.id]))) return null;
+  const expiresAt = exports.getTokenExpiryMs.call(void 0, session.access_token) || Number(session.expires_at || 0) * 1000 || null;
+  return {
+    access_token: session.access_token,
+    refresh_token: session.refresh_token || _optionalChain([fallback, 'optionalAccess', _8 => _8.refresh_token]) || "",
+    user: session.user || _optionalChain([fallback, 'optionalAccess', _9 => _9.user]) || null,
+    expires_at: expiresAt ? Math.floor(expiresAt / 1000) : null,
+  };
+}; exports.normalizeSession = normalizeSession;
+
+ function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePersonalization, normalizeGoals, DEFAULT_PERSONALIZATION, DEFAULT_MULTI_GOALS }) {
+  const rawSupabaseUrl = (typeof window !== "undefined" ? (window.__SUPABASE_URL || "") : "").trim();
+  const SB_URL = rawSupabaseUrl.replace(/\/+$/, "");
+  const SB_KEY = (typeof window !== "undefined" ? (window.__SUPABASE_ANON_KEY || "") : "").trim();
+  let hasValidSupabaseUrl = false;
+  try {
+    const parsed = new URL(SB_URL || "https://invalid.local");
+    hasValidSupabaseUrl = parsed.protocol === "https:" && !!parsed.hostname;
+  } catch (e3) {
+    hasValidSupabaseUrl = false;
+  }
+  const SB_CONFIG_ERROR = !SB_URL
+    ? "Missing Supabase URL. Set VITE_SUPABASE_URL."
+    : !hasValidSupabaseUrl
+    ? `Malformed Supabase URL: ${SB_URL}`
+    : !SB_KEY
+    ? "Missing Supabase anon key. Set VITE_SUPABASE_ANON_KEY."
+    : "";
+
+  const sbH = { "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + SB_KEY };
+  const sbUserHeaders = (token) => ({ "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + token });
+
+  const localLoad = () => {
+    try {
+      const raw = localStorage.getItem(exports.LOCAL_CACHE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e4) { return null; }
+  };
+
+  const localSave = (payload) => {
+    try { localStorage.setItem(exports.LOCAL_CACHE_KEY, JSON.stringify(payload)); } catch (e5) {}
+  };
+
+  const loadAuthSession = () => {
+    try {
+      const raw = localStorage.getItem(exports.AUTH_CACHE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e6) { return null; }
+  };
+
+  const saveAuthSession = (session) => {
+    try { localStorage.setItem(exports.AUTH_CACHE_KEY, JSON.stringify(session || null)); } catch (e7) {}
+  };
+  const authRequest = async (path, options = {}) => {
+    if (SB_CONFIG_ERROR) throw new Error(exports.AUTH_PROVIDER_UNAVAILABLE);
+    const res = await safeFetchWithTimeout(`${SB_URL}/auth/v1/${path}`, {
+      ...options,
+      headers: { "Content-Type": "application/json", "apikey": SB_KEY, ...(options.headers || {}) }
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.status === 204 ? {} : res.json();
+  };
+
+  const refreshSession = async (refreshToken, fallbackSession = null) => {
+    if (!refreshToken) return null;
+    try {
+      const data = await authRequest("token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: refreshToken }) });
+      const normalized = exports.normalizeSession.call(void 0, { ...data, refresh_token: _optionalChain([data, 'optionalAccess', _10 => _10.refresh_token]) || refreshToken }, fallbackSession);
+      if (!_optionalChain([normalized, 'optionalAccess', _11 => _11.access_token]) || !_optionalChain([normalized, 'optionalAccess', _12 => _12.user, 'optionalAccess', _13 => _13.id])) return null;
+      return normalized;
+    } catch (e) {
+      logDiag("auth.refresh.failed", _optionalChain([e, 'optionalAccess', _14 => _14.message]) || "unknown");
+      return null;
+    }
+  };
+
+  const ensureValidSession = async (session, { reason = "unspecified" } = {}) => {
+    const normalized = exports.normalizeSession.call(void 0, session);
+    if (!_optionalChain([normalized, 'optionalAccess', _15 => _15.access_token]) || !_optionalChain([normalized, 'optionalAccess', _16 => _16.user, 'optionalAccess', _17 => _17.id])) {
+      logDiag("auth.ensure.missing", reason);
+      return { session: null, status: "missing" };
+    }
+    const now = Date.now();
+    const expiresAtMs = normalized.expires_at ? Number(normalized.expires_at) * 1000 : exports.getTokenExpiryMs.call(void 0, normalized.access_token);
+    if (expiresAtMs && expiresAtMs - now > 120000) {
+      return { session: normalized, status: "ok" };
+    }
+    if (!_optionalChain([normalized, 'optionalAccess', _18 => _18.refresh_token])) {
+      logDiag("auth.ensure.no_refresh", reason);
+      return { session: null, status: "refresh_missing" };
+    }
+    try {
+      const refreshed = await refreshSession(normalized.refresh_token, normalized);
+      if (_optionalChain([refreshed, 'optionalAccess', _19 => _19.access_token])) {
+        logDiag("auth.ensure.refreshed", reason);
+        return { session: exports.normalizeSession.call(void 0, refreshed, normalized), status: "refreshed" };
+      }
+      logDiag("auth.ensure.refresh_failed", reason);
+      return { session: null, status: "refresh_failed" };
+    } catch (e) {
+      logDiag("auth.ensure.transient", reason, _optionalChain([e, 'optionalAccess', _20 => _20.message]) || "unknown");
+      return { session: normalized, status: "transient" };
+    }
+  };
+
+  const handleSignIn = async ({ authEmail, authPassword, setAuthError, setAuthSession }) => {
+    setAuthError("");
+    try {
+      const data = await authRequest("token?grant_type=password", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
+      const session = exports.normalizeSession.call(void 0, data);
+      if (!_optionalChain([session, 'optionalAccess', _21 => _21.access_token]) || !_optionalChain([session, 'optionalAccess', _22 => _22.user, 'optionalAccess', _23 => _23.id])) throw new Error("Invalid auth response");
+      setAuthSession(session);
+      saveAuthSession(session);
+      logDiag("auth.signin.success", session.user.id);
+    } catch (e) {
+      if (_optionalChain([e, 'optionalAccess', _24 => _24.message]) === exports.AUTH_PROVIDER_UNAVAILABLE) {
+        setAuthError("Cloud auth provider is unavailable or misconfigured.");
+        return;
+      }
+      setAuthError("Sign in failed. Check email/password.");
+    }
+  };
+
+  const handleSignUp = async ({ authEmail, authPassword, setAuthError, setAuthSession }) => {
+    setAuthError("");
+    try {
+      const data = await authRequest("signup", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
+      if (_optionalChain([data, 'optionalAccess', _25 => _25.access_token]) && _optionalChain([data, 'optionalAccess', _26 => _26.user])) {
+        const session = exports.normalizeSession.call(void 0, data);
+        setAuthSession(session);
+        saveAuthSession(session);
+      } else {
+        setAuthError("Account created. Confirm email, then sign in.");
+      }
+    } catch (e) {
+      if (_optionalChain([e, 'optionalAccess', _27 => _27.message]) === exports.AUTH_PROVIDER_UNAVAILABLE) {
+        setAuthError("Cloud auth provider is unavailable or misconfigured.");
+        return;
+      }
+      setAuthError("Sign up failed.");
+    }
+  };
+
+  const handleSignOut = async ({ authSession, setAuthSession, setStorageStatus }) => {
+    try {
+      if (_optionalChain([authSession, 'optionalAccess', _28 => _28.access_token])) {
+        await authRequest("logout", { method: "POST", headers: { "Authorization": `Bearer ${authSession.access_token}` } });
+      }
+    } catch (e8) {}
+    setAuthSession(null);
+    saveAuthSession(null);
+    setStorageStatus(exports.buildStorageStatus.call(void 0, {
+      mode: "local",
+      label: "SIGNED OUT",
+      reason: exports.STORAGE_STATUS_REASONS.signedOut,
+      detail: "You are signed out, so cloud sync is paused until you sign back in.",
+    }));
+  };
+
+  const withFreshSession = async ({ authSession, setAuthSession, reason }) => {
+    const ensured = await ensureValidSession(authSession, { reason });
+    const validSession = _optionalChain([ensured, 'optionalAccess', _29 => _29.session]) || null;
+    if (_optionalChain([ensured, 'optionalAccess', _30 => _30.status]) === "refreshed" && _optionalChain([validSession, 'optionalAccess', _31 => _31.access_token]) !== _optionalChain([authSession, 'optionalAccess', _32 => _32.access_token])) {
+      if (setAuthSession) setAuthSession(validSession);
+      saveAuthSession(validSession);
+    }
+    return { ensured, validSession };
+  };
+
+  const authFetchWithRetry = async ({ path, method = "GET", body, authSession, setAuthSession, reason = "rest_call" }) => {
+    if (SB_CONFIG_ERROR) throw new Error(exports.AUTH_PROVIDER_UNAVAILABLE);
+    const { ensured, validSession } = await withFreshSession({ authSession, setAuthSession, reason });
+    if (!_optionalChain([validSession, 'optionalAccess', _33 => _33.user, 'optionalAccess', _34 => _34.id]) || !_optionalChain([validSession, 'optionalAccess', _35 => _35.access_token])) {
+      if (_optionalChain([ensured, 'optionalAccess', _36 => _36.status]) === "transient") throw new Error(exports.AUTH_TRANSIENT);
+      throw new Error(exports.AUTH_REQUIRED);
+    }
+    const request = async (sessionToUse) => safeFetchWithTimeout(`${SB_URL}/rest/v1/${path}`, {
+      method,
+      headers: { ...sbUserHeaders(sessionToUse.access_token), ...(method !== "GET" ? { "Prefer": "resolution=merge-duplicates" } : {}) },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+    let res = await request(validSession);
+    if (res.status !== 401) return { res, sessionUsed: validSession };
+    logDiag("auth.rest.401", reason);
+    if (!_optionalChain([validSession, 'optionalAccess', _37 => _37.refresh_token])) throw new Error(exports.AUTH_REQUIRED);
+    const refreshed = await refreshSession(validSession.refresh_token, validSession);
+    if (!_optionalChain([refreshed, 'optionalAccess', _38 => _38.access_token])) throw new Error(exports.AUTH_REQUIRED);
+    if (setAuthSession) setAuthSession(refreshed);
+    saveAuthSession(refreshed);
+    res = await request(refreshed);
+    return { res, sessionUsed: refreshed };
+  };
+
+  const toFiniteNumber = (value) => {
+    if (value === "" || value === null || value === undefined) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const toFiniteInteger = (value) => {
+    const parsed = toFiniteNumber(value);
+    return parsed === null ? null : Math.round(parsed);
+  };
+
+  const toJsonDate = (value) => {
+    const dateKey = String(value || "").split("T")[0];
+    return /^\d{4}-\d{2}-\d{2}$/.test(dateKey) ? dateKey : null;
+  };
+
+  const encodeCoachMemoryField = (value) => {
+    try {
+      return JSON.stringify(_nullishCoalesce(value, () => ( null)));
+    } catch (e9) {
+      return JSON.stringify(null);
+    }
+  };
+
+  const normalizeGoalRow = (goal = {}, idx = 0) => {
+    const targetValue = toFiniteNumber(_optionalChain([goal, 'optionalAccess', _39 => _39.targetValue]));
+    const currentValue = toFiniteNumber(_optionalChain([goal, 'optionalAccess', _40 => _40.currentValue]));
+    return {
+      id: _optionalChain([goal, 'optionalAccess', _41 => _41.id]) || undefined,
+      type: _optionalChain([goal, 'optionalAccess', _42 => _42.type]) || (_optionalChain([goal, 'optionalAccess', _43 => _43.targetDate]) ? "time_bound" : "ongoing"),
+      category: _optionalChain([goal, 'optionalAccess', _44 => _44.category]) || "running",
+      title: String(_optionalChain([goal, 'optionalAccess', _45 => _45.title]) || _optionalChain([goal, 'optionalAccess', _46 => _46.name]) || `Goal ${idx + 1}`),
+      target_value: targetValue,
+      current_value: currentValue,
+      target_date: toJsonDate(_optionalChain([goal, 'optionalAccess', _47 => _47.targetDate])),
+      priority: toFiniteInteger(_optionalChain([goal, 'optionalAccess', _48 => _48.priority])) || (idx + 1),
+      status: _optionalChain([goal, 'optionalAccess', _49 => _49.active]) === false ? "archived" : String(_optionalChain([goal, 'optionalAccess', _50 => _50.status]) || "active"),
+    };
+  };
+
+  const syncExercisePerformanceForDate = async ({ dateKey, rows = [], authSession, setAuthSession }) => {
+    const normalized = exports.normalizeSession.call(void 0, authSession);
+    const userId = _optionalChain([normalized, 'optionalAccess', _51 => _51.user, 'optionalAccess', _52 => _52.id]) || _optionalChain([authSession, 'optionalAccess', _53 => _53.user, 'optionalAccess', _54 => _54.id]);
+    const safeDateKey = toJsonDate(dateKey);
+    if (!userId || !safeDateKey) throw new Error(exports.AUTH_REQUIRED);
+
+    const sanitizedRows = (rows || []).map((row) => ({
+      user_id: userId,
+      exercise_name: String(_optionalChain([row, 'optionalAccess', _55 => _55.exercise_name]) || _optionalChain([row, 'optionalAccess', _56 => _56.exercise]) || "").trim(),
+      date: safeDateKey,
+      prescribed_weight: toFiniteNumber(_optionalChain([row, 'optionalAccess', _57 => _57.prescribed_weight])),
+      actual_weight: toFiniteNumber(_optionalChain([row, 'optionalAccess', _58 => _58.actual_weight])),
+      prescribed_reps: toFiniteInteger(_optionalChain([row, 'optionalAccess', _59 => _59.prescribed_reps])),
+      actual_reps: toFiniteInteger(_optionalChain([row, 'optionalAccess', _60 => _60.actual_reps])),
+      prescribed_sets: toFiniteInteger(_optionalChain([row, 'optionalAccess', _61 => _61.prescribed_sets])),
+      actual_sets: toFiniteInteger(_optionalChain([row, 'optionalAccess', _62 => _62.actual_sets])),
+      band_tension: _optionalChain([row, 'optionalAccess', _63 => _63.band_tension]) ? String(row.band_tension) : null,
+      bodyweight_only: Boolean(_optionalChain([row, 'optionalAccess', _64 => _64.bodyweight_only])),
+      feel_this_session: toFiniteInteger(_optionalChain([row, 'optionalAccess', _65 => _65.feel_this_session])),
+    })).filter((row) => row.exercise_name);
+
+    const { res: deleteRes } = await authFetchWithRetry({
+      path: `exercise_performance?user_id=eq.${userId}&date=eq.${safeDateKey}`,
+      method: "DELETE",
+      authSession,
+      setAuthSession,
+      reason: "sync_exercise_performance_delete",
+    });
+    if (!deleteRes.ok) throw new Error("Exercise performance delete failed");
+    if (!sanitizedRows.length) return;
+
+    const { res } = await authFetchWithRetry({
+      path: "exercise_performance",
+      method: "POST",
+      body: sanitizedRows,
+      authSession,
+      setAuthSession,
+      reason: "sync_exercise_performance_upsert",
+    });
+    if (!res.ok) throw new Error("Exercise performance upsert failed");
+  };
+
+  const syncSessionLogForDate = async ({ dateKey, entry = null, authSession, setAuthSession }) => {
+    const normalized = exports.normalizeSession.call(void 0, authSession);
+    const userId = _optionalChain([normalized, 'optionalAccess', _66 => _66.user, 'optionalAccess', _67 => _67.id]) || _optionalChain([authSession, 'optionalAccess', _68 => _68.user, 'optionalAccess', _69 => _69.id]);
+    const safeDateKey = toJsonDate(dateKey);
+    if (!userId || !safeDateKey) throw new Error(exports.AUTH_REQUIRED);
+
+    const { res: deleteRes } = await authFetchWithRetry({
+      path: `session_logs?user_id=eq.${userId}&date=eq.${safeDateKey}`,
+      method: "DELETE",
+      authSession,
+      setAuthSession,
+      reason: "sync_session_log_delete",
+    });
+    if (!deleteRes.ok) throw new Error("Session log delete failed");
+    if (!entry) return;
+
+    const sessionLogRow = {
+      user_id: userId,
+      date: safeDateKey,
+      completion_status: _optionalChain([entry, 'optionalAccess', _70 => _70.actualSession, 'optionalAccess', _71 => _71.status]) ? String(entry.actualSession.status) : (_optionalChain([entry, 'optionalAccess', _72 => _72.checkin, 'optionalAccess', _73 => _73.status]) ? String(entry.checkin.status) : null),
+      feel_rating: toFiniteInteger(_nullishCoalesce(_optionalChain([entry, 'optionalAccess', _74 => _74.feel]), () => ( _optionalChain([entry, 'optionalAccess', _75 => _75.checkin, 'optionalAccess', _76 => _76.feelRating])))),
+      note: _optionalChain([entry, 'optionalAccess', _77 => _77.notes]) ? String(entry.notes) : null,
+      distance_mi: toFiniteNumber(_optionalChain([entry, 'optionalAccess', _78 => _78.miles])),
+      duration_min: toFiniteNumber(_optionalChain([entry, 'optionalAccess', _79 => _79.runTime])),
+      avg_hr: toFiniteInteger(_optionalChain([entry, 'optionalAccess', _80 => _80.healthMetrics, 'optionalAccess', _81 => _81.avgHr])),
+      exercises: Array.isArray(_optionalChain([entry, 'optionalAccess', _82 => _82.strengthPerformance])) ? entry.strengthPerformance : [],
+    };
+
+    const { res } = await authFetchWithRetry({
+      path: "session_logs",
+      method: "POST",
+      body: sessionLogRow,
+      authSession,
+      setAuthSession,
+      reason: "sync_session_log_upsert",
+    });
+    if (!res.ok) throw new Error("Session log upsert failed");
+  };
+
+  const syncGoals = async ({ goals = [], authSession, setAuthSession }) => {
+    const normalized = exports.normalizeSession.call(void 0, authSession);
+    const userId = _optionalChain([normalized, 'optionalAccess', _83 => _83.user, 'optionalAccess', _84 => _84.id]) || _optionalChain([authSession, 'optionalAccess', _85 => _85.user, 'optionalAccess', _86 => _86.id]);
+    if (!userId) throw new Error(exports.AUTH_REQUIRED);
+
+    const { res: deleteRes } = await authFetchWithRetry({
+      path: `goals?user_id=eq.${userId}`,
+      method: "DELETE",
+      authSession,
+      setAuthSession,
+      reason: "sync_goals_delete",
+    });
+    if (!deleteRes.ok) throw new Error("Goals reset failed");
+
+    const normalizedGoals = (goals || []).map((goal, idx) => ({
+      user_id: userId,
+      ...normalizeGoalRow(goal, idx),
+    })).filter((goal) => goal.title);
+
+    if (!normalizedGoals.length) return;
+
+    const { res } = await authFetchWithRetry({
+      path: "goals",
+      method: "POST",
+      body: normalizedGoals,
+      authSession,
+      setAuthSession,
+      reason: "sync_goals_insert",
+    });
+    if (!res.ok) throw new Error("Goals insert failed");
+  };
+
+  const syncCoachMemory = async ({ personalization = {}, authSession, setAuthSession }) => {
+    const normalized = exports.normalizeSession.call(void 0, authSession);
+    const userId = _optionalChain([normalized, 'optionalAccess', _87 => _87.user, 'optionalAccess', _88 => _88.id]) || _optionalChain([authSession, 'optionalAccess', _89 => _89.user, 'optionalAccess', _90 => _90.id]);
+    if (!userId) throw new Error(exports.AUTH_REQUIRED);
+
+    const memory = _optionalChain([personalization, 'optionalAccess', _91 => _91.coachMemory]) || {};
+    const row = {
+      user_id: userId,
+      field_1: encodeCoachMemoryField({
+        wins: _optionalChain([memory, 'optionalAccess', _92 => _92.wins]) || [],
+        constraints: _optionalChain([memory, 'optionalAccess', _93 => _93.constraints]) || [],
+        failurePatterns: _optionalChain([memory, 'optionalAccess', _94 => _94.failurePatterns]) || [],
+        commonBarriers: _optionalChain([memory, 'optionalAccess', _95 => _95.commonBarriers]) || [],
+        preferredFoodPatterns: _optionalChain([memory, 'optionalAccess', _96 => _96.preferredFoodPatterns]) || [],
+      }),
+      field_2: encodeCoachMemoryField({
+        longTermMemory: _optionalChain([memory, 'optionalAccess', _97 => _97.longTermMemory]) || [],
+        compounding: _optionalChain([memory, 'optionalAccess', _98 => _98.compounding]) || {},
+        sundayReviews: _optionalChain([memory, 'optionalAccess', _99 => _99.sundayReviews]) || [],
+      }),
+      field_3: encodeCoachMemoryField({
+        pushResponse: _optionalChain([memory, 'optionalAccess', _100 => _100.pushResponse]) || "",
+        protectResponse: _optionalChain([memory, 'optionalAccess', _101 => _101.protectResponse]) || "",
+        scheduleConstraints: _optionalChain([memory, 'optionalAccess', _102 => _102.scheduleConstraints]) || [],
+        simplicityVsVariety: _optionalChain([memory, 'optionalAccess', _103 => _103.simplicityVsVariety]) || "",
+        lastAdjustment: _optionalChain([memory, 'optionalAccess', _104 => _104.lastAdjustment]) || "",
+        lastSundayPushWeek: _optionalChain([memory, 'optionalAccess', _105 => _105.lastSundayPushWeek]) || "",
+      }),
+    };
+
+    const { res: deleteRes } = await authFetchWithRetry({
+      path: `coach_memory?user_id=eq.${userId}`,
+      method: "DELETE",
+      authSession,
+      setAuthSession,
+      reason: "sync_coach_memory_delete",
+    });
+    if (!deleteRes.ok) throw new Error("Coach memory reset failed");
+
+    const { res } = await authFetchWithRetry({
+      path: "coach_memory",
+      method: "POST",
+      body: row,
+      authSession,
+      setAuthSession,
+      reason: "sync_coach_memory_insert",
+    });
+    if (!res.ok) throw new Error("Coach memory insert failed");
+  };
+
+  const sbSave = async ({ payload, authSession, setAuthSession }) => {
+    const normalized = exports.normalizeSession.call(void 0, authSession);
+    const userId = _optionalChain([normalized, 'optionalAccess', _106 => _106.user, 'optionalAccess', _107 => _107.id]) || _optionalChain([authSession, 'optionalAccess', _108 => _108.user, 'optionalAccess', _109 => _109.id]);
+    if (!userId) throw new Error(exports.AUTH_REQUIRED);
+    const body = { id: `${exports.SB_ROW}_${userId}`, user_id: userId, data: payload, updated_at: new Date().toISOString() };
+    const { res } = await authFetchWithRetry({
+      path: "trainer_data",
+      method: "POST",
+      body,
+      authSession,
+      setAuthSession,
+      reason: "sb_save",
+    });
+    if (!res.ok) throw new Error("Save failed " + res.status + ": " + await res.text());
+  };
+
+  const sbLoad = async ({ authSession, setters, persistAll, setAuthSession }) => {
+    const normalized = exports.normalizeSession.call(void 0, authSession);
+    const userId = _optionalChain([normalized, 'optionalAccess', _110 => _110.user, 'optionalAccess', _111 => _111.id]) || _optionalChain([authSession, 'optionalAccess', _112 => _112.user, 'optionalAccess', _113 => _113.id]);
+    if (!userId) throw new Error(exports.AUTH_REQUIRED);
+    const { res, sessionUsed } = await authFetchWithRetry({
+      path: "trainer_data?user_id=eq." + userId,
+      method: "GET",
+      authSession,
+      setAuthSession,
+      reason: "sb_load",
+    });
+    if (!res.ok) throw new Error("Load failed " + res.status + ": " + await res.text());
+    const rows = await res.json();
+    if (rows && rows.length > 0 && rows[0].data) {
+      try {
+        const runtimeState = _persistenceadapterservicejs.buildCanonicalRuntimeStateFromStorage.call(void 0, {
+          storedPayload: rows[0].data,
+          mergePersonalization,
+          DEFAULT_PERSONALIZATION,
+          normalizeGoals,
+          DEFAULT_MULTI_GOALS,
+        });
+        _persistenceadapterservicejs.applyCanonicalRuntimeStateSetters.call(void 0, {
+          runtimeState,
+          setters,
+        });
+      } catch (e) {
+        logDiag("cloud.load.data_incompatible", _optionalChain([e, 'optionalAccess', _114 => _114.message]) || "unknown");
+        throw new Error(exports.AUTH_DATA_INCOMPATIBLE);
+      }
+    } else {
+      const cache = localLoad();
+      if (cache && typeof cache === "object") {
+        const cachedRuntimeState = _persistenceadapterservicejs.buildCanonicalRuntimeStateFromStorage.call(void 0, {
+          storedPayload: cache,
+          mergePersonalization,
+          DEFAULT_PERSONALIZATION,
+          normalizeGoals,
+          DEFAULT_MULTI_GOALS,
+        });
+        await sbSave({
+          payload: _persistenceadapterservicejs.buildPersistedTrainerPayload.call(void 0, { runtimeState: cachedRuntimeState }),
+          authSession: sessionUsed || normalized,
+          setAuthSession,
+        });
+      } else {
+        await persistAll(
+          {},
+          [],
+          {},
+          {},
+          [],
+          DEFAULT_PERSONALIZATION,
+          [],
+          _persistenceadapterservicejs.DEFAULT_COACH_PLAN_ADJUSTMENTS,
+          DEFAULT_MULTI_GOALS,
+          {},
+          {},
+          _persistenceadapterservicejs.DEFAULT_NUTRITION_FAVORITES,
+          {},
+          {}
+        );
+      }
+    }
+  };
+
+  const persistAll = async ({
+    payload,
+    authSession,
+    setStorageStatus,
+    setAuthSession,
+  }) => {
+    localSave(payload);
+    if (!_optionalChain([authSession, 'optionalAccess', _115 => _115.user, 'optionalAccess', _116 => _116.id])) {
+      setStorageStatus(exports.buildStorageStatus.call(void 0, {
+        mode: "local",
+        label: "NOT SIGNED IN",
+        reason: exports.STORAGE_STATUS_REASONS.notSignedIn,
+        detail: "You are using local data because no signed-in cloud session is active.",
+      }));
+      return;
+    }
+    try {
+      await sbSave({ payload, authSession, setAuthSession });
+      try {
+        await syncGoals({ goals: _optionalChain([payload, 'optionalAccess', _117 => _117.goals]) || [], authSession, setAuthSession });
+      } catch (e) {
+        logDiag("goals sync failed", _optionalChain([e, 'optionalAccess', _118 => _118.message]) || "unknown");
+      }
+      try {
+        await syncCoachMemory({ personalization: _optionalChain([payload, 'optionalAccess', _119 => _119.personalization]) || DEFAULT_PERSONALIZATION, authSession, setAuthSession });
+      } catch (e) {
+        logDiag("coach memory sync failed", _optionalChain([e, 'optionalAccess', _120 => _120.message]) || "unknown");
+      }
+      setStorageStatus(exports.buildStorageStatus.call(void 0, {
+        mode: "cloud",
+        label: "SYNCED",
+        reason: exports.STORAGE_STATUS_REASONS.synced,
+        detail: "Cloud sync is working normally.",
+      }));
+    } catch (e) {
+      if (_optionalChain([e, 'optionalAccess', _121 => _121.message]) === exports.AUTH_TRANSIENT) {
+        logDiag("cloud.save.transient", "falling back to local while preserving session");
+      }
+      logDiag("Cloud save failed, local fallback active:", e.message);
+      setStorageStatus(exports.classifyStorageError.call(void 0, e));
+    }
+  };
+
+  return {
+    SB_URL,
+    SB_KEY,
+    SB_CONFIG_ERROR,
+    sbH,
+    localLoad,
+    localSave,
+    loadAuthSession,
+    saveAuthSession,
+    authRequest,
+    ensureValidSession,
+    handleSignIn,
+    handleSignUp,
+    handleSignOut,
+    sbLoad,
+    sbSave,
+    syncExercisePerformanceForDate,
+    syncSessionLogForDate,
+    syncGoals,
+    syncCoachMemory,
+    persistAll,
+  };
+} exports.createAuthStorageModule = createAuthStorageModule;
 
   },
   "src/modules-checkins.js": function(require, module, exports) {
@@ -5010,6 +5646,475 @@ const getNutritionPrescriptionForRecord = (record = null) => (
 }; exports.buildDayReview = buildDayReview;
 
   },
+  "src/modules-ai-state.js": function(require, module, exports) {
+"use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _nullishCoalesce(lhs, rhsFn) { if (lhs != null) { return lhs; } else { return rhsFn(); } } function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }var _provenanceservicejs = require('./services/provenance-service.js');
+
+ const AI_PACKET_VERSION = "2026-04-v1"; exports.AI_PACKET_VERSION = AI_PACKET_VERSION;
+
+ const AI_PACKET_INTENTS = {
+  coachChat: "coach_chat",
+  planAnalysis: "plan_analysis",
+}; exports.AI_PACKET_INTENTS = AI_PACKET_INTENTS;
+
+const clonePlainValueAiState = (value) => {
+  if (value == null) return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (e) {
+    return value;
+  }
+};
+
+const sanitizeTextAiState = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+const clampNumberAiState = (value, min, max, fallback = min) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, numeric));
+};
+
+const sortEntriesByDate = (collection = {}) => Object.entries(collection || {})
+  .filter(([dateKey]) => Boolean(dateKey))
+  .sort((a, b) => a[0].localeCompare(b[0]));
+
+const compactTrainingShape = (training = null) => {
+  if (!training) return null;
+  return clonePlainValueAiState({
+    label: _optionalChain([training, 'optionalAccess', _ => _.label]) || "",
+    type: _optionalChain([training, 'optionalAccess', _2 => _2.type]) || "",
+    run: _optionalChain([training, 'optionalAccess', _3 => _3.run]) || null,
+    strengthTrack: _optionalChain([training, 'optionalAccess', _4 => _4.strengthTrack]) || "",
+    strengthDuration: _optionalChain([training, 'optionalAccess', _5 => _5.strengthDuration]) || "",
+    success: _optionalChain([training, 'optionalAccess', _6 => _6.success]) || "",
+    fallback: _optionalChain([training, 'optionalAccess', _7 => _7.fallback]) || "",
+    minDay: Boolean(_optionalChain([training, 'optionalAccess', _8 => _8.minDay])),
+    readinessState: _optionalChain([training, 'optionalAccess', _9 => _9.readinessState]) || "",
+    recoveryRecommendation: _optionalChain([training, 'optionalAccess', _10 => _10.recoveryRecommendation]) || "",
+    environmentNote: _optionalChain([training, 'optionalAccess', _11 => _11.environmentNote]) || "",
+    nutri: _optionalChain([training, 'optionalAccess', _12 => _12.nutri]) || "",
+  });
+};
+
+const compactSessionsByDay = (sessionsByDay = {}) => {
+  return clonePlainValueAiState(
+    Object.fromEntries(
+      Object.entries(sessionsByDay || {}).map(([dayKey, session]) => [
+        dayKey,
+        compactTrainingShape(session),
+      ])
+    )
+  );
+};
+
+const compactPlanDay = (planDay = null) => {
+  if (!planDay) return null;
+  return clonePlainValueAiState({
+    id: _optionalChain([planDay, 'optionalAccess', _13 => _13.id]) || "",
+    dateKey: _optionalChain([planDay, 'optionalAccess', _14 => _14.dateKey]) || "",
+    dayOfWeek: _nullishCoalesce(_optionalChain([planDay, 'optionalAccess', _15 => _15.dayOfWeek]), () => ( null)),
+    decision: _optionalChain([planDay, 'optionalAccess', _16 => _16.decision]) || null,
+    flags: _optionalChain([planDay, 'optionalAccess', _17 => _17.flags]) || null,
+    week: {
+      currentWeek: _optionalChain([planDay, 'optionalAccess', _18 => _18.week, 'optionalAccess', _19 => _19.currentWeek]) || null,
+      phase: _optionalChain([planDay, 'optionalAccess', _20 => _20.week, 'optionalAccess', _21 => _21.phase]) || "",
+      label: _optionalChain([planDay, 'optionalAccess', _22 => _22.week, 'optionalAccess', _23 => _23.label]) || "",
+      status: _optionalChain([planDay, 'optionalAccess', _24 => _24.week, 'optionalAccess', _25 => _25.status]) || "",
+      adjusted: Boolean(_optionalChain([planDay, 'optionalAccess', _26 => _26.week, 'optionalAccess', _27 => _27.adjusted])),
+      summary: _optionalChain([planDay, 'optionalAccess', _28 => _28.week, 'optionalAccess', _29 => _29.summary]) || "",
+      constraints: _optionalChain([planDay, 'optionalAccess', _30 => _30.week, 'optionalAccess', _31 => _31.constraints]) || [],
+      successDefinition: _optionalChain([planDay, 'optionalAccess', _32 => _32.week, 'optionalAccess', _33 => _33.successDefinition]) || "",
+      weeklyIntent: _optionalChain([planDay, 'optionalAccess', _34 => _34.week, 'optionalAccess', _35 => _35.weeklyIntent]) || null,
+    },
+    base: {
+      training: compactTrainingShape(_optionalChain([planDay, 'optionalAccess', _36 => _36.base, 'optionalAccess', _37 => _37.training]) || null),
+      nutrition: _optionalChain([planDay, 'optionalAccess', _38 => _38.base, 'optionalAccess', _39 => _39.nutrition]) || null,
+      recovery: _optionalChain([planDay, 'optionalAccess', _40 => _40.base, 'optionalAccess', _41 => _41.recovery]) || null,
+      supplements: _optionalChain([planDay, 'optionalAccess', _42 => _42.base, 'optionalAccess', _43 => _43.supplements]) || null,
+      logging: _optionalChain([planDay, 'optionalAccess', _44 => _44.base, 'optionalAccess', _45 => _45.logging]) || null,
+    },
+    resolved: {
+      training: compactTrainingShape(_optionalChain([planDay, 'optionalAccess', _46 => _46.resolved, 'optionalAccess', _47 => _47.training]) || null),
+      nutrition: _optionalChain([planDay, 'optionalAccess', _48 => _48.resolved, 'optionalAccess', _49 => _49.nutrition]) || null,
+      recovery: _optionalChain([planDay, 'optionalAccess', _50 => _50.resolved, 'optionalAccess', _51 => _51.recovery]) || null,
+      supplements: _optionalChain([planDay, 'optionalAccess', _52 => _52.resolved, 'optionalAccess', _53 => _53.supplements]) || null,
+      logging: _optionalChain([planDay, 'optionalAccess', _54 => _54.resolved, 'optionalAccess', _55 => _55.logging]) || null,
+    },
+    provenance: _optionalChain([planDay, 'optionalAccess', _56 => _56.provenance]) || null,
+  });
+};
+
+const compactPlanWeek = (planWeek = null) => {
+  if (!planWeek) return null;
+  return clonePlainValueAiState({
+    id: _optionalChain([planWeek, 'optionalAccess', _57 => _57.id]) || "",
+    weekNumber: _optionalChain([planWeek, 'optionalAccess', _58 => _58.weekNumber]) || null,
+    absoluteWeek: _optionalChain([planWeek, 'optionalAccess', _59 => _59.absoluteWeek]) || null,
+    phase: _optionalChain([planWeek, 'optionalAccess', _60 => _60.phase]) || "",
+    label: _optionalChain([planWeek, 'optionalAccess', _61 => _61.label]) || "",
+    status: _optionalChain([planWeek, 'optionalAccess', _62 => _62.status]) || "",
+    adjusted: Boolean(_optionalChain([planWeek, 'optionalAccess', _63 => _63.adjusted])),
+    summary: _optionalChain([planWeek, 'optionalAccess', _64 => _64.summary]) || "",
+    constraints: _optionalChain([planWeek, 'optionalAccess', _65 => _65.constraints]) || [],
+    weeklyIntent: _optionalChain([planWeek, 'optionalAccess', _66 => _66.weeklyIntent]) || null,
+    sessionsByDay: compactSessionsByDay(_optionalChain([planWeek, 'optionalAccess', _67 => _67.sessionsByDay]) || {}),
+  });
+};
+
+const buildRecentSessions = (logs = {}, limit = 7) => sortEntriesByDate(logs)
+  .slice(-Math.max(1, limit))
+  .map(([dateKey, log]) => ({
+    dateKey,
+    label: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _68 => _68.type]) || _optionalChain([log, 'optionalAccess', _69 => _69.label]) || "Session", 80),
+    status: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _70 => _70.actualSession, 'optionalAccess', _71 => _71.status]) || _optionalChain([log, 'optionalAccess', _72 => _72.checkin, 'optionalAccess', _73 => _73.status]) || "", 40),
+    feel: Number(_optionalChain([log, 'optionalAccess', _74 => _74.feel]) || 0) || null,
+    miles: Number(_optionalChain([log, 'optionalAccess', _75 => _75.miles]) || 0) || null,
+    pace: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _76 => _76.pace]) || "", 24),
+    note: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _77 => _77.notes]) || "", 140),
+    comparison: clonePlainValueAiState(_optionalChain([log, 'optionalAccess', _78 => _78.comparison]) || null),
+  }));
+
+const buildRecentCheckins = (dailyCheckins = {}, limit = 7) => sortEntriesByDate(dailyCheckins)
+  .slice(-Math.max(1, limit))
+  .map(([dateKey, checkin]) => ({
+    dateKey,
+    status: sanitizeTextAiState(_optionalChain([checkin, 'optionalAccess', _79 => _79.status]) || "", 40),
+    sessionFeel: sanitizeTextAiState(_optionalChain([checkin, 'optionalAccess', _80 => _80.sessionFeel]) || "", 40),
+    blocker: sanitizeTextAiState(_optionalChain([checkin, 'optionalAccess', _81 => _81.blocker]) || "", 40),
+    readiness: clonePlainValueAiState(_optionalChain([checkin, 'optionalAccess', _82 => _82.readiness]) || {}),
+  }));
+
+const buildRecentNutritionLogs = (nutritionActualLogs = {}, limit = 7) => sortEntriesByDate(nutritionActualLogs)
+  .slice(-Math.max(1, limit))
+  .map(([dateKey, log]) => ({
+    dateKey,
+    quickStatus: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _83 => _83.quickStatus]) || "", 40),
+    adherence: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _84 => _84.adherence]) || "", 40),
+    deviationKind: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _85 => _85.deviationKind]) || "", 40),
+    issue: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _86 => _86.issue]) || "", 60),
+    note: sanitizeTextAiState(_optionalChain([log, 'optionalAccess', _87 => _87.note]) || "", 120),
+    hydration: clonePlainValueAiState(_optionalChain([log, 'optionalAccess', _88 => _88.hydration]) || null),
+    supplements: clonePlainValueAiState(_optionalChain([log, 'optionalAccess', _89 => _89.supplements]) || null),
+  }));
+
+const buildRecentBodyweights = (bodyweights = [], limit = 6) => (Array.isArray(bodyweights) ? bodyweights : [])
+  .slice(-Math.max(1, limit))
+  .map((row) => ({
+    date: _optionalChain([row, 'optionalAccess', _90 => _90.date]) || _optionalChain([row, 'optionalAccess', _91 => _91.d]) || "",
+    weight: Number(_optionalChain([row, 'optionalAccess', _92 => _92.w]) || _optionalChain([row, 'optionalAccess', _93 => _93.weight]) || 0) || null,
+  }));
+
+const buildGoalsSnapshot = (goals = []) => (Array.isArray(goals) ? goals : [])
+  .filter((goal) => _optionalChain([goal, 'optionalAccess', _94 => _94.active]))
+  .slice(0, 5)
+  .map((goal) => ({
+    id: _optionalChain([goal, 'optionalAccess', _95 => _95.id]) || "",
+    name: sanitizeTextAiState(_optionalChain([goal, 'optionalAccess', _96 => _96.name]) || "", 120),
+    category: sanitizeTextAiState(_optionalChain([goal, 'optionalAccess', _97 => _97.category]) || "", 40),
+    priority: Number(_optionalChain([goal, 'optionalAccess', _98 => _98.priority]) || 0) || null,
+    horizon: sanitizeTextAiState(_optionalChain([goal, 'optionalAccess', _99 => _99.horizon]) || "", 40),
+    target: sanitizeTextAiState(_optionalChain([goal, 'optionalAccess', _100 => _100.target]) || _optionalChain([goal, 'optionalAccess', _101 => _101.metric]) || "", 120),
+    deadline: _optionalChain([goal, 'optionalAccess', _102 => _102.deadline]) || _optionalChain([goal, 'optionalAccess', _103 => _103.targetDate]) || "",
+    status: sanitizeTextAiState(_optionalChain([goal, 'optionalAccess', _104 => _104.status]) || "", 40),
+  }));
+
+const sanitizePaceValue = (value = "") => {
+  const text = sanitizeTextAiState(value, 24);
+  if (!text) return "";
+  return /^[0-9:\/\-\u2013\u2014 .mi]+$/i.test(text) ? text : "";
+};
+
+ const buildAiStatePacket = ({
+  intent = exports.AI_PACKET_INTENTS.coachChat,
+  input = "",
+  dateKey = "",
+  currentWeek = 1,
+  canonicalGoalState = {},
+  canonicalUserProfile = {},
+  goals = [],
+  planDay = null,
+  planWeek = null,
+  logs = {},
+  dailyCheckins = {},
+  nutritionActualLogs = {},
+  bodyweights = [],
+  momentum = {},
+  expectations = {},
+  strengthLayer = {},
+  optimizationLayer = {},
+  failureMode = {},
+  readiness = null,
+  nutritionComparison = null,
+  arbitration = {},
+  memoryInsights = [],
+  coachMemoryContext = null,
+  weekNotes = {},
+  paceOverrides = {},
+  planAlerts = [],
+  recentWindow = 7,
+} = {}) => {
+  const compactDay = compactPlanDay(planDay);
+  const compactWeek = compactPlanWeek(planWeek || _optionalChain([planDay, 'optionalAccess', _105 => _105.week, 'optionalAccess', _106 => _106.planWeek]) || null);
+  const goalsSnapshot = buildGoalsSnapshot(goals);
+  const readinessSummary = clonePlainValueAiState(readiness || _optionalChain([planDay, 'optionalAccess', _107 => _107.resolved, 'optionalAccess', _108 => _108.recovery]) || null);
+  const nutritionSummary = clonePlainValueAiState(nutritionComparison || _optionalChain([planDay, 'optionalAccess', _109 => _109.resolved, 'optionalAccess', _110 => _110.nutrition, 'optionalAccess', _111 => _111.comparison]) || null);
+  const availablePacePhases = Array.from(new Set([
+    ...Object.keys(paceOverrides || {}),
+    _optionalChain([compactWeek, 'optionalAccess', _112 => _112.phase]) || "",
+    _optionalChain([compactDay, 'optionalAccess', _113 => _113.week, 'optionalAccess', _114 => _114.phase]) || "",
+  ].filter(Boolean)));
+
+  return {
+    version: exports.AI_PACKET_VERSION,
+    intent,
+    generatedAt: new Date().toISOString(),
+    scope: {
+      dateKey: dateKey || _optionalChain([compactDay, 'optionalAccess', _115 => _115.dateKey]) || "",
+      currentWeek: Number(currentWeek) || _optionalChain([compactWeek, 'optionalAccess', _116 => _116.weekNumber]) || _optionalChain([compactDay, 'optionalAccess', _117 => _117.week, 'optionalAccess', _118 => _118.currentWeek]) || 1,
+      input: sanitizeTextAiState(input, 280),
+    },
+    canonical: {
+      goalState: clonePlainValueAiState({
+        primaryGoal: _optionalChain([canonicalGoalState, 'optionalAccess', _119 => _119.primaryGoal]) || "",
+        deadline: _optionalChain([canonicalGoalState, 'optionalAccess', _120 => _120.deadline]) || "",
+        planStartDate: _optionalChain([canonicalGoalState, 'optionalAccess', _121 => _121.planStartDate]) || "",
+      }),
+      userProfile: clonePlainValueAiState({
+        name: _optionalChain([canonicalUserProfile, 'optionalAccess', _122 => _122.name]) || _optionalChain([canonicalUserProfile, 'optionalAccess', _123 => _123.profile, 'optionalAccess', _124 => _124.name]) || "",
+        fitnessLevel: _optionalChain([canonicalUserProfile, 'optionalAccess', _125 => _125.fitnessLevel]) || _optionalChain([canonicalUserProfile, 'optionalAccess', _126 => _126.profile, 'optionalAccess', _127 => _127.fitnessLevel]) || "",
+        equipmentAccess: _optionalChain([canonicalUserProfile, 'optionalAccess', _128 => _128.equipmentAccess]) || _optionalChain([canonicalUserProfile, 'optionalAccess', _129 => _129.environment, 'optionalAccess', _130 => _130.equipment]) || [],
+        constraints: _optionalChain([canonicalUserProfile, 'optionalAccess', _131 => _131.constraints]) || _optionalChain([canonicalUserProfile, 'optionalAccess', _132 => _132.scheduleConstraints]) || [],
+        preferences: _optionalChain([canonicalUserProfile, 'optionalAccess', _133 => _133.preferences]) || {},
+      }),
+      goals: goalsSnapshot,
+      weeklyIntent: clonePlainValueAiState(_optionalChain([compactWeek, 'optionalAccess', _134 => _134.weeklyIntent]) || _optionalChain([compactDay, 'optionalAccess', _135 => _135.week, 'optionalAccess', _136 => _136.weeklyIntent]) || null),
+      planWeek: compactWeek,
+      planDay: compactDay,
+    },
+    actuals: {
+      recentSessions: buildRecentSessions(logs, recentWindow),
+      recentCheckins: buildRecentCheckins(dailyCheckins, recentWindow),
+      recentNutrition: buildRecentNutritionLogs(nutritionActualLogs, recentWindow),
+      recentBodyweights: buildRecentBodyweights(bodyweights, 6),
+    },
+    summaries: {
+      readiness: clonePlainValueAiState(readinessSummary),
+      adherence: clonePlainValueAiState({
+        momentumState: _optionalChain([momentum, 'optionalAccess', _137 => _137.momentumState]) || "",
+        completionRate: Number(_optionalChain([momentum, 'optionalAccess', _138 => _138.completionRate]) || 0) || 0,
+        score: Number(_optionalChain([momentum, 'optionalAccess', _139 => _139.score]) || 0) || 0,
+        inconsistencyRisk: _optionalChain([momentum, 'optionalAccess', _140 => _140.inconsistencyRisk]) || "",
+        logGapDays: Number(_optionalChain([momentum, 'optionalAccess', _141 => _141.logGapDays]) || 0) || 0,
+      }),
+      progression: clonePlainValueAiState({
+        strengthFocus: _optionalChain([strengthLayer, 'optionalAccess', _142 => _142.focus]) || "",
+        planFocus: _optionalChain([strengthLayer, 'optionalAccess', _143 => _143.planFocus]) || "",
+        adjustmentBias: _optionalChain([optimizationLayer, 'optionalAccess', _144 => _144.adjustmentBias]) || "",
+        experimentationReady: Boolean(_optionalChain([optimizationLayer, 'optionalAccess', _145 => _145.experimentation, 'optionalAccess', _146 => _146.canExperiment])),
+        pendingExperiment: _optionalChain([optimizationLayer, 'optionalAccess', _147 => _147.experimentation, 'optionalAccess', _148 => _148.pendingExperiment]) || "",
+      }),
+      nutrition: clonePlainValueAiState({
+        comparison: nutritionSummary,
+      }),
+      arbitration: clonePlainValueAiState({
+        primary: _optionalChain([arbitration, 'optionalAccess', _149 => _149.primary]) || null,
+        todayLine: _optionalChain([arbitration, 'optionalAccess', _150 => _150.todayLine]) || "",
+      }),
+      expectations: clonePlainValueAiState({
+        coachLine: _optionalChain([expectations, 'optionalAccess', _151 => _151.coachLine]) || "",
+        rationale: _optionalChain([expectations, 'optionalAccess', _152 => _152.rationale]) || "",
+      }),
+      failureMode: clonePlainValueAiState({
+        mode: _optionalChain([failureMode, 'optionalAccess', _153 => _153.mode]) || "normal",
+        isLowEngagement: Boolean(_optionalChain([failureMode, 'optionalAccess', _154 => _154.isLowEngagement])),
+        isReEntry: Boolean(_optionalChain([failureMode, 'optionalAccess', _155 => _155.isReEntry])),
+      }),
+      provenance: clonePlainValueAiState({
+        summary: _optionalChain([compactDay, 'optionalAccess', _156 => _156.provenance, 'optionalAccess', _157 => _157.summary]) || "",
+        keyDrivers: _optionalChain([compactDay, 'optionalAccess', _158 => _158.provenance, 'optionalAccess', _159 => _159.keyDrivers]) || [],
+        events: _optionalChain([compactDay, 'optionalAccess', _160 => _160.provenance, 'optionalAccess', _161 => _161.events]) || [],
+      }),
+      memory: clonePlainValueAiState({
+        insights: (memoryInsights || []).slice(0, 4),
+        coachMemory: coachMemoryContext ? {
+          preferredMotivationStyle: _optionalChain([coachMemoryContext, 'optionalAccess', _162 => _162.preferredMotivationStyle]) || "",
+          injuryHistory: (_optionalChain([coachMemoryContext, 'optionalAccess', _163 => _163.injuryHistory]) || []).slice(0, 3),
+          recurringBreakdowns: (_optionalChain([coachMemoryContext, 'optionalAccess', _164 => _164.recurringBreakdowns]) || []).slice(0, 3),
+        } : null,
+      }),
+    },
+    planningContext: {
+      paceOverrides: clonePlainValueAiState(paceOverrides || {}),
+      weekNotes: clonePlainValueAiState(weekNotes || {}),
+      alerts: clonePlainValueAiState((planAlerts || []).slice(0, 6)),
+      availablePacePhases,
+    },
+    boundaries: {
+      sourceOfTruth: "canonical_app_state",
+      mutationPolicy: "acceptance_only",
+      aiMay: ["explain", "summarize", "propose"],
+      aiMayNot: ["directly_mutate_plan", "directly_mutate_logs", "be_source_of_truth"],
+    },
+  };
+}; exports.buildAiStatePacket = buildAiStatePacket;
+
+ const parseAiJsonObjectFromText = (text = "") => {
+  const cleaned = String(text || "").replace(/```json|```/gi, "").trim();
+  if (!cleaned) return null;
+  try {
+    const parsed = JSON.parse(cleaned);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (e2) {
+    return null;
+  }
+}; exports.parseAiJsonObjectFromText = parseAiJsonObjectFromText;
+
+const stringifyPacketForPrompt = (packet = null) => {
+  try {
+    return JSON.stringify(packet || {});
+  } catch (e3) {
+    return "{}";
+  }
+};
+
+ const buildCoachAiSystemPrompt = ({ statePacket = null } = {}) => `You are an adaptive fitness coach inside a personal training app.
+Your source of truth is the typed AI state packet below.
+The packet is derived from canonical app state. Do not invent workouts, logs, readiness, or nutrition facts outside it.
+You may explain, summarize, and suggest. You may not return machine-action proposals or act as the system of record.
+Any plan, nutrition, or recovery change must be phrased as a suggestion that requires deterministic acceptance inside the app.
+Keep responses direct, specific, and under 4 sentences unless more detail is clearly required.
+End with one concrete action or decision.
+AI_STATE_PACKET_JSON:${stringifyPacketForPrompt(statePacket)}`; exports.buildCoachAiSystemPrompt = buildCoachAiSystemPrompt;
+
+ const buildPlanAnalysisAiSystemPrompt = ({ statePacket = null } = {}) => `You are an AI training analyst operating inside a fitness app. Respond ONLY with valid JSON, no other text.
+Your source of truth is the typed AI state packet below.
+Treat all output as a proposal only. The app will deterministically accept, reject, or transform anything you return before state changes.
+Never invent state outside the packet.
+AI_STATE_PACKET_JSON:${stringifyPacketForPrompt(statePacket)}
+
+Return JSON in this exact format:
+{
+  "paceAdjustments": {
+    "PHASE_NAME": { "easy": "X:XX-X:XX", "tempo": "X:XX-X:XX", "int": "X:XX-X:XX", "long": "X:XX-X:XX" }
+  },
+  "weekNotes": {
+    "WEEK_NUMBER": "note text"
+  },
+  "alerts": [
+    { "id": "unique_id", "type": "upgrade|warning|info|makeup", "msg": "message text" }
+  ],
+  "noChange": true
+}
+
+RULES:
+- Only propose paceAdjustments for phases already present in the packet.
+- Only propose weekNotes for weeks materially affected by recent actuals.
+- alerts must be short, direct, and actionable. Max 3 alerts total.
+- If nothing needs changing, return { "noChange": true }`; exports.buildPlanAnalysisAiSystemPrompt = buildPlanAnalysisAiSystemPrompt;
+
+ const acceptAiPlanAnalysisProposal = ({ proposal = null, statePacket = null } = {}) => {
+  const rejected = [];
+  const currentWeek = Number(_optionalChain([statePacket, 'optionalAccess', _165 => _165.scope, 'optionalAccess', _166 => _166.currentWeek]) || 1) || 1;
+  const allowedPhases = new Set((_optionalChain([statePacket, 'optionalAccess', _167 => _167.planningContext, 'optionalAccess', _168 => _168.availablePacePhases]) || []).filter(Boolean));
+  const acceptedAt = Date.now();
+  const proposalProvenance = _provenanceservicejs.buildProvenanceEvent.call(void 0, {
+    actor: _provenanceservicejs.PROVENANCE_ACTORS.aiInterpretation,
+    trigger: "plan_analysis",
+    mutationType: "ai_proposal_acceptance",
+    revisionReason: "AI plan-analysis proposal accepted by deterministic gate.",
+    sourceInputs: [
+      "typed_ai_state_packet",
+      _optionalChain([statePacket, 'optionalAccess', _169 => _169.intent]) || exports.AI_PACKET_INTENTS.planAnalysis,
+      _optionalChain([statePacket, 'optionalAccess', _170 => _170.version]) || exports.AI_PACKET_VERSION,
+    ],
+    confidence: "medium",
+    timestamp: acceptedAt,
+    details: {
+      packetVersion: _optionalChain([statePacket, 'optionalAccess', _171 => _171.version]) || exports.AI_PACKET_VERSION,
+      packetIntent: _optionalChain([statePacket, 'optionalAccess', _172 => _172.intent]) || exports.AI_PACKET_INTENTS.planAnalysis,
+    },
+  });
+  const accepted = {
+    noChange: Boolean(_optionalChain([proposal, 'optionalAccess', _173 => _173.noChange])),
+    paceAdjustments: {},
+    weekNotes: {},
+    alerts: [],
+    provenance: proposalProvenance,
+  };
+
+  if (!proposal || typeof proposal !== "object") {
+    return { accepted, rejected: ["proposal_missing_or_invalid"], hasChanges: false };
+  }
+
+  Object.entries(_optionalChain([proposal, 'optionalAccess', _174 => _174.paceAdjustments]) || {}).forEach(([phase, zones]) => {
+    const phaseKey = sanitizeTextAiState(String(phase || "").toUpperCase(), 24);
+    if (!phaseKey || !allowedPhases.has(phaseKey)) {
+      rejected.push(`pace_phase_rejected:${phaseKey || "unknown"}`);
+      return;
+    }
+    const normalizedZones = {};
+    ["easy", "tempo", "int", "long"].forEach((zoneKey) => {
+      const safeValue = sanitizePaceValue(_optionalChain([zones, 'optionalAccess', _175 => _175[zoneKey]]) || "");
+      if (safeValue) normalizedZones[zoneKey] = safeValue;
+    });
+    if (Object.keys(normalizedZones).length > 0) accepted.paceAdjustments[phaseKey] = normalizedZones;
+  });
+
+  Object.entries(_optionalChain([proposal, 'optionalAccess', _176 => _176.weekNotes]) || {}).forEach(([weekKey, note]) => {
+    const numericWeek = Number(weekKey);
+    const safeNote = sanitizeTextAiState(note, 220);
+    if (!Number.isFinite(numericWeek) || numericWeek < (currentWeek - 1) || numericWeek > (currentWeek + 2) || !safeNote) {
+      rejected.push(`week_note_rejected:${weekKey}`);
+      return;
+    }
+    accepted.weekNotes[String(numericWeek)] = safeNote;
+  });
+
+  const allowedAlertTypes = new Set(["upgrade", "warning", "info", "makeup"]);
+  (Array.isArray(_optionalChain([proposal, 'optionalAccess', _177 => _177.alerts])) ? proposal.alerts : []).slice(0, 3).forEach((alert, index) => {
+    const type = sanitizeTextAiState(_optionalChain([alert, 'optionalAccess', _178 => _178.type]) || "", 24).toLowerCase();
+    const msg = sanitizeTextAiState(_optionalChain([alert, 'optionalAccess', _179 => _179.msg]) || "", 160);
+    if (!allowedAlertTypes.has(type) || !msg) {
+      rejected.push(`alert_rejected:${type || index}`);
+      return;
+    }
+    const rawId = sanitizeTextAiState(_optionalChain([alert, 'optionalAccess', _180 => _180.id]) || `alert_${index + 1}`, 40).replace(/[^a-z0-9_-]/gi, "_").toLowerCase();
+    accepted.alerts.push({
+      id: rawId ? `ai_plan_${rawId}` : `ai_plan_${index + 1}`,
+      type,
+      msg,
+      source: "ai_proposal_accepted",
+      acceptedBy: "deterministic_gate",
+      packetVersion: _optionalChain([statePacket, 'optionalAccess', _181 => _181.version]) || exports.AI_PACKET_VERSION,
+      packetIntent: _optionalChain([statePacket, 'optionalAccess', _182 => _182.intent]) || exports.AI_PACKET_INTENTS.planAnalysis,
+      provenance: _provenanceservicejs.buildProvenanceEvent.call(void 0, {
+        actor: _provenanceservicejs.PROVENANCE_ACTORS.aiInterpretation,
+        trigger: "plan_analysis_alert",
+        mutationType: "plan_alert",
+        revisionReason: msg,
+        sourceInputs: [
+          "typed_ai_state_packet",
+          type,
+        ],
+        confidence: "medium",
+        timestamp: acceptedAt,
+        details: {
+          packetVersion: _optionalChain([statePacket, 'optionalAccess', _183 => _183.version]) || exports.AI_PACKET_VERSION,
+          packetIntent: _optionalChain([statePacket, 'optionalAccess', _184 => _184.intent]) || exports.AI_PACKET_INTENTS.planAnalysis,
+          alertType: type,
+        },
+      }),
+    });
+  });
+
+  const hasChanges = Boolean(
+    Object.keys(accepted.paceAdjustments).length
+    || Object.keys(accepted.weekNotes).length
+    || accepted.alerts.length
+  );
+
+  return { accepted, rejected, hasChanges };
+}; exports.acceptAiPlanAnalysisProposal = acceptAiPlanAnalysisProposal;
+
+  },
   "src/services/ai-runtime-service.js": function(require, module, exports) {
 "use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }
 
@@ -5493,455 +6598,6 @@ const DEFAULT_API_URL = "https://api.anthropic.com/v1/messages";
     },
   };
 }; exports.coordinateCoachActionCommit = coordinateCoachActionCommit;
-
-  },
-  "src/services/canonical-athlete-service.js": function(require, module, exports) {
-"use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }var _collectionutilsjs = require('../utils/collection-utils.js');
-
- const CANONICAL_ATHLETE_VERSION = "2026-04-athlete-v1"; exports.CANONICAL_ATHLETE_VERSION = CANONICAL_ATHLETE_VERSION;
-
- const LEGACY_GOAL_PROFILE_PATHS = [
-  "goals",
-  "personalization.userGoalProfile",
-  "personalization.goalState",
-]; exports.LEGACY_GOAL_PROFILE_PATHS = LEGACY_GOAL_PROFILE_PATHS;
-
-const CATEGORY_TO_PRIMARY_GOAL = {
-  body_comp: "fat_loss",
-  strength: "muscle_gain",
-  running: "endurance",
-  injury_prevention: "general_fitness",
-  general_fitness: "general_fitness",
-};
-
-const DEFAULT_CANONICAL_USER_PROFILE = {
-  name: "Athlete",
-  primaryGoalKey: "general_fitness",
-  experienceLevel: "beginner",
-  fitnessLevel: "unknown",
-  daysPerWeek: 3,
-  sessionLength: "30",
-  equipmentAccess: [],
-  constraints: [],
-  scheduleConstraints: [],
-  preferences: {
-    coachingTone: "adaptive",
-    trainingStyle: "",
-    goalMix: "",
-    preferredEnvironments: [],
-    defaultEnvironment: "Home",
-    intensityPreference: "Standard",
-    nutritionStyle: "",
-    preferredMeals: [],
-  },
-};
-
-const DEFAULT_CANONICAL_GOAL_STATE = {
-  primaryGoal: "",
-  primaryGoalCategory: "undecided",
-  priority: "undecided",
-  priorityOrder: "",
-  deadline: "",
-  planStartDate: "",
-  milestones: null,
-  confidence: 0,
-};
-
-const pickFirstNonEmpty = (...values) => {
-  for (const value of values) {
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return "";
-};
-
-const clampMinInt = (value, fallback = 3, min = 2) => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.max(min, Math.round(numeric));
-};
-
- const inferGoalType = (goal = {}) => {
-  if (_optionalChain([goal, 'optionalAccess', _ => _.type]) === "time_bound" || _optionalChain([goal, 'optionalAccess', _2 => _2.type]) === "ongoing") return goal.type;
-  return _optionalChain([goal, 'optionalAccess', _3 => _3.targetDate]) ? "time_bound" : "ongoing";
-}; exports.inferGoalType = inferGoalType;
-
- const normalizeGoalObject = (goal = {}, idx = 0) => {
-  const type = exports.inferGoalType.call(void 0, goal);
-  const tracking = _optionalChain([goal, 'optionalAccess', _4 => _4.tracking]) || (type === "ongoing"
-    ? {
-        mode: _optionalChain([goal, 'optionalAccess', _5 => _5.category]) === "body_comp" ? "weekly_checkin" : _optionalChain([goal, 'optionalAccess', _6 => _6.category]) === "strength" ? "logged_lifts" : "progress_tracker",
-        unit: _optionalChain([goal, 'optionalAccess', _7 => _7.category]) === "body_comp" ? "lb" : _optionalChain([goal, 'optionalAccess', _8 => _8.category]) === "strength" ? "lb" : "",
-      }
-    : { mode: "deadline" });
-
-  return {
-    id: _optionalChain([goal, 'optionalAccess', _9 => _9.id]) || `goal_${idx + 1}`,
-    name: _optionalChain([goal, 'optionalAccess', _10 => _10.name]) || "Goal",
-    category: _optionalChain([goal, 'optionalAccess', _11 => _11.category]) || "running",
-    priority: Number(_optionalChain([goal, 'optionalAccess', _12 => _12.priority]) || (idx + 1)),
-    targetDate: _optionalChain([goal, 'optionalAccess', _13 => _13.targetDate]) || "",
-    measurableTarget: _optionalChain([goal, 'optionalAccess', _14 => _14.measurableTarget]) || "",
-    active: _optionalChain([goal, 'optionalAccess', _15 => _15.active]) !== false,
-    ...goal,
-    type,
-    tracking,
-  };
-}; exports.normalizeGoalObject = normalizeGoalObject;
-
- const normalizeGoals = (goals = []) => (goals || []).map((goal, idx) => exports.normalizeGoalObject.call(void 0, goal, idx)); exports.normalizeGoals = normalizeGoals;
-
- const daysUntil = (dateStr) => {
-  if (!dateStr) return 9999;
-  const target = new Date(`${dateStr}T12:00:00`).getTime();
-  if (Number.isNaN(target)) return 9999;
-  return Math.floor((target - Date.now()) / 86400000);
-}; exports.daysUntil = daysUntil;
-
- const getGoalBuckets = (goals = []) => {
-  const normalized = exports.normalizeGoals.call(void 0, goals);
-  const active = normalized.filter((goal) => goal.active).sort((a, b) => a.priority - b.priority);
-  const timeBound = active.filter((goal) => goal.type === "time_bound");
-  const ongoing = active.filter((goal) => goal.type === "ongoing");
-  return { normalized, active, timeBound, ongoing };
-}; exports.getGoalBuckets = getGoalBuckets;
-
- const getActiveTimeBoundGoal = (goals = []) => {
-  const { timeBound } = exports.getGoalBuckets.call(void 0, goals);
-  return (timeBound || [])
-    .map((goal) => ({ ...goal, days: exports.daysUntil.call(void 0, goal.targetDate) }))
-    .filter((goal) => Number.isFinite(goal.days))
-    .sort((a, b) => a.days - b.days)[0] || null;
-}; exports.getActiveTimeBoundGoal = getActiveTimeBoundGoal;
-
-const buildCanonicalUserProfile = ({
-  primaryGoal,
-  personalization = {},
-  legacyUserProfile = {},
-  profileDefaults = {},
-} = {}) => {
-  const profile = _optionalChain([personalization, 'optionalAccess', _16 => _16.profile]) || {};
-  const settings = _optionalChain([personalization, 'optionalAccess', _17 => _17.settings]) || {};
-  const trainingPreferences = _optionalChain([settings, 'optionalAccess', _18 => _18.trainingPreferences]) || {};
-  const nutritionPreferenceState = _optionalChain([personalization, 'optionalAccess', _19 => _19.nutritionPreferenceState]) || {};
-  const environmentConfig = _optionalChain([personalization, 'optionalAccess', _20 => _20.environmentConfig]) || {};
-  const coachMemory = _optionalChain([personalization, 'optionalAccess', _21 => _21.coachMemory]) || {};
-  const homePresetEquipment = _optionalChain([environmentConfig, 'optionalAccess', _22 => _22.presets, 'optionalAccess', _23 => _23.Home, 'optionalAccess', _24 => _24.equipment]) || [];
-
-  return {
-    ...DEFAULT_CANONICAL_USER_PROFILE,
-    name: pickFirstNonEmpty(_optionalChain([profile, 'optionalAccess', _25 => _25.name]), _optionalChain([profileDefaults, 'optionalAccess', _26 => _26.name]), DEFAULT_CANONICAL_USER_PROFILE.name),
-    primaryGoalKey: _optionalChain([legacyUserProfile, 'optionalAccess', _27 => _27.primary_goal])
-      || CATEGORY_TO_PRIMARY_GOAL[_optionalChain([primaryGoal, 'optionalAccess', _28 => _28.category])]
-      || DEFAULT_CANONICAL_USER_PROFILE.primaryGoalKey,
-    experienceLevel: pickFirstNonEmpty(
-      _optionalChain([legacyUserProfile, 'optionalAccess', _29 => _29.experience_level]),
-      _optionalChain([profile, 'optionalAccess', _30 => _30.estimatedFitnessLevel]),
-      DEFAULT_CANONICAL_USER_PROFILE.experienceLevel
-    ),
-    fitnessLevel: pickFirstNonEmpty(
-      _optionalChain([personalization, 'optionalAccess', _31 => _31.fitnessSignals, 'optionalAccess', _32 => _32.fitnessLevel]),
-      _optionalChain([profile, 'optionalAccess', _33 => _33.fitnessLevel]),
-      _optionalChain([profile, 'optionalAccess', _34 => _34.estimatedFitnessLevel]),
-      DEFAULT_CANONICAL_USER_PROFILE.fitnessLevel
-    ),
-    daysPerWeek: clampMinInt(_optionalChain([legacyUserProfile, 'optionalAccess', _35 => _35.days_per_week]), DEFAULT_CANONICAL_USER_PROFILE.daysPerWeek),
-    sessionLength: pickFirstNonEmpty(
-      _optionalChain([legacyUserProfile, 'optionalAccess', _36 => _36.session_length]),
-      _optionalChain([environmentConfig, 'optionalAccess', _37 => _37.base, 'optionalAccess', _38 => _38.time]),
-      DEFAULT_CANONICAL_USER_PROFILE.sessionLength
-    ),
-    equipmentAccess: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([legacyUserProfile, 'optionalAccess', _39 => _39.equipment_access]) || homePresetEquipment),
-    constraints: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([legacyUserProfile, 'optionalAccess', _40 => _40.constraints]) || []),
-    scheduleConstraints: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([coachMemory, 'optionalAccess', _41 => _41.scheduleConstraints]) || []),
-    preferences: {
-      coachingTone: pickFirstNonEmpty(_optionalChain([profile, 'optionalAccess', _42 => _42.preferredCoachingTone]), DEFAULT_CANONICAL_USER_PROFILE.preferences.coachingTone),
-      trainingStyle: pickFirstNonEmpty(_optionalChain([profile, 'optionalAccess', _43 => _43.preferredTrainingStyle]), DEFAULT_CANONICAL_USER_PROFILE.preferences.trainingStyle),
-      goalMix: pickFirstNonEmpty(_optionalChain([profile, 'optionalAccess', _44 => _44.goalMix]), DEFAULT_CANONICAL_USER_PROFILE.preferences.goalMix),
-      preferredEnvironments: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([profile, 'optionalAccess', _45 => _45.preferredEnvironments]) || []),
-      defaultEnvironment: pickFirstNonEmpty(
-        _optionalChain([trainingPreferences, 'optionalAccess', _46 => _46.defaultEnvironment]),
-        _optionalChain([environmentConfig, 'optionalAccess', _47 => _47.defaultMode]),
-        DEFAULT_CANONICAL_USER_PROFILE.preferences.defaultEnvironment
-      ),
-      intensityPreference: pickFirstNonEmpty(
-        _optionalChain([trainingPreferences, 'optionalAccess', _48 => _48.intensityPreference]),
-        DEFAULT_CANONICAL_USER_PROFILE.preferences.intensityPreference
-      ),
-      nutritionStyle: pickFirstNonEmpty(
-        _optionalChain([nutritionPreferenceState, 'optionalAccess', _49 => _49.style]),
-        DEFAULT_CANONICAL_USER_PROFILE.preferences.nutritionStyle
-      ),
-      preferredMeals: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([nutritionPreferenceState, 'optionalAccess', _50 => _50.preferredMeals]) || []),
-    },
-  };
-};
-
-const buildCanonicalGoalState = ({
-  primaryGoal = null,
-  activeTimeBoundGoal = null,
-  goalBuckets = {},
-  personalization = {},
-} = {}) => {
-  const storedGoalState = _optionalChain([personalization, 'optionalAccess', _51 => _51.goalState]) || {};
-  const priorityOrder = (_optionalChain([goalBuckets, 'optionalAccess', _52 => _52.active]) || []).map((goal) => _optionalChain([goal, 'optionalAccess', _53 => _53.name])).filter(Boolean);
-
-  return {
-    ...DEFAULT_CANONICAL_GOAL_STATE,
-    ...storedGoalState,
-    primaryGoal: _optionalChain([primaryGoal, 'optionalAccess', _54 => _54.name]) || _optionalChain([storedGoalState, 'optionalAccess', _55 => _55.primaryGoal]) || DEFAULT_CANONICAL_GOAL_STATE.primaryGoal,
-    primaryGoalCategory: _optionalChain([primaryGoal, 'optionalAccess', _56 => _56.category]) || _optionalChain([storedGoalState, 'optionalAccess', _57 => _57.priority]) || DEFAULT_CANONICAL_GOAL_STATE.primaryGoalCategory,
-    priority: _optionalChain([primaryGoal, 'optionalAccess', _58 => _58.category]) || _optionalChain([storedGoalState, 'optionalAccess', _59 => _59.priority]) || DEFAULT_CANONICAL_GOAL_STATE.priority,
-    priorityOrder: priorityOrder.length ? priorityOrder.join(" > ") : (_optionalChain([storedGoalState, 'optionalAccess', _60 => _60.priorityOrder]) || DEFAULT_CANONICAL_GOAL_STATE.priorityOrder),
-    deadline: _optionalChain([activeTimeBoundGoal, 'optionalAccess', _61 => _61.targetDate]) || _optionalChain([storedGoalState, 'optionalAccess', _62 => _62.deadline]) || DEFAULT_CANONICAL_GOAL_STATE.deadline,
-    planStartDate: _optionalChain([storedGoalState, 'optionalAccess', _63 => _63.planStartDate]) || DEFAULT_CANONICAL_GOAL_STATE.planStartDate,
-    milestones: _optionalChain([storedGoalState, 'optionalAccess', _64 => _64.milestones]) || DEFAULT_CANONICAL_GOAL_STATE.milestones,
-    confidence: Number.isFinite(Number(_optionalChain([storedGoalState, 'optionalAccess', _65 => _65.confidence])))
-      ? Number(storedGoalState.confidence)
-      : DEFAULT_CANONICAL_GOAL_STATE.confidence,
-  };
-};
-
- const deriveCanonicalAthleteState = ({
-  goals = [],
-  personalization = {},
-  profileDefaults = {},
-} = {}) => {
-  const normalizedGoals = exports.normalizeGoals.call(void 0, goals);
-  const goalBuckets = exports.getGoalBuckets.call(void 0, normalizedGoals);
-  const activeTimeBoundGoal = exports.getActiveTimeBoundGoal.call(void 0, goalBuckets.active);
-  const primaryGoal = goalBuckets.active[0] || null;
-  const legacyUserProfile = _optionalChain([personalization, 'optionalAccess', _66 => _66.userGoalProfile]) || {};
-  const userProfile = buildCanonicalUserProfile({
-    primaryGoal,
-    personalization,
-    legacyUserProfile,
-    profileDefaults,
-  });
-  const goalState = buildCanonicalGoalState({
-    primaryGoal,
-    activeTimeBoundGoal,
-    goalBuckets,
-    personalization,
-  });
-
-  return {
-    version: exports.CANONICAL_ATHLETE_VERSION,
-    goals: normalizedGoals,
-    goalBuckets,
-    activeTimeBoundGoal,
-    primaryGoal,
-    userProfile,
-    goalState,
-    legacyCompatibility: {
-      deprecatedInputPaths: [...exports.LEGACY_GOAL_PROFILE_PATHS],
-    },
-  };
-}; exports.deriveCanonicalAthleteState = deriveCanonicalAthleteState;
-
- const buildLegacyGoalProfileCompatibilityFields = ({
-  canonicalAthlete = null,
-  personalization = {},
-  userProfileOverrides = {},
-  goalStateOverrides = {},
-} = {}) => {
-  const canonicalUserProfile = _optionalChain([canonicalAthlete, 'optionalAccess', _67 => _67.userProfile]) || DEFAULT_CANONICAL_USER_PROFILE;
-  const canonicalGoalState = _optionalChain([canonicalAthlete, 'optionalAccess', _68 => _68.goalState]) || DEFAULT_CANONICAL_GOAL_STATE;
-  const existingUserGoalProfile = _optionalChain([personalization, 'optionalAccess', _69 => _69.userGoalProfile]) || {};
-  const existingGoalState = _optionalChain([personalization, 'optionalAccess', _70 => _70.goalState]) || {};
-
-  return {
-    userGoalProfile: {
-      ...existingUserGoalProfile,
-      primary_goal: _optionalChain([canonicalUserProfile, 'optionalAccess', _71 => _71.primaryGoalKey]) || _optionalChain([existingUserGoalProfile, 'optionalAccess', _72 => _72.primary_goal]) || "",
-      experience_level: _optionalChain([canonicalUserProfile, 'optionalAccess', _73 => _73.experienceLevel]) || _optionalChain([existingUserGoalProfile, 'optionalAccess', _74 => _74.experience_level]) || DEFAULT_CANONICAL_USER_PROFILE.experienceLevel,
-      days_per_week: clampMinInt(
-        _optionalChain([canonicalUserProfile, 'optionalAccess', _75 => _75.daysPerWeek]),
-        _optionalChain([existingUserGoalProfile, 'optionalAccess', _76 => _76.days_per_week]) || DEFAULT_CANONICAL_USER_PROFILE.daysPerWeek
-      ),
-      session_length: _optionalChain([canonicalUserProfile, 'optionalAccess', _77 => _77.sessionLength]) || _optionalChain([existingUserGoalProfile, 'optionalAccess', _78 => _78.session_length]) || DEFAULT_CANONICAL_USER_PROFILE.sessionLength,
-      equipment_access: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([canonicalUserProfile, 'optionalAccess', _79 => _79.equipmentAccess]) || _optionalChain([existingUserGoalProfile, 'optionalAccess', _80 => _80.equipment_access]) || []),
-      constraints: _collectionutilsjs.dedupeStrings.call(void 0, _optionalChain([canonicalUserProfile, 'optionalAccess', _81 => _81.constraints]) || _optionalChain([existingUserGoalProfile, 'optionalAccess', _82 => _82.constraints]) || []),
-      ...userProfileOverrides,
-    },
-    goalState: {
-      ...existingGoalState,
-      primaryGoal: _optionalChain([canonicalGoalState, 'optionalAccess', _83 => _83.primaryGoal]) || _optionalChain([existingGoalState, 'optionalAccess', _84 => _84.primaryGoal]) || "",
-      priority: _optionalChain([canonicalGoalState, 'optionalAccess', _85 => _85.priority]) || _optionalChain([existingGoalState, 'optionalAccess', _86 => _86.priority]) || DEFAULT_CANONICAL_GOAL_STATE.priority,
-      priorityOrder: _optionalChain([canonicalGoalState, 'optionalAccess', _87 => _87.priorityOrder]) || _optionalChain([existingGoalState, 'optionalAccess', _88 => _88.priorityOrder]) || DEFAULT_CANONICAL_GOAL_STATE.priorityOrder,
-      deadline: _optionalChain([canonicalGoalState, 'optionalAccess', _89 => _89.deadline]) || _optionalChain([existingGoalState, 'optionalAccess', _90 => _90.deadline]) || DEFAULT_CANONICAL_GOAL_STATE.deadline,
-      planStartDate: _optionalChain([canonicalGoalState, 'optionalAccess', _91 => _91.planStartDate]) || _optionalChain([existingGoalState, 'optionalAccess', _92 => _92.planStartDate]) || DEFAULT_CANONICAL_GOAL_STATE.planStartDate,
-      milestones: _optionalChain([canonicalGoalState, 'optionalAccess', _93 => _93.milestones]) || _optionalChain([existingGoalState, 'optionalAccess', _94 => _94.milestones]) || DEFAULT_CANONICAL_GOAL_STATE.milestones,
-      confidence: Number.isFinite(Number(_optionalChain([canonicalGoalState, 'optionalAccess', _95 => _95.confidence])))
-        ? Number(canonicalGoalState.confidence)
-        : (Number.isFinite(Number(_optionalChain([existingGoalState, 'optionalAccess', _96 => _96.confidence]))) ? Number(existingGoalState.confidence) : DEFAULT_CANONICAL_GOAL_STATE.confidence),
-      ...goalStateOverrides,
-    },
-  };
-}; exports.buildLegacyGoalProfileCompatibilityFields = buildLegacyGoalProfileCompatibilityFields;
-
- const withLegacyGoalProfileCompatibility = ({
-  personalization = {},
-  canonicalAthlete = null,
-  userProfileOverrides = {},
-  goalStateOverrides = {},
-} = {}) => {
-  const compatibilityFields = exports.buildLegacyGoalProfileCompatibilityFields.call(void 0, {
-    canonicalAthlete,
-    personalization,
-    userProfileOverrides,
-    goalStateOverrides,
-  });
-
-  return {
-    ...personalization,
-    ...compatibilityFields,
-  };
-}; exports.withLegacyGoalProfileCompatibility = withLegacyGoalProfileCompatibility;
-
-  },
-  "src/services/provenance-service.js": function(require, module, exports) {
-"use strict";Object.defineProperty(exports, "__esModule", {value: true}); function _optionalChain(ops) { let lastAccessLHS = undefined; let value = ops[0]; let i = 1; while (i < ops.length) { const op = ops[i]; const fn = ops[i + 1]; i += 2; if ((op === 'optionalAccess' || op === 'optionalCall') && value == null) { return undefined; } if (op === 'access' || op === 'optionalAccess') { lastAccessLHS = value; value = fn(value); } else if (op === 'call' || op === 'optionalCall') { value = fn((...args) => value.call(lastAccessLHS, ...args)); lastAccessLHS = undefined; } } return value; }var _collectionutilsjs = require('../utils/collection-utils.js');
-
- const PROVENANCE_VERSION = 1; exports.PROVENANCE_VERSION = PROVENANCE_VERSION;
-
- const PROVENANCE_ACTORS = {
-  user: "user",
-  deterministicEngine: "deterministic_engine",
-  aiInterpretation: "ai_interpretation",
-  migration: "migration",
-  fallback: "fallback",
-}; exports.PROVENANCE_ACTORS = PROVENANCE_ACTORS;
-
-const VALID_ACTORS = new Set(Object.values(exports.PROVENANCE_ACTORS));
-const VALID_CONFIDENCE_LEVELS = new Set(["low", "medium", "high"]);
-
-const clonePlainValue = (value) => {
-  if (value == null) return value;
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch (e) {
-    return value;
-  }
-};
-
-const sanitizeText = (value = "", maxLength = 200) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
-
- const buildProvenanceEvent = ({
-  actor = exports.PROVENANCE_ACTORS.deterministicEngine,
-  trigger = "",
-  mutationType = "",
-  revisionReason = "",
-  sourceInputs = [],
-  confidence = null,
-  timestamp = Date.now(),
-  details = {},
-} = {}) => ({
-  version: exports.PROVENANCE_VERSION,
-  actor: VALID_ACTORS.has(actor) ? actor : exports.PROVENANCE_ACTORS.deterministicEngine,
-  trigger: sanitizeText(trigger, 80) || "unknown_trigger",
-  mutationType: sanitizeText(mutationType, 80) || "state_update",
-  revisionReason: sanitizeText(revisionReason, 120) || "",
-  sourceInputs: _collectionutilsjs.dedupeStrings.call(void 0, (sourceInputs || []).map((value) => sanitizeText(value, 120))).slice(0, 8),
-  confidence: VALID_CONFIDENCE_LEVELS.has(confidence) ? confidence : null,
-  timestamp: Number(timestamp) || Date.now(),
-  details: clonePlainValue(details || {}),
-}); exports.buildProvenanceEvent = buildProvenanceEvent;
-
- const normalizeProvenanceEvent = (event = null, fallbacks = {}) => {
-  if (!event || typeof event !== "object") {
-    return exports.buildProvenanceEvent.call(void 0, fallbacks);
-  }
-  return exports.buildProvenanceEvent.call(void 0, {
-    actor: _optionalChain([event, 'optionalAccess', _ => _.actor]) || _optionalChain([fallbacks, 'optionalAccess', _2 => _2.actor]),
-    trigger: _optionalChain([event, 'optionalAccess', _3 => _3.trigger]) || _optionalChain([fallbacks, 'optionalAccess', _4 => _4.trigger]),
-    mutationType: _optionalChain([event, 'optionalAccess', _5 => _5.mutationType]) || _optionalChain([fallbacks, 'optionalAccess', _6 => _6.mutationType]),
-    revisionReason: _optionalChain([event, 'optionalAccess', _7 => _7.revisionReason]) || _optionalChain([event, 'optionalAccess', _8 => _8.reason]) || _optionalChain([fallbacks, 'optionalAccess', _9 => _9.revisionReason]),
-    sourceInputs: _optionalChain([event, 'optionalAccess', _10 => _10.sourceInputs]) || _optionalChain([fallbacks, 'optionalAccess', _11 => _11.sourceInputs]) || [],
-    confidence: _optionalChain([event, 'optionalAccess', _12 => _12.confidence]) || _optionalChain([fallbacks, 'optionalAccess', _13 => _13.confidence]) || null,
-    timestamp: _optionalChain([event, 'optionalAccess', _14 => _14.timestamp]) || _optionalChain([event, 'optionalAccess', _15 => _15.capturedAt]) || _optionalChain([event, 'optionalAccess', _16 => _16.updatedAt]) || _optionalChain([fallbacks, 'optionalAccess', _17 => _17.timestamp]) || Date.now(),
-    details: {
-      ...(clonePlainValue(_optionalChain([event, 'optionalAccess', _18 => _18.details]) || {}) || {}),
-      ...(clonePlainValue(_optionalChain([fallbacks, 'optionalAccess', _19 => _19.details]) || {}) || {}),
-    },
-  });
-}; exports.normalizeProvenanceEvent = normalizeProvenanceEvent;
-
- const buildProvenanceSummary = ({ keyDrivers = [], events = [], fallbackSummary = "" } = {}) => {
-  const driverText = _collectionutilsjs.dedupeStrings.call(void 0, (keyDrivers || []).map((value) => sanitizeText(value, 120))).slice(0, 3);
-  if (driverText.length > 0) {
-    return `Based on ${driverText.join(", ")}.`;
-  }
-  const primaryEvent = (events || []).find(Boolean) || null;
-  if (_optionalChain([primaryEvent, 'optionalAccess', _20 => _20.revisionReason])) {
-    return sanitizeText(primaryEvent.revisionReason, 200);
-  }
-  return sanitizeText(fallbackSummary, 200);
-}; exports.buildProvenanceSummary = buildProvenanceSummary;
-
- const buildStructuredProvenance = ({
-  keyDrivers = [],
-  events = [],
-  summary = "",
-} = {}) => {
-  const normalizedEvents = (events || []).map((event) => exports.normalizeProvenanceEvent.call(void 0, event)).filter(Boolean);
-  const normalizedDrivers = _collectionutilsjs.dedupeStrings.call(void 0, (keyDrivers || []).map((value) => sanitizeText(value, 120))).slice(0, 8);
-  const updatedAt = normalizedEvents.reduce((max, event) => Math.max(max, Number(_optionalChain([event, 'optionalAccess', _21 => _21.timestamp]) || 0) || 0), 0) || Date.now();
-
-  return {
-    version: exports.PROVENANCE_VERSION,
-    summary: exports.buildProvenanceSummary.call(void 0, { keyDrivers: normalizedDrivers, events: normalizedEvents, fallbackSummary: summary }),
-    keyDrivers: normalizedDrivers,
-    events: normalizedEvents,
-    updatedAt,
-  };
-}; exports.buildStructuredProvenance = buildStructuredProvenance;
-
- const normalizeStructuredProvenance = (provenance = null, fallbacks = {}) => {
-  if (_optionalChain([provenance, 'optionalAccess', _22 => _22.version]) === exports.PROVENANCE_VERSION && Array.isArray(_optionalChain([provenance, 'optionalAccess', _23 => _23.events]))) {
-    return exports.buildStructuredProvenance.call(void 0, {
-      keyDrivers: _optionalChain([provenance, 'optionalAccess', _24 => _24.keyDrivers]) || [],
-      events: _optionalChain([provenance, 'optionalAccess', _25 => _25.events]) || [],
-      summary: _optionalChain([provenance, 'optionalAccess', _26 => _26.summary]) || "",
-    });
-  }
-  const fallbackEvents = Array.isArray(_optionalChain([fallbacks, 'optionalAccess', _27 => _27.events])) ? fallbacks.events : [];
-  const legacyEvents = Array.isArray(_optionalChain([provenance, 'optionalAccess', _28 => _28.events]))
-    ? provenance.events
-    : provenance
-    ? [exports.normalizeProvenanceEvent.call(void 0, provenance, fallbacks)]
-    : [];
-  return exports.buildStructuredProvenance.call(void 0, {
-    keyDrivers: _optionalChain([provenance, 'optionalAccess', _29 => _29.keyDrivers]) || _optionalChain([fallbacks, 'optionalAccess', _30 => _30.keyDrivers]) || [],
-    events: [...legacyEvents, ...fallbackEvents].filter(Boolean),
-    summary: _optionalChain([provenance, 'optionalAccess', _31 => _31.summary]) || _optionalChain([fallbacks, 'optionalAccess', _32 => _32.summary]) || "",
-  });
-}; exports.normalizeStructuredProvenance = normalizeStructuredProvenance;
-
- const buildLegacyProvenanceAdjustmentView = (events = []) => (
-  (events || []).map((event) => ({
-    type: _optionalChain([event, 'optionalAccess', _33 => _33.trigger]) || "unknown_trigger",
-    actor: _optionalChain([event, 'optionalAccess', _34 => _34.actor]) || exports.PROVENANCE_ACTORS.deterministicEngine,
-    reason: _optionalChain([event, 'optionalAccess', _35 => _35.revisionReason]) || "",
-    sourceInputs: clonePlainValue(_optionalChain([event, 'optionalAccess', _36 => _36.sourceInputs]) || []),
-    mutationType: _optionalChain([event, 'optionalAccess', _37 => _37.mutationType]) || "",
-    timestamp: _optionalChain([event, 'optionalAccess', _38 => _38.timestamp]) || Date.now(),
-  }))
-); exports.buildLegacyProvenanceAdjustmentView = buildLegacyProvenanceAdjustmentView;
-
- const appendProvenanceSidecar = (container = {}, bucket = "", key = "", provenance = null) => ({
-  ...(container || {}),
-  provenance: {
-    ...((container || {}).provenance || {}),
-    [bucket]: {
-      ...(_optionalChain([((container || {}).provenance || {}), 'optionalAccess', _39 => _39[bucket]]) || {}),
-      [String(key || "")]: provenance,
-    },
-  },
-}); exports.appendProvenanceSidecar = appendProvenanceSidecar;
-
- const describeProvenanceRecord = (provenance = null, fallbackSummary = "") => (
-  _optionalChain([exports.normalizeStructuredProvenance.call(void 0, provenance, { summary: fallbackSummary }), 'optionalAccess', _40 => _40.summary]) || sanitizeText(fallbackSummary, 200)
-); exports.describeProvenanceRecord = describeProvenanceRecord;
 
   },
   "src/trainer-dashboard.jsx": function(require, module, exports) {
