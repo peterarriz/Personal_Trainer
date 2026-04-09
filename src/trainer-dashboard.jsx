@@ -998,6 +998,10 @@ const sanitizeDisplayText = (text = "") => stripInternalTags(
     .replace(/\btravelRun\b/gi, "run")
     .replace(/\bhybridRun\b/gi, "run + strength")
 ).trim();
+const sanitizeStatusLabel = (value = "", fallback = "Unknown") => {
+  const textValue = String(value || "").replaceAll("_", " ").trim();
+  return sanitizeDisplayText(textValue || fallback);
+};
 const joinHumanList = (items = []) => {
   const filtered = (items || []).filter(Boolean);
   if (!filtered.length) return "";
@@ -5969,13 +5973,13 @@ Keep it plain and specific.`;
         .btn:hover{border-color:rgba(60,145,230,0.34);color:var(--text-strong);background:var(--surface-1);transform:translateY(-1px);box-shadow:var(--shadow-1)}
         .btn:active{transform:translateY(0) scale(0.985)}
         .btn-primary{
-          background:var(--phase-accent)!important;
-          border-color:rgba(0,0,0,0)!important;
-          color:#f8fbff!important;
+          background:linear-gradient(135deg, rgba(34,84,94,0.92), rgba(27,56,86,0.94))!important;
+          border:1px solid rgba(125,211,252,0.22)!important;
+          color:var(--text-strong)!important;
           font-weight:700;
-          box-shadow:var(--shadow-2);
+          box-shadow:0 10px 24px rgba(6, 14, 28, 0.34), inset 0 1px 0 rgba(255,255,255,0.04);
         }
-        .btn-primary:hover{filter:none;box-shadow:var(--shadow-3)}
+        .btn-primary:hover{filter:none;background:linear-gradient(135deg, rgba(40,95,106,0.95), rgba(32,65,98,0.98))!important;border-color:rgba(147,197,253,0.34)!important;box-shadow:0 14px 28px rgba(8, 18, 34, 0.38)}
         input,textarea,select{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'Inter',sans-serif;font-size:0.7rem;padding:9px 11px;outline:none;width:100%;transition:border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease}
         input:focus,textarea:focus,select:focus{border-color:rgba(60,145,230,0.5);box-shadow:0 0 0 3px rgba(60,145,230,0.14);background:var(--surface-1)}
         @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
@@ -7097,7 +7101,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       });
       setPersonalization(next);
       await onPersist(next);
-      setLocationMsg("Location permission denied. Enable it in iPhone Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Location Services.");
+      setLocationMsg(sanitizeDisplayText("Location permission denied. Enable it in iPhone Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Location Services."));
     }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 600000 });
   };
   const handleCopyBackup = async () => {
@@ -7259,7 +7263,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 </button>
               </div>
               <div style={{ marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
-                iPhone path: Settings Ã¢â€ â€™ Privacy &amp; Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ Allow all categories.
+                {sanitizeDisplayText("iPhone path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ Allow all categories.")}
               </div>
               {checkMsg && <div style={{ marginTop:"0.22rem", fontSize:"0.51rem", color:"#cbd5e1" }}>{checkMsg}</div>}
             </div>
@@ -7304,7 +7308,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             <div style={{ fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.6 }}>{locationIntegration.summary}</div>
             <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Enable location permission</button>
             <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
-              iPhone path: Settings Ã¢â€ â€™ Privacy &amp; Security Ã¢â€ â€™ Location Services Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ While Using App.
+              {sanitizeDisplayText("iPhone path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Location Services Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ While Using App.")}
             </div>
             {!!locationMsg && <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#cbd5e1" }}>{locationMsg}</div>}
           </div>
@@ -7661,9 +7665,9 @@ function OnboardingCoachLegacy({ onComplete }) {
             Your Garmin data will appear in Apple Health automatically once connected. Here&apos;s how:
           </div>
           <div style={{ fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.7 }}>
-            Step 1: Open Garmin Connect app<br />
-            Step 2: Tap your profile photo Ã¢â€ â€™ Settings Ã¢â€ â€™ Connected Apps Ã¢â€ â€™ Apple Health Ã¢â€ â€™ Enable All<br />
-            Step 3: Come back here and tap &quot;Check Connection&quot;
+            {sanitizeDisplayText("Step 1: Open Garmin Connect app")}<br />
+            {sanitizeDisplayText("Step 2: Tap your profile photo Ã¢â€ â€™ Settings Ã¢â€ â€™ Connected Apps Ã¢â€ â€™ Apple Health Ã¢â€ â€™ Enable All")}<br />
+            {sanitizeDisplayText("Step 3: Come back here and tap \"Check Connection\"")}
           </div>
           <div style={{ marginTop:"0.45rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
             <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
@@ -7677,7 +7681,10 @@ function OnboardingCoachLegacy({ onComplete }) {
             </button>
           </div>
           <div style={{ marginTop:"0.28rem", fontSize:"0.5rem", color:"#6f85a7" }}>
-            Status: {appleHealth?.status || "not_connected"} Ã‚Â· Last check: {appleHealth?.lastConnectionCheck ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}
+            {joinDisplayParts([
+              `Status: ${sanitizeStatusLabel(appleHealth?.status, "not_connected")}`,
+              `Last check: ${appleHealth?.lastConnectionCheck ? new Date(appleHealth.lastConnectionCheck).toLocaleString() : "never"}`,
+            ])}
           </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>
             Permission confirmed: {appleHealth?.permissionConfirmedAt ? new Date(appleHealth.permissionConfirmedAt).toLocaleString() : "not confirmed"}
@@ -7694,7 +7701,7 @@ function OnboardingCoachLegacy({ onComplete }) {
               : "Not connected yet."}
           </div>
           <div style={{ marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 }}>
-            iPhone permission path: Settings Ã¢â€ â€™ Privacy &amp; Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer (or browser app) Ã¢â€ â€™ Allow all categories.
+            {sanitizeDisplayText("iPhone permission path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer (or browser app) Ã¢â€ â€™ Allow all categories.")}
           </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
           {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
@@ -7708,12 +7715,15 @@ function OnboardingCoachLegacy({ onComplete }) {
             Connect Garmin
           </button>
           <div style={{ marginTop:"0.25rem", fontSize:"0.52rem", color:garmin?.status === "connected" ? C.green : "#8fa5c8" }}>
-            {garmin?.status === "connected" ? `Garmin connected Ã‚Â· ${garmin?.deviceName || "device"}` : "Garmin not connected"}
+            {garmin?.status === "connected" ? joinDisplayParts(["Garmin connected", garmin?.deviceName || "device"]) : "Garmin not connected"}
           </div>
           <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#6f85a7" }}>
-            Last activity synced: {lastGarminActivity?.startTime || "none"} Ã‚Â· {lastGarminActivity?.type || ""}
+            {joinDisplayParts([
+              `Last activity synced: ${lastGarminActivity?.startTime || "none"}`,
+              sanitizeDisplayText(lastGarminActivity?.type || ""),
+            ])}
           </div>
-          <a href="#" onClick={(e)=>{ e.preventDefault(); setConnectOpen(true); }} style={{ display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue }}>How to sync Garmin Ã¢â€ â€™ Apple Health</a>
+          <a href="#" onClick={(e)=>{ e.preventDefault(); setConnectOpen(true); }} style={{ display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue }}>{sanitizeDisplayText("How to sync Garmin Ã¢â€ â€™ Apple Health")}</a>
           {!!garminMsg && <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:"#cbd5e1" }}>{garminMsg}</div>}
         </div>
 
@@ -9256,7 +9266,11 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     : primaryCategory === "strength"
     ? "Strength progression"
     : "Endurance progression");
-  const phaseBanner = `${currentProgramBlock?.label || String(currentPhaseMeta?.name || currentPhase).replace(" Phase", "")} Ã‚Â· ${phaseShortMeaning} Ã‚Â· ${daysToShift ? `transitions in ${daysToShift} days.` : "current block active."}`;
+  const phaseBanner = joinDisplayParts([
+    sanitizeDisplayText(currentProgramBlock?.label || String(currentPhaseMeta?.name || currentPhase).replace(" Phase", "")),
+    sanitizeDisplayText(phaseShortMeaning),
+    daysToShift ? `transitions in ${daysToShift} days.` : "current block active.",
+  ]);
   const strengthProgress = deriveStrengthProgressTracker({ logs, goals, strengthLayer });
   const strengthGoalTracking = personalization?.strengthProgression?.tracking || {};
   const displayedStrengthProgress = useMemo(() => {
@@ -9860,10 +9874,6 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       }),
     };
   }, [selectedArchiveReviewTarget, planArchives]);
-  const sanitizeStatusLabel = (value = "", fallback = "Unknown") => {
-    const textValue = String(value || "").replaceAll("_", " ").trim();
-    return sanitizeDisplayText(textValue || fallback);
-  };
   const summarizeExecutionDelta = (comparison = {}) => {
     if (!comparison?.hasPlannedDay) return "No planned day available for comparison.";
     return `${sanitizeStatusLabel(comparison?.completionKind)} - ${sanitizeStatusLabel(comparison?.differenceKind)}`;
