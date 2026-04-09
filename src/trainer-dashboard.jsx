@@ -50,6 +50,10 @@ import {
   buildHistoricalWeekAuditEntries,
 } from "./services/history-audit-service.js";
 import {
+  joinDisplayParts,
+  sanitizeDisplayCopy,
+} from "./services/text-format-service.js";
+import {
   normalizeHomeEquipmentResponse,
   sanitizeIntakeText,
 } from "./services/intake-flow-service.js";
@@ -941,7 +945,10 @@ const deriveReadinessAdjustedCheckin = (checkin = {}) => {
   adjusted.note = cleanedNote ? `${cleanedNote} ${marker}` : marker;
   return { readinessFilled: true, readiness: { sleep, soreness, stress }, adjusted };
 };
-const stripInternalTags = (text = "") => String(text || "").replace(/\[.*?\]/g, "").replace(/\s{2,}/g, " ").trim();
+const stripInternalTags = (text = "") => sanitizeDisplayCopy(String(text || ""))
+  .replace(/\[.*?\]/g, "")
+  .replace(/\s{2,}/g, " ")
+  .trim();
 const normalizePendingStrengthAdjustments = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
   return value ? [value] : [];
@@ -1921,14 +1928,14 @@ const applySessionNamingRules = (session = {}, injuryState = {}) => {
       return next;
     }
     if (type === "long-run") {
-      next.label = runTarget ? `Long Run Ã‚Â· ${runTarget}` : "Long Run";
+      next.label = runTarget ? joinDisplayParts(["Long Run", runTarget]) : "Long Run";
       return next;
     }
     if (type === "hard-run" && !/easy/i.test(runType)) {
-      next.label = runTarget ? `${next?.run?.t || "Quality"} Run Ã‚Â· ${runTarget}` : `${next?.run?.t || "Quality"} Run`;
+      next.label = runTarget ? joinDisplayParts([`${next?.run?.t || "Quality"} Run`, runTarget]) : `${next?.run?.t || "Quality"} Run`;
       return next;
     }
-    next.label = runTarget ? `${SESSION_NAMING.EASY_RUN} Ã‚Â· ${runTarget}` : SESSION_NAMING.EASY_RUN;
+    next.label = runTarget ? joinDisplayParts([SESSION_NAMING.EASY_RUN, runTarget]) : SESSION_NAMING.EASY_RUN;
     return next;
   }
   const lowImpactOnly = /(bike|elliptical|pool|incline walk|low-impact)/i.test(`${next?.label || ""} ${next?.environmentNote || ""}`);
@@ -1995,7 +2002,7 @@ const DAY_CONTEXT_OVERRIDES = {
   },
 };
 
-const fmtDate = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+const fmtDate = (d) => sanitizeDisplayCopy(d.toLocaleDateString("en-US", { month: "short", day: "numeric" }));
 const buildNamedPhaseArc = ({ rollingHorizon = [], goals = [] }) => {
   const primaryCategory = goals.find(g => g.active)?.category || "running";
   const labelSet = PHASE_ARC_LABELS[primaryCategory] || PHASE_ARC_LABELS.running;
@@ -6017,7 +6024,7 @@ Keep it plain and specific.`;
               PERSONAL TRAINER
             </h1>
             <div style={{ fontFamily:"'Inter',sans-serif", fontSize:"0.56rem", color:"var(--muted)", letterSpacing:"0.08em", marginTop:4 }}>
-              {fmtDate(today).toUpperCase()} Ã‚Â· WEEK {currentWeek}
+              {joinDisplayParts([fmtDate(today).toUpperCase(), `WEEK ${currentWeek}`])}
             </div>
           </div>
           <button className="btn" onClick={()=>setTab(5)} aria-label="Open settings" title="Settings" style={{ width:40, height:40, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>

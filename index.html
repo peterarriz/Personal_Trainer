@@ -9935,15 +9935,87 @@ const buildArchiveNutritionActualMap = (archive = null) => (
 }; exports.buildArchivedPlanAudit = buildArchivedPlanAudit;
 
   },
+  "src/services/text-format-service.js": function(require, module, exports) {
+"use strict";Object.defineProperty(exports, "__esModule", {value: true});const MOJIBAKE_PATTERN = /(?:Ã.|Â|â€|â€™|â€œ|â€¢|â€“|â€”|â€¦|�)/;
+const COMMON_MOJIBAKE_REPLACEMENTS = [
+  ["Ã‚Â·", "·"],
+  ["Ã¢â‚¬Â¢", "•"],
+  ["Ã¢â‚¬â€", "—"],
+  ["Ã¢â‚¬â€œ", "–"],
+  ["Ã¢â‚¬Â¦", "…"],
+  ["Ã¢â‚¬â„¢", "’"],
+  ["Ã¢â‚¬Å“", "“"],
+  ["Ã¢â‚¬Â", "”"],
+  ["Ã¢â€ â€™", "→"],
+  ["Ã¢â€ â€˜", "↑"],
+  ["Ã¢â€ â€œ", "↓"],
+  ["Ãƒâ€”", "×"],
+  ["Ã‚Â°", "°"],
+  ["Â·", "·"],
+  ["Â", ""],
+];
+
+const suspiciousScore = (value = "") => {
+  const matches = String(value || "").match(/(?:Ã.|Â|â.|�)/g);
+  return matches ? matches.length : 0;
+};
+
+const decodeLatin1AsUtf8 = (value = "") => {
+  const input = String(value || "");
+  const bytes = Uint8Array.from(Array.from(input).map((char) => char.charCodeAt(0) & 0xff));
+  if (typeof TextDecoder !== "undefined") {
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  }
+  const percentEncoded = Array.from(bytes).map((byte) => `%${byte.toString(16).padStart(2, "0")}`).join("");
+  try {
+    return decodeURIComponent(percentEncoded);
+  } catch (e) {
+    return input;
+  }
+};
+
+ const repairMojibakeText = (value = "") => {
+  let current = String(value || "");
+  if (!current || !MOJIBAKE_PATTERN.test(current)) return current;
+
+  for (const [broken, fixed] of COMMON_MOJIBAKE_REPLACEMENTS) {
+    current = current.replaceAll(broken, fixed);
+  }
+
+  if (!MOJIBAKE_PATTERN.test(current)) return current;
+
+  for (let i = 0; i < 2; i += 1) {
+    const decoded = decodeLatin1AsUtf8(current);
+    if (!decoded || decoded === current) break;
+    if (suspiciousScore(decoded) > suspiciousScore(current)) break;
+    current = decoded;
+    if (!MOJIBAKE_PATTERN.test(current)) break;
+  }
+
+  for (const [broken, fixed] of COMMON_MOJIBAKE_REPLACEMENTS) {
+    current = current.replaceAll(broken, fixed);
+  }
+
+  return current;
+}; exports.repairMojibakeText = repairMojibakeText;
+
+ const DISPLAY_SEPARATORS = {
+  middot: " · ",
+  bullet: " • ",
+  emDash: " — ",
+}; exports.DISPLAY_SEPARATORS = DISPLAY_SEPARATORS;
+
+ const joinDisplayParts = (parts = [], separator = exports.DISPLAY_SEPARATORS.middot) => (
+  exports.repairMojibakeText.call(void 0, (parts || []).filter(Boolean).join(separator))
+); exports.joinDisplayParts = joinDisplayParts;
+
+ const sanitizeDisplayCopy = (value = "") => exports.repairMojibakeText.call(void 0, String(value || "")); exports.sanitizeDisplayCopy = sanitizeDisplayCopy;
+
+  },
   "src/services/intake-flow-service.js": function(require, module, exports) {
-"use strict";Object.defineProperty(exports, "__esModule", {value: true}); const sanitizeIntakeText = (text = "") => String(text || "")
-  .replaceAll("Ã¢â‚¬â€", "-")
-  .replaceAll("Ã¢â‚¬â€œ", "-")
-  .replaceAll("Ã¢â‚¬Â¢", " • ")
-  .replaceAll("Ã¢â‚¬Â¦", "...")
-  .replaceAll("Ã¢â‚¬â„¢", "'")
-  .replaceAll("Ã‚Â·", " - ")
-  .replaceAll("Ã‚Â", ""); exports.sanitizeIntakeText = sanitizeIntakeText;
+"use strict";Object.defineProperty(exports, "__esModule", {value: true});var _textformatservicejs = require('./text-format-service.js');
+
+ const sanitizeIntakeText = (text = "") => _textformatservicejs.sanitizeDisplayCopy.call(void 0, text); exports.sanitizeIntakeText = sanitizeIntakeText;
 
  const normalizeHomeEquipmentResponse = ({
   selection = [],
@@ -10320,6 +10392,10 @@ var _weeklynutritionreviewservicejs = require('./services/weekly-nutrition-revie
 
 
 var _historyauditservicejs = require('./services/history-audit-service.js');
+
+
+
+var _textformatservicejs = require('./services/text-format-service.js');
 
 
 
@@ -11212,7 +11288,10 @@ const deriveReadinessAdjustedCheckin = (checkin = {}) => {
   adjusted.note = cleanedNote ? `${cleanedNote} ${marker}` : marker;
   return { readinessFilled: true, readiness: { sleep, soreness, stress }, adjusted };
 };
-const stripInternalTags = (text = "") => String(text || "").replace(/\[.*?\]/g, "").replace(/\s{2,}/g, " ").trim();
+const stripInternalTags = (text = "") => _textformatservicejs.sanitizeDisplayCopy.call(void 0, String(text || ""))
+  .replace(/\[.*?\]/g, "")
+  .replace(/\s{2,}/g, " ")
+  .trim();
 const normalizePendingStrengthAdjustments = (value) => {
   if (Array.isArray(value)) return value.filter(Boolean);
   return value ? [value] : [];
@@ -12192,14 +12271,14 @@ const applySessionNamingRules = (session = {}, injuryState = {}) => {
       return next;
     }
     if (type === "long-run") {
-      next.label = runTarget ? `Long Run Ã‚Â· ${runTarget}` : "Long Run";
+      next.label = runTarget ? _textformatservicejs.joinDisplayParts.call(void 0, ["Long Run", runTarget]) : "Long Run";
       return next;
     }
     if (type === "hard-run" && !/easy/i.test(runType)) {
-      next.label = runTarget ? `${_optionalChain([next, 'optionalAccess', _459 => _459.run, 'optionalAccess', _460 => _460.t]) || "Quality"} Run Ã‚Â· ${runTarget}` : `${_optionalChain([next, 'optionalAccess', _461 => _461.run, 'optionalAccess', _462 => _462.t]) || "Quality"} Run`;
+      next.label = runTarget ? _textformatservicejs.joinDisplayParts.call(void 0, [`${_optionalChain([next, 'optionalAccess', _459 => _459.run, 'optionalAccess', _460 => _460.t]) || "Quality"} Run`, runTarget]) : `${_optionalChain([next, 'optionalAccess', _461 => _461.run, 'optionalAccess', _462 => _462.t]) || "Quality"} Run`;
       return next;
     }
-    next.label = runTarget ? `${SESSION_NAMING.EASY_RUN} Ã‚Â· ${runTarget}` : SESSION_NAMING.EASY_RUN;
+    next.label = runTarget ? _textformatservicejs.joinDisplayParts.call(void 0, [SESSION_NAMING.EASY_RUN, runTarget]) : SESSION_NAMING.EASY_RUN;
     return next;
   }
   const lowImpactOnly = /(bike|elliptical|pool|incline walk|low-impact)/i.test(`${_optionalChain([next, 'optionalAccess', _463 => _463.label]) || ""} ${_optionalChain([next, 'optionalAccess', _464 => _464.environmentNote]) || ""}`);
@@ -12266,7 +12345,7 @@ const DAY_CONTEXT_OVERRIDES = {
   },
 };
 
-const fmtDate = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+const fmtDate = (d) => _textformatservicejs.sanitizeDisplayCopy.call(void 0, d.toLocaleDateString("en-US", { month: "short", day: "numeric" }));
 const buildNamedPhaseArc = ({ rollingHorizon = [], goals = [] }) => {
   const primaryCategory = _optionalChain([goals, 'access', _465 => _465.find, 'call', _466 => _466(g => g.active), 'optionalAccess', _467 => _467.category]) || "running";
   const labelSet = PHASE_ARC_LABELS[primaryCategory] || PHASE_ARC_LABELS.running;
@@ -16288,7 +16367,7 @@ Keep it plain and specific.`;
 
             )
             , React.createElement('div', { style: { fontFamily:"'Inter',sans-serif", fontSize:"0.56rem", color:"var(--muted)", letterSpacing:"0.08em", marginTop:4 },}
-              , fmtDate(today).toUpperCase(), " Ã‚Â· WEEK "   , currentWeek
+              , _textformatservicejs.joinDisplayParts.call(void 0, [fmtDate(today).toUpperCase(), `WEEK ${currentWeek}`])
             )
           )
           , React.createElement('button', { className: "btn", onClick: ()=>setTab(5), 'aria-label': "Open settings" , title: "Settings", style: { width:40, height:40, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0 },}
