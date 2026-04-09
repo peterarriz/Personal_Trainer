@@ -50,6 +50,10 @@ import {
   buildHistoricalWeekAuditEntries,
 } from "./services/history-audit-service.js";
 import {
+  normalizeHomeEquipmentResponse,
+  sanitizeIntakeText,
+} from "./services/intake-flow-service.js";
+import {
   buildLegacyHistoryDisplayLabel,
   resolveLegacyPlannedDayHistoryEntry,
 } from "./services/legacy-fallback-compat-service.js";
@@ -6255,7 +6259,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (startedRef.current) return;
     startedRef.current = true;
     const id = nextMessageIdRef.current++;
-    setMessages([{ id, role: "coach", text: initialPrompt, displayedText: "" }]);
+    setMessages([{ id, role: "coach", text: sanitizeIntakeText(initialPrompt), displayedText: "" }]);
     setStreamTargetId(id);
   }, [initialPrompt]);
 
@@ -6320,7 +6324,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
   const appendCoachMessage = (text) => {
     const id = nextMessageIdRef.current++;
-    setMessages((prev) => [...prev, { id, role: "coach", text, displayedText: "" }]);
+    setMessages((prev) => [...prev, { id, role: "coach", text: sanitizeIntakeText(text), displayedText: "" }]);
     if (!streamTargetId) setStreamTargetId(id);
     return id;
   };
@@ -6415,8 +6419,9 @@ Sound like a coach who has done this a hundred times.`;
     setAssessing(true);
     setPhase("assessment");
     const timeline = await buildTimelineAssessment(updatedAnswers);
-    setAssessmentText(timeline);
-    appendCoachMessage(timeline);
+    const cleanTimeline = sanitizeIntakeText(timeline);
+    setAssessmentText(cleanTimeline);
+    appendCoachMessage(cleanTimeline);
     setAssessing(false);
     setPhase("review");
   };
@@ -6429,20 +6434,16 @@ Sound like a coach who has done this a hundred times.`;
     await advanceConversation({ ...answers, [explicitKey]: storedValue });
   };
   const submitEquipmentAnswer = async () => {
-    const normalized = [
-      ...equipmentSelection.filter((item) => item !== "Other"),
-      ...(equipmentSelection.includes("Other") && equipmentOther.trim() ? ["Other"] : []),
-    ];
-    if (normalized.length === 0 && !equipmentOther.trim()) return;
-    const display = [
-      ...equipmentSelection.filter((item) => item !== "Other"),
-      ...(equipmentSelection.includes("Other") && equipmentOther.trim() ? [equipmentOther.trim()] : []),
-    ].join(" / ");
-    appendUserMessage(display);
+    const equipmentResponse = normalizeHomeEquipmentResponse({
+      selection: equipmentSelection,
+      otherText: equipmentOther,
+    });
+    if (equipmentResponse.normalized.length === 0 && !equipmentResponse.otherText) return;
+    appendUserMessage(equipmentResponse.display);
     await advanceConversation({
       ...answers,
-      home_equipment: equipmentSelection,
-      home_equipment_other: equipmentOther.trim(),
+      home_equipment: equipmentResponse.normalized,
+      home_equipment_other: equipmentResponse.otherText,
     });
   };
   const requestAdjustment = () => {
@@ -6461,8 +6462,9 @@ Sound like a coach who has done this a hundred times.`;
     const updatedAnswers = { ...answers, timeline_adjustment: clean };
     setAnswers(updatedAnswers);
     const timeline = await buildTimelineAssessment(updatedAnswers);
-    setAssessmentText(timeline);
-    appendCoachMessage(timeline);
+    const cleanTimeline = sanitizeIntakeText(timeline);
+    setAssessmentText(cleanTimeline);
+    appendCoachMessage(cleanTimeline);
     setAssessing(false);
     setPhase("review");
   };
@@ -7772,7 +7774,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
     { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
   ];
-  const [messages, setMessages] = useState([{ role: "coach", text: SCRIPT[0].text }]);
+  const [messages, setMessages] = useState([{ role: "coach", text: sanitizeIntakeText(SCRIPT[0].text) }]);
   const [answers, setAnswers] = useState({});
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState("");
@@ -7806,7 +7808,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
 
   const askNext = (nextStep) => {
     if (nextStep >= SCRIPT.length) return;
-    setMessages((prev) => [...prev, { role: "coach", text: SCRIPT[nextStep].text }]);
+    setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(SCRIPT[nextStep].text) }]);
     setStep(nextStep);
     setDraft("");
   };
@@ -7822,7 +7824,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
       setAnswers(patched);
       setAwaitingTimeline(true);
       const timeline = await buildTimelineAssessment(patched);
-      setMessages((prev) => [...prev, { role: "coach", text: timeline }]);
+      setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(timeline) }]);
       setAwaitingTimeline(false);
       setAwaitingAdjustConfirm(true);
       return;
@@ -7833,7 +7835,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
     setAnswers(nextAnswers);
     if (current.key === "training_location" && ["Home", "Varies"].includes(answerText)) {
       setAnswers({ ...nextAnswers, __needs_equipment: true });
-      setMessages((prev) => [...prev, { role: "coach", text: "What equipment is available where you train?" }]);
+      setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText("What equipment is available where you train?") }]);
       setDraft("");
       return;
     }
@@ -7843,7 +7845,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
     }
     setAwaitingTimeline(true);
     const timeline = await buildTimelineAssessment(nextAnswers);
-    setMessages((prev) => [...prev, { role: "coach", text: timeline }]);
+    setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText(timeline) }]);
     setAwaitingTimeline(false);
     setAwaitingAdjustConfirm(true);
   };
@@ -7851,7 +7853,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
   const finalize = async (adjust = "") => {
     if (adjust.trim()) setMessages((prev) => [...prev, { role: "user", text: adjust.trim() }]);
     setBuilding(true);
-    setMessages((prev) => [...prev, { role: "coach", text: "Building your plan..." }]);
+    setMessages((prev) => [...prev, { role: "coach", text: sanitizeIntakeText("Building your plan...") }]);
     await onComplete({
       ...answers,
       training_days: answers.training_days || "3",
@@ -9791,13 +9793,13 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       }),
     };
   }, [selectedArchiveReviewTarget, planArchives]);
-  const buildReviewBadgeTone = (kind = "") => {
+  function buildReviewBadgeTone(kind = "") {
     const value = String(kind || "").toLowerCase();
     if (/match|completed_as_planned|on_track|followed|high/.test(value)) return { color: C.green, bg: C.green+"14" };
     if (/modified|partial|changed|deviated|minor/.test(value)) return { color: C.blue, bg: C.blue+"14" };
     if (/skip|miss|unknown|missing|material|low|not_logged/.test(value)) return { color: C.amber, bg: C.amber+"14" };
     return { color: "#94a3b8", bg: "#1e293b" };
-  };
+  }
   const sanitizeStatusLabel = (value = "", fallback = "Unknown") => {
     const textValue = String(value || "").replaceAll("_", " ").trim();
     return sanitizeDisplayText(textValue || fallback);

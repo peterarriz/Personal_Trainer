@@ -309,6 +309,8 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     return /^\d{4}-\d{2}-\d{2}$/.test(dateKey) ? dateKey : null;
   };
 
+  const isUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || "").trim());
+
   const encodeCoachMemoryField = (value) => {
     try {
       return JSON.stringify(value ?? null);
@@ -321,7 +323,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     const targetValue = toFiniteNumber(goal?.targetValue);
     const currentValue = toFiniteNumber(goal?.currentValue);
     return {
-      id: goal?.id || undefined,
+      id: isUuid(goal?.id) ? String(goal.id).trim() : undefined,
       type: goal?.type || (goal?.targetDate ? "time_bound" : "ongoing"),
       category: goal?.category || "running",
       title: String(goal?.title || goal?.name || `Goal ${idx + 1}`),
