@@ -1,6 +1,10 @@
 import { resolveNutritionActualLogStoreCompat } from "../modules-nutrition.js";
-import { normalizePerformanceLogsCollection } from "./performance-record-service.js";
-import { normalizePersistedPlanWeekRecordMap } from "./plan-week-persistence-service.js";
+import {
+  sanitizePersistedGoalsCollection,
+  sanitizePersistedLogsCollection,
+  sanitizePersistedPlanWeekRecords,
+  sanitizePersistedPlannedDayRecords,
+} from "./persistence-contract-service.js";
 
 export const PERSISTED_TRAINER_DATA_VERSION = 6;
 export const PERSISTENCE_CONTRACT_VERSION = "runtime_storage_v1";
@@ -50,18 +54,18 @@ export const buildCanonicalRuntimeState = ({
   nutritionFavorites = DEFAULT_NUTRITION_FAVORITES,
   nutritionActualLogs = {},
 } = {}) => ({
-  logs: normalizePerformanceLogsCollection(clonePersistenceValue(logs || {})),
+  logs: sanitizePersistedLogsCollection({ logs: clonePersistenceValue(logs || {}) }),
   bodyweights: clonePersistenceValue(bodyweights || []),
   paceOverrides: clonePersistenceValue(paceOverrides || {}),
   weekNotes: clonePersistenceValue(weekNotes || {}),
   planAlerts: clonePersistenceValue(planAlerts || []),
   personalization: clonePersistenceValue(personalization || {}),
-  goals: clonePersistenceValue(goals || []),
+  goals: sanitizePersistedGoalsCollection({ goals: clonePersistenceValue(goals || []) }),
   coachActions: clonePersistenceValue(coachActions || []),
   coachPlanAdjustments: clonePersistenceValue(coachPlanAdjustments || DEFAULT_COACH_PLAN_ADJUSTMENTS),
   dailyCheckins: clonePersistenceValue(dailyCheckins || {}),
-  plannedDayRecords: clonePersistenceValue(plannedDayRecords || {}),
-  planWeekRecords: normalizePersistedPlanWeekRecordMap(clonePersistenceValue(planWeekRecords || {})),
+  plannedDayRecords: sanitizePersistedPlannedDayRecords({ plannedDayRecords: clonePersistenceValue(plannedDayRecords || {}) }),
+  planWeekRecords: sanitizePersistedPlanWeekRecords({ planWeekRecords: clonePersistenceValue(planWeekRecords || {}) }),
   weeklyCheckins: clonePersistenceValue(weeklyCheckins || {}),
   nutritionFavorites: clonePersistenceValue(nutritionFavorites || DEFAULT_NUTRITION_FAVORITES),
   nutritionActualLogs: clonePersistenceValue(nutritionActualLogs || {}),

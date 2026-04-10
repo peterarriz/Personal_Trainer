@@ -5,6 +5,11 @@ import {
   DEFAULT_COACH_PLAN_ADJUSTMENTS,
   DEFAULT_NUTRITION_FAVORITES,
 } from "./services/persistence-adapter-service.js";
+import {
+  sanitizeExercisePerformanceRowsForRest,
+  sanitizeGoalRowsForRest,
+  sanitizeTrainerDataPayloadForRest,
+} from "./services/persistence-contract-service.js";
 import { buildLegacyStrengthPerformanceFromRecords, getExercisePerformanceRecordsForLog } from "./services/performance-record-service.js";
 
 export const SB_ROW = "trainer_v1";
@@ -121,6 +126,9 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   } catch {
     hasValidSupabaseUrl = false;
   }
+  const persistenceWarningSink = (message, details = {}) => {
+    try { logDiag?.(message, JSON.stringify(details || {})); } catch {}
+  };
   const SB_CONFIG_ERROR = !SB_URL
     ? "Missing Supabase URL. Set VITE_SUPABASE_URL."
     : !hasValidSupabaseUrl
@@ -341,20 +349,12 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     const safeDateKey = toJsonDate(dateKey);
     if (!userId || !safeDateKey) throw new Error(AUTH_REQUIRED);
 
-    const sanitizedRows = (rows || []).map((row) => ({
-      user_id: userId,
-      exercise_name: String(row?.exercise_name || row?.exercise || "").trim(),
-      date: safeDateKey,
-      prescribed_weight: toFiniteNumber(row?.prescribed_weight),
-      actual_weight: toFiniteNumber(row?.actual_weight),
-      prescribed_reps: toFiniteInteger(row?.prescribed_reps),
-      actual_reps: toFiniteInteger(row?.actual_reps),
-      prescribed_sets: toFiniteInteger(row?.prescribed_sets),
-      actual_sets: toFiniteInteger(row?.actual_sets),
-      band_tension: row?.band_tension ? String(row.band_tension) : null,
-      bodyweight_only: Boolean(row?.bodyweight_only),
-      feel_this_session: toFiniteInteger(row?.feel_this_session),
-    })).filter((row) => row.exercise_name);
+    const sanitizedRows = sanitizeExercisePerformanceRowsForRest({
+      rows,
+      userId,
+      dateKey: safeDateKey,
+      warningSink: persistenceWarningSink,
+    });
 
     const { res: deleteRes } = await authFetchWithRetry({
       path: `exercise_performance?user_id=eq.${userId}&date=eq.${safeDateKey}`,
@@ -431,10 +431,11 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     });
     if (!deleteRes.ok) throw new Error("Goals reset failed");
 
-    const normalizedGoals = (goals || []).map((goal, idx) => ({
-      user_id: userId,
-      ...normalizeGoalRow(goal, idx),
-    })).filter((goal) => goal.title);
+    const normalizedGoals = sanitizeGoalRowsForRest({
+      goals: (goals || []).map((goal, idx) => normalizeGoalRow(goal, idx)),
+      userId,
+      warningSink: persistenceWarningSink,
+    });
 
     if (!normalizedGoals.length) return;
 
@@ -503,7 +504,11 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     const normalized = normalizeSession(authSession);
     const userId = normalized?.user?.id || authSession?.user?.id;
     if (!userId) throw new Error(AUTH_REQUIRED);
-    const body = { id: `${SB_ROW}_${userId}`, user_id: userId, data: payload, updated_at: new Date().toISOString() };
+    const safePayload = sanitizeTrainerDataPayloadForRest({
+      payload,
+      warningSink: persistenceWarningSink,
+    });
+    const body = { id: `${SB_ROW}_${userId}`, user_id: userId, data: safePayload, updated_at: new Date().toISOString() };
     const { res } = await authFetchWithRetry({
       path: "trainer_data",
       method: "POST",

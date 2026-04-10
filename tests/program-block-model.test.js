@@ -72,6 +72,35 @@ const WEEK_TEMPLATES = [
   },
 ];
 
+const buildResolvedGoal = ({
+  summary,
+  planningCategory,
+  goalFamily = "",
+  measurabilityTier = "fully_measurable",
+  primaryMetric = null,
+  proxyMetrics = [],
+  targetDate = "",
+  targetHorizonWeeks = null,
+  tradeoffs = [],
+  first30DaySuccessDefinition = "",
+} = {}) => ({
+  id: `resolved_${String(summary || planningCategory || "goal").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`,
+  summary,
+  goalFamily,
+  planningCategory,
+  measurabilityTier,
+  primaryMetric,
+  proxyMetrics,
+  targetDate,
+  targetHorizonWeeks,
+  tradeoffs,
+  first30DaySuccessDefinition,
+  confidence: "medium",
+  unresolvedGaps: [],
+  reviewCadence: "weekly",
+  refinementTrigger: "block_start_or_metric_stall",
+});
+
 const buildGoals = (goalDefs = []) => normalizeGoals(goalDefs.map((goal, index) => ({
   id: goal.id || `goal_${index + 1}`,
   name: goal.name,
@@ -82,6 +111,8 @@ const buildGoals = (goalDefs = []) => normalizeGoals(goalDefs.map((goal, index) 
   targetDate: goal.targetDate || "",
   measurableTarget: goal.measurableTarget || goal.target || "",
   status: goal.status || "active",
+  tradeoffs: goal.tradeoffs || [],
+  resolvedGoal: goal.resolvedGoal || null,
 })));
 
 const buildComposer = ({
@@ -159,6 +190,51 @@ test("ProgramBlock captures the main hybrid planning modes without creating sepa
         expectedDominant: "hybrid",
         expectedSecondary: "running",
         expectedNutritionMode: "consistency_support",
+      },
+      {
+        label: "event-prep + upper-body maintenance",
+        goals: buildGoals([
+          {
+            name: "Half marathon in 1:45",
+            category: "running",
+            priority: 1,
+            targetDate: "2026-05-10",
+            resolvedGoal: buildResolvedGoal({
+              summary: "Run a half marathon in 1:45:00",
+              planningCategory: "running",
+              goalFamily: "performance",
+              measurabilityTier: "fully_measurable",
+              primaryMetric: { key: "half_marathon_time", label: "Half marathon time", unit: "time", kind: "primary", targetValue: "1:45:00" },
+              targetDate: "2026-05-10",
+              targetHorizonWeeks: 5,
+            }),
+          },
+          {
+            name: "Maintain bench 225",
+            category: "strength",
+            priority: 2,
+            resolvedGoal: buildResolvedGoal({
+              summary: "Maintain bench 225",
+              planningCategory: "strength",
+              goalFamily: "strength",
+              measurabilityTier: "fully_measurable",
+              primaryMetric: { key: "bench_press_weight", label: "Bench press", unit: "lb", kind: "primary", targetValue: "225" },
+              targetHorizonWeeks: 5,
+              tradeoffs: ["Lower-body lifting must stay subordinate to race prep."],
+            }),
+          },
+        ]),
+        personalization: {
+          travelState: { access: "full gym" },
+          userGoalProfile: { days_per_week: 5, session_length: "45" },
+          profile: { estimatedFitnessLevel: "intermediate" },
+        },
+        momentum: { inconsistencyRisk: "low" },
+        learningLayer: {},
+        expectedArchitecture: "event_prep_upper_body_maintenance",
+        expectedDominant: "running",
+        expectedSecondary: "strength",
+        expectedNutritionMode: "performance_support",
       },
     ];
 
@@ -248,6 +324,140 @@ test("ProgramBlock flows through WeeklyIntent, PlanWeek, and PlanDay as one hier
     assert.equal(planDay.week.programBlock.id, planWeek.programBlock.id);
     assert.equal(planDay.week.blockIntent.prioritized, planWeek.blockIntent.prioritized);
     assert.equal(planDay.week.successDefinition, planWeek.weeklyIntent.successDefinition);
+  });
+});
+
+test("ProgramBlock uses resolved goal structure to express horizon, proxies, and conflict-aware posture", async () => {
+  await withMockedNow("2026-04-09T12:00:00Z", async () => {
+    const goals = buildGoals([
+      {
+        name: "Lean out for summer",
+        category: "body_comp",
+        priority: 1,
+        resolvedGoal: buildResolvedGoal({
+          summary: "Get leaner within the current time window",
+          planningCategory: "body_comp",
+          goalFamily: "appearance",
+          measurabilityTier: "proxy_measurable",
+          proxyMetrics: [
+            { key: "waist_circumference", label: "Waist circumference", unit: "in", kind: "proxy" },
+            { key: "progress_photos", label: "Progress photos", unit: "checkins", kind: "proxy" },
+          ],
+          targetHorizonWeeks: 8,
+          tradeoffs: ["Aggressive fat loss may limit strength progression and recovery quality."],
+        }),
+        tradeoffs: ["Aggressive fat loss may limit strength progression and recovery quality."],
+      },
+      {
+        name: "Keep strength numbers",
+        category: "strength",
+        priority: 2,
+        resolvedGoal: buildResolvedGoal({
+          summary: "Keep strength while the primary goal leads",
+          planningCategory: "strength",
+          goalFamily: "strength",
+          measurabilityTier: "exploratory_fuzzy",
+          proxyMetrics: [
+            { key: "top_set_load", label: "Top set load", unit: "lb", kind: "proxy" },
+          ],
+          tradeoffs: ["Aggressive fat loss may limit strength progression and recovery quality."],
+        }),
+      },
+    ]);
+
+    const composer = buildComposer({
+      goals,
+      personalization: {
+        travelState: { access: "full gym" },
+        userGoalProfile: { days_per_week: 3, session_length: "30" },
+        profile: { estimatedFitnessLevel: "intermediate" },
+      },
+      momentum: { inconsistencyRisk: "medium" },
+      learningLayer: {},
+    });
+
+    assert.equal(composer.programBlock.goalStack.measurabilityTier, "proxy_measurable");
+    assert.equal(composer.programBlock.goalStack.targetHorizonWeeks, 8);
+    assert.ok(composer.programBlock.goalStack.proxyMetricLabels.includes("Waist circumference"));
+    assert.ok(composer.programBlock.tradeoffs.some((item) => /fat loss may limit strength/i.test(item)));
+    assert.equal(composer.programBlock.recoveryPosture.level, "protective");
+    assert.equal(composer.programBlock.goalAllocation.prioritized, "Get leaner within the current time window");
+    assert.ok(composer.programBlock.goalAllocation.maintained.includes("Keep strength while the primary goal leads"));
+    assert.equal(composer.programBlock.minimizedEmphasis.role, "minimized");
+    assert.ok(composer.programBlock.successCriteria.some((item) => /Waist circumference/i.test(item)));
+    assert.match(composer.programBlock.dominantEmphasis.objective, /8 week target horizon/i);
+  });
+});
+
+test("WeeklyIntent carries maintained, minimized, and tradeoff posture for hybrid archetypes", async () => {
+  await withMockedNow("2026-04-09T12:00:00Z", async () => {
+    const goals = buildGoals([
+      {
+        name: "Half marathon in 1:45",
+        category: "running",
+        priority: 1,
+        targetDate: "2026-05-10",
+        resolvedGoal: buildResolvedGoal({
+          summary: "Run a half marathon in 1:45:00",
+          planningCategory: "running",
+          goalFamily: "performance",
+          measurabilityTier: "fully_measurable",
+          primaryMetric: { key: "half_marathon_time", label: "Half marathon time", unit: "time", kind: "primary", targetValue: "1:45:00" },
+          targetDate: "2026-05-10",
+          targetHorizonWeeks: 5,
+        }),
+      },
+      {
+        name: "Maintain bench 225",
+        category: "strength",
+        priority: 2,
+        resolvedGoal: buildResolvedGoal({
+          summary: "Maintain bench 225",
+          planningCategory: "strength",
+          goalFamily: "strength",
+          measurabilityTier: "fully_measurable",
+          primaryMetric: { key: "bench_press_weight", label: "Bench press", unit: "lb", kind: "primary", targetValue: "225" },
+          targetHorizonWeeks: 5,
+          tradeoffs: ["Lower-body lifting must stay subordinate to race prep."],
+        }),
+      },
+    ]);
+
+    const composer = buildComposer({
+      goals,
+      personalization: {
+        travelState: { access: "full gym" },
+        userGoalProfile: { days_per_week: 5, session_length: "45" },
+        profile: { estimatedFitnessLevel: "intermediate" },
+      },
+      momentum: { inconsistencyRisk: "low" },
+      learningLayer: {},
+    });
+
+    const planWeek = buildPlanWeek({
+      weekNumber: 4,
+      template: WEEK_TEMPLATES[3],
+      weekTemplates: WEEK_TEMPLATES,
+      referenceTemplate: WEEK_TEMPLATES[3],
+      goals,
+      architecture: composer.architecture,
+      programBlock: composer.programBlock,
+      programContext: composer.programContext,
+      blockIntent: composer.blockIntent,
+      split: composer.split,
+      sessionsByDay: composer.dayTemplates,
+      weeklyCheckin: { energy: 4, stress: 2, confidence: 4 },
+      coachPlanAdjustments: {},
+      failureMode: {},
+      constraints: composer.constraints,
+    });
+
+    assert.equal(composer.architecture, "event_prep_upper_body_maintenance");
+    assert.equal(planWeek.weeklyIntent.maintainedFocus, "Maintain bench 225");
+    assert.equal(planWeek.weeklyIntent.minimizedFocus, "non-primary volume");
+    assert.match(planWeek.weeklyIntent.tradeoffFocus, /lower-body|race prep/i);
+    assert.match(planWeek.weeklyIntent.successDefinition, /upper-body maintenance|maintenance exposures/i);
+    assert.match(planWeek.weeklyIntent.rationale, /stays maintained/i);
   });
 });
 

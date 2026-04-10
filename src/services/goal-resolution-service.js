@@ -85,6 +85,7 @@ const slugify = (value = "", fallback = "goal") => {
 };
 
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
+const hasFiniteNumericValue = (value) => value !== null && value !== "" && Number.isFinite(Number(value));
 
 const uniqMetrics = (metrics = []) => {
   const seen = new Set();
@@ -153,8 +154,8 @@ const normalizeUserConfirmation = (confirmation = {}) => ({
     measurableTier: sanitizeText(confirmation?.edits?.measurableTier || confirmation?.measurableTier || "", 40).toLowerCase(),
     planningCategory: sanitizeText(confirmation?.edits?.planningCategory || "", 40).toLowerCase(),
     targetDate: sanitizeText(confirmation?.edits?.targetDate || confirmation?.targetDate || "", 24),
-    targetHorizonWeeks: Number.isFinite(Number(confirmation?.edits?.targetHorizonWeeks ?? confirmation?.targetHorizonWeeks))
-      ? Math.max(1, Math.min(104, Math.round(Number(confirmation.edits?.targetHorizonWeeks ?? confirmation.targetHorizonWeeks))))
+    targetHorizonWeeks: hasFiniteNumericValue(confirmation?.edits?.targetHorizonWeeks ?? confirmation?.targetHorizonWeeks)
+      ? Math.max(1, Math.min(104, Math.round(Number(confirmation.edits?.targetHorizonWeeks ?? confirmation?.targetHorizonWeeks))))
       : null,
     confidence: sanitizeText(confirmation?.edits?.confidence || confirmation?.confidence || "", 20).toLowerCase(),
     tradeoffs: dedupeStrings(toArray(confirmation?.edits?.tradeoffs || confirmation?.tradeoffs).map((item) => sanitizeText(item, 140))).slice(0, 4),
@@ -168,8 +169,15 @@ const resolveIntakeContext = (typedIntakePacket = {}) => (
   typedIntakePacket?.intake || typedIntakePacket?.intakeContext || typedIntakePacket || {}
 );
 
+const getRawGoalIntentText = ({ rawUserGoalIntent = "", intakeContext = {} } = {}) => sanitizeText(
+  typeof rawUserGoalIntent === "string"
+    ? rawUserGoalIntent
+    : rawUserGoalIntent?.text || intakeContext?.rawGoalText || "",
+  420
+);
+
 const getCorpusText = ({ rawUserGoalIntent = "", intakeContext = {} } = {}) => dedupeStrings([
-  sanitizeText(typeof rawUserGoalIntent === "string" ? rawUserGoalIntent : rawUserGoalIntent?.text || "", 420),
+  getRawGoalIntentText({ rawUserGoalIntent, intakeContext }),
   sanitizeText(intakeContext?.rawGoalText || "", 420),
   sanitizeText(intakeContext?.baselineContext?.primaryGoalLabel || "", 80),
   sanitizeText(intakeContext?.baselineContext?.currentBaseline || "", 180),
@@ -528,11 +536,11 @@ const buildSummary = ({
   if (goalFamily === GOAL_FAMILIES.appearance && /\bsix pack\b/i.test(rawText)) {
     return targetWindow?.targetHorizonWeeks ? "Improve midsection definition by the target window" : "Improve midsection definition";
   }
+  if ((goalFamily === GOAL_FAMILIES.appearance || goalFamily === GOAL_FAMILIES.bodyComp) && /\bget lean\b/i.test(rawText)) {
+    return targetWindow?.targetHorizonWeeks ? "Get leaner within the current time window" : "Get leaner";
+  }
   if (goalFamily === GOAL_FAMILIES.appearance && /\blook athletic again\b/i.test(rawText)) {
     return "Look athletic again with repeatable training";
-  }
-  if (goalFamily === GOAL_FAMILIES.bodyComp && /\bget lean\b/i.test(rawText)) {
-    return "Get leaner within the current time window";
   }
   if (planningCategory === "running" && primaryMetric?.targetValue && /half marathon/i.test(primaryMetric?.label || "")) {
     return `Run a half marathon in ${primaryMetric.targetValue}`;
@@ -628,7 +636,8 @@ const buildTrackingFromResolvedGoal = (resolvedGoal = {}) => {
 };
 
 const createResolvedGoal = ({
-  rawText = "",
+  rawIntentText = "",
+  analysisText = "",
   goalFamily = GOAL_FAMILIES.generalFitness,
   planningCategory = "general_fitness",
   priority = 1,
@@ -638,8 +647,9 @@ const createResolvedGoal = ({
   confirmation = {},
   signals = {},
 } = {}) => {
+  const metricText = rawIntentText || analysisText;
   const metricSet = resolveMetricSet({
-    rawText,
+    rawText: metricText,
     planningCategory,
     goalFamily,
     proposal,
@@ -648,7 +658,7 @@ const createResolvedGoal = ({
   const measurableTier = inferMeasurabilityTier({
     goalFamily,
     planningCategory,
-    rawText,
+    rawText: metricText,
     proposal,
     confirmation,
     primaryMetric: metricSet.primaryMetric,
@@ -672,7 +682,7 @@ const createResolvedGoal = ({
     primaryMetric: metricSet.primaryMetric,
   });
   const summary = buildSummary({
-    rawText,
+    rawText: rawIntentText || analysisText,
     goalFamily,
     planningCategory,
     variant,
@@ -704,7 +714,7 @@ const createResolvedGoal = ({
     planningCategory: confirmation?.edits?.planningCategory || planningCategory,
     summary,
     rawIntent: {
-      text: rawText,
+      text: rawIntentText || analysisText,
     },
     measurabilityTier: measurableTier,
     primaryMetric: metricSet.primaryMetric,
@@ -761,7 +771,7 @@ export const projectResolvedGoalToPlanningGoal = (resolvedGoal = {}, index = 0) 
     category: sanitizeText(resolvedGoal?.planningCategory || "general_fitness", 40) || "general_fitness",
     priority: planningPriority,
     targetDate,
-    targetHorizonWeeks: Number.isFinite(Number(resolvedGoal?.targetHorizonWeeks)) ? Math.max(1, Math.round(Number(resolvedGoal.targetHorizonWeeks))) : null,
+    targetHorizonWeeks: hasFiniteNumericValue(resolvedGoal?.targetHorizonWeeks) ? Math.max(1, Math.round(Number(resolvedGoal.targetHorizonWeeks))) : null,
     measurableTarget: buildPlanningTargetText(resolvedGoal),
     active: true,
     type,
@@ -852,17 +862,18 @@ export const resolveGoalTranslation = ({
   now = new Date(),
 } = {}) => {
   const intakeContext = resolveIntakeContext(typedIntakePacket);
-  const rawText = getCorpusText({ rawUserGoalIntent, intakeContext });
+  const rawIntentText = getRawGoalIntentText({ rawUserGoalIntent, intakeContext });
+  const analysisText = getCorpusText({ rawUserGoalIntent: rawIntentText, intakeContext });
   const proposal = normalizeAiInterpretationProposal(aiInterpretationProposal);
   const confirmation = normalizeUserConfirmation(explicitUserConfirmation);
-  const signals = detectSignals(rawText);
+  const signals = detectSignals(analysisText);
   const goalFamily = inferGoalFamily({
     proposal,
     confirmation,
     signals,
   });
   const targetWindow = resolveTargetWindow({
-    rawText,
+    rawText: rawIntentText,
     intakeContext,
     proposal,
     confirmation,
@@ -873,7 +884,8 @@ export const resolveGoalTranslation = ({
     signals,
   });
   const resolvedGoals = goalBlueprints.map((blueprint, index) => createResolvedGoal({
-    rawText,
+    rawIntentText,
+    analysisText,
     goalFamily: blueprint.goalFamily,
     planningCategory: blueprint.planningCategory,
     priority: blueprint.priority || index + 1,
@@ -889,7 +901,7 @@ export const resolveGoalTranslation = ({
   const primaryConfidence = resolvedGoals[0]?.confidence || GOAL_CONFIDENCE_LEVELS.low;
 
   return {
-    rawIntent: rawText,
+    rawIntent: rawIntentText,
     resolvedGoals,
     planningGoals,
     confidenceLevel: primaryConfidence,

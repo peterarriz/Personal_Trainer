@@ -11,7 +11,23 @@ import { assemblePlanWeekRuntime, resolveCurrentPlanWeekNumber, resolvePlanWeekN
 import { buildDayReview, buildDayReviewComparison, classifyDayReviewStatus } from "./services/day-review-service.js";
 import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
 import { deriveCanonicalAthleteState, withLegacyGoalProfileCompatibility } from "./services/canonical-athlete-service.js";
-import { applyResolvedGoalsToGoalSlots, buildGoalStateFromResolvedGoals, resolveGoalTranslation } from "./services/goal-resolution-service.js";
+import { buildPlanningGoalsFromResolvedGoals, applyResolvedGoalsToGoalSlots, buildGoalStateFromResolvedGoals, resolveGoalTranslation } from "./services/goal-resolution-service.js";
+import { GOAL_REALISM_STATUSES, applyFeasibilityPriorityOrdering, assessGoalFeasibility } from "./services/goal-feasibility-service.js";
+import {
+  GOAL_CHANGE_MODES,
+  GOAL_CHANGE_MODE_META,
+  buildGoalChangeArchiveEntry,
+  buildGoalChangeHistoryEvent,
+  prepareGoalChangeActiveState,
+  resolveGoalChangePlanStartDate,
+} from "./services/goal-change-service.js";
+import { buildGoalProgressTrackingFromGoals, GOAL_PROGRESS_STATUSES } from "./services/goal-progress-service.js";
+import {
+  buildGoalReview,
+  buildGoalReviewHistoryEntry,
+  GOAL_REVIEW_DUE_STATES,
+  GOAL_REVIEW_RECOMMENDATIONS,
+} from "./services/goal-review-service.js";
 import {
   applyCanonicalRuntimeStateSetters,
   buildCanonicalRuntimeState,
@@ -2189,50 +2205,235 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
   };
 };
 
-const buildIntakeTimelineFallback = (payload = {}) => {
-  const goalLabel = PRIMARY_GOAL_LABELS[payload.primary_goal] || payload.primary_goal || "your main goal";
-  const days = String(payload.training_days || "3");
-  const sessionLen = SESSION_LENGTH_LABELS[payload.session_length] || payload.session_length || "30 min";
-  const expLevel = EXPERIENCE_LEVEL_LABELS[payload.experience_level] || payload.experience_level || "your level";
-  const injuryNote = hasMeaningfulConstraintText(payload.injury_text)
-    ? ` I'll work around ${String(payload.injury_text).toLowerCase()}.`
-    : "";
-  return `With ${String(goalLabel).toLowerCase()} as the focus, ${days} days a week at ${sessionLen} per session is a solid setup for someone at the ${String(expLevel).toLowerCase()} level. The next 30 days are about locking in a repeatable rhythm. By 60 days you should see measurable progress, and by 90 days the results compound if consistency stays real.${injuryNote} Here's what I'm prioritizing in your plan: ${String(goalLabel).toLowerCase()} first.`;
+const buildGoalChangePacketArgs = ({
+  rawGoalText = "",
+  changeMode = GOAL_CHANGE_MODES.refineCurrentGoal,
+  canonicalUserProfile = {},
+  personalization = {},
+  goals = [],
+  goalState = {},
+  existingMemory = [],
+} = {}) => {
+  const cleanGoalText = sanitizeIntakeText(rawGoalText || "");
+  const activeGoals = (Array.isArray(goals) ? goals : [])
+    .filter((goal) => goal?.active && goal?.category !== "injury_prevention" && goal?.id !== "g_resilience")
+    .sort((a, b) => Number(a?.priority || 99) - Number(b?.priority || 99));
+  const activeGoalLabels = activeGoals
+    .map((goal) => String(goal?.resolvedGoal?.summary || goal?.name || "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  const daysPerWeek = parseTrainingDaysForIntakePacket(String(canonicalUserProfile?.daysPerWeek || ""));
+  const sessionLength = String(canonicalUserProfile?.sessionLength || personalization?.environmentConfig?.base?.time || "").trim();
+  const trainingLocation = String(
+    canonicalUserProfile?.preferences?.defaultEnvironment
+    || personalization?.environmentConfig?.defaultMode
+    || personalization?.travelState?.environmentMode
+    || ""
+  ).trim();
+  const equipment = Array.isArray(canonicalUserProfile?.equipmentAccess) && canonicalUserProfile.equipmentAccess.length > 0
+    ? canonicalUserProfile.equipmentAccess
+    : (personalization?.environmentConfig?.presets?.Home?.equipment || []);
+  const constraints = Array.isArray(canonicalUserProfile?.constraints)
+    ? canonicalUserProfile.constraints.filter(Boolean)
+    : [];
+  const scheduleConstraints = Array.isArray(canonicalUserProfile?.scheduleConstraints)
+    ? canonicalUserProfile.scheduleConstraints.filter(Boolean)
+    : [];
+  const baselineNotes = [
+    canonicalUserProfile?.experienceLevel ? `${canonicalUserProfile.experienceLevel} training background` : "",
+    daysPerWeek ? `${daysPerWeek} training days per week` : "",
+    sessionLength ? `${sessionLength} sessions` : "",
+    activeGoalLabels.length ? `current goals: ${activeGoalLabels.join(" / ")}` : "",
+  ].filter(Boolean).join("; ");
+  const timingConstraints = [
+    goalState?.deadline ? `Current active deadline: ${goalState.deadline}` : "",
+    GOAL_CHANGE_MODE_META?.[changeMode]?.effectLine || "",
+  ].filter(Boolean);
+  const additionalContext = [
+    "User is changing goals from an existing planning arc.",
+    activeGoalLabels.length ? `Current goal stack: ${activeGoalLabels.join(" / ")}.` : "",
+    canonicalUserProfile?.preferences?.goalMix ? `Current goal mix: ${canonicalUserProfile.preferences.goalMix}.` : "",
+    scheduleConstraints.length ? `Schedule constraints: ${scheduleConstraints.join("; ")}.` : "",
+    personalization?.travelState?.isTravelWeek ? "Training environment may vary because travel is active." : "",
+  ].filter(Boolean).join(" ");
+  const injuryText = [
+    ...constraints,
+    String(personalization?.injuryPainState?.notes || "").trim(),
+  ].filter(Boolean).join("; ");
+
+  return {
+    input: `Interpret this goal change request without writing canonical goal state. Change mode: ${changeMode}.`,
+    intakeContext: {
+      rawGoalText: cleanGoalText,
+      baselineContext: {
+        primaryGoalKey: String(canonicalUserProfile?.primaryGoalKey || "").trim(),
+        primaryGoalLabel: String(goalState?.primaryGoal || activeGoalLabels[0] || "").trim(),
+        experienceLevel: String(canonicalUserProfile?.experienceLevel || "").trim(),
+        fitnessLevel: String(canonicalUserProfile?.fitnessLevel || "").trim(),
+        startingFresh: changeMode === GOAL_CHANGE_MODES.startNewGoalArc,
+        currentBaseline: baselineNotes,
+        priorMemory: (existingMemory || []).slice(-6),
+      },
+      scheduleReality: {
+        trainingDaysPerWeek: daysPerWeek,
+        sessionLength,
+        trainingLocation,
+        scheduleNotes: scheduleConstraints.join("; "),
+      },
+      equipmentAccessContext: {
+        trainingLocation,
+        equipment,
+        accessNotes: personalization?.travelState?.isTravelWeek ? "Environment may change during travel weeks." : "",
+      },
+      injuryConstraintContext: {
+        injuryText,
+        constraints,
+      },
+      userProvidedConstraints: {
+        timingConstraints,
+        appearanceConstraints: extractAppearanceConstraints(
+          cleanGoalText,
+          goalState?.primaryGoal,
+          canonicalUserProfile?.preferences?.goalMix
+        ),
+        additionalContext,
+      },
+    },
+  };
 };
 
-const buildIntakeAssessmentTextFromProposal = ({ payload = {}, interpretation = null } = {}) => {
-  if (!interpretation) return buildIntakeTimelineFallback(payload);
-  const goalLabel = PRIMARY_GOAL_LABELS[payload.primary_goal] || payload.primary_goal || "your main goal";
-  const summary = String(interpretation?.coachSummary || "").trim();
-  const timelineSummary = String(interpretation?.timelineRealism?.summary || "").trim();
-  const metricLine = (interpretation?.suggestedMetrics || []).length
-    ? `We'll track ${interpretation.suggestedMetrics.map((metric) => metric.label).slice(0, 3).join(", ")} so progress stays grounded in something measurable.`
+const buildGoalFeasibilityContextFromIntake = (intakeContext = {}) => ({
+  userBaseline: intakeContext?.baselineContext || {},
+  scheduleReality: intakeContext?.scheduleReality || {},
+  currentExperienceContext: {
+    injuryConstraintContext: intakeContext?.injuryConstraintContext || {},
+    equipmentAccessContext: intakeContext?.equipmentAccessContext || {},
+    trainingLocation: intakeContext?.scheduleReality?.trainingLocation || intakeContext?.equipmentAccessContext?.trainingLocation || "",
+    startingFresh: Boolean(intakeContext?.baselineContext?.startingFresh),
+  },
+});
+
+const buildPreviewGoalResolutionBundle = ({
+  intakeContext = {},
+  aiInterpretationProposal = null,
+  now = new Date(),
+} = {}) => {
+  const typedIntakePacket = {
+    version: "2026-04-v1",
+    intent: "intake_interpretation",
+    intake: intakeContext,
+  };
+  const goalResolution = resolveGoalTranslation({
+    rawUserGoalIntent: intakeContext?.rawGoalText || "",
+    typedIntakePacket,
+    aiInterpretationProposal,
+    explicitUserConfirmation: {
+      confirmed: false,
+      acceptedProposal: true,
+      source: "intake_preview",
+    },
+    now,
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: goalResolution?.resolvedGoals || [],
+    ...buildGoalFeasibilityContextFromIntake(intakeContext),
+    now,
+  });
+  const orderedResolvedGoals = applyFeasibilityPriorityOrdering({
+    resolvedGoals: goalResolution?.resolvedGoals || [],
+    feasibility: goalFeasibility,
+  });
+
+  return {
+    typedIntakePacket,
+    goalResolution,
+    goalFeasibility,
+    orderedResolvedGoals,
+  };
+};
+
+const buildIntakeTimelineFallback = (payload = {}) => {
+  const packetArgs = buildIntakePacketArgsFromAnswers({ answers: payload, existingMemory: [] });
+  const preview = buildPreviewGoalResolutionBundle({
+    intakeContext: packetArgs.intakeContext,
+    aiInterpretationProposal: null,
+    now: new Date(),
+  });
+  const topGoal = preview?.orderedResolvedGoals?.[0] || preview?.goalResolution?.resolvedGoals?.[0] || null;
+  const focusLabel = topGoal?.summary || PRIMARY_GOAL_LABELS[payload.primary_goal] || payload.primary_goal || "your goal";
+  const statusLine = preview?.goalFeasibility?.realismStatus === GOAL_REALISM_STATUSES.unrealistic
+    ? `The full ${String(focusLabel).toLowerCase()} outcome is too compressed for your current schedule, so the first block needs a smaller win.`
+    : preview?.goalFeasibility?.realismStatus === GOAL_REALISM_STATUSES.aggressive
+    ? `This goal stack can work, but the current schedule or tradeoffs make the near-term path tight.`
+    : preview?.goalFeasibility?.realismStatus === GOAL_REALISM_STATUSES.exploratory
+    ? `This goal is real, but the first block should focus on a concrete 30-day win instead of pretending every detail is settled.`
+    : `This goal stack fits your current schedule and baseline well enough to plan directly from it.`;
+  const realisticLine = preview?.goalFeasibility?.realisticByTargetDate?.[0]?.summary || "";
+  const conflictLine = preview?.goalFeasibility?.conflictFlags?.[0]?.summary
+    ? `Main tradeoff: ${preview.goalFeasibility.conflictFlags[0].summary}`
     : "";
-  const conflictLine = interpretation?.detectedConflicts?.[0]
-    ? `Main tradeoff: ${interpretation.detectedConflicts[0]}.`
+  return sanitizeIntakeText([statusLine, realisticLine, conflictLine].filter(Boolean).join(" "));
+};
+
+const buildIntakeAssessmentTextFromProposal = ({
+  payload = {},
+  interpretation = null,
+  previewGoalResolution = null,
+  goalFeasibility = null,
+} = {}) => {
+  const orderedResolvedGoals = applyFeasibilityPriorityOrdering({
+    resolvedGoals: previewGoalResolution?.resolvedGoals || [],
+    feasibility: goalFeasibility,
+  });
+  const topGoal = orderedResolvedGoals?.[0] || previewGoalResolution?.resolvedGoals?.[0] || null;
+  if (!topGoal || !goalFeasibility) return buildIntakeTimelineFallback(payload);
+  const trackingLabels = [
+    topGoal?.primaryMetric?.label,
+    ...(Array.isArray(topGoal?.proxyMetrics) ? topGoal.proxyMetrics.map((metric) => metric.label) : []),
+  ].filter(Boolean).slice(0, 3);
+  const statusLine = goalFeasibility.realismStatus === GOAL_REALISM_STATUSES.unrealistic
+    ? `The full ${String(topGoal.summary || "goal").toLowerCase()} outcome is too compressed for your current schedule and baseline, so the first block needs a scaled target.`
+    : goalFeasibility.realismStatus === GOAL_REALISM_STATUSES.aggressive
+    ? `This goal stack is workable, but the current window or tradeoffs are tight for your schedule and baseline.`
+    : goalFeasibility.realismStatus === GOAL_REALISM_STATUSES.exploratory
+    ? `This goal direction is valid, but the first block should lock in a concrete 30-day win before we push a more exact outcome.`
+    : `This goal stack fits your current schedule and baseline well enough to plan directly from it.`;
+  const trackingLine = trackingLabels.length
+    ? `We'll track ${trackingLabels.join(", ")} first so progress stays grounded in something visible.`
     : "";
-  const priorityLine = /here'?s what i'?m prioritizing/i.test(summary)
-    ? ""
-    : `Here's what I'm prioritizing in your plan: ${String(goalLabel).toLowerCase()} first.`;
-  const composed = [
-    summary,
-    !summary && timelineSummary ? timelineSummary : "",
-    !summary && !timelineSummary ? `We'll keep ${String(goalLabel).toLowerCase()} realistic for your current schedule and baseline.` : "",
-    !summary ? metricLine : "",
-    !summary ? conflictLine : "",
+  const realisticLine = goalFeasibility?.realisticByTargetDate?.[0]?.summary || "";
+  const longerLine = goalFeasibility?.longerHorizonNeeds?.[0]?.summary
+    ? `Longer horizon: ${goalFeasibility.longerHorizonNeeds[0].summary}`
+    : "";
+  const conflictLine = goalFeasibility?.conflictFlags?.[0]?.summary
+    ? `Main tradeoff: ${goalFeasibility.conflictFlags[0].summary}`
+    : "";
+  const priorityLine = orderedResolvedGoals.length > 1
+    ? `Priority order: ${orderedResolvedGoals.map((goal) => goal.summary).join(", then ")}.`
+    : `Priority order: ${topGoal.summary}.`;
+  const optionalInterpretationLine = interpretation?.missingClarifyingQuestions?.[0]
+    ? `Main open question: ${interpretation.missingClarifyingQuestions[0]}`
+    : "";
+  return sanitizeIntakeText([
+    statusLine,
+    trackingLine,
+    realisticLine,
+    longerLine,
+    conflictLine,
     priorityLine,
-  ].filter(Boolean).join(" ");
-  return sanitizeIntakeText(composed || buildIntakeTimelineFallback(payload));
+    optionalInterpretationLine,
+  ].filter(Boolean).join(" "));
 };
 
 const buildTypedIntakeAssessment = async ({ answers = {}, existingMemory = [] } = {}) => {
   const packetArgs = buildIntakePacketArgsFromAnswers({ answers, existingMemory });
+  const previewFallback = buildPreviewGoalResolutionBundle({
+    intakeContext: packetArgs.intakeContext,
+    aiInterpretationProposal: null,
+    now: new Date(),
+  });
   const fallbackText = buildIntakeTimelineFallback(answers);
-  const fallbackPacket = {
-    version: "2026-04-v1",
-    intent: "intake_interpretation",
-    intake: packetArgs.intakeContext,
-  };
+  const fallbackPacket = previewFallback.typedIntakePacket;
   const apiKey = resolveStoredAiApiKey({
     safeStorageGet,
     storageLike: typeof localStorage !== "undefined" ? localStorage : null,
@@ -2242,6 +2443,8 @@ const buildTypedIntakeAssessment = async ({ answers = {}, existingMemory = [] } 
       text: fallbackText,
       typedIntakePacket: fallbackPacket,
       aiInterpretationProposal: null,
+      resolvedGoalPreview: previewFallback.goalResolution?.resolvedGoals || [],
+      goalFeasibility: previewFallback.goalFeasibility,
     };
   }
   const runtime = await runIntakeInterpretationRuntime({
@@ -2254,15 +2457,26 @@ const buildTypedIntakeAssessment = async ({ answers = {}, existingMemory = [] } 
       text: fallbackText,
       typedIntakePacket: runtime?.statePacket || fallbackPacket,
       aiInterpretationProposal: null,
+      resolvedGoalPreview: previewFallback.goalResolution?.resolvedGoals || [],
+      goalFeasibility: previewFallback.goalFeasibility,
     };
   }
+  const previewFromProposal = buildPreviewGoalResolutionBundle({
+    intakeContext: runtime?.statePacket?.intake || packetArgs.intakeContext,
+    aiInterpretationProposal: runtime.interpreted,
+    now: new Date(),
+  });
   return {
     text: buildIntakeAssessmentTextFromProposal({
       payload: answers,
       interpretation: runtime.interpreted,
+      previewGoalResolution: previewFromProposal.goalResolution,
+      goalFeasibility: previewFromProposal.goalFeasibility,
     }),
     typedIntakePacket: runtime.statePacket || fallbackPacket,
     aiInterpretationProposal: runtime.interpreted,
+    resolvedGoalPreview: previewFromProposal.goalResolution?.resolvedGoals || [],
+    goalFeasibility: previewFromProposal.goalFeasibility,
   };
 };
 
@@ -2426,6 +2640,8 @@ const DEFAULT_PERSONALIZATION = {
     },
   },
   planArchives: [],
+  goalChangeHistory: [],
+  goalReviewHistory: [],
   planResetUndo: null,
 };
 
@@ -5969,8 +6185,20 @@ Keep it plain and specific.`;
       },
       now: todayKey,
     });
-    const primaryPlanningGoal = goalResolution?.planningGoals?.[0] || null;
-    const primaryResolvedGoal = goalResolution?.resolvedGoals?.[0] || null;
+    const goalFeasibility = assessGoalFeasibility({
+      resolvedGoals: goalResolution?.resolvedGoals || [],
+      ...buildGoalFeasibilityContextFromIntake(fallbackTypedIntakePacket?.intake || {}),
+      now: todayKey,
+    });
+    const orderedResolvedGoals = applyFeasibilityPriorityOrdering({
+      resolvedGoals: goalResolution?.resolvedGoals || [],
+      feasibility: goalFeasibility,
+    });
+    const orderedPlanningGoals = buildPlanningGoalsFromResolvedGoals({
+      resolvedGoals: orderedResolvedGoals,
+    });
+    const primaryPlanningGoal = orderedPlanningGoals?.[0] || null;
+    const primaryResolvedGoal = orderedResolvedGoals?.[0] || null;
     const primaryCategory = primaryPlanningGoal?.category || "general_fitness";
     const primaryGoalLabel = primaryResolvedGoal?.summary || PRIMARY_GOAL_LABELS[primaryGoalKey] || "General Fitness";
     const primaryGoal = primaryGoalLabel;
@@ -5990,7 +6218,7 @@ Keep it plain and specific.`;
       constraints,
     };
     const refreshedGoals = normalizeGoals(applyResolvedGoalsToGoalSlots({
-      resolvedGoals: goalResolution?.resolvedGoals || [],
+      resolvedGoals: orderedResolvedGoals,
       goalSlots: goalsModel || DEFAULT_MULTI_GOALS,
     }));
     const nextPresets = {
@@ -6016,12 +6244,15 @@ Keep it plain and specific.`;
       : coachingStyle === "Keep it simple"
       ? "Conservative"
       : "Standard";
-    const goalMix = goalResolution?.resolvedGoals?.map((goal) => goal?.summary).filter(Boolean).join(" + ") || primaryGoalLabel;
+    const goalMix = orderedResolvedGoals?.map((goal) => goal?.summary).filter(Boolean).join(" + ") || primaryGoalLabel;
     const onboardingMemory = [
       answers.timeline_assessment ? `Timeline assessment: ${answers.timeline_assessment}` : null,
       answers.timeline_adjustment ? `Timeline adjustment requested: ${answers.timeline_adjustment}` : null,
       `Primary goal: ${primaryGoalLabel}`,
-      goalResolution?.resolvedGoals?.length ? `Resolved goals: ${goalResolution.resolvedGoals.map((goal) => goal.summary).join(" / ")}` : null,
+      orderedResolvedGoals?.length ? `Resolved goals: ${orderedResolvedGoals.map((goal) => goal.summary).join(" / ")}` : null,
+      goalFeasibility?.realismStatus ? `Goal realism: ${goalFeasibility.realismStatus}` : null,
+      goalFeasibility?.conflictFlags?.[0] ? `Goal conflict: ${goalFeasibility.conflictFlags[0].summary}` : null,
+      goalFeasibility?.suggestedSequencing?.[0] ? `Goal sequencing: ${goalFeasibility.suggestedSequencing[0].summary}` : null,
       goalResolution?.tradeoffs?.[0] ? `Goal tradeoff: ${goalResolution.tradeoffs[0]}` : null,
       goalResolution?.unresolvedGaps?.[0] ? `Goal refinement gap: ${goalResolution.unresolvedGaps[0]}` : null,
       `Experience level: ${EXPERIENCE_LEVEL_LABELS[experienceLevel] || experienceLevel}`,
@@ -6033,7 +6264,7 @@ Keep it plain and specific.`;
       `Coaching preference: ${coachingStyle}`,
     ].filter(Boolean);
     const onboardingGoalState = buildGoalStateFromResolvedGoals({
-      resolvedGoals: goalResolution?.resolvedGoals || [],
+      resolvedGoals: orderedResolvedGoals,
       planStartDate: todayKey,
     });
     const nextPersonalizationBase = mergePersonalization(personalization, {
@@ -6109,6 +6340,253 @@ Keep it plain and specific.`;
     setGoals(refreshedGoals);
     setTab(0);
     await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, refreshedGoals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
+  };
+
+  const previewGoalChange = async ({
+    rawGoalText = "",
+    changeMode = GOAL_CHANGE_MODES.refineCurrentGoal,
+  } = {}) => {
+    const cleanGoalText = sanitizeIntakeText(rawGoalText || "");
+    if (!cleanGoalText) return null;
+    const packetArgs = buildGoalChangePacketArgs({
+      rawGoalText: cleanGoalText,
+      changeMode,
+      canonicalUserProfile,
+      personalization,
+      goals: goalsModel,
+      goalState: canonicalGoalState,
+      existingMemory: personalization?.coachMemory?.longTermMemory || [],
+    });
+    const fallbackPreview = buildPreviewGoalResolutionBundle({
+      intakeContext: packetArgs.intakeContext,
+      aiInterpretationProposal: null,
+      now: new Date(),
+    });
+    let typedIntakePacket = fallbackPreview.typedIntakePacket;
+    let aiInterpretationProposal = null;
+    const apiKey = resolveStoredAiApiKey({
+      safeStorageGet,
+      storageLike: typeof localStorage !== "undefined" ? localStorage : null,
+    });
+
+    if (apiKey) {
+      const runtime = await runIntakeInterpretationRuntime({
+        apiKey,
+        safeFetchWithTimeout,
+        packetArgs,
+      });
+      if (runtime?.ok && runtime?.interpreted) {
+        typedIntakePacket = runtime.statePacket || typedIntakePacket;
+        aiInterpretationProposal = runtime.interpreted;
+      }
+    }
+
+    const previewBundle = buildPreviewGoalResolutionBundle({
+      intakeContext: typedIntakePacket?.intake || packetArgs.intakeContext,
+      aiInterpretationProposal,
+      now: new Date(),
+    });
+    const explanationText = buildIntakeAssessmentTextFromProposal({
+      payload: { primary_goal: canonicalUserProfile?.primaryGoalKey || "", primary_goal_detail: cleanGoalText },
+      interpretation: aiInterpretationProposal,
+      previewGoalResolution: previewBundle.goalResolution,
+      goalFeasibility: previewBundle.goalFeasibility,
+    });
+
+    return {
+      rawGoalText: cleanGoalText,
+      changeMode,
+      modeMeta: GOAL_CHANGE_MODE_META?.[changeMode] || GOAL_CHANGE_MODE_META[GOAL_CHANGE_MODES.refineCurrentGoal],
+      typedIntakePacket,
+      aiInterpretationProposal,
+      goalResolution: previewBundle.goalResolution,
+      goalFeasibility: previewBundle.goalFeasibility,
+      orderedResolvedGoals: previewBundle.orderedResolvedGoals,
+      explanationText,
+      interpretationSource: aiInterpretationProposal ? "ai_proposal" : "deterministic_fallback",
+    };
+  };
+
+  const applyGoalChange = async ({
+    rawGoalText = "",
+    changeMode = GOAL_CHANGE_MODES.refineCurrentGoal,
+    previewBundle = null,
+  } = {}) => {
+    const cleanGoalText = sanitizeIntakeText(rawGoalText || "");
+    if (!cleanGoalText) return { ok: false, error: "missing_goal_text" };
+    const preparedPreview = previewBundle || await previewGoalChange({ rawGoalText: cleanGoalText, changeMode });
+    const orderedResolvedGoals = preparedPreview?.orderedResolvedGoals || [];
+    if (!orderedResolvedGoals.length) return { ok: false, error: "missing_resolved_goals" };
+
+    const todayKeyLocal = new Date().toISOString().split("T")[0];
+    const planningGoals = buildPlanningGoalsFromResolvedGoals({ resolvedGoals: orderedResolvedGoals });
+    const primaryPlanningGoal = planningGoals?.[0] || null;
+    const primaryCategory = primaryPlanningGoal?.category || "general_fitness";
+    const nextGoals = normalizeGoals(applyResolvedGoalsToGoalSlots({
+      resolvedGoals: orderedResolvedGoals,
+      goalSlots: goalsModel || DEFAULT_MULTI_GOALS,
+    }));
+    const nextPlanStartDate = resolveGoalChangePlanStartDate({
+      mode: changeMode,
+      todayKey: todayKeyLocal,
+      existingPlanStartDate: canonicalGoalState?.planStartDate || todayKeyLocal,
+    });
+    const nextGoalState = buildGoalStateFromResolvedGoals({
+      resolvedGoals: orderedResolvedGoals,
+      planStartDate: nextPlanStartDate,
+    });
+    const archiveEntry = buildGoalChangeArchiveEntry({
+      todayKey: todayKeyLocal,
+      mode: changeMode,
+      rawGoalIntent: cleanGoalText,
+      currentGoalState: canonicalGoalState,
+      goals: goalsModel,
+      resolvedGoals: orderedResolvedGoals,
+      plannedDayRecords,
+      planWeekRecords,
+      weeklyCheckins,
+      logs,
+    });
+    const historyEvent = buildGoalChangeHistoryEvent({
+      todayKey: todayKeyLocal,
+      mode: changeMode,
+      rawGoalIntent: cleanGoalText,
+      previousGoals: (goalsModel || [])
+        .filter((goal) => goal?.active && goal?.category !== "injury_prevention" && goal?.id !== "g_resilience")
+        .sort((a, b) => Number(a?.priority || 99) - Number(b?.priority || 99))
+        .map((goal) => String(goal?.resolvedGoal?.summary || goal?.name || "").trim())
+        .filter(Boolean),
+      nextGoals: orderedResolvedGoals.map((goal) => goal?.summary).filter(Boolean),
+      archivedPlanId: archiveEntry?.id || "",
+    });
+    const nextActivePlanningState = prepareGoalChangeActiveState({
+      mode: changeMode,
+      todayKey: todayKeyLocal,
+      currentWeek,
+      plannedDayRecords,
+      planWeekRecords,
+      weeklyCheckins,
+      weekNotes,
+      planAlerts,
+      paceOverrides,
+      coachPlanAdjustments,
+      defaultCoachPlanAdjustments: DEFAULT_COACH_PLAN_ADJUSTMENTS,
+    });
+    const compatibilityPrimaryGoalKey = primaryCategory === "body_comp"
+      ? "fat_loss"
+      : primaryCategory === "strength"
+      ? "muscle_gain"
+      : primaryCategory === "running"
+      ? "endurance"
+      : "general_fitness";
+    const compatibilityUserProfile = {
+      primary_goal: compatibilityPrimaryGoalKey,
+      experience_level: canonicalUserProfile?.experienceLevel || "beginner",
+      days_per_week: Math.max(2, Number(canonicalUserProfile?.daysPerWeek || 3) || 3),
+      session_length: String(canonicalUserProfile?.sessionLength || "30"),
+      equipment_access: Array.isArray(canonicalUserProfile?.equipmentAccess) ? canonicalUserProfile.equipmentAccess : [],
+      constraints: Array.isArray(canonicalUserProfile?.constraints) ? canonicalUserProfile.constraints : [],
+    };
+    const goalMix = orderedResolvedGoals.map((goal) => goal?.summary).filter(Boolean).join(" + ");
+    const nextGoalAlert = {
+      id: `goal_change_${Date.now()}`,
+      type: "info",
+      msg: `${historyEvent.label} applied. Planning now follows ${orderedResolvedGoals[0]?.summary || "the updated goal stack"}.`,
+      ts: Date.now(),
+    };
+    const nextPersonalizationBase = mergePersonalization(personalization, {
+      profile: {
+        ...personalization.profile,
+        onboardingComplete: true,
+        goalMix,
+      },
+      nutritionPreferenceState: {
+        ...(personalization.nutritionPreferenceState || DEFAULT_PERSONALIZATION.nutritionPreferenceState),
+        style: primaryCategory === "body_comp" ? "high-protein fat-loss support" : "high-protein performance",
+      },
+      coachMemory: {
+        ...personalization.coachMemory,
+        lastAdjustment: `${historyEvent.label} ${todayKeyLocal}.`,
+        longTermMemory: [
+          ...(personalization?.coachMemory?.longTermMemory || []),
+          `Goal change mode: ${historyEvent.label}.`,
+          `New raw goal intent: ${cleanGoalText}`,
+          orderedResolvedGoals.length ? `Resolved goals: ${orderedResolvedGoals.map((goal) => goal.summary).join(" / ")}` : null,
+          preparedPreview?.goalFeasibility?.realismStatus ? `Goal realism: ${preparedPreview.goalFeasibility.realismStatus}` : null,
+          preparedPreview?.goalFeasibility?.conflictFlags?.[0]?.summary ? `Goal conflict: ${preparedPreview.goalFeasibility.conflictFlags[0].summary}` : null,
+          preparedPreview?.goalFeasibility?.suggestedSequencing?.[0]?.summary ? `Goal sequencing: ${preparedPreview.goalFeasibility.suggestedSequencing[0].summary}` : null,
+        ].filter(Boolean).slice(-40),
+      },
+      planArchives: [archiveEntry, ...(personalization?.planArchives || [])].slice(0, 12),
+      goalChangeHistory: [historyEvent, ...(personalization?.goalChangeHistory || [])].slice(0, 24),
+      planResetUndo: null,
+    });
+    const nextPersonalization = withLegacyGoalProfileCompatibility({
+      personalization: nextPersonalizationBase,
+      canonicalAthlete: deriveCanonicalAthleteState({
+        goals: nextGoals,
+        personalization: nextPersonalizationBase,
+        profileDefaults: PROFILE,
+      }),
+      userProfileOverrides: compatibilityUserProfile,
+      goalStateOverrides: nextGoalState,
+    });
+    const nextPlanAlerts = [nextGoalAlert];
+
+    setGoals(nextGoals);
+    setPersonalization(nextPersonalization);
+    setPaceOverrides(nextActivePlanningState.paceOverrides);
+    setWeekNotes(nextActivePlanningState.weekNotes);
+    setPlanAlerts(nextPlanAlerts);
+    setPlannedDayRecords(nextActivePlanningState.plannedDayRecords);
+    setPlanWeekRecords(nextActivePlanningState.planWeekRecords);
+    setWeeklyCheckins(nextActivePlanningState.weeklyCheckins);
+    setCoachPlanAdjustments(nextActivePlanningState.coachPlanAdjustments);
+
+    await persistAll(
+      logs,
+      bodyweights,
+      nextActivePlanningState.paceOverrides,
+      nextActivePlanningState.weekNotes,
+      nextPlanAlerts,
+      nextPersonalization,
+      coachActions,
+      nextActivePlanningState.coachPlanAdjustments,
+      nextGoals,
+      dailyCheckins,
+      nextActivePlanningState.weeklyCheckins,
+      nutritionFavorites,
+      nutritionActualLogs,
+      nextActivePlanningState.plannedDayRecords,
+      nextActivePlanningState.planWeekRecords
+    );
+
+    return {
+      ok: true,
+      archiveEntry,
+      historyEvent,
+      orderedResolvedGoals,
+      goalFeasibility: preparedPreview?.goalFeasibility || null,
+    };
+  };
+
+  const saveGoalReview = async ({
+    goalReview = null,
+    action = GOAL_REVIEW_RECOMMENDATIONS.keepCurrentGoal,
+    note = "",
+  } = {}) => {
+    const reviewEntry = buildGoalReviewHistoryEntry({
+      goalReview,
+      action,
+      note,
+      now: new Date(),
+    });
+    const nextPersonalization = mergePersonalization(personalization, {
+      goalReviewHistory: [reviewEntry, ...(personalization?.goalReviewHistory || [])].slice(0, 24),
+    });
+    setPersonalization(nextPersonalization);
+    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs, plannedDayRecords, planWeekRecords);
+    return reviewEntry;
   };
 
   return (
@@ -6291,7 +6769,7 @@ Keep it plain and specific.`;
         Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} todayWorkout={planDay?.resolved?.training} />
+            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} todayWorkout={planDay?.resolved?.training} />
           </ProgramTabErrorBoundary>
         )}
 
@@ -9211,7 +9689,7 @@ class ProgramTabErrorBoundary extends React.Component {
   }
 }
 
-function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, todayWorkout: legacyTodayWorkout }) {
+function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, todayWorkout: legacyTodayWorkout }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const goalBuckets = athleteProfile?.goalBuckets || {};
@@ -9225,6 +9703,15 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const [phaseExpanded, setPhaseExpanded] = useState(false);
   const [strengthTrackerOpen, setStrengthTrackerOpen] = useState(false);
   const [openLiftKey, setOpenLiftKey] = useState("");
+  const [goalChangeMode, setGoalChangeMode] = useState(GOAL_CHANGE_MODES.refineCurrentGoal);
+  const [goalChangeIntent, setGoalChangeIntent] = useState("");
+  const [goalChangePreview, setGoalChangePreview] = useState(null);
+  const [goalChangeError, setGoalChangeError] = useState("");
+  const [goalChangeNotice, setGoalChangeNotice] = useState("");
+  const [goalChangePreviewing, setGoalChangePreviewing] = useState(false);
+  const [goalChangeApplying, setGoalChangeApplying] = useState(false);
+  const [goalReviewNotice, setGoalReviewNotice] = useState("");
+  const [goalReviewSaving, setGoalReviewSaving] = useState(false);
   const scheduleEntries = personalization?.environmentConfig?.schedule || [];
   const weeklyProgress = Math.max(0, Math.min(100, Math.round((((Number(miniWeekly.energy) || 0) + (Number(miniWeekly.confidence) || 0) + (6 - (Number(miniWeekly.stress) || 0))) / 15) * 100)));
   const weeklyGoalHit = (Number(miniWeekly.energy) || 0) >= 4 && (Number(miniWeekly.confidence) || 0) >= 4 && (Number(miniWeekly.stress) || 0) <= 3;
@@ -9382,6 +9869,37 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
       }));
     return [...base, ...extras];
   }, [strengthProgress, strengthGoalTracking]);
+  const goalProgressTracking = useMemo(() => buildGoalProgressTrackingFromGoals({
+    goals,
+    logs,
+    bodyweights,
+    dailyCheckins,
+    weeklyCheckins,
+    now: new Date(),
+  }), [goals, logs, bodyweights, dailyCheckins, weeklyCheckins]);
+  const goalProgressCards = goalProgressTracking?.goalCards || [];
+  const latestGoalChangeEvent = personalization?.goalChangeHistory?.[0] || null;
+  const latestGoalReviewEvent = personalization?.goalReviewHistory?.[0] || null;
+  const goalReview = useMemo(() => buildGoalReview({
+    goals,
+    goalProgressTracking,
+    currentProgramBlock,
+    goalChangeHistory: personalization?.goalChangeHistory || [],
+    goalReviewHistory: personalization?.goalReviewHistory || [],
+    now: new Date(),
+  }), [goals, goalProgressTracking, currentProgramBlock, personalization?.goalChangeHistory, personalization?.goalReviewHistory]);
+  const getGoalProgressTone = (status = "") => {
+    if (status === GOAL_PROGRESS_STATUSES.onTrack) return { color: C.green, bg: `${C.green}14`, border: `${C.green}36` };
+    if (status === GOAL_PROGRESS_STATUSES.reviewBased) return { color: C.blue, bg: `${C.blue}14`, border: `${C.blue}32` };
+    if (status === GOAL_PROGRESS_STATUSES.needsData) return { color: C.amber, bg: `${C.amber}14`, border: `${C.amber}34` };
+    return { color: "#cbd5e1", bg: "#172131", border: "#2b3d55" };
+  };
+  const getGoalReviewVerdictTone = (verdict = "") => {
+    if (verdict === "yes" || verdict === "no") return { color: C.green, bg: `${C.green}14`, border: `${C.green}36` };
+    if (verdict === "reprioritize") return { color: C.amber, bg: `${C.amber}14`, border: `${C.amber}36` };
+    if (verdict === "review" || verdict === "mixed") return { color: C.blue, bg: `${C.blue}14`, border: `${C.blue}32` };
+    return { color: "#cbd5e1", bg: "#172131", border: "#2b3d55" };
+  };
   const weeklyCoachBrief = buildWeeklyPlanningCoachBrief({
     goals,
     momentum,
@@ -9510,6 +10028,90 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     currentProgramBlock?.nutritionPosture?.mode ? `nutrition ${String(currentProgramBlock.nutritionPosture.mode).replaceAll("_", " ")}` : null,
     currentWeeklyIntent?.nutritionEmphasis || null,
   ].filter(Boolean);
+  const handleGoalChangePreview = async () => {
+    const cleanGoalText = sanitizeIntakeText(goalChangeIntent || "");
+    if (!cleanGoalText) {
+      setGoalChangeError("Add the new goal in plain English first.");
+      setGoalChangePreview(null);
+      return;
+    }
+    setGoalChangePreviewing(true);
+    setGoalChangeError("");
+    setGoalChangeNotice("");
+    try {
+      const preview = await previewGoalChange({
+        rawGoalText: cleanGoalText,
+        changeMode: goalChangeMode,
+      });
+      if (!preview?.orderedResolvedGoals?.length) {
+        setGoalChangeError("I couldn't turn that into a resolved goal preview yet.");
+        setGoalChangePreview(null);
+      } else {
+        setGoalChangePreview(preview);
+      }
+    } catch (error) {
+      setGoalChangeError(error?.message || "Goal preview failed.");
+      setGoalChangePreview(null);
+    } finally {
+      setGoalChangePreviewing(false);
+    }
+  };
+  const handleGoalChangeApply = async () => {
+    if (!goalChangePreview?.orderedResolvedGoals?.length) {
+      setGoalChangeError("Preview the goal change before you confirm it.");
+      return;
+    }
+    setGoalChangeApplying(true);
+    setGoalChangeError("");
+    setGoalChangeNotice("");
+    try {
+      const result = await applyGoalChange({
+        rawGoalText: goalChangeIntent,
+        changeMode: goalChangeMode,
+        previewBundle: goalChangePreview,
+      });
+      if (!result?.ok) {
+        setGoalChangeError(result?.error || "Goal change could not be applied.");
+        return;
+      }
+      setGoalChangeNotice(`${goalChangePreview?.modeMeta?.label || "Goal change"} applied. History is preserved and planning now follows the confirmed structure.`);
+      setGoalChangeIntent("");
+      setGoalChangePreview(null);
+      setGoalReviewNotice("");
+    } catch (error) {
+      setGoalChangeError(error?.message || "Goal change could not be applied.");
+    } finally {
+      setGoalChangeApplying(false);
+    }
+  };
+  const seedGoalChangeFromReview = (mode = GOAL_CHANGE_MODES.refineCurrentGoal) => {
+    setGoalChangeMode(mode);
+    setGoalChangePreview(null);
+    setGoalChangeError("");
+    setGoalChangeNotice("");
+    setGoalReviewNotice(mode === GOAL_CHANGE_MODES.reprioritizeGoalStack
+      ? "Re-prioritize mode is ready below. Update the goal wording only if the stack itself should change."
+      : "Refine mode is ready below. Tighten the goal wording or proxies, then preview it.");
+  };
+  const handleMarkGoalReview = async (action = GOAL_REVIEW_RECOMMENDATIONS.keepCurrentGoal) => {
+    setGoalReviewSaving(true);
+    try {
+      await saveGoalReview({ goalReview, action });
+      setGoalReviewNotice(action === GOAL_REVIEW_RECOMMENDATIONS.keepCurrentGoal
+        ? "Goal review saved. The current goal stays active."
+        : action === GOAL_REVIEW_RECOMMENDATIONS.reprioritizeGoalStack
+        ? "Goal review saved. Re-prioritize mode is ready below if you want to confirm the change."
+        : "Goal review saved. Refine mode is ready below if you want to tighten the goal.");
+      if (action === GOAL_REVIEW_RECOMMENDATIONS.refineCurrentGoal) {
+        seedGoalChangeFromReview(GOAL_CHANGE_MODES.refineCurrentGoal);
+      }
+      if (action === GOAL_REVIEW_RECOMMENDATIONS.reprioritizeGoalStack) {
+        seedGoalChangeFromReview(GOAL_CHANGE_MODES.reprioritizeGoalStack);
+      }
+    } finally {
+      setGoalReviewSaving(false);
+    }
+  };
 
   return (
     <div className="fi">
@@ -9580,6 +10182,295 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="card card-subtle" style={{ borderColor:C.blue+"26" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.7rem" }}>
+            <div>
+              <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>GOAL TRACKING</div>
+              <div style={{ fontSize:"0.58rem", color:"#8fa5c8", lineHeight:1.55 }}>{goalProgressTracking?.summary || "Resolved goals drive what gets tracked."}</div>
+            </div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", background:"#1e293b", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>RESOLVED-GOAL NATIVE</div>
+          </div>
+          {goalProgressCards.length > 0 ? (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:"0.7rem" }}>
+              {goalProgressCards.map((card) => {
+                const tone = getGoalProgressTone(card.status);
+                return (
+                  <div key={card.goalId || card.summary} style={{ border:`1px solid ${tone.border}`, borderRadius:14, background:"#0f172a", padding:"0.8rem" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.5rem", marginBottom:"0.45rem" }}>
+                      <div style={{ minWidth:0 }}>
+                        <div style={{ fontSize:"0.7rem", color:"#f8fafc", fontWeight:600, lineHeight:1.25 }}>{card.summary}</div>
+                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                          {String(card.trackingMode || "tracking").replaceAll("_", " ")} - review {card.reviewCadence}
+                        </div>
+                      </div>
+                      <div style={{ fontSize:"0.48rem", color:tone.color, background:tone.bg, border:`1px solid ${tone.border}`, padding:"0.16rem 0.45rem", borderRadius:999, letterSpacing:"0.08em", whiteSpace:"nowrap" }}>
+                        {String(card.status || "tracking").replaceAll("_", " ")}
+                      </div>
+                    </div>
+                    <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>{card.statusSummary}</div>
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.24rem" }}>
+                      Tracking: {(card.whatIsTracked || []).join(" - ") || "Awaiting resolved metrics."}
+                    </div>
+                    <div style={{ display:"grid", gap:"0.42rem", marginTop:"0.6rem" }}>
+                      {(card.trackedItems || []).slice(0, 4).map((item) => (
+                        <div key={`${card.goalId}_${item.key}`} style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.5rem 0.55rem" }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.35rem", flexWrap:"wrap" }}>
+                            <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>{item.label}</div>
+                            <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.06em" }}>{String(item.kind || "proxy").toUpperCase()}</div>
+                          </div>
+                          <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.5 }}>{item.currentDisplay || "No current data yet."}</div>
+                          {item.targetDisplay && <div style={{ fontSize:"0.5rem", color:"#93c5fd", marginTop:"0.14rem", lineHeight:1.45 }}>Target: {item.targetDisplay}</div>}
+                          {item.trendDisplay && <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>{item.trendDisplay}</div>}
+                          <div style={{ fontSize:"0.49rem", color:"#64748b", marginTop:"0.18rem", lineHeight:1.5 }}>Why: {item.why}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.55, marginTop:"0.55rem" }}>{card.honestyNote}</div>
+                    {card.unresolvedGaps?.[0] && (
+                      <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.5, marginTop:"0.3rem" }}>Still fuzzy: {card.unresolvedGaps[0]}</div>
+                    )}
+                    {card.tradeoffs?.[0] && (
+                      <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.22rem" }}>Tradeoff: {card.tradeoffs[0]}</div>
+                    )}
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.3rem" }}>Next review: {card.nextReviewFocus}</div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.55 }}>No resolved goals are available for progress tracking yet.</div>
+          )}
+        </section>
+
+        <section className="card card-subtle" style={{ borderColor:goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.dueNow ? `${C.amber}40` : `${C.blue}28`, background:"#101622" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.75rem" }}>
+            <div>
+              <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>GOAL REVIEW</div>
+              <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>{goalReview?.headline || "Goal review snapshot"}</div>
+              <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.14rem", lineHeight:1.55 }}>
+                {goalReview?.due?.summary || "Use canonical goal and progress data to keep the review lightweight."}
+              </div>
+              <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{goalReview?.summary}</div>
+            </div>
+            <div style={{ display:"grid", gap:"0.22rem", justifyItems:"end" }}>
+              <div style={{ fontSize:"0.48rem", color:goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.dueNow ? C.amber : "#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.2rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                {String(goalReview?.due?.dueState || "not_due").replaceAll("_", " ")}
+              </div>
+              {latestGoalReviewEvent?.effectiveDate && (
+                <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.06em" }}>last reviewed {latestGoalReviewEvent.effectiveDate}</div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.55rem" }}>
+            {(goalReview?.reviewItems || []).map((item) => {
+              const tone = getGoalReviewVerdictTone(item?.verdict);
+              return (
+                <div key={item?.key} style={{ border:`1px solid ${tone.border}`, borderRadius:12, background:"#0f172a", padding:"0.7rem" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.35rem", marginBottom:"0.28rem" }}>
+                    <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                      {item?.key === "are_we_progressing" ? "Are we progressing?" : item?.key === "is_goal_still_right" ? "Is the goal still right?" : item?.key === "are_metrics_still_useful" ? "Are the metrics still useful?" : "Should we refine or re-prioritize?"}
+                    </div>
+                    <div style={{ fontSize:"0.45rem", color:tone.color, background:tone.bg, border:`1px solid ${tone.border}`, padding:"0.14rem 0.38rem", borderRadius:999, letterSpacing:"0.08em", whiteSpace:"nowrap" }}>
+                      {String(item?.verdict || "review").replaceAll("_", " ")}
+                    </div>
+                  </div>
+                  <div style={{ fontSize:"0.56rem", color:"#f8fafc", lineHeight:1.5 }}>{item?.answer}</div>
+                  <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.2rem" }}>{item?.detail}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginTop:"0.7rem" }}>
+            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              Recommendation: <span style={{ color:"#dbe7f6" }}>{goalReview?.recommendation?.label || "Keep current goal"}</span>. {goalReview?.recommendation?.reason || ""}
+            </div>
+            <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+              <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.keepCurrentGoal)} disabled={goalReviewSaving} style={{ borderColor:"#2b3d55", color:"#dbe7f6" }}>
+                {goalReviewSaving ? "Saving..." : "Looks Right"}
+              </button>
+              <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.refineCurrentGoal)} disabled={goalReviewSaving} style={{ borderColor:`${C.blue}40`, color:C.blue }}>
+                Refine Goal
+              </button>
+              <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.reprioritizeGoalStack)} disabled={goalReviewSaving} style={{ borderColor:`${C.amber}40`, color:C.amber }}>
+                Re-prioritize
+              </button>
+            </div>
+          </div>
+          {goalReviewNotice && (
+            <div style={{ fontSize:"0.52rem", color:"#94a3b8", lineHeight:1.5, marginTop:"0.4rem" }}>{goalReviewNotice}</div>
+          )}
+        </section>
+
+        <section className="card card-subtle" style={{ borderColor:C.amber+"30", background:"#11141d" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.75rem" }}>
+            <div>
+              <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>CHANGE MY GOAL</div>
+              <div style={{ fontSize:"0.62rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>Start vague if you need to. We’ll resolve it before it changes the plan.</div>
+              <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.18rem", lineHeight:1.55 }}>
+                This uses the same typed intake and resolved-goal boundary as onboarding. Nothing becomes canonical until you confirm it.
+              </div>
+            </div>
+            {latestGoalChangeEvent && (
+              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.2rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                LAST CHANGE {latestGoalChangeEvent.effectiveDate || ""}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display:"grid", gap:"0.65rem" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
+              {Object.values(GOAL_CHANGE_MODES).map((mode) => {
+                const meta = GOAL_CHANGE_MODE_META?.[mode] || null;
+                const selected = goalChangeMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    className="btn"
+                    onClick={() => {
+                      setGoalChangeMode(mode);
+                      setGoalChangePreview(null);
+                      setGoalChangeError("");
+                      setGoalChangeNotice("");
+                    }}
+                    style={{
+                      textAlign:"left",
+                      minHeight:84,
+                      padding:"0.65rem 0.72rem",
+                      color:selected ? "#f8fafc" : "#cbd5e1",
+                      borderColor:selected ? `${C.amber}55` : "#2b3d55",
+                      background:selected ? "rgba(245, 158, 11, 0.12)" : "#0f172a",
+                    }}
+                  >
+                    <div style={{ fontSize:"0.56rem", fontWeight:700, color:selected ? C.amber : "#dbe7f6", marginBottom:"0.18rem" }}>{meta?.label || mode}</div>
+                    <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{meta?.effectLine}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>
+              {GOAL_CHANGE_MODE_META?.[goalChangeMode]?.historyLine}
+            </div>
+
+            <textarea
+              value={goalChangeIntent}
+              onChange={(event) => {
+                setGoalChangeIntent(event.target.value);
+                setGoalChangePreview(null);
+                setGoalChangeError("");
+                setGoalChangeNotice("");
+              }}
+              placeholder='Examples: "have six pack by August", "bench 225", "be a hybrid athlete", "lose fat but keep strength"'
+              rows={3}
+              style={{ resize:"vertical", minHeight:88 }}
+            />
+
+            <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+              <button className="btn btn-primary" onClick={handleGoalChangePreview} disabled={goalChangePreviewing || goalChangeApplying}>
+                {goalChangePreviewing ? "Previewing..." : "Preview Goal Change"}
+              </button>
+              {goalChangePreview && (
+                <button className="btn" onClick={handleGoalChangeApply} disabled={goalChangeApplying || goalChangePreviewing} style={{ color:C.green, borderColor:`${C.green}44` }}>
+                  {goalChangeApplying ? "Applying..." : `Confirm ${goalChangePreview?.modeMeta?.label || "Goal Change"}`}
+                </button>
+              )}
+            </div>
+
+            {goalChangeError && (
+              <div style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>{goalChangeError}</div>
+            )}
+            {goalChangeNotice && (
+              <div style={{ fontSize:"0.54rem", color:C.green, lineHeight:1.5 }}>{goalChangeNotice}</div>
+            )}
+
+            {goalChangePreview && (
+              <div style={{ display:"grid", gap:"0.7rem", border:"1px solid #2b3d55", borderRadius:14, background:"#0b1220", padding:"0.8rem" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:"0.6rem" }}>
+                  <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.7rem" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>INTERPRETATION</div>
+                    <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>
+                      {goalChangePreview?.aiInterpretationProposal
+                        ? "AI proposal only. Review it before confirming."
+                        : "AI unavailable. Deterministic fallback preview is shown."}
+                    </div>
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.24rem", lineHeight:1.5 }}>
+                      Goal type: {goalChangePreview?.aiInterpretationProposal?.interpretedGoalType || goalChangePreview?.orderedResolvedGoals?.[0]?.goalFamily || "pending"}
+                    </div>
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                      Measurability: {String(goalChangePreview?.orderedResolvedGoals?.[0]?.measurabilityTier || "pending").replaceAll("_", " ")}
+                    </div>
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                      Realism: {String(goalChangePreview?.goalFeasibility?.realismStatus || "pending").replaceAll("_", " ")}
+                    </div>
+                  </div>
+
+                  <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.7rem" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>WHAT CHANGES</div>
+                    <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalChangePreview?.modeMeta?.effectLine}</div>
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.24rem", lineHeight:1.5 }}>{goalChangePreview?.modeMeta?.historyLine}</div>
+                    {goalChangePreview?.goalFeasibility?.suggestedSequencing?.[0]?.summary && (
+                      <div style={{ fontSize:"0.5rem", color:"#93c5fd", marginTop:"0.24rem", lineHeight:1.5 }}>
+                        Sequencing: {goalChangePreview.goalFeasibility.suggestedSequencing[0].summary}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.65 }}>{goalChangePreview?.explanationText}</div>
+
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:"0.6rem" }}>
+                  {goalChangePreview.orderedResolvedGoals.map((goal) => (
+                    <div key={goal.id || goal.summary} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.75rem" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem" }}>
+                        <div>
+                          <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.3 }}>{goal.summary}</div>
+                          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
+                            {String(goal.goalFamily || "goal").replaceAll("_", " ")} - priority {goal.planningPriority}
+                          </div>
+                        </div>
+                        <div style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#162131", border:"1px solid #24344b", padding:"0.16rem 0.4rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                          {String(goal.confidence || "low").toUpperCase()}
+                        </div>
+                      </div>
+                      <div style={{ fontSize:"0.52rem", color:"#dbe7f6", marginTop:"0.35rem", lineHeight:1.55 }}>
+                        Track: {[goal?.primaryMetric?.label, ...(goal?.proxyMetrics || []).map((metric) => metric.label)].filter(Boolean).join(" - ") || "First 30-day success only"}
+                      </div>
+                      {goal?.targetDate && (
+                        <div style={{ fontSize:"0.5rem", color:"#93c5fd", marginTop:"0.18rem", lineHeight:1.5 }}>
+                          Target date: {goal.targetDate}
+                        </div>
+                      )}
+                      {goal?.first30DaySuccessDefinition && (
+                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
+                          First 30 days: {goal.first30DaySuccessDefinition}
+                        </div>
+                      )}
+                      {goal?.unresolvedGaps?.[0] && (
+                        <div style={{ fontSize:"0.5rem", color:C.amber, marginTop:"0.2rem", lineHeight:1.5 }}>
+                          Still fuzzy: {goal.unresolvedGaps[0]}
+                        </div>
+                      )}
+                      {goal?.tradeoffs?.[0] && (
+                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
+                          Tradeoff: {goal.tradeoffs[0]}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {(goalChangePreview?.goalFeasibility?.conflictFlags?.length || 0) > 0 && (
+                  <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.55 }}>
+                    Tradeoffs to respect: {goalChangePreview.goalFeasibility.conflictFlags.map((item) => item.summary).filter(Boolean).join(" - ")}
+                  </div>
+                )}
               </div>
             )}
           </div>

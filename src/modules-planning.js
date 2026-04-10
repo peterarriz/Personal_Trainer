@@ -19,6 +19,7 @@ import {
   normalizeActualRecoveryLog,
   deriveSupplementActual,
 } from "./services/recovery-supplement-service.js";
+import { assessGoalFeasibility } from "./services/goal-feasibility-service.js";
 import { dedupeStrings } from "./utils/collection-utils.js";
 
 export { daysUntil, deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
@@ -63,6 +64,7 @@ const buildPlanDaySummary = (drivers = [], modifiedFromBase = false) => {
 };
 
 const clampNumber = (value, min, max) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : min));
+const sanitizeText = (value = "", maxLength = 220) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 
 const buildSessionsByDayFromTemplate = (template = {}) => {
   const restDay = { type: "rest", label: "Active Recovery", nutri: "rest", isRecoverySlot: true };
@@ -243,6 +245,61 @@ const buildFallbackProgramBlockFromCompatibilityIntent = ({
   };
 };
 
+const getResolvedGoalPayload = (goal = {}) => goal?.resolvedGoal || null;
+
+const buildResolvedGoalBlockContext = ({
+  goals = [],
+  programContext = {},
+} = {}) => {
+  const activeGoals = Array.isArray(goals) ? goals.filter((goal) => goal?.active !== false) : [];
+  const primaryGoal = activeGoals[0] || null;
+  const secondaryGoals = activeGoals.slice(1, 3);
+  const resolvedPrimaryGoal = getResolvedGoalPayload(primaryGoal);
+  const resolvedSecondaryGoals = secondaryGoals.map((goal) => getResolvedGoalPayload(goal)).filter(Boolean);
+  const resolvedGoals = activeGoals.map((goal) => getResolvedGoalPayload(goal)).filter(Boolean);
+  const proxyMetricLabels = dedupeStrings(resolvedGoals.flatMap((goal) => (goal?.proxyMetrics || []).map((metric) => sanitizeText(metric?.label || "", 80)))).slice(0, 4);
+  const primaryMetricLabel = sanitizeText(resolvedPrimaryGoal?.primaryMetric?.label || "", 80);
+  const tradeoffs = dedupeStrings([
+    ...activeGoals.flatMap((goal) => goal?.tradeoffs || []),
+    ...resolvedGoals.flatMap((goal) => goal?.tradeoffs || []),
+    ...(programContext?.goalFeasibility?.conflictFlags || []).map((flag) => sanitizeText(flag?.summary || "", 180)),
+  ]).slice(0, 5);
+  const feasibilityByGoalId = new Map((programContext?.goalFeasibility?.goalAssessments || []).map((item) => [item.goalId, item]));
+  const primaryAssessment = resolvedPrimaryGoal ? feasibilityByGoalId.get(resolvedPrimaryGoal.id) || null : null;
+  const sequencingSummary = sanitizeText(programContext?.goalFeasibility?.suggestedSequencing?.[0]?.summary || "", 220);
+  const realisticByDateSummary = sanitizeText(programContext?.goalFeasibility?.realisticByTargetDate?.[0]?.summary || "", 220);
+  const longerHorizonSummary = sanitizeText(programContext?.goalFeasibility?.longerHorizonNeeds?.[0]?.summary || "", 220);
+  const maintainedLabels = secondaryGoals.map((goal) => goal?.name).filter(Boolean);
+  const minimizedLabel = activeGoals.find((goal) => goal?.category === "injury_prevention")?.name || "non-primary volume";
+
+  return {
+    primaryGoal,
+    secondaryGoals,
+    resolvedPrimaryGoal,
+    resolvedSecondaryGoals,
+    resolvedGoals,
+    primaryMetricLabel,
+    proxyMetricLabels,
+    tradeoffs,
+    primaryAssessment,
+    sequencingSummary,
+    realisticByDateSummary,
+    longerHorizonSummary,
+    maintainedLabels,
+    minimizedLabel,
+  };
+};
+
+const goalLooksUpperBodyFocused = (goal = {}) => {
+  const text = sanitizeText([
+    goal?.name,
+    goal?.resolvedGoal?.summary,
+    goal?.resolvedGoal?.primaryMetric?.label,
+    goal?.resolvedGoal?.primaryMetric?.key,
+  ].filter(Boolean).join(" "), 240).toLowerCase();
+  return /(bench|upper body|push|pull|press|chin|pull-up|pull up|row)/i.test(text);
+};
+
 export const buildProgramBlock = ({
   weekNumber = 1,
   weekTemplate = {},
@@ -264,6 +321,15 @@ export const buildProgramBlock = ({
   const phase = window.phase || weekTemplate?.phase || "";
   const lowBandwidth = Boolean(programContext?.lowBandwidth);
   const bodyCompActive = Boolean(programContext?.bodyCompActive || bodyCompGoal);
+  const resolvedContext = buildResolvedGoalBlockContext({
+    goals: active,
+    programContext,
+  });
+  const primaryResolvedGoal = resolvedContext.resolvedPrimaryGoal;
+  const primaryFeasibility = resolvedContext.primaryAssessment;
+  const primaryMetricLabel = resolvedContext.primaryMetricLabel;
+  const proxyMetricLabels = resolvedContext.proxyMetricLabels;
+  const feasibilityStatus = sanitizeText(programContext?.goalFeasibility?.realismStatus || "", 40).toLowerCase();
 
   const maintainedGoals = active
     .filter((goal) => goal?.id !== primary?.id && goal?.category !== "injury_prevention")
@@ -271,19 +337,41 @@ export const buildProgramBlock = ({
     .map((goal) => goal?.name)
     .filter(Boolean);
   const minimizedGoal = active.find((goal) => goal?.category === "injury_prevention")?.name || "non-primary volume";
+  const primaryMeasurabilityTier = primaryResolvedGoal?.measurabilityTier || primary?.measurabilityTier || "";
+  const primaryTargetHorizonWeeks = primaryResolvedGoal?.targetHorizonWeeks || primary?.targetHorizonWeeks || null;
+  const dominantMetricLine = primaryMetricLabel
+    ? `${primaryMetricLabel} is the main success anchor for this block.`
+    : proxyMetricLabels.length
+    ? `${proxyMetricLabels.slice(0, 2).join(" and ")} are the working signals for block progress.`
+    : "";
+  const horizonLine = primaryTargetHorizonWeeks
+    ? `${primaryTargetHorizonWeeks} week target horizon sets the pacing of this block.`
+    : primaryMeasurabilityTier === "exploratory_fuzzy"
+    ? "This block starts by proving a first 30-day win before pushing a narrower target."
+    : "";
+  const feasibilityLine = resolvedContext.realisticByDateSummary || resolvedContext.longerHorizonSummary || "";
+  const sequencingLine = resolvedContext.sequencingSummary || "";
 
   let labelSuffix = "Hybrid performance";
   let dominantEmphasis = {
     category: primary?.category || "hybrid",
     label: primary?.name || "Hybrid performance",
-    objective: "Advance the primary lane while keeping the rest of the system credible.",
+    objective: ["Advance the primary lane while keeping the rest of the system credible.", horizonLine, feasibilityLine].filter(Boolean).join(" "),
     role: "dominant",
+    measurabilityTier: primaryMeasurabilityTier,
+    targetHorizonWeeks: primaryTargetHorizonWeeks,
   };
   let secondaryEmphasis = {
     category: secondaryGoals[0]?.category || "maintenance",
     label: secondaryGoals[0]?.name || maintainedGoals[0] || "General fitness",
-    objective: "Secondary work stays in maintenance range while the dominant lane leads.",
+    objective: sequencingLine || "Secondary work stays in maintenance range while the dominant lane leads.",
     role: "secondary",
+  };
+  let minimizedEmphasis = {
+    category: active.find((goal) => goal?.name === minimizedGoal)?.category || "support",
+    label: minimizedGoal,
+    objective: `${minimizedGoal} receives the least dedicated block volume so the main goal stack stays coherent.`,
+    role: "minimized",
   };
   let recoveryPosture = {
     level: "balanced",
@@ -291,121 +379,209 @@ export const buildProgramBlock = ({
   };
   let nutritionPosture = {
     mode: "maintenance_support",
-    summary: "Nutrition supports steady training quality and repeatable recovery.",
+    summary: ["Nutrition supports steady training quality and repeatable recovery.", dominantMetricLine].filter(Boolean).join(" "),
   };
   let successCriteria = [
     "Keep the dominant lane progressing without losing consistency.",
     "Hold the secondary lane in a credible maintenance range.",
     "Finish the block with recovery still intact.",
+    dominantMetricLine,
+    feasibilityLine,
   ];
-  let tradeoffs = [];
+  let tradeoffs = [...resolvedContext.tradeoffs];
 
-  if (architecture === "race_prep_dominant") {
+  if (architecture === "event_prep_upper_body_maintenance") {
+    labelSuffix = "Event-prep + upper-body maintenance";
+    dominantEmphasis = {
+      category: "running",
+      label: primary?.name || runningGoal?.name || "Event prep",
+      objective: [
+        "Event-specific endurance or race prep takes first claim on fatigue, scheduling, and lower-body freshness this block.",
+        horizonLine,
+        feasibilityLine,
+      ].filter(Boolean).join(" "),
+      role: "dominant",
+      measurabilityTier: primaryMeasurabilityTier,
+      targetHorizonWeeks: primaryTargetHorizonWeeks,
+    };
+    secondaryEmphasis = {
+      category: "strength",
+      label: strengthGoal?.name || maintainedGoals[0] || "Upper-body maintenance",
+      objective: sequencingLine || "Upper-body strength is maintained with low leg-cost sessions so the event-prep lane stays clean.",
+      role: "secondary",
+    };
+    recoveryPosture = {
+      level: "protective",
+      summary: "Recovery strongly protects key run sessions and long-run quality by minimizing lower-body lifting fatigue.",
+    };
+    nutritionPosture = {
+      mode: "performance_support",
+      summary: [
+        "Nutrition supports event-specific quality work while keeping enough protein to preserve upper-body training identity.",
+        dominantMetricLine,
+      ].filter(Boolean).join(" "),
+    };
+    successCriteria = [
+      "Land the event-specific key sessions without lower-body lifting spillover.",
+      "Keep 2 upper-body maintenance exposures each week.",
+      "Arrive at the next block with race-specific durability intact.",
+      dominantMetricLine,
+      feasibilityLine,
+    ];
+    tradeoffs = dedupeStrings([
+      "Lower-body hypertrophy and heavy bilateral lifting are intentionally minimized while event prep leads.",
+      ...tradeoffs,
+    ]);
+  } else if (architecture === "race_prep_dominant") {
     labelSuffix = "Run-dominant + strength-maintenance";
     dominantEmphasis = {
       category: "running",
       label: primary?.name || runningGoal?.name || "Run performance",
-      objective: "Run quality and endurance progression get first claim on fatigue and recovery this block.",
+      objective: [
+        "Run quality and endurance progression get first claim on fatigue and recovery this block.",
+        horizonLine,
+        feasibilityLine,
+      ].filter(Boolean).join(" "),
       role: "dominant",
+      measurabilityTier: primaryMeasurabilityTier,
+      targetHorizonWeeks: primaryTargetHorizonWeeks,
     };
     secondaryEmphasis = {
       category: strengthGoal ? "strength" : "maintenance",
       label: strengthGoal?.name || maintainedGoals[0] || "Strength maintenance",
-      objective: "Strength stays in maintenance range so it supports running instead of competing with it.",
+      objective: sequencingLine || "Strength stays in maintenance range so it supports running instead of competing with it.",
       role: "secondary",
     };
     recoveryPosture = {
-      level: lowBandwidth ? "protective" : "balanced",
-      summary: lowBandwidth
+      level: lowBandwidth || ["aggressive", "unrealistic"].includes(feasibilityStatus) ? "protective" : "balanced",
+      summary: lowBandwidth || ["aggressive", "unrealistic"].includes(feasibilityStatus)
         ? "Recovery is protected so run rhythm survives even when bandwidth is limited."
         : "Recovery is biased toward protecting the key run sessions and long-run quality.",
     };
     nutritionPosture = {
       mode: lowBandwidth ? "recovery_support" : "performance_support",
-      summary: "Fuel key run sessions, protect tendon recovery, and replenish enough to keep quality work credible.",
+      summary: [
+        "Fuel key run sessions, protect tendon recovery, and replenish enough to keep quality work credible.",
+        dominantMetricLine,
+      ].filter(Boolean).join(" "),
     };
     successCriteria = [
       "Land the key run sessions for the block without stacking recovery debt.",
       "Keep 1-2 strength touches in maintenance range.",
       "Arrive at the next phase with run durability intact.",
+      dominantMetricLine,
+      feasibilityLine,
     ];
-    tradeoffs = [
+    tradeoffs = dedupeStrings([
       "Strength volume stays capped while running receives the cleanest recovery windows.",
-    ];
+      ...tradeoffs,
+    ]);
   } else if (architecture === "strength_dominant") {
     labelSuffix = "Strength-dominant + conditioning-maintenance";
     dominantEmphasis = {
       category: "strength",
       label: primary?.name || strengthGoal?.name || "Strength progression",
-      objective: "Strength progression is the main stressor to advance during this block.",
+      objective: [
+        "Strength progression is the main stressor to advance during this block.",
+        horizonLine,
+        feasibilityLine,
+      ].filter(Boolean).join(" "),
       role: "dominant",
+      measurabilityTier: primaryMeasurabilityTier,
+      targetHorizonWeeks: primaryTargetHorizonWeeks,
     };
     secondaryEmphasis = {
       category: runningGoal ? "running" : "conditioning",
       label: runningGoal?.name || maintainedGoals[0] || "Conditioning maintenance",
-      objective: "Conditioning stays supportive so it preserves work capacity without stealing lower-body recovery.",
+      objective: sequencingLine || "Conditioning stays supportive so it preserves work capacity without stealing lower-body recovery.",
       role: "secondary",
     };
     recoveryPosture = {
-      level: lowBandwidth ? "protective" : "balanced",
-      summary: lowBandwidth
+      level: lowBandwidth || ["aggressive", "unrealistic"].includes(feasibilityStatus) ? "protective" : "balanced",
+      summary: lowBandwidth || ["aggressive", "unrealistic"].includes(feasibilityStatus)
         ? "Recovery is kept protective so strength rhythm survives inconsistent weeks."
         : "Recovery protects the primary lifts while still leaving room for supportive conditioning.",
     };
     nutritionPosture = {
       mode: "strength_support",
-      summary: "Nutrition emphasizes protein coverage, lift-day fueling, and enough intake to keep strength sessions productive.",
+      summary: [
+        "Nutrition emphasizes protein coverage, lift-day fueling, and enough intake to keep strength sessions productive.",
+        dominantMetricLine,
+      ].filter(Boolean).join(" "),
     };
     successCriteria = [
       "Progress the primary strength lifts with controlled fatigue.",
       "Keep 1-2 conditioning exposures so hybrid fitness does not collapse.",
       "Finish the block stronger without letting supportive conditioning interfere.",
+      dominantMetricLine,
+      feasibilityLine,
     ];
-    tradeoffs = [
+    tradeoffs = dedupeStrings([
       "Conditioning stays supportive rather than chasing peak endurance or speed.",
-    ];
+      ...tradeoffs,
+    ]);
   } else if (architecture === "body_comp_conditioning") {
     labelSuffix = "Body-comp + strength-retention";
     dominantEmphasis = {
       category: "body_comp",
       label: primary?.name || bodyCompGoal?.name || "Body composition",
-      objective: "Energy balance and adherence drive the block while training protects lean mass and momentum.",
+      objective: [
+        "Energy balance and adherence drive the block while training protects lean mass and momentum.",
+        horizonLine,
+        feasibilityLine,
+      ].filter(Boolean).join(" "),
       role: "dominant",
+      measurabilityTier: primaryMeasurabilityTier,
+      targetHorizonWeeks: primaryTargetHorizonWeeks,
     };
     secondaryEmphasis = {
       category: "strength",
       label: strengthGoal?.name || maintainedGoals[0] || "Strength retention",
-      objective: "Strength work stays present enough to retain muscle and training identity while conditioning supports expenditure.",
+      objective: sequencingLine || "Strength work stays present enough to retain muscle and training identity while conditioning supports expenditure.",
       role: "secondary",
     };
     recoveryPosture = {
-      level: lowBandwidth ? "protective" : "balanced",
-      summary: "Recovery is protected enough to preserve adherence while the deficit stays sustainable.",
+      level: lowBandwidth || feasibilityStatus === "aggressive" ? "protective" : "balanced",
+      summary: lowBandwidth || feasibilityStatus === "aggressive"
+        ? "Recovery is slightly more protective so the deficit stays sustainable and strength can be retained."
+        : "Recovery is protected enough to preserve adherence while the deficit stays sustainable.",
     };
     nutritionPosture = {
       mode: "deficit_support",
-      summary: "Nutrition prioritizes satiety, protein retention, and a deficit that the athlete can actually repeat.",
+      summary: [
+        "Nutrition prioritizes satiety, protein retention, and a deficit that the athlete can actually repeat.",
+        dominantMetricLine,
+      ].filter(Boolean).join(" "),
     };
     successCriteria = [
       "Keep nutrition adherence high enough that the deficit is sustainable.",
       "Retain minimum effective strength work.",
       "Use conditioning to support expenditure without creating rebound fatigue.",
+      dominantMetricLine || "Use proxy metrics to show body-composition progress instead of guessing.",
+      feasibilityLine,
     ];
-    tradeoffs = [
+    tradeoffs = dedupeStrings([
       "Aggressive performance progression is intentionally limited while body-comp pressure is active.",
-    ];
+      ...tradeoffs,
+    ]);
   } else if (architecture === "maintenance_rebuild") {
     labelSuffix = "Balanced hybrid rebuild";
     dominantEmphasis = {
       category: "hybrid",
       label: "Balanced hybrid rebuild",
-      objective: "Rebuild rhythm with finishable run and strength doses before asking the athlete to push again.",
+      objective: [
+        "Rebuild rhythm with finishable run and strength doses before asking the athlete to push again.",
+        horizonLine,
+        feasibilityLine,
+      ].filter(Boolean).join(" "),
       role: "dominant",
+      measurabilityTier: primaryMeasurabilityTier,
+      targetHorizonWeeks: primaryTargetHorizonWeeks,
     };
     secondaryEmphasis = {
       category: primary?.category || "maintenance",
       label: primary?.name || "Primary goal maintenance",
-      objective: "Primary-goal qualities stay in maintenance range while consistency and recovery are restored.",
+      objective: sequencingLine || "Primary-goal qualities stay in maintenance range while consistency and recovery are restored.",
       role: "secondary",
     };
     recoveryPosture = {
@@ -414,16 +590,22 @@ export const buildProgramBlock = ({
     };
     nutritionPosture = {
       mode: "consistency_support",
-      summary: "Nutrition stays low-friction and repeatable so the athlete can rebuild adherence across the block.",
+      summary: [
+        "Nutrition stays low-friction and repeatable so the athlete can rebuild adherence across the block.",
+        dominantMetricLine,
+      ].filter(Boolean).join(" "),
     };
     successCriteria = [
       "String together repeatable sessions for several weeks in a row.",
       "Keep both run and strength in minimum effective range.",
       "Exit the block fresher and more consistent than it started.",
+      dominantMetricLine || "Use simple check-ins and consistency proxies as the first proof of progress.",
+      feasibilityLine,
     ];
-    tradeoffs = [
+    tradeoffs = dedupeStrings([
       "Aggressive progression is deferred until consistency and recovery are trustworthy again.",
-    ];
+      ...tradeoffs,
+    ]);
   } else {
     labelSuffix = dominantEmphasis.category === "running" && strengthGoal
       ? "Run-dominant + strength-maintenance"
@@ -433,55 +615,86 @@ export const buildProgramBlock = ({
     dominantEmphasis = {
       category: primary?.category || "hybrid",
       label: primary?.name || "Hybrid performance",
-      objective: primary?.category === "running"
-        ? "Run fitness advances while strength work stays present enough to keep the athlete meaningfully hybrid."
-        : primary?.category === "strength"
-        ? "Strength advances while conditioning stays present enough to protect broader fitness."
-        : "Run, strength, and conditioning stay balanced enough that progress remains credible across lanes.",
+      objective: [
+        primary?.category === "running"
+          ? "Run fitness advances while strength work stays present enough to keep the athlete meaningfully hybrid."
+          : primary?.category === "strength"
+          ? "Strength advances while conditioning stays present enough to protect broader fitness."
+          : "Run, strength, and conditioning stay balanced enough that progress remains credible across lanes.",
+        horizonLine,
+        feasibilityLine,
+      ].filter(Boolean).join(" "),
       role: "dominant",
+      measurabilityTier: primaryMeasurabilityTier,
+      targetHorizonWeeks: primaryTargetHorizonWeeks,
     };
     secondaryEmphasis = {
       category: secondaryGoals[0]?.category || (primary?.category === "running" ? "strength" : "running"),
       label: secondaryGoals[0]?.name || maintainedGoals[0] || (primary?.category === "running" ? "Strength maintenance" : "Conditioning maintenance"),
-      objective: primary?.category === "running"
+      objective: sequencingLine || (primary?.category === "running"
         ? "Strength stays in maintenance range so the athlete still looks and performs like a hybrid athlete."
         : primary?.category === "strength"
         ? "Conditioning stays supportive so strength work remains the main driver without losing aerobic support."
-        : "Secondary work is maintained so no lane falls too far behind while the block stays balanced.",
+        : "Secondary work is maintained so no lane falls too far behind while the block stays balanced."),
       role: "secondary",
     };
     recoveryPosture = {
-      level: lowBandwidth ? "protective" : "balanced",
+      level: lowBandwidth || feasibilityStatus === "aggressive" ? "protective" : "balanced",
       summary: lowBandwidth
         ? "Recovery stays slightly protective so hybrid work remains finishable."
+        : feasibilityStatus === "aggressive"
+        ? "Recovery leans slightly protective because the active goal stack has real tradeoffs to manage."
         : "Recovery is balanced so both dominant and secondary work can stay credible across the block.",
     };
     nutritionPosture = {
-      mode: primary?.category === "running" ? "performance_support" : "maintenance_support",
-      summary: primary?.category === "running"
-        ? "Nutrition leans toward supporting key run work while covering enough protein to preserve strength."
-        : "Nutrition supports repeatable hybrid training without overcommitting to one lane.",
+      mode: primary?.category === "running"
+        ? "performance_support"
+        : primary?.category === "strength"
+        ? "strength_support"
+        : bodyCompActive
+        ? "deficit_support"
+        : "maintenance_support",
+      summary: [
+        primary?.category === "running"
+          ? "Nutrition leans toward supporting key run work while covering enough protein to preserve strength."
+          : primary?.category === "strength"
+          ? "Nutrition supports productive lifting while keeping conditioning compatible."
+          : bodyCompActive
+          ? "Nutrition keeps the deficit sustainable enough that the hybrid structure survives."
+          : "Nutrition supports repeatable hybrid training without overcommitting to one lane.",
+        dominantMetricLine,
+      ].filter(Boolean).join(" "),
     };
     successCriteria = [
       "Progress the dominant lane while keeping the secondary lane credible.",
       "Maintain enough cross-training that the athlete stays truly hybrid.",
       "Keep the block repeatable instead of overfilling a single week.",
+      dominantMetricLine,
+      feasibilityLine,
     ];
-    tradeoffs = [
+    tradeoffs = dedupeStrings([
       "The secondary lane is maintained, not pushed, while the dominant lane receives cleaner recovery and planning attention.",
-    ];
+      ...tradeoffs,
+    ]);
   }
+
+  minimizedEmphasis = {
+    category: active.find((goal) => goal?.name === minimizedGoal)?.category || "support",
+    label: minimizedGoal,
+    objective: `${minimizedGoal} receives the least dedicated block volume so the dominant and maintained lanes stay coherent.`,
+    role: "minimized",
+  };
 
   if (unlockMessage) tradeoffs = [...tradeoffs, unlockMessage];
 
   const safeConstraints = dedupeStrings([...(constraints || [])]);
   const safeTradeoffs = dedupeStrings([...(tradeoffs || []), ...safeConstraints.slice(0, 2)]).slice(0, 5);
-  const safeCriteria = dedupeStrings(successCriteria).slice(0, 4);
+  const safeCriteria = dedupeStrings(successCriteria.filter(Boolean)).slice(0, 5);
   const prioritized = dominantEmphasis.label || primary?.name || "Consistency and execution";
   const maintained = maintainedGoals.length
     ? maintainedGoals
     : [secondaryEmphasis.label || "general fitness"].filter(Boolean);
-  const summary = `${dominantEmphasis.objective} ${secondaryEmphasis.objective}`.trim();
+  const summary = `${dominantEmphasis.objective} ${secondaryEmphasis.objective} ${minimizedEmphasis.objective}`.trim();
 
   return {
     version: PROGRAM_BLOCK_MODEL_VERSION,
@@ -492,6 +705,7 @@ export const buildProgramBlock = ({
     window,
     dominantEmphasis,
     secondaryEmphasis,
+    minimizedEmphasis,
     recoveryPosture,
     nutritionPosture,
     successCriteria: safeCriteria,
@@ -502,9 +716,22 @@ export const buildProgramBlock = ({
       maintained,
       minimized: minimizedGoal,
     },
+    goalStack: {
+      primaryResolvedGoalId: primaryResolvedGoal?.id || "",
+      secondaryResolvedGoalIds: resolvedContext.resolvedSecondaryGoals.map((goal) => goal.id).filter(Boolean),
+      measurabilityTier: primaryMeasurabilityTier,
+      targetHorizonWeeks: primaryTargetHorizonWeeks,
+      primaryMetricLabel,
+      proxyMetricLabels,
+      realismStatus: feasibilityStatus || "",
+      realisticByDate: resolvedContext.realisticByDateSummary || "",
+      sequencingSummary: sequencingLine,
+    },
+    feasibility: clonePlainValue(programContext?.goalFeasibility || null),
     drivers: dedupeStrings([
       prioritized,
       ...(maintained || []),
+      minimizedGoal,
       ...(drivers || []),
       phase,
       architecture,
@@ -523,7 +750,7 @@ const resolveWeeklyNutritionEmphasis = ({
   if (recoveryBias === "high") return "recovery support and consistent fueling";
   if (primaryCategory === "body_comp" || architecture === "body_comp_conditioning") return "satiety, recovery, and deficit adherence";
   if (primaryCategory === "strength" || architecture === "strength_dominant") return "protein coverage and session recovery";
-  if (performanceBias === "high" || architecture === "race_prep_dominant") return "fuel key sessions and replenish quality work";
+  if (performanceBias === "high" || ["race_prep_dominant", "event_prep_upper_body_maintenance"].includes(architecture)) return "fuel key sessions and replenish quality work";
   if (architecture === "maintenance_rebuild") return "consistency and low-friction meals";
   return "balanced support for training and recovery";
 };
@@ -584,7 +811,7 @@ export const deriveWeeklyIntent = ({
   else if (
     volumePct > 100
     || normalizedProgramBlock?.recoveryPosture?.level === "progressive"
-    || ["race_prep_dominant", "strength_dominant"].includes(architecture)
+    || ["race_prep_dominant", "strength_dominant", "event_prep_upper_body_maintenance"].includes(architecture)
   ) aggressionLevel = "progressive";
 
   let recoveryBias = normalizedProgramBlock?.recoveryPosture?.level === "protective"
@@ -601,7 +828,7 @@ export const deriveWeeklyIntent = ({
 
   let performanceBias = "moderate";
   if (recoveryBias === "high") performanceBias = "low";
-  else if (["race_prep_dominant", "strength_dominant"].includes(architecture) && aggressionLevel === "progressive") performanceBias = "high";
+  else if (["race_prep_dominant", "strength_dominant", "event_prep_upper_body_maintenance"].includes(architecture) && aggressionLevel === "progressive") performanceBias = "high";
 
   const focus = weekTemplate?.label
     || normalizedProgramBlock?.dominantEmphasis?.label
@@ -634,16 +861,27 @@ export const deriveWeeklyIntent = ({
       performanceBias,
     });
   const status = adjusted ? "adjusted" : "planned";
+  const maintainedFocus = normalizedProgramBlock?.secondaryEmphasis?.label || "";
+  const minimizedFocus = normalizedProgramBlock?.minimizedEmphasis?.label || normalizedProgramBlock?.goalAllocation?.minimized || "";
+  const tradeoffFocus = normalizedProgramBlock?.tradeoffs?.[0] || "";
   const successDefinition = recoveryBias === "high"
-    ? "Protect recovery, land the minimum effective work, and keep logging."
+    ? ["event_prep_upper_body_maintenance", "race_prep_dominant"].includes(architecture)
+      ? architecture === "event_prep_upper_body_maintenance"
+        ? "Protect recovery, land the key event-prep work, and keep upper-body maintenance exposures minimal but real."
+        : "Protect recovery, land the key event-prep work, and keep the maintained strength work minimal but real."
+      : architecture === "body_comp_conditioning"
+      ? "Protect recovery, keep the deficit repeatable, and land the minimum effective maintenance work."
+      : "Protect recovery, land the minimum effective work, and keep logging."
+    : normalizedProgramBlock?.successCriteria?.length > 1
+    ? `${normalizedProgramBlock.successCriteria[0]} ${normalizedProgramBlock.successCriteria[1]}`
     : normalizedProgramBlock?.successCriteria?.[0]
     ? normalizedProgramBlock.successCriteria[0]
     : performanceBias === "high"
     ? "Hit the key quality sessions without sacrificing recovery."
     : "String together repeatable sessions and keep the week stable.";
   const rationale = adjusted
-    ? `This week is adjusted inside ${String(normalizedProgramBlock?.label || "the current block").toLowerCase()} around ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture.`
-    : `This week sits inside ${String(normalizedProgramBlock?.label || "the current block").toLowerCase()} and advances ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture.`;
+    ? `This week is adjusted inside ${String(normalizedProgramBlock?.label || "the current block").toLowerCase()} around ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture. ${maintainedFocus ? `${maintainedFocus} stays maintained.` : ""} ${minimizedFocus ? `${minimizedFocus} stays minimized.` : ""}`.trim()
+    : `This week sits inside ${String(normalizedProgramBlock?.label || "the current block").toLowerCase()} and advances ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture. ${maintainedFocus ? `${maintainedFocus} stays maintained.` : ""} ${minimizedFocus ? `${minimizedFocus} stays minimized.` : ""}`.trim();
 
   return {
     id: `weekly_intent_${weekNumber}`,
@@ -661,11 +899,17 @@ export const deriveWeeklyIntent = ({
     adjusted,
     volumePct,
     successDefinition,
+    maintainedFocus,
+    minimizedFocus,
+    tradeoffFocus,
     drivers: dedupeStrings([
       focus,
+      maintainedFocus,
+      minimizedFocus,
       normalizedProgramBlock?.dominantEmphasis?.label || "",
       blockIntent?.prioritized || "",
       primaryGoal?.name || "",
+      tradeoffFocus,
       volumePct !== 100 ? `volume ${volumePct}%` : "",
       weeklyCheckin?.blocker ? String(weeklyCheckin.blocker).replace(/_/g, " ") : "",
     ]),
@@ -1219,6 +1463,8 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
   const lowBandwidth = inconsistencyRisk === "high" || learningLayer?.adjustmentBias === "simplify";
   const strengthPriority = primary?.category === "strength" && !lowBandwidth;
   const bodyCompActive = !!bodyCompGoal;
+  const resolvedGoals = active.map((goal) => goal?.resolvedGoal).filter(Boolean);
+  const upperBodyMaintenance = Boolean(runningGoal && strengthGoal && goalLooksUpperBodyFocused(strengthGoal));
 
   const runningScore = (primary?.category === "running" ? 3 : 0) + (runningGoal ? 2 : 0) + (raceNear ? 2 : 0);
   const strengthScore = (primary?.category === "strength" ? 3 : 0) + (strengthGoal ? 2 : 0) + (hasGym ? 1 : -1);
@@ -1226,11 +1472,13 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
 
   let architecture = "hybrid_performance";
   if (lowBandwidth) architecture = "maintenance_rebuild";
+  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && (raceNear || primary?.category === "running") && upperBodyMaintenance) architecture = "event_prep_upper_body_maintenance";
   else if (runningScore >= Math.max(strengthScore, bodyCompScore) && (raceNear || primary?.category === "running")) architecture = "race_prep_dominant";
   else if (bodyCompScore >= Math.max(runningScore, strengthScore)) architecture = "body_comp_conditioning";
   else if (strengthScore >= Math.max(runningScore, bodyCompScore)) architecture = hasGym ? "strength_dominant" : "hybrid_performance";
 
   const splits = {
+    event_prep_upper_body_maintenance: { run: 4, strength: 2, conditioning: 0, recovery: 1 },
     race_prep_dominant: { run: 4, strength: 2, conditioning: 1, recovery: 1 },
     strength_dominant: { run: 2, strength: 4, conditioning: 1, recovery: 1 },
     body_comp_conditioning: { run: 2, strength: 3, conditioning: 2, recovery: 1 },
@@ -1241,18 +1489,29 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
 
   const constraints = [];
   if (!hasGym && strengthGoal) constraints.push("Bench-specific progression constrained by no gym access; using home/limited-equipment substitutes.");
-  if (architecture !== "race_prep_dominant" && runningGoal) constraints.push("Running kept supportive/maintenance until running priority or race proximity increases.");
+  if (!["race_prep_dominant", "event_prep_upper_body_maintenance"].includes(architecture) && runningGoal) constraints.push("Running kept supportive/maintenance until running priority or race proximity increases.");
+  if (architecture === "event_prep_upper_body_maintenance") constraints.push("Lower-body lifting volume is capped so the event-prep lane keeps the cleanest recovery windows.");
   const why = [
     `Primary goal: ${primary?.name || "none set"}.`,
     `Environment: ${env}.`,
     `Inconsistency risk: ${inconsistencyRisk}.`,
     bodyCompGoal ? "Body-comp goal is active and materially affects split allocation." : null,
     raceNear ? "Race date is near enough to increase running weight." : null,
+    upperBodyMaintenance ? "Secondary strength work is upper-body biased, so lower-body fatigue can stay subordinate to event prep." : null,
   ].filter(Boolean);
 
   const restDay = (label = "Active Recovery") => ({ type: "rest", label, nutri: "rest", isRecoverySlot: true });
 
   const dayTemplates = {
+    event_prep_upper_body_maintenance: {
+      1: { type: "hard-run", label: `${baseWeek.mon?.t || "Quality"} Run`, run: baseWeek.mon, nutri: "hardRun" },
+      2: { type: "strength+prehab", label: "Upper-Body Maintenance A", strSess: baseWeek.str || "A", nutri: "strength", upperBodyBias: true },
+      3: { type: "easy-run", label: "Easy Run", run: baseWeek.fri || { t: "Easy", d: "25-35 min" }, nutri: "easyRun" },
+      4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
+      5: { type: "strength+prehab", label: "Upper-Body Maintenance B", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength", upperBodyBias: true },
+      6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: "longRun" },
+      0: restDay("Active Recovery"),
+    },
     race_prep_dominant: {
       1: { type: "run+strength", label: "Quality Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "hardRun" },
       2: { type: "conditioning", label: "Conditioning / OTF", nutri: "otf" },
@@ -1331,6 +1590,35 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     .slice(0, 2)
     .map(g => g.name);
   const minimizedGoal = active.find(g => g.category === "injury_prevention")?.name || "non-primary volume";
+  const goalFeasibility = resolvedGoals.length
+    ? assessGoalFeasibility({
+        resolvedGoals,
+        userBaseline: {
+          experienceLevel: personalization?.profile?.estimatedFitnessLevel || personalization?.canonicalAthlete?.userProfile?.experienceLevel || "unknown",
+          fitnessLevel: personalization?.fitnessSignals?.fitnessLevel || personalization?.profile?.fitnessLevel || "",
+          currentBaseline: personalization?.profile?.goalMix || "",
+          primaryGoalLabel: primary?.name || "",
+        },
+        scheduleReality: {
+          trainingDaysPerWeek: Number(personalization?.userGoalProfile?.days_per_week || personalization?.canonicalAthlete?.userProfile?.daysPerWeek || 0),
+          sessionLength: personalization?.userGoalProfile?.session_length || personalization?.canonicalAthlete?.userProfile?.sessionLength || personalization?.environmentConfig?.base?.time || "",
+          trainingLocation: env,
+          scheduleNotes: lowBandwidth ? "Bandwidth is currently limited." : "",
+        },
+        currentExperienceContext: {
+          injuryConstraintContext: {
+            constraints: personalization?.injuryPainState?.notes ? [personalization.injuryPainState.notes] : [],
+            injuryText: personalization?.injuryPainState?.notes || "",
+          },
+          equipmentAccessContext: {
+            equipment: personalization?.environmentConfig?.presets?.Home?.equipment || [],
+            trainingLocation: env,
+          },
+          startingFresh: Boolean(personalization?.planResetUndo?.startedAt),
+        },
+        now: Date.now(),
+      })
+    : null;
   const programContext = {
     environmentMode: env,
     hasGym,
@@ -1340,6 +1628,7 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     inconsistencyRisk,
     drivers: [primary?.name, ...secondary.map(g => g.name)].filter(Boolean),
     unlockMessage: !hasGym && strengthGoal ? "When gym access returns, bench-specific progression can move from foundation mode to direct loading." : "",
+    goalFeasibility,
   };
   const programBlock = buildProgramBlock({
     weekNumber: currentWeek,
