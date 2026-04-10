@@ -115,6 +115,28 @@ test("appearance goals stay proxy-measurable and use a time horizon when timing 
   assert.ok(result.unresolvedGaps.some((gap) => /approximate/i.test(gap)));
 });
 
+test("lean-for-summer goals preserve raw intent and resolve into proxy-tracked body-comp planning input", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "get lean for summer",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "get lean for summer",
+      timingConstraints: ["summer"],
+      appearanceConstraints: ["leaner"],
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-10",
+  });
+
+  assert.equal(result.rawIntent, "get lean for summer");
+  assert.equal(result.resolvedGoals[0].rawIntent.text, "get lean for summer");
+  assert.equal(result.resolvedGoals[0].planningCategory, "body_comp");
+  assert.equal(result.resolvedGoals[0].measurabilityTier, GOAL_MEASURABILITY_TIERS.proxyMeasurable);
+  assert.equal(result.resolvedGoals[0].summary, "Get leaner within the current time window");
+  assert.equal(result.resolvedGoals[0].targetDate, "");
+  assert.ok(Number.isFinite(result.resolvedGoals[0].targetHorizonWeeks));
+  assert.ok(result.resolvedGoals[0].proxyMetrics.some((metric) => metric.key === "waist_circumference"));
+});
+
 test("hybrid athlete goals become two exploratory planning goals with a first 30-day success definition", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "be a hybrid athlete",
@@ -137,6 +159,24 @@ test("hybrid athlete goals become two exploratory planning goals with a first 30
   assert.ok(result.resolvedGoals.every((goal) => goal.measurabilityTier === GOAL_MEASURABILITY_TIERS.exploratoryFuzzy));
   assert.match(result.resolvedGoals[0].first30DaySuccessDefinition, /8 aerobic sessions/i);
   assert.ok(result.unresolvedGaps.some((gap) => /balance between endurance and strength/i.test(gap)));
+});
+
+test("re-entry goals stay exploratory and become 30-day success definitions instead of fake precise targets", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "get back in shape",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "get back in shape" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-10",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "re_entry");
+  assert.equal(result.resolvedGoals[0].measurabilityTier, GOAL_MEASURABILITY_TIERS.exploratoryFuzzy);
+  assert.equal(result.resolvedGoals[0].primaryMetric, null);
+  assert.equal(result.resolvedGoals[0].confidence, "low");
+  assert.match(result.resolvedGoals[0].first30DaySuccessDefinition, /30 days/i);
+  assert.equal(result.planningGoals[0].measurableTarget, result.resolvedGoals[0].first30DaySuccessDefinition);
+  assert.ok(result.unresolvedGaps.some((gap) => /stronger metrics/i.test(gap)));
 });
 
 test("mixed lose-fat-but-keep-strength intent resolves into body-comp plus strength-maintenance goals with tradeoffs", () => {

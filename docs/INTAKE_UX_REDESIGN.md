@@ -62,6 +62,66 @@ The summary rail should always show:
 
 That gives the user a stable sense of progress without turning intake into a wizard with many screens.
 
+## Current Flow Vs Target Flow
+
+Current flow shape in the app:
+
+- fixed scripted prompts
+- schedule and logistics are asked before the product has shown real understanding
+- interpretation shows up mostly as generated assessment copy
+- confirmation is soft rather than a clear proposal-to-canonical boundary
+
+Target flow shape:
+
+- lead with the goal in the user's own words
+- show the interpretation before asking for more effort
+- ask only the missing questions needed to make planning viable
+- render a reviewable resolved-goal object before plan generation
+- make confirmation the explicit canonical handoff
+
+This keeps the experience focused without making it feel like either a survey or a freeform AI conversation.
+
+## Screen Contract
+
+The redesigned intake should use one main stage container with three stable regions:
+
+- `Main action panel`
+- `Goal summary rail`
+- `Footer action bar`
+
+The `Main action panel` changes per step.
+
+The `Goal summary rail` persists across the whole flow and updates in place.
+
+The `Footer action bar` should keep actions stable and predictable:
+
+- back
+- continue
+- confirm
+- edit
+
+Avoid hiding core state in message bubbles. The user should always be able to see what the app currently believes without scrolling through a transcript.
+
+## Summary Rail Contract
+
+The summary rail is the trust anchor of the flow.
+
+It should always show the latest version of:
+
+- `Your words`
+- `Interpreted goal`
+- `Track at start`
+- `Still fuzzy`
+- `Tradeoffs`
+
+If a section is still empty, show an explicit placeholder:
+
+- `Not set yet`
+- `No major tradeoff detected yet`
+- `Needs confirmation`
+
+This prevents the experience from feeling vague while also avoiding fake certainty.
+
 ## Step 1: Say It
 
 The first screen should ask one direct question:
@@ -118,6 +178,11 @@ Important rule:
 - this is clearly labeled as a proposal
 - nothing in this state is canonical yet
 
+Recommended label treatment:
+
+- eyebrow: `AI interpretation`
+- supporting note: `Proposal only until you confirm`
+
 Primary actions:
 
 - `Looks right`
@@ -164,6 +229,12 @@ Examples of questions to avoid:
 - questions asked only because they exist in a template
 - broad motivational prompts
 - free-text autobiography
+
+Clarification engine rule:
+
+- once the app has enough information to produce a resolved goal object with trackable metrics or proxies, stop asking questions
+
+This is the main defense against giant-form creep.
 
 ## Clarification Logic By Goal Type
 
@@ -215,6 +286,20 @@ Example:
 - `Preserve:` barbell strength
 - `Track:` bodyweight trend, waist, top set strength stability
 
+## Clarification Question Types
+
+To keep friction low, the clarifying layer should prefer a small set of input patterns:
+
+- priority toggle
+- date or season picker
+- frequency chips
+- session-length chips
+- location and equipment selector
+- injury constraint text field
+- one "what would feel like progress?" choice set for fuzzy goals
+
+The product should avoid large multiline text areas unless the user explicitly chooses to correct the interpretation in their own words.
+
 ## Step 4: Confirm
 
 Before plan generation, the app should show a `Resolved goal` card.
@@ -253,6 +338,10 @@ Rule:
 - `Confirm goal` is the moment the app may create canonical resolved goal objects
 - before this click, all AI output remains proposal-only
 
+Recommended secondary line:
+
+- `You can still edit this after confirmation, but this is the version the first plan will use.`
+
 ## Step 5: Build
 
 Only after confirmation should plan generation proceed.
@@ -283,6 +372,34 @@ Each intake should make four things explicit before confirmation:
 - what tradeoffs the plan will respect
 
 These should not be hidden in long paragraphs. They should be displayed as compact labeled rows or pills.
+
+## Fast Paths
+
+The flow should support two clear fast paths.
+
+### Fast path for exact-goal users
+
+If the user provides a clear metric and date early, the flow should behave like:
+
+1. enter goal
+2. show interpretation
+3. ask only schedule and constraint gaps
+4. confirm
+5. build
+
+This path should feel like 2 to 4 interactions, not a long intake.
+
+### Fast path for vague-goal users
+
+If the user starts with a fuzzy appearance or lifestyle goal, the flow should behave like:
+
+1. enter goal
+2. show interpretation with proxies
+3. ask one success-signal question and one timing or priority question
+4. confirm the first 30-day version
+5. build
+
+This path should still end in a usable planning object, but without pretending the user gave exact metrics.
 
 ## Handling Fuzzy Goals Without Fake Precision
 
@@ -325,6 +442,23 @@ Bad microcopy:
 - fake human-like small talk
 - vague reassurance without concrete meaning
 
+## Confirmation Boundary
+
+The redesign should preserve one explicit technical and UX rule:
+
+- AI may propose the interpretation
+- the UI may render the interpretation
+- only user confirmation may create canonical resolved goals
+
+That means the UI should never auto-advance from `Interpret` to `Build`.
+
+It should always pass through a visible review step where the user sees:
+
+- what the app concluded
+- what will be tracked
+- what remains fuzzy
+- what plan tradeoffs are implied
+
 ## Why This Is Better Than The Current Flow
 
 The redesigned flow improves usability because it lets people begin naturally, then narrows only where necessary.
@@ -354,6 +488,20 @@ This UX should map directly to the current architecture:
 - Step 5 hands resolved goals to the planner
 
 This keeps the final system deterministic while still making the intake feel adaptive and human-readable.
+
+## Implementation Notes
+
+The redesign can be delivered without introducing a new planning subsystem.
+
+Recommended implementation direction:
+
+- keep `buildTypedIntakeAssessment(...)` as the proposal-generation seam
+- replace the current scripted chat shell in `OnboardingCoach` with a staged card flow
+- keep the typed intake packet as the intake AI input boundary
+- keep `resolveGoalTranslation(...)` as the deterministic confirmation boundary
+- keep planner inputs sourced from resolved goals rather than raw intake text
+
+This keeps scope narrow while improving the visible UX substantially.
 
 ## New Intake UX Structure
 
