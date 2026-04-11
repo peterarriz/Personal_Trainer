@@ -3864,37 +3864,60 @@ const buildPlanDaySummary = (drivers = [], modifiedFromBase = false) => {
 
 const clampNumber = (value, min, max) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : min));
 const sanitizeText = (value = "", maxLength = 220) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+const isRunSessionType = (value = "") => ["run+strength", "easy-run", "hard-run", "long-run"].includes(String(value || "").toLowerCase());
+const resolvePlannedSessionKind = (plannedSession = null) => {
+  const type = String(_optionalChain([plannedSession, 'optionalAccess', _14 => _14.type]) || "").toLowerCase();
+  if (!type) return "";
+  if (type === "rest" || type === "recovery") return "recovery";
+  if (type === "run+strength") return "cardio";
+  if (/strength/.test(type)) return "strength";
+  if (/run|conditioning|otf/.test(type)) return "cardio";
+  return "";
+};
+const buildConditioningSession = ({
+  label = "Conditioning",
+  detail = "20-30 min zone-2 bike, rower, incline walk, or circuit",
+  nutri = "easyRun",
+  lowImpact = false,
+} = {}) => ({
+  type: "conditioning",
+  label,
+  nutri,
+  fallback: detail,
+  intensityGuidance: lowImpact ? "easy aerobic only" : "controlled aerobic conditioning",
+  environmentNote: lowImpact ? "Use any low-impact aerobic setup available." : "",
+});
 
 const buildSessionsByDayFromTemplate = (template = {}) => {
   const restDay = { type: "rest", label: "Active Recovery", nutri: "rest", isRecoverySlot: true };
   return {
-    1: _optionalChain([template, 'optionalAccess', _14 => _14.mon]) ? { type: "easy-run", label: `${template.mon.t || "Easy"} Run`, run: clonePlainValue(template.mon), nutri: _optionalChain([template, 'optionalAccess', _15 => _15.nutri]) || "easyRun" } : null,
+    1: _optionalChain([template, 'optionalAccess', _15 => _15.mon]) ? { type: "easy-run", label: `${template.mon.t || "Easy"} Run`, run: clonePlainValue(template.mon), nutri: _optionalChain([template, 'optionalAccess', _16 => _16.nutri]) || "easyRun" } : null,
     2: null,
-    3: _optionalChain([template, 'optionalAccess', _16 => _16.str]) ? { type: "strength+prehab", label: `Strength ${template.str}`, strSess: template.str, nutri: "strength" } : null,
-    4: _optionalChain([template, 'optionalAccess', _17 => _17.thu]) ? { type: "hard-run", label: `${template.thu.t || "Quality"} Run`, run: clonePlainValue(template.thu), nutri: _optionalChain([template, 'optionalAccess', _18 => _18.nutri]) || "hardRun" } : null,
-    5: _optionalChain([template, 'optionalAccess', _19 => _19.fri]) ? { type: "easy-run", label: `${template.fri.t || "Easy"} Run`, run: clonePlainValue(template.fri), nutri: "easyRun" } : null,
-    6: _optionalChain([template, 'optionalAccess', _20 => _20.sat]) ? { type: "long-run", label: `${template.sat.t || "Long"} Run`, run: clonePlainValue(template.sat), nutri: "longRun" } : null,
+    3: _optionalChain([template, 'optionalAccess', _17 => _17.str]) ? { type: "strength+prehab", label: `Strength ${template.str}`, strSess: template.str, nutri: "strength" } : null,
+    4: _optionalChain([template, 'optionalAccess', _18 => _18.thu]) ? { type: "hard-run", label: `${template.thu.t || "Quality"} Run`, run: clonePlainValue(template.thu), nutri: _optionalChain([template, 'optionalAccess', _19 => _19.nutri]) || "hardRun" } : null,
+    5: _optionalChain([template, 'optionalAccess', _20 => _20.fri]) ? { type: "easy-run", label: `${template.fri.t || "Easy"} Run`, run: clonePlainValue(template.fri), nutri: "easyRun" } : null,
+    6: _optionalChain([template, 'optionalAccess', _21 => _21.sat]) ? { type: "long-run", label: `${template.sat.t || "Long"} Run`, run: clonePlainValue(template.sat), nutri: "longRun" } : null,
     0: restDay,
   };
 };
 
 const normalizeRunSignature = (run = null) => JSON.stringify({
-  t: _optionalChain([run, 'optionalAccess', _21 => _21.t]) || "",
-  d: _optionalChain([run, 'optionalAccess', _22 => _22.d]) || "",
+  t: _optionalChain([run, 'optionalAccess', _22 => _22.t]) || "",
+  d: _optionalChain([run, 'optionalAccess', _23 => _23.d]) || "",
 });
 
 const invertStrengthSession = (value = "") => value === "A" ? "B" : value === "B" ? "A" : value;
 
 const resolveProjectedRunTemplateSlot = ({ dayKey = null, session = null, referenceTemplate = {} } = {}) => {
-  const sessionSignature = normalizeRunSignature(_optionalChain([session, 'optionalAccess', _23 => _23.run]) || null);
+  const sessionSignature = normalizeRunSignature(_optionalChain([session, 'optionalAccess', _24 => _24.run]) || null);
   const templateSlots = [
-    ["mon", _optionalChain([referenceTemplate, 'optionalAccess', _24 => _24.mon]) || null],
-    ["thu", _optionalChain([referenceTemplate, 'optionalAccess', _25 => _25.thu]) || null],
-    ["fri", _optionalChain([referenceTemplate, 'optionalAccess', _26 => _26.fri]) || null],
-    ["sat", _optionalChain([referenceTemplate, 'optionalAccess', _27 => _27.sat]) || null],
+    ["mon", _optionalChain([referenceTemplate, 'optionalAccess', _25 => _25.mon]) || null],
+    ["thu", _optionalChain([referenceTemplate, 'optionalAccess', _26 => _26.thu]) || null],
+    ["fri", _optionalChain([referenceTemplate, 'optionalAccess', _27 => _27.fri]) || null],
+    ["sat", _optionalChain([referenceTemplate, 'optionalAccess', _28 => _28.sat]) || null],
   ];
   const matchedSlot = templateSlots.find(([, templateRun]) => normalizeRunSignature(templateRun || null) === sessionSignature);
-  if (_optionalChain([matchedSlot, 'optionalAccess', _28 => _28[0]])) return matchedSlot[0];
+  if (_optionalChain([matchedSlot, 'optionalAccess', _29 => _29[0]])) return matchedSlot[0];
   return null;
 };
 
@@ -3912,24 +3935,24 @@ const projectSessionsByDayFromCanonicalPattern = ({
       if (!session) return [dayKeyRaw, null];
       const dayKey = Number(dayKeyRaw);
       const nextSession = clonePlainValue(session);
-      const runSlot = _optionalChain([nextSession, 'optionalAccess', _29 => _29.run])
+      const runSlot = _optionalChain([nextSession, 'optionalAccess', _30 => _30.run])
         ? resolveProjectedRunTemplateSlot({ dayKey, session: nextSession, referenceTemplate })
         : null;
-      const projectedRun = runSlot ? clonePlainValue(_optionalChain([template, 'optionalAccess', _30 => _30[runSlot]]) || null) : null;
+      const projectedRun = runSlot ? clonePlainValue(_optionalChain([template, 'optionalAccess', _31 => _31[runSlot]]) || null) : null;
 
       if (projectedRun) {
         nextSession.run = projectedRun;
-        const currentLabel = String(_optionalChain([nextSession, 'optionalAccess', _31 => _31.label]) || "");
-        const shouldRewriteRunLabel = ["hard-run", "easy-run", "long-run"].includes(String(_optionalChain([nextSession, 'optionalAccess', _32 => _32.type]) || ""))
+        const currentLabel = String(_optionalChain([nextSession, 'optionalAccess', _32 => _32.label]) || "");
+        const shouldRewriteRunLabel = ["hard-run", "easy-run", "long-run"].includes(String(_optionalChain([nextSession, 'optionalAccess', _33 => _33.type]) || ""))
           && /run$/i.test(currentLabel);
         if (shouldRewriteRunLabel) {
           nextSession.label = `${projectedRun.t || (nextSession.type === "long-run" ? "Long" : nextSession.type === "hard-run" ? "Quality" : "Easy")} Run`;
         }
       }
 
-      const referenceStrength = String(_optionalChain([referenceTemplate, 'optionalAccess', _33 => _33.str]) || "");
-      const templateStrength = String(_optionalChain([template, 'optionalAccess', _34 => _34.str]) || "");
-      if (_optionalChain([nextSession, 'optionalAccess', _35 => _35.strSess]) && referenceStrength && templateStrength) {
+      const referenceStrength = String(_optionalChain([referenceTemplate, 'optionalAccess', _34 => _34.str]) || "");
+      const templateStrength = String(_optionalChain([template, 'optionalAccess', _35 => _35.str]) || "");
+      if (_optionalChain([nextSession, 'optionalAccess', _36 => _36.strSess]) && referenceStrength && templateStrength) {
         const alternateReference = invertStrengthSession(referenceStrength);
         if (String(nextSession.strSess) === referenceStrength) nextSession.strSess = templateStrength;
         else if (alternateReference && String(nextSession.strSess) === alternateReference) nextSession.strSess = invertStrengthSession(templateStrength) || nextSession.strSess;
@@ -3947,7 +3970,7 @@ const resolveProgramBlockWindow = ({
   weekTemplate = {},
   weekTemplates = [],
 } = {}) => {
-  const phase = _optionalChain([weekTemplate, 'optionalAccess', _36 => _36.phase]) || _optionalChain([weekTemplates, 'optionalAccess', _37 => _37[Math.max(0, currentWeek - 1)], 'optionalAccess', _38 => _38.phase]) || "";
+  const phase = _optionalChain([weekTemplate, 'optionalAccess', _37 => _37.phase]) || _optionalChain([weekTemplates, 'optionalAccess', _38 => _38[Math.max(0, currentWeek - 1)], 'optionalAccess', _39 => _39.phase]) || "";
   if (!phase || !Array.isArray(weekTemplates) || !weekTemplates.length) {
     return {
       phase,
@@ -3963,8 +3986,8 @@ const resolveProgramBlockWindow = ({
   let startIndex = safeIndex;
   let endIndex = safeIndex;
 
-  while (startIndex > 0 && _optionalChain([weekTemplates, 'access', _39 => _39[startIndex - 1], 'optionalAccess', _40 => _40.phase]) === phase) startIndex -= 1;
-  while (endIndex < weekTemplates.length - 1 && _optionalChain([weekTemplates, 'access', _41 => _41[endIndex + 1], 'optionalAccess', _42 => _42.phase]) === phase) endIndex += 1;
+  while (startIndex > 0 && _optionalChain([weekTemplates, 'access', _40 => _40[startIndex - 1], 'optionalAccess', _41 => _41.phase]) === phase) startIndex -= 1;
+  while (endIndex < weekTemplates.length - 1 && _optionalChain([weekTemplates, 'access', _42 => _42[endIndex + 1], 'optionalAccess', _43 => _43.phase]) === phase) endIndex += 1;
 
   return {
     phase,
@@ -3978,10 +4001,10 @@ const resolveProgramBlockWindow = ({
 
 const buildProgramBlockCompatibilityIntent = (programBlock = null) => (
   !programBlock ? null : {
-    prioritized: _optionalChain([programBlock, 'optionalAccess', _43 => _43.goalAllocation, 'optionalAccess', _44 => _44.prioritized]) || _optionalChain([programBlock, 'optionalAccess', _45 => _45.dominantEmphasis, 'optionalAccess', _46 => _46.label]) || "Consistency and execution",
-    maintained: clonePlainValue(_optionalChain([programBlock, 'optionalAccess', _47 => _47.goalAllocation, 'optionalAccess', _48 => _48.maintained]) || [_optionalChain([programBlock, 'optionalAccess', _49 => _49.secondaryEmphasis, 'optionalAccess', _50 => _50.label]) || "general fitness"].filter(Boolean)),
-    minimized: _optionalChain([programBlock, 'optionalAccess', _51 => _51.goalAllocation, 'optionalAccess', _52 => _52.minimized]) || "non-primary volume",
-    narrative: _optionalChain([programBlock, 'optionalAccess', _53 => _53.summary]) || "",
+    prioritized: _optionalChain([programBlock, 'optionalAccess', _44 => _44.goalAllocation, 'optionalAccess', _45 => _45.prioritized]) || _optionalChain([programBlock, 'optionalAccess', _46 => _46.dominantEmphasis, 'optionalAccess', _47 => _47.label]) || "Consistency and execution",
+    maintained: clonePlainValue(_optionalChain([programBlock, 'optionalAccess', _48 => _48.goalAllocation, 'optionalAccess', _49 => _49.maintained]) || [_optionalChain([programBlock, 'optionalAccess', _50 => _50.secondaryEmphasis, 'optionalAccess', _51 => _51.label]) || "general fitness"].filter(Boolean)),
+    minimized: _optionalChain([programBlock, 'optionalAccess', _52 => _52.goalAllocation, 'optionalAccess', _53 => _53.minimized]) || "non-primary volume",
+    narrative: _optionalChain([programBlock, 'optionalAccess', _54 => _54.summary]) || "",
   }
 );
 
@@ -3996,8 +4019,8 @@ const buildFallbackProgramBlockFromCompatibilityIntent = ({
 } = {}) => {
   if (!blockIntent) return null;
   const window = resolveProgramBlockWindow({ currentWeek: weekNumber, weekTemplate, weekTemplates });
-  const prioritized = _optionalChain([blockIntent, 'optionalAccess', _54 => _54.prioritized]) || "Consistency and execution";
-  const maintained = Array.isArray(_optionalChain([blockIntent, 'optionalAccess', _55 => _55.maintained])) && blockIntent.maintained.length
+  const prioritized = _optionalChain([blockIntent, 'optionalAccess', _55 => _55.prioritized]) || "Consistency and execution";
+  const maintained = Array.isArray(_optionalChain([blockIntent, 'optionalAccess', _56 => _56.maintained])) && blockIntent.maintained.length
     ? blockIntent.maintained
     : ["general fitness"];
   return {
@@ -4008,9 +4031,9 @@ const buildFallbackProgramBlockFromCompatibilityIntent = ({
     phase: window.phase || "",
     window,
     dominantEmphasis: {
-      category: _optionalChain([goals, 'optionalAccess', _56 => _56[0], 'optionalAccess', _57 => _57.category]) || "hybrid",
+      category: _optionalChain([goals, 'optionalAccess', _57 => _57[0], 'optionalAccess', _58 => _58.category]) || "hybrid",
       label: prioritized,
-      objective: _optionalChain([blockIntent, 'optionalAccess', _58 => _58.narrative]) || `${prioritized} is the top block priority.`,
+      objective: _optionalChain([blockIntent, 'optionalAccess', _59 => _59.narrative]) || `${prioritized} is the top block priority.`,
       role: "dominant",
     },
     secondaryEmphasis: {
@@ -4032,44 +4055,44 @@ const buildFallbackProgramBlockFromCompatibilityIntent = ({
     ],
     constraints: clonePlainValue(constraints || []),
     tradeoffs: [
-      _optionalChain([blockIntent, 'optionalAccess', _59 => _59.minimized]) ? `${blockIntent.minimized} is intentionally limited this block.` : "",
+      _optionalChain([blockIntent, 'optionalAccess', _60 => _60.minimized]) ? `${blockIntent.minimized} is intentionally limited this block.` : "",
     ].filter(Boolean),
     goalAllocation: {
       prioritized,
       maintained,
-      minimized: _optionalChain([blockIntent, 'optionalAccess', _60 => _60.minimized]) || "non-primary volume",
+      minimized: _optionalChain([blockIntent, 'optionalAccess', _61 => _61.minimized]) || "non-primary volume",
     },
     drivers: _collectionutilsjs.dedupeStrings.call(void 0, [prioritized, ...(maintained || [])]),
-    summary: _optionalChain([blockIntent, 'optionalAccess', _61 => _61.narrative]) || `${prioritized} is prioritized while secondary work stays supportive.`,
+    summary: _optionalChain([blockIntent, 'optionalAccess', _62 => _62.narrative]) || `${prioritized} is prioritized while secondary work stays supportive.`,
   };
 };
 
-const getResolvedGoalPayload = (goal = {}) => _optionalChain([goal, 'optionalAccess', _62 => _62.resolvedGoal]) || null;
+const getResolvedGoalPayload = (goal = {}) => _optionalChain([goal, 'optionalAccess', _63 => _63.resolvedGoal]) || null;
 
 const buildResolvedGoalBlockContext = ({
   goals = [],
   programContext = {},
 } = {}) => {
-  const activeGoals = Array.isArray(goals) ? goals.filter((goal) => _optionalChain([goal, 'optionalAccess', _63 => _63.active]) !== false) : [];
+  const activeGoals = Array.isArray(goals) ? goals.filter((goal) => _optionalChain([goal, 'optionalAccess', _64 => _64.active]) !== false) : [];
   const primaryGoal = activeGoals[0] || null;
   const secondaryGoals = activeGoals.slice(1, 3);
   const resolvedPrimaryGoal = getResolvedGoalPayload(primaryGoal);
   const resolvedSecondaryGoals = secondaryGoals.map((goal) => getResolvedGoalPayload(goal)).filter(Boolean);
   const resolvedGoals = activeGoals.map((goal) => getResolvedGoalPayload(goal)).filter(Boolean);
-  const proxyMetricLabels = _collectionutilsjs.dedupeStrings.call(void 0, resolvedGoals.flatMap((goal) => (_optionalChain([goal, 'optionalAccess', _64 => _64.proxyMetrics]) || []).map((metric) => sanitizeText(_optionalChain([metric, 'optionalAccess', _65 => _65.label]) || "", 80)))).slice(0, 4);
-  const primaryMetricLabel = sanitizeText(_optionalChain([resolvedPrimaryGoal, 'optionalAccess', _66 => _66.primaryMetric, 'optionalAccess', _67 => _67.label]) || "", 80);
+  const proxyMetricLabels = _collectionutilsjs.dedupeStrings.call(void 0, resolvedGoals.flatMap((goal) => (_optionalChain([goal, 'optionalAccess', _65 => _65.proxyMetrics]) || []).map((metric) => sanitizeText(_optionalChain([metric, 'optionalAccess', _66 => _66.label]) || "", 80)))).slice(0, 4);
+  const primaryMetricLabel = sanitizeText(_optionalChain([resolvedPrimaryGoal, 'optionalAccess', _67 => _67.primaryMetric, 'optionalAccess', _68 => _68.label]) || "", 80);
   const tradeoffs = _collectionutilsjs.dedupeStrings.call(void 0, [
-    ...activeGoals.flatMap((goal) => _optionalChain([goal, 'optionalAccess', _68 => _68.tradeoffs]) || []),
-    ...resolvedGoals.flatMap((goal) => _optionalChain([goal, 'optionalAccess', _69 => _69.tradeoffs]) || []),
-    ...(_optionalChain([programContext, 'optionalAccess', _70 => _70.goalFeasibility, 'optionalAccess', _71 => _71.conflictFlags]) || []).map((flag) => sanitizeText(_optionalChain([flag, 'optionalAccess', _72 => _72.summary]) || "", 180)),
+    ...activeGoals.flatMap((goal) => _optionalChain([goal, 'optionalAccess', _69 => _69.tradeoffs]) || []),
+    ...resolvedGoals.flatMap((goal) => _optionalChain([goal, 'optionalAccess', _70 => _70.tradeoffs]) || []),
+    ...(_optionalChain([programContext, 'optionalAccess', _71 => _71.goalFeasibility, 'optionalAccess', _72 => _72.conflictFlags]) || []).map((flag) => sanitizeText(_optionalChain([flag, 'optionalAccess', _73 => _73.summary]) || "", 180)),
   ]).slice(0, 5);
-  const feasibilityByGoalId = new Map((_optionalChain([programContext, 'optionalAccess', _73 => _73.goalFeasibility, 'optionalAccess', _74 => _74.goalAssessments]) || []).map((item) => [item.goalId, item]));
+  const feasibilityByGoalId = new Map((_optionalChain([programContext, 'optionalAccess', _74 => _74.goalFeasibility, 'optionalAccess', _75 => _75.goalAssessments]) || []).map((item) => [item.goalId, item]));
   const primaryAssessment = resolvedPrimaryGoal ? feasibilityByGoalId.get(resolvedPrimaryGoal.id) || null : null;
-  const sequencingSummary = sanitizeText(_optionalChain([programContext, 'optionalAccess', _75 => _75.goalFeasibility, 'optionalAccess', _76 => _76.suggestedSequencing, 'optionalAccess', _77 => _77[0], 'optionalAccess', _78 => _78.summary]) || "", 220);
-  const realisticByDateSummary = sanitizeText(_optionalChain([programContext, 'optionalAccess', _79 => _79.goalFeasibility, 'optionalAccess', _80 => _80.realisticByTargetDate, 'optionalAccess', _81 => _81[0], 'optionalAccess', _82 => _82.summary]) || "", 220);
-  const longerHorizonSummary = sanitizeText(_optionalChain([programContext, 'optionalAccess', _83 => _83.goalFeasibility, 'optionalAccess', _84 => _84.longerHorizonNeeds, 'optionalAccess', _85 => _85[0], 'optionalAccess', _86 => _86.summary]) || "", 220);
-  const maintainedLabels = secondaryGoals.map((goal) => _optionalChain([goal, 'optionalAccess', _87 => _87.name])).filter(Boolean);
-  const minimizedLabel = _optionalChain([activeGoals, 'access', _88 => _88.find, 'call', _89 => _89((goal) => _optionalChain([goal, 'optionalAccess', _90 => _90.category]) === "injury_prevention"), 'optionalAccess', _91 => _91.name]) || "non-primary volume";
+  const sequencingSummary = sanitizeText(_optionalChain([programContext, 'optionalAccess', _76 => _76.goalFeasibility, 'optionalAccess', _77 => _77.suggestedSequencing, 'optionalAccess', _78 => _78[0], 'optionalAccess', _79 => _79.summary]) || "", 220);
+  const realisticByDateSummary = sanitizeText(_optionalChain([programContext, 'optionalAccess', _80 => _80.goalFeasibility, 'optionalAccess', _81 => _81.realisticByTargetDate, 'optionalAccess', _82 => _82[0], 'optionalAccess', _83 => _83.summary]) || "", 220);
+  const longerHorizonSummary = sanitizeText(_optionalChain([programContext, 'optionalAccess', _84 => _84.goalFeasibility, 'optionalAccess', _85 => _85.longerHorizonNeeds, 'optionalAccess', _86 => _86[0], 'optionalAccess', _87 => _87.summary]) || "", 220);
+  const maintainedLabels = secondaryGoals.map((goal) => _optionalChain([goal, 'optionalAccess', _88 => _88.name])).filter(Boolean);
+  const minimizedLabel = _optionalChain([activeGoals, 'access', _89 => _89.find, 'call', _90 => _90((goal) => _optionalChain([goal, 'optionalAccess', _91 => _91.category]) === "injury_prevention"), 'optionalAccess', _92 => _92.name]) || "non-primary volume";
 
   return {
     primaryGoal,
@@ -4091,10 +4114,10 @@ const buildResolvedGoalBlockContext = ({
 
 const goalLooksUpperBodyFocused = (goal = {}) => {
   const text = sanitizeText([
-    _optionalChain([goal, 'optionalAccess', _92 => _92.name]),
-    _optionalChain([goal, 'optionalAccess', _93 => _93.resolvedGoal, 'optionalAccess', _94 => _94.summary]),
-    _optionalChain([goal, 'optionalAccess', _95 => _95.resolvedGoal, 'optionalAccess', _96 => _96.primaryMetric, 'optionalAccess', _97 => _97.label]),
-    _optionalChain([goal, 'optionalAccess', _98 => _98.resolvedGoal, 'optionalAccess', _99 => _99.primaryMetric, 'optionalAccess', _100 => _100.key]),
+    _optionalChain([goal, 'optionalAccess', _93 => _93.name]),
+    _optionalChain([goal, 'optionalAccess', _94 => _94.resolvedGoal, 'optionalAccess', _95 => _95.summary]),
+    _optionalChain([goal, 'optionalAccess', _96 => _96.resolvedGoal, 'optionalAccess', _97 => _97.primaryMetric, 'optionalAccess', _98 => _98.label]),
+    _optionalChain([goal, 'optionalAccess', _99 => _99.resolvedGoal, 'optionalAccess', _100 => _100.primaryMetric, 'optionalAccess', _101 => _101.key]),
   ].filter(Boolean).join(" "), 240).toLowerCase();
   return /(bench|upper body|push|pull|press|chin|pull-up|pull up|row)/i.test(text);
 };
@@ -4112,14 +4135,14 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
 } = {}) => {
   const { active } = _canonicalathleteservicejs.getGoalBuckets.call(void 0, goals);
   const primary = active[0] || null;
-  const secondaryGoals = active.filter((goal) => _optionalChain([goal, 'optionalAccess', _101 => _101.id]) !== _optionalChain([primary, 'optionalAccess', _102 => _102.id])).slice(0, 2);
-  const runningGoal = active.find((goal) => _optionalChain([goal, 'optionalAccess', _103 => _103.category]) === "running") || null;
-  const strengthGoal = active.find((goal) => _optionalChain([goal, 'optionalAccess', _104 => _104.category]) === "strength") || null;
-  const bodyCompGoal = active.find((goal) => _optionalChain([goal, 'optionalAccess', _105 => _105.category]) === "body_comp") || null;
+  const secondaryGoals = active.filter((goal) => _optionalChain([goal, 'optionalAccess', _102 => _102.id]) !== _optionalChain([primary, 'optionalAccess', _103 => _103.id])).slice(0, 2);
+  const runningGoal = active.find((goal) => _optionalChain([goal, 'optionalAccess', _104 => _104.category]) === "running") || null;
+  const strengthGoal = active.find((goal) => _optionalChain([goal, 'optionalAccess', _105 => _105.category]) === "strength") || null;
+  const bodyCompGoal = active.find((goal) => _optionalChain([goal, 'optionalAccess', _106 => _106.category]) === "body_comp") || null;
   const window = resolveProgramBlockWindow({ currentWeek: weekNumber, weekTemplate, weekTemplates });
-  const phase = window.phase || _optionalChain([weekTemplate, 'optionalAccess', _106 => _106.phase]) || "";
-  const lowBandwidth = Boolean(_optionalChain([programContext, 'optionalAccess', _107 => _107.lowBandwidth]));
-  const bodyCompActive = Boolean(_optionalChain([programContext, 'optionalAccess', _108 => _108.bodyCompActive]) || bodyCompGoal);
+  const phase = window.phase || _optionalChain([weekTemplate, 'optionalAccess', _107 => _107.phase]) || "";
+  const lowBandwidth = Boolean(_optionalChain([programContext, 'optionalAccess', _108 => _108.lowBandwidth]));
+  const bodyCompActive = Boolean(_optionalChain([programContext, 'optionalAccess', _109 => _109.bodyCompActive]) || bodyCompGoal);
   const resolvedContext = buildResolvedGoalBlockContext({
     goals: active,
     programContext,
@@ -4128,16 +4151,16 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
   const primaryFeasibility = resolvedContext.primaryAssessment;
   const primaryMetricLabel = resolvedContext.primaryMetricLabel;
   const proxyMetricLabels = resolvedContext.proxyMetricLabels;
-  const feasibilityStatus = sanitizeText(_optionalChain([programContext, 'optionalAccess', _109 => _109.goalFeasibility, 'optionalAccess', _110 => _110.realismStatus]) || "", 40).toLowerCase();
+  const feasibilityStatus = sanitizeText(_optionalChain([programContext, 'optionalAccess', _110 => _110.goalFeasibility, 'optionalAccess', _111 => _111.realismStatus]) || "", 40).toLowerCase();
 
   const maintainedGoals = active
-    .filter((goal) => _optionalChain([goal, 'optionalAccess', _111 => _111.id]) !== _optionalChain([primary, 'optionalAccess', _112 => _112.id]) && _optionalChain([goal, 'optionalAccess', _113 => _113.category]) !== "injury_prevention")
+    .filter((goal) => _optionalChain([goal, 'optionalAccess', _112 => _112.id]) !== _optionalChain([primary, 'optionalAccess', _113 => _113.id]) && _optionalChain([goal, 'optionalAccess', _114 => _114.category]) !== "injury_prevention")
     .slice(0, 2)
-    .map((goal) => _optionalChain([goal, 'optionalAccess', _114 => _114.name]))
+    .map((goal) => _optionalChain([goal, 'optionalAccess', _115 => _115.name]))
     .filter(Boolean);
-  const minimizedGoal = _optionalChain([active, 'access', _115 => _115.find, 'call', _116 => _116((goal) => _optionalChain([goal, 'optionalAccess', _117 => _117.category]) === "injury_prevention"), 'optionalAccess', _118 => _118.name]) || "non-primary volume";
-  const primaryMeasurabilityTier = _optionalChain([primaryResolvedGoal, 'optionalAccess', _119 => _119.measurabilityTier]) || _optionalChain([primary, 'optionalAccess', _120 => _120.measurabilityTier]) || "";
-  const primaryTargetHorizonWeeks = _optionalChain([primaryResolvedGoal, 'optionalAccess', _121 => _121.targetHorizonWeeks]) || _optionalChain([primary, 'optionalAccess', _122 => _122.targetHorizonWeeks]) || null;
+  const minimizedGoal = _optionalChain([active, 'access', _116 => _116.find, 'call', _117 => _117((goal) => _optionalChain([goal, 'optionalAccess', _118 => _118.category]) === "injury_prevention"), 'optionalAccess', _119 => _119.name]) || "non-primary volume";
+  const primaryMeasurabilityTier = _optionalChain([primaryResolvedGoal, 'optionalAccess', _120 => _120.measurabilityTier]) || _optionalChain([primary, 'optionalAccess', _121 => _121.measurabilityTier]) || "";
+  const primaryTargetHorizonWeeks = _optionalChain([primaryResolvedGoal, 'optionalAccess', _122 => _122.targetHorizonWeeks]) || _optionalChain([primary, 'optionalAccess', _123 => _123.targetHorizonWeeks]) || null;
   const dominantMetricLine = primaryMetricLabel
     ? `${primaryMetricLabel} is the main success anchor for this block.`
     : proxyMetricLabels.length
@@ -4153,21 +4176,21 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
 
   let labelSuffix = "Hybrid performance";
   let dominantEmphasis = {
-    category: _optionalChain([primary, 'optionalAccess', _123 => _123.category]) || "hybrid",
-    label: _optionalChain([primary, 'optionalAccess', _124 => _124.name]) || "Hybrid performance",
+    category: _optionalChain([primary, 'optionalAccess', _124 => _124.category]) || "hybrid",
+    label: _optionalChain([primary, 'optionalAccess', _125 => _125.name]) || "Hybrid performance",
     objective: ["Advance the primary lane while keeping the rest of the system credible.", horizonLine, feasibilityLine].filter(Boolean).join(" "),
     role: "dominant",
     measurabilityTier: primaryMeasurabilityTier,
     targetHorizonWeeks: primaryTargetHorizonWeeks,
   };
   let secondaryEmphasis = {
-    category: _optionalChain([secondaryGoals, 'access', _125 => _125[0], 'optionalAccess', _126 => _126.category]) || "maintenance",
-    label: _optionalChain([secondaryGoals, 'access', _127 => _127[0], 'optionalAccess', _128 => _128.name]) || maintainedGoals[0] || "General fitness",
+    category: _optionalChain([secondaryGoals, 'access', _126 => _126[0], 'optionalAccess', _127 => _127.category]) || "maintenance",
+    label: _optionalChain([secondaryGoals, 'access', _128 => _128[0], 'optionalAccess', _129 => _129.name]) || maintainedGoals[0] || "General fitness",
     objective: sequencingLine || "Secondary work stays in maintenance range while the dominant lane leads.",
     role: "secondary",
   };
   let minimizedEmphasis = {
-    category: _optionalChain([active, 'access', _129 => _129.find, 'call', _130 => _130((goal) => _optionalChain([goal, 'optionalAccess', _131 => _131.name]) === minimizedGoal), 'optionalAccess', _132 => _132.category]) || "support",
+    category: _optionalChain([active, 'access', _130 => _130.find, 'call', _131 => _131((goal) => _optionalChain([goal, 'optionalAccess', _132 => _132.name]) === minimizedGoal), 'optionalAccess', _133 => _133.category]) || "support",
     label: minimizedGoal,
     objective: `${minimizedGoal} receives the least dedicated block volume so the main goal stack stays coherent.`,
     role: "minimized",
@@ -4193,7 +4216,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
     labelSuffix = "Event-prep + upper-body maintenance";
     dominantEmphasis = {
       category: "running",
-      label: _optionalChain([primary, 'optionalAccess', _133 => _133.name]) || _optionalChain([runningGoal, 'optionalAccess', _134 => _134.name]) || "Event prep",
+      label: _optionalChain([primary, 'optionalAccess', _134 => _134.name]) || _optionalChain([runningGoal, 'optionalAccess', _135 => _135.name]) || "Event prep",
       objective: [
         "Event-specific endurance or race prep takes first claim on fatigue, scheduling, and lower-body freshness this block.",
         horizonLine,
@@ -4205,7 +4228,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
     };
     secondaryEmphasis = {
       category: "strength",
-      label: _optionalChain([strengthGoal, 'optionalAccess', _135 => _135.name]) || maintainedGoals[0] || "Upper-body maintenance",
+      label: _optionalChain([strengthGoal, 'optionalAccess', _136 => _136.name]) || maintainedGoals[0] || "Upper-body maintenance",
       objective: sequencingLine || "Upper-body strength is maintained with low leg-cost sessions so the event-prep lane stays clean.",
       role: "secondary",
     };
@@ -4235,7 +4258,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
     labelSuffix = "Run-dominant + strength-maintenance";
     dominantEmphasis = {
       category: "running",
-      label: _optionalChain([primary, 'optionalAccess', _136 => _136.name]) || _optionalChain([runningGoal, 'optionalAccess', _137 => _137.name]) || "Run performance",
+      label: _optionalChain([primary, 'optionalAccess', _137 => _137.name]) || _optionalChain([runningGoal, 'optionalAccess', _138 => _138.name]) || "Run performance",
       objective: [
         "Run quality and endurance progression get first claim on fatigue and recovery this block.",
         horizonLine,
@@ -4247,7 +4270,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
     };
     secondaryEmphasis = {
       category: strengthGoal ? "strength" : "maintenance",
-      label: _optionalChain([strengthGoal, 'optionalAccess', _138 => _138.name]) || maintainedGoals[0] || "Strength maintenance",
+      label: _optionalChain([strengthGoal, 'optionalAccess', _139 => _139.name]) || maintainedGoals[0] || "Strength maintenance",
       objective: sequencingLine || "Strength stays in maintenance range so it supports running instead of competing with it.",
       role: "secondary",
     };
@@ -4279,7 +4302,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
     labelSuffix = "Strength-dominant + conditioning-maintenance";
     dominantEmphasis = {
       category: "strength",
-      label: _optionalChain([primary, 'optionalAccess', _139 => _139.name]) || _optionalChain([strengthGoal, 'optionalAccess', _140 => _140.name]) || "Strength progression",
+      label: _optionalChain([primary, 'optionalAccess', _140 => _140.name]) || _optionalChain([strengthGoal, 'optionalAccess', _141 => _141.name]) || "Strength progression",
       objective: [
         "Strength progression is the main stressor to advance during this block.",
         horizonLine,
@@ -4291,7 +4314,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
     };
     secondaryEmphasis = {
       category: runningGoal ? "running" : "conditioning",
-      label: _optionalChain([runningGoal, 'optionalAccess', _141 => _141.name]) || maintainedGoals[0] || "Conditioning maintenance",
+      label: _optionalChain([runningGoal, 'optionalAccess', _142 => _142.name]) || maintainedGoals[0] || "Conditioning maintenance",
       objective: sequencingLine || "Conditioning stays supportive so it preserves work capacity without stealing lower-body recovery.",
       role: "secondary",
     };
@@ -4323,7 +4346,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
     labelSuffix = "Body-comp + strength-retention";
     dominantEmphasis = {
       category: "body_comp",
-      label: _optionalChain([primary, 'optionalAccess', _142 => _142.name]) || _optionalChain([bodyCompGoal, 'optionalAccess', _143 => _143.name]) || "Body composition",
+      label: _optionalChain([primary, 'optionalAccess', _143 => _143.name]) || _optionalChain([bodyCompGoal, 'optionalAccess', _144 => _144.name]) || "Body composition",
       objective: [
         "Energy balance and adherence drive the block while training protects lean mass and momentum.",
         horizonLine,
@@ -4335,7 +4358,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
     };
     secondaryEmphasis = {
       category: "strength",
-      label: _optionalChain([strengthGoal, 'optionalAccess', _144 => _144.name]) || maintainedGoals[0] || "Strength retention",
+      label: _optionalChain([strengthGoal, 'optionalAccess', _145 => _145.name]) || maintainedGoals[0] || "Strength retention",
       objective: sequencingLine || "Strength work stays present enough to retain muscle and training identity while conditioning supports expenditure.",
       role: "secondary",
     };
@@ -4378,8 +4401,8 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
       targetHorizonWeeks: primaryTargetHorizonWeeks,
     };
     secondaryEmphasis = {
-      category: _optionalChain([primary, 'optionalAccess', _145 => _145.category]) || "maintenance",
-      label: _optionalChain([primary, 'optionalAccess', _146 => _146.name]) || "Primary goal maintenance",
+      category: _optionalChain([primary, 'optionalAccess', _146 => _146.category]) || "maintenance",
+      label: _optionalChain([primary, 'optionalAccess', _147 => _147.name]) || "Primary goal maintenance",
       objective: sequencingLine || "Primary-goal qualities stay in maintenance range while consistency and recovery are restored.",
       role: "secondary",
     };
@@ -4412,12 +4435,12 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
       ? "Strength-dominant + conditioning-maintenance"
       : "Hybrid performance";
     dominantEmphasis = {
-      category: _optionalChain([primary, 'optionalAccess', _147 => _147.category]) || "hybrid",
-      label: _optionalChain([primary, 'optionalAccess', _148 => _148.name]) || "Hybrid performance",
+      category: _optionalChain([primary, 'optionalAccess', _148 => _148.category]) || "hybrid",
+      label: _optionalChain([primary, 'optionalAccess', _149 => _149.name]) || "Hybrid performance",
       objective: [
-        _optionalChain([primary, 'optionalAccess', _149 => _149.category]) === "running"
+        _optionalChain([primary, 'optionalAccess', _150 => _150.category]) === "running"
           ? "Run fitness advances while strength work stays present enough to keep the athlete meaningfully hybrid."
-          : _optionalChain([primary, 'optionalAccess', _150 => _150.category]) === "strength"
+          : _optionalChain([primary, 'optionalAccess', _151 => _151.category]) === "strength"
           ? "Strength advances while conditioning stays present enough to protect broader fitness."
           : "Run, strength, and conditioning stay balanced enough that progress remains credible across lanes.",
         horizonLine,
@@ -4428,11 +4451,11 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
       targetHorizonWeeks: primaryTargetHorizonWeeks,
     };
     secondaryEmphasis = {
-      category: _optionalChain([secondaryGoals, 'access', _151 => _151[0], 'optionalAccess', _152 => _152.category]) || (_optionalChain([primary, 'optionalAccess', _153 => _153.category]) === "running" ? "strength" : "running"),
-      label: _optionalChain([secondaryGoals, 'access', _154 => _154[0], 'optionalAccess', _155 => _155.name]) || maintainedGoals[0] || (_optionalChain([primary, 'optionalAccess', _156 => _156.category]) === "running" ? "Strength maintenance" : "Conditioning maintenance"),
-      objective: sequencingLine || (_optionalChain([primary, 'optionalAccess', _157 => _157.category]) === "running"
+      category: _optionalChain([secondaryGoals, 'access', _152 => _152[0], 'optionalAccess', _153 => _153.category]) || (_optionalChain([primary, 'optionalAccess', _154 => _154.category]) === "running" ? "strength" : "running"),
+      label: _optionalChain([secondaryGoals, 'access', _155 => _155[0], 'optionalAccess', _156 => _156.name]) || maintainedGoals[0] || (_optionalChain([primary, 'optionalAccess', _157 => _157.category]) === "running" ? "Strength maintenance" : "Conditioning maintenance"),
+      objective: sequencingLine || (_optionalChain([primary, 'optionalAccess', _158 => _158.category]) === "running"
         ? "Strength stays in maintenance range so the athlete still looks and performs like a hybrid athlete."
-        : _optionalChain([primary, 'optionalAccess', _158 => _158.category]) === "strength"
+        : _optionalChain([primary, 'optionalAccess', _159 => _159.category]) === "strength"
         ? "Conditioning stays supportive so strength work remains the main driver without losing aerobic support."
         : "Secondary work is maintained so no lane falls too far behind while the block stays balanced."),
       role: "secondary",
@@ -4446,17 +4469,17 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
         : "Recovery is balanced so both dominant and secondary work can stay credible across the block.",
     };
     nutritionPosture = {
-      mode: _optionalChain([primary, 'optionalAccess', _159 => _159.category]) === "running"
+      mode: _optionalChain([primary, 'optionalAccess', _160 => _160.category]) === "running"
         ? "performance_support"
-        : _optionalChain([primary, 'optionalAccess', _160 => _160.category]) === "strength"
+        : _optionalChain([primary, 'optionalAccess', _161 => _161.category]) === "strength"
         ? "strength_support"
         : bodyCompActive
         ? "deficit_support"
         : "maintenance_support",
       summary: [
-        _optionalChain([primary, 'optionalAccess', _161 => _161.category]) === "running"
+        _optionalChain([primary, 'optionalAccess', _162 => _162.category]) === "running"
           ? "Nutrition leans toward supporting key run work while covering enough protein to preserve strength."
-          : _optionalChain([primary, 'optionalAccess', _162 => _162.category]) === "strength"
+          : _optionalChain([primary, 'optionalAccess', _163 => _163.category]) === "strength"
           ? "Nutrition supports productive lifting while keeping conditioning compatible."
           : bodyCompActive
           ? "Nutrition keeps the deficit sustainable enough that the hybrid structure survives."
@@ -4478,7 +4501,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
   }
 
   minimizedEmphasis = {
-    category: _optionalChain([active, 'access', _163 => _163.find, 'call', _164 => _164((goal) => _optionalChain([goal, 'optionalAccess', _165 => _165.name]) === minimizedGoal), 'optionalAccess', _166 => _166.category]) || "support",
+    category: _optionalChain([active, 'access', _164 => _164.find, 'call', _165 => _165((goal) => _optionalChain([goal, 'optionalAccess', _166 => _166.name]) === minimizedGoal), 'optionalAccess', _167 => _167.category]) || "support",
     label: minimizedGoal,
     objective: `${minimizedGoal} receives the least dedicated block volume so the dominant and maintained lanes stay coherent.`,
     role: "minimized",
@@ -4489,7 +4512,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
   const safeConstraints = _collectionutilsjs.dedupeStrings.call(void 0, [...(constraints || [])]);
   const safeTradeoffs = _collectionutilsjs.dedupeStrings.call(void 0, [...(tradeoffs || []), ...safeConstraints.slice(0, 2)]).slice(0, 5);
   const safeCriteria = _collectionutilsjs.dedupeStrings.call(void 0, successCriteria.filter(Boolean)).slice(0, 5);
-  const prioritized = dominantEmphasis.label || _optionalChain([primary, 'optionalAccess', _167 => _167.name]) || "Consistency and execution";
+  const prioritized = dominantEmphasis.label || _optionalChain([primary, 'optionalAccess', _168 => _168.name]) || "Consistency and execution";
   const maintained = maintainedGoals.length
     ? maintainedGoals
     : [secondaryEmphasis.label || "general fitness"].filter(Boolean);
@@ -4516,7 +4539,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
       minimized: minimizedGoal,
     },
     goalStack: {
-      primaryResolvedGoalId: _optionalChain([primaryResolvedGoal, 'optionalAccess', _168 => _168.id]) || "",
+      primaryResolvedGoalId: _optionalChain([primaryResolvedGoal, 'optionalAccess', _169 => _169.id]) || "",
       secondaryResolvedGoalIds: resolvedContext.resolvedSecondaryGoals.map((goal) => goal.id).filter(Boolean),
       measurabilityTier: primaryMeasurabilityTier,
       targetHorizonWeeks: primaryTargetHorizonWeeks,
@@ -4526,7 +4549,7 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
       realisticByDate: resolvedContext.realisticByDateSummary || "",
       sequencingSummary: sequencingLine,
     },
-    feasibility: clonePlainValue(_optionalChain([programContext, 'optionalAccess', _169 => _169.goalFeasibility]) || null),
+    feasibility: clonePlainValue(_optionalChain([programContext, 'optionalAccess', _170 => _170.goalFeasibility]) || null),
     drivers: _collectionutilsjs.dedupeStrings.call(void 0, [
       prioritized,
       ...(maintained || []),
@@ -4534,14 +4557,14 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
       ...(drivers || []),
       phase,
       architecture,
-      _optionalChain([programContext, 'optionalAccess', _170 => _170.inconsistencyRisk]) ? `risk ${programContext.inconsistencyRisk}` : "",
+      _optionalChain([programContext, 'optionalAccess', _171 => _171.inconsistencyRisk]) ? `risk ${programContext.inconsistencyRisk}` : "",
     ]).slice(0, 8),
     summary,
   };
 }; exports.buildProgramBlock = buildProgramBlock;
 
 const resolveWeeklyNutritionEmphasis = ({
-  primaryCategory = "running",
+  primaryCategory = "general_fitness",
   architecture = "hybrid_performance",
   recoveryBias = "moderate",
   performanceBias = "moderate",
@@ -4583,16 +4606,16 @@ const resolveWeeklyNutritionEmphasis = ({
       blockIntent,
       constraints,
     });
-  const volumePctRaw = Number(_optionalChain([coachPlanAdjustments, 'optionalAccess', _171 => _171.weekVolumePct, 'optionalAccess', _172 => _172[String(weekNumber)]]) || 100);
+  const volumePctRaw = Number(_optionalChain([coachPlanAdjustments, 'optionalAccess', _172 => _172.weekVolumePct, 'optionalAccess', _173 => _173[String(weekNumber)]]) || 100);
   const volumePct = clampNumber(volumePctRaw, 70, 120);
-  const lowEnergy = Number(_optionalChain([weeklyCheckin, 'optionalAccess', _173 => _173.energy]) || 3) <= 2;
-  const highStress = Number(_optionalChain([weeklyCheckin, 'optionalAccess', _174 => _174.stress]) || 3) >= 4;
-  const lowConfidence = Number(_optionalChain([weeklyCheckin, 'optionalAccess', _175 => _175.confidence]) || 3) <= 2;
-  const simplifyBias = _optionalChain([learningLayer, 'optionalAccess', _176 => _176.adjustmentBias]) === "simplify";
-  const cutback = Boolean(_optionalChain([weekTemplate, 'optionalAccess', _177 => _177.cutback]));
-  const chaotic = _optionalChain([failureMode, 'optionalAccess', _178 => _178.mode]) === "chaotic";
-  const reEntry = Boolean(_optionalChain([failureMode, 'optionalAccess', _179 => _179.isReEntry]));
-  const intensityPosture = _optionalChain([programContext, 'optionalAccess', _180 => _180.trainingContext, 'optionalAccess', _181 => _181.intensityPosture, 'optionalAccess', _182 => _182.confirmed])
+  const lowEnergy = Number(_optionalChain([weeklyCheckin, 'optionalAccess', _174 => _174.energy]) || 3) <= 2;
+  const highStress = Number(_optionalChain([weeklyCheckin, 'optionalAccess', _175 => _175.stress]) || 3) >= 4;
+  const lowConfidence = Number(_optionalChain([weeklyCheckin, 'optionalAccess', _176 => _176.confidence]) || 3) <= 2;
+  const simplifyBias = _optionalChain([learningLayer, 'optionalAccess', _177 => _177.adjustmentBias]) === "simplify";
+  const cutback = Boolean(_optionalChain([weekTemplate, 'optionalAccess', _178 => _178.cutback]));
+  const chaotic = _optionalChain([failureMode, 'optionalAccess', _179 => _179.mode]) === "chaotic";
+  const reEntry = Boolean(_optionalChain([failureMode, 'optionalAccess', _180 => _180.isReEntry]));
+  const intensityPosture = _optionalChain([programContext, 'optionalAccess', _181 => _181.trainingContext, 'optionalAccess', _182 => _182.intensityPosture, 'optionalAccess', _183 => _183.confirmed])
     ? programContext.trainingContext.intensityPosture.value
     : _trainingcontextservicejs.TRAINING_INTENSITY_VALUES.unknown;
   const adjusted = Boolean(
@@ -4604,23 +4627,23 @@ const resolveWeeklyNutritionEmphasis = ({
     || lowConfidence
     || simplifyBias
     || volumePct !== 100
-    || _optionalChain([environmentSelection, 'optionalAccess', _183 => _183.scope]) === "week"
+    || _optionalChain([environmentSelection, 'optionalAccess', _184 => _184.scope]) === "week"
   );
 
   let aggressionLevel = "steady";
-  if (chaotic || reEntry || _optionalChain([normalizedProgramBlock, 'optionalAccess', _184 => _184.recoveryPosture, 'optionalAccess', _185 => _185.level]) === "protective") aggressionLevel = "rebuild";
+  if (chaotic || reEntry || _optionalChain([normalizedProgramBlock, 'optionalAccess', _185 => _185.recoveryPosture, 'optionalAccess', _186 => _186.level]) === "protective") aggressionLevel = "rebuild";
   else if (cutback || lowEnergy || highStress || lowConfidence || simplifyBias || volumePct < 100) aggressionLevel = "controlled";
   else if (
     volumePct > 100
-    || _optionalChain([normalizedProgramBlock, 'optionalAccess', _186 => _186.recoveryPosture, 'optionalAccess', _187 => _187.level]) === "progressive"
+    || _optionalChain([normalizedProgramBlock, 'optionalAccess', _187 => _187.recoveryPosture, 'optionalAccess', _188 => _188.level]) === "progressive"
     || ["race_prep_dominant", "strength_dominant", "event_prep_upper_body_maintenance"].includes(architecture)
   ) aggressionLevel = "progressive";
   else if (intensityPosture === _trainingcontextservicejs.TRAINING_INTENSITY_VALUES.aggressive) aggressionLevel = "progressive";
   else if (intensityPosture === _trainingcontextservicejs.TRAINING_INTENSITY_VALUES.conservative) aggressionLevel = "controlled";
 
-  let recoveryBias = _optionalChain([normalizedProgramBlock, 'optionalAccess', _188 => _188.recoveryPosture, 'optionalAccess', _189 => _189.level]) === "protective"
+  let recoveryBias = _optionalChain([normalizedProgramBlock, 'optionalAccess', _189 => _189.recoveryPosture, 'optionalAccess', _190 => _190.level]) === "protective"
     ? "high"
-    : _optionalChain([normalizedProgramBlock, 'optionalAccess', _190 => _190.recoveryPosture, 'optionalAccess', _191 => _191.level]) === "progressive"
+    : _optionalChain([normalizedProgramBlock, 'optionalAccess', _191 => _191.recoveryPosture, 'optionalAccess', _192 => _192.level]) === "progressive"
     ? "low"
     : "moderate";
   if (chaotic || reEntry || cutback || lowEnergy || highStress) recoveryBias = "high";
@@ -4634,21 +4657,21 @@ const resolveWeeklyNutritionEmphasis = ({
   if (recoveryBias === "high") performanceBias = "low";
   else if (["race_prep_dominant", "strength_dominant", "event_prep_upper_body_maintenance"].includes(architecture) && aggressionLevel === "progressive") performanceBias = "high";
 
-  const focus = _optionalChain([weekTemplate, 'optionalAccess', _192 => _192.label])
-    || _optionalChain([normalizedProgramBlock, 'optionalAccess', _193 => _193.dominantEmphasis, 'optionalAccess', _194 => _194.label])
+  const focus = _optionalChain([normalizedProgramBlock, 'optionalAccess', _193 => _193.dominantEmphasis, 'optionalAccess', _194 => _194.label])
     || _optionalChain([blockIntent, 'optionalAccess', _195 => _195.prioritized])
     || _optionalChain([primaryGoal, 'optionalAccess', _196 => _196.name])
+    || _optionalChain([weekTemplate, 'optionalAccess', _197 => _197.label])
     || "Consistency and execution";
-  const primaryCategory = _optionalChain([primaryGoal, 'optionalAccess', _197 => _197.category]) || "running";
+  const primaryCategory = _optionalChain([primaryGoal, 'optionalAccess', _198 => _198.category]) || "general_fitness";
   const weeklyConstraints = _collectionutilsjs.dedupeStrings.call(void 0, [
-    ...(_optionalChain([normalizedProgramBlock, 'optionalAccess', _198 => _198.constraints]) || []),
-    ...(_optionalChain([normalizedProgramBlock, 'optionalAccess', _199 => _199.tradeoffs]) || []),
+    ...(_optionalChain([normalizedProgramBlock, 'optionalAccess', _199 => _199.constraints]) || []),
+    ...(_optionalChain([normalizedProgramBlock, 'optionalAccess', _200 => _200.tradeoffs]) || []),
     ...(constraints || []),
-    _optionalChain([weekTemplate, 'optionalAccess', _200 => _200.cutback]) ? "Cutback week" : "",
+    _optionalChain([weekTemplate, 'optionalAccess', _201 => _201.cutback]) ? "Cutback week" : "",
     chaotic ? "Salvage mode is active this week" : "",
     reEntry ? "Re-entry week: protect momentum first" : "",
-    _optionalChain([weeklyCheckin, 'optionalAccess', _201 => _201.blocker]) ? `Weekly blocker: ${String(weeklyCheckin.blocker).replace(/_/g, " ")}` : "",
-    _optionalChain([environmentSelection, 'optionalAccess', _202 => _202.scope]) === "week" ? `${String(_optionalChain([environmentSelection, 'optionalAccess', _203 => _203.mode]) || "custom").replace(/_/g, " ")} environment this week` : "",
+    _optionalChain([weeklyCheckin, 'optionalAccess', _202 => _202.blocker]) ? `Weekly blocker: ${String(weeklyCheckin.blocker).replace(/_/g, " ")}` : "",
+    _optionalChain([environmentSelection, 'optionalAccess', _203 => _203.scope]) === "week" ? `${String(_optionalChain([environmentSelection, 'optionalAccess', _204 => _204.mode]) || "custom").replace(/_/g, " ")} environment this week` : "",
     volumePct !== 100 ? `Volume set to ${volumePct}%` : "",
   ]);
   const nutritionEmphasis = recoveryBias === "high"
@@ -4658,16 +4681,16 @@ const resolveWeeklyNutritionEmphasis = ({
       recoveryBias,
       performanceBias,
     })
-    : _optionalChain([normalizedProgramBlock, 'optionalAccess', _204 => _204.nutritionPosture, 'optionalAccess', _205 => _205.summary]) || resolveWeeklyNutritionEmphasis({
+    : _optionalChain([normalizedProgramBlock, 'optionalAccess', _205 => _205.nutritionPosture, 'optionalAccess', _206 => _206.summary]) || resolveWeeklyNutritionEmphasis({
       primaryCategory,
       architecture,
       recoveryBias,
       performanceBias,
     });
   const status = adjusted ? "adjusted" : "planned";
-  const maintainedFocus = _optionalChain([normalizedProgramBlock, 'optionalAccess', _206 => _206.secondaryEmphasis, 'optionalAccess', _207 => _207.label]) || "";
-  const minimizedFocus = _optionalChain([normalizedProgramBlock, 'optionalAccess', _208 => _208.minimizedEmphasis, 'optionalAccess', _209 => _209.label]) || _optionalChain([normalizedProgramBlock, 'optionalAccess', _210 => _210.goalAllocation, 'optionalAccess', _211 => _211.minimized]) || "";
-  const tradeoffFocus = _optionalChain([normalizedProgramBlock, 'optionalAccess', _212 => _212.tradeoffs, 'optionalAccess', _213 => _213[0]]) || "";
+  const maintainedFocus = _optionalChain([normalizedProgramBlock, 'optionalAccess', _207 => _207.secondaryEmphasis, 'optionalAccess', _208 => _208.label]) || "";
+  const minimizedFocus = _optionalChain([normalizedProgramBlock, 'optionalAccess', _209 => _209.minimizedEmphasis, 'optionalAccess', _210 => _210.label]) || _optionalChain([normalizedProgramBlock, 'optionalAccess', _211 => _211.goalAllocation, 'optionalAccess', _212 => _212.minimized]) || "";
+  const tradeoffFocus = _optionalChain([normalizedProgramBlock, 'optionalAccess', _213 => _213.tradeoffs, 'optionalAccess', _214 => _214[0]]) || "";
   const successDefinition = recoveryBias === "high"
     ? ["event_prep_upper_body_maintenance", "race_prep_dominant"].includes(architecture)
       ? architecture === "event_prep_upper_body_maintenance"
@@ -4676,22 +4699,22 @@ const resolveWeeklyNutritionEmphasis = ({
       : architecture === "body_comp_conditioning"
       ? "Protect recovery, keep the deficit repeatable, and land the minimum effective maintenance work."
       : "Protect recovery, land the minimum effective work, and keep logging."
-    : _optionalChain([normalizedProgramBlock, 'optionalAccess', _214 => _214.successCriteria, 'optionalAccess', _215 => _215.length]) > 1
+    : _optionalChain([normalizedProgramBlock, 'optionalAccess', _215 => _215.successCriteria, 'optionalAccess', _216 => _216.length]) > 1
     ? `${normalizedProgramBlock.successCriteria[0]} ${normalizedProgramBlock.successCriteria[1]}`
-    : _optionalChain([normalizedProgramBlock, 'optionalAccess', _216 => _216.successCriteria, 'optionalAccess', _217 => _217[0]])
+    : _optionalChain([normalizedProgramBlock, 'optionalAccess', _217 => _217.successCriteria, 'optionalAccess', _218 => _218[0]])
     ? normalizedProgramBlock.successCriteria[0]
     : performanceBias === "high"
     ? "Hit the key quality sessions without sacrificing recovery."
     : "String together repeatable sessions and keep the week stable.";
   const rationale = adjusted
-    ? `This week is adjusted inside ${String(_optionalChain([normalizedProgramBlock, 'optionalAccess', _218 => _218.label]) || "the current block").toLowerCase()} around ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture. ${maintainedFocus ? `${maintainedFocus} stays maintained.` : ""} ${minimizedFocus ? `${minimizedFocus} stays minimized.` : ""}`.trim()
-    : `This week sits inside ${String(_optionalChain([normalizedProgramBlock, 'optionalAccess', _219 => _219.label]) || "the current block").toLowerCase()} and advances ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture. ${maintainedFocus ? `${maintainedFocus} stays maintained.` : ""} ${minimizedFocus ? `${minimizedFocus} stays minimized.` : ""}`.trim();
+    ? `This week is adjusted inside ${String(_optionalChain([normalizedProgramBlock, 'optionalAccess', _219 => _219.label]) || "the current block").toLowerCase()} around ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture. ${maintainedFocus ? `${maintainedFocus} stays maintained.` : ""} ${minimizedFocus ? `${minimizedFocus} stays minimized.` : ""}`.trim()
+    : `This week sits inside ${String(_optionalChain([normalizedProgramBlock, 'optionalAccess', _220 => _220.label]) || "the current block").toLowerCase()} and advances ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture. ${maintainedFocus ? `${maintainedFocus} stays maintained.` : ""} ${minimizedFocus ? `${minimizedFocus} stays minimized.` : ""}`.trim();
 
   return {
     id: `weekly_intent_${weekNumber}`,
     weekNumber,
-    programBlockId: _optionalChain([normalizedProgramBlock, 'optionalAccess', _220 => _220.id]) || "",
-    blockLabel: _optionalChain([normalizedProgramBlock, 'optionalAccess', _221 => _221.label]) || "",
+    programBlockId: _optionalChain([normalizedProgramBlock, 'optionalAccess', _221 => _221.id]) || "",
+    blockLabel: _optionalChain([normalizedProgramBlock, 'optionalAccess', _222 => _222.label]) || "",
     focus,
     aggressionLevel,
     recoveryBias,
@@ -4710,14 +4733,14 @@ const resolveWeeklyNutritionEmphasis = ({
       focus,
       maintainedFocus,
       minimizedFocus,
-      _optionalChain([normalizedProgramBlock, 'optionalAccess', _222 => _222.dominantEmphasis, 'optionalAccess', _223 => _223.label]) || "",
-      _optionalChain([blockIntent, 'optionalAccess', _224 => _224.prioritized]) || "",
-      _optionalChain([primaryGoal, 'optionalAccess', _225 => _225.name]) || "",
+      _optionalChain([normalizedProgramBlock, 'optionalAccess', _223 => _223.dominantEmphasis, 'optionalAccess', _224 => _224.label]) || "",
+      _optionalChain([blockIntent, 'optionalAccess', _225 => _225.prioritized]) || "",
+      _optionalChain([primaryGoal, 'optionalAccess', _226 => _226.name]) || "",
       tradeoffFocus,
       volumePct !== 100 ? `volume ${volumePct}%` : "",
-      _optionalChain([weeklyCheckin, 'optionalAccess', _226 => _226.blocker]) ? String(weeklyCheckin.blocker).replace(/_/g, " ") : "",
+      _optionalChain([weeklyCheckin, 'optionalAccess', _227 => _227.blocker]) ? String(weeklyCheckin.blocker).replace(/_/g, " ") : "",
     ]),
-    blockTradeoffs: clonePlainValue(_optionalChain([normalizedProgramBlock, 'optionalAccess', _227 => _227.tradeoffs]) || []),
+    blockTradeoffs: clonePlainValue(_optionalChain([normalizedProgramBlock, 'optionalAccess', _228 => _228.tradeoffs]) || []),
     rationale,
   };
 }; exports.deriveWeeklyIntent = deriveWeeklyIntent;
@@ -4763,8 +4786,8 @@ const resolveWeeklyNutritionEmphasis = ({
       goals,
       architecture,
       constraints,
-      drivers: _optionalChain([programContext, 'optionalAccess', _228 => _228.drivers]) || [],
-      unlockMessage: _optionalChain([programContext, 'optionalAccess', _229 => _229.unlockMessage]) || "",
+      drivers: _optionalChain([programContext, 'optionalAccess', _229 => _229.drivers]) || [],
+      unlockMessage: _optionalChain([programContext, 'optionalAccess', _230 => _230.unlockMessage]) || "",
       programContext,
     })
     || buildFallbackProgramBlockFromCompatibilityIntent({
@@ -4795,11 +4818,11 @@ const resolveWeeklyNutritionEmphasis = ({
     constraints,
   });
   const sessionSource = hasCanonicalSessionPattern
-    ? normalizeRunSignature(_optionalChain([referenceTemplate, 'optionalAccess', _230 => _230.mon]) || null) === normalizeRunSignature(_optionalChain([template, 'optionalAccess', _231 => _231.mon]) || null)
-      && normalizeRunSignature(_optionalChain([referenceTemplate, 'optionalAccess', _232 => _232.thu]) || null) === normalizeRunSignature(_optionalChain([template, 'optionalAccess', _233 => _233.thu]) || null)
-      && normalizeRunSignature(_optionalChain([referenceTemplate, 'optionalAccess', _234 => _234.fri]) || null) === normalizeRunSignature(_optionalChain([template, 'optionalAccess', _235 => _235.fri]) || null)
-      && normalizeRunSignature(_optionalChain([referenceTemplate, 'optionalAccess', _236 => _236.sat]) || null) === normalizeRunSignature(_optionalChain([template, 'optionalAccess', _237 => _237.sat]) || null)
-      && String(_optionalChain([referenceTemplate, 'optionalAccess', _238 => _238.str]) || "") === String(_optionalChain([template, 'optionalAccess', _239 => _239.str]) || "")
+    ? normalizeRunSignature(_optionalChain([referenceTemplate, 'optionalAccess', _231 => _231.mon]) || null) === normalizeRunSignature(_optionalChain([template, 'optionalAccess', _232 => _232.mon]) || null)
+      && normalizeRunSignature(_optionalChain([referenceTemplate, 'optionalAccess', _233 => _233.thu]) || null) === normalizeRunSignature(_optionalChain([template, 'optionalAccess', _234 => _234.thu]) || null)
+      && normalizeRunSignature(_optionalChain([referenceTemplate, 'optionalAccess', _235 => _235.fri]) || null) === normalizeRunSignature(_optionalChain([template, 'optionalAccess', _236 => _236.fri]) || null)
+      && normalizeRunSignature(_optionalChain([referenceTemplate, 'optionalAccess', _237 => _237.sat]) || null) === normalizeRunSignature(_optionalChain([template, 'optionalAccess', _238 => _238.sat]) || null)
+      && String(_optionalChain([referenceTemplate, 'optionalAccess', _239 => _239.str]) || "") === String(_optionalChain([template, 'optionalAccess', _240 => _240.str]) || "")
       ? "canonical_week_pattern"
       : "projected_canonical_week_pattern"
     : "template_fallback";
@@ -4808,8 +4831,8 @@ const resolveWeeklyNutritionEmphasis = ({
     id: `plan_week_${weekNumber}`,
     weekNumber,
     absoluteWeek: weekNumber,
-    phase: _optionalChain([template, 'optionalAccess', _240 => _240.phase]) || "",
-    label: label || `${_optionalChain([template, 'optionalAccess', _241 => _241.phase]) || "BASE"} · Week ${weekNumber}`,
+    phase: _optionalChain([template, 'optionalAccess', _241 => _241.phase]) || "",
+    label: label || `${_optionalChain([template, 'optionalAccess', _242 => _242.phase]) || "BASE"} · Week ${weekNumber}`,
     kind,
     specificity,
     startDate: startDate || null,
@@ -4900,37 +4923,37 @@ const resolveWeeklyNutritionEmphasis = ({
   } = args;
   const baseTraining = clonePlainValue(basePlannedDay || {});
   const resolvedTraining = clonePlainValue(resolvedDay || basePlannedDay || {});
-  const planWeek = clonePlainValue(_optionalChain([context, 'optionalAccess', _242 => _242.planWeek]) || null);
-  const programBlock = clonePlainValue(_optionalChain([context, 'optionalAccess', _243 => _243.programBlock]) || _optionalChain([planWeek, 'optionalAccess', _244 => _244.programBlock]) || null);
+  const planWeek = clonePlainValue(_optionalChain([context, 'optionalAccess', _243 => _243.planWeek]) || null);
+  const programBlock = clonePlainValue(_optionalChain([context, 'optionalAccess', _244 => _244.programBlock]) || _optionalChain([planWeek, 'optionalAccess', _245 => _245.programBlock]) || null);
   const compatibilityBlockIntent = clonePlainValue(
-    _optionalChain([context, 'optionalAccess', _245 => _245.blockIntent])
-    || _optionalChain([planWeek, 'optionalAccess', _246 => _246.blockIntent])
+    _optionalChain([context, 'optionalAccess', _246 => _246.blockIntent])
+    || _optionalChain([planWeek, 'optionalAccess', _247 => _247.blockIntent])
     || buildProgramBlockCompatibilityIntent(programBlock)
     || null
   );
-  const weeklyIntent = clonePlainValue(_optionalChain([context, 'optionalAccess', _247 => _247.weeklyIntent]) || _optionalChain([planWeek, 'optionalAccess', _248 => _248.weeklyIntent]) || null);
+  const weeklyIntent = clonePlainValue(_optionalChain([context, 'optionalAccess', _248 => _248.weeklyIntent]) || _optionalChain([planWeek, 'optionalAccess', _249 => _249.weeklyIntent]) || null);
   const readinessState = clonePlainValue(readiness || {});
-  const nutritionPrescription = clonePlainValue(_optionalChain([nutrition, 'optionalAccess', _249 => _249.prescription]) || null);
-  const nutritionReality = clonePlainValue(_optionalChain([nutrition, 'optionalAccess', _250 => _250.reality]) || null);
-  const nutritionActual = clonePlainValue(_optionalChain([nutrition, 'optionalAccess', _251 => _251.actual]) || null);
-  const nutritionComparison = clonePlainValue(_optionalChain([nutrition, 'optionalAccess', _252 => _252.comparison]) || null);
-  const dailyCheckin = clonePlainValue(_optionalChain([logging, 'optionalAccess', _253 => _253.dailyCheckin]) || null);
-  const sessionLog = clonePlainValue(_optionalChain([logging, 'optionalAccess', _254 => _254.sessionLog]) || null);
-  const nutritionLog = clonePlainValue(_optionalChain([logging, 'optionalAccess', _255 => _255.nutritionLog]) || null);
-  const supplementLog = clonePlainValue(_optionalChain([logging, 'optionalAccess', _256 => _256.supplementLog]) || null);
-  const dayOverride = _optionalChain([adjustments, 'optionalAccess', _257 => _257.dayOverride]) || null;
-  const nutritionOverride = _optionalChain([adjustments, 'optionalAccess', _258 => _258.nutritionOverride]) || null;
-  const injuryRule = _optionalChain([adjustments, 'optionalAccess', _259 => _259.injuryRule]) || null;
-  const injuryState = clonePlainValue(_optionalChain([adjustments, 'optionalAccess', _260 => _260.injuryState]) || null);
-  const failureMode = _optionalChain([adjustments, 'optionalAccess', _261 => _261.failureMode]) || null;
-  const garminReadiness = _optionalChain([adjustments, 'optionalAccess', _262 => _262.garminReadiness]) || null;
-  const deviceSyncAudit = _optionalChain([adjustments, 'optionalAccess', _263 => _263.deviceSyncAudit]) || null;
-  const environmentSelection = _optionalChain([adjustments, 'optionalAccess', _264 => _264.environmentSelection]) || null;
+  const nutritionPrescription = clonePlainValue(_optionalChain([nutrition, 'optionalAccess', _250 => _250.prescription]) || null);
+  const nutritionReality = clonePlainValue(_optionalChain([nutrition, 'optionalAccess', _251 => _251.reality]) || null);
+  const nutritionActual = clonePlainValue(_optionalChain([nutrition, 'optionalAccess', _252 => _252.actual]) || null);
+  const nutritionComparison = clonePlainValue(_optionalChain([nutrition, 'optionalAccess', _253 => _253.comparison]) || null);
+  const dailyCheckin = clonePlainValue(_optionalChain([logging, 'optionalAccess', _254 => _254.dailyCheckin]) || null);
+  const sessionLog = clonePlainValue(_optionalChain([logging, 'optionalAccess', _255 => _255.sessionLog]) || null);
+  const nutritionLog = clonePlainValue(_optionalChain([logging, 'optionalAccess', _256 => _256.nutritionLog]) || null);
+  const supplementLog = clonePlainValue(_optionalChain([logging, 'optionalAccess', _257 => _257.supplementLog]) || null);
+  const dayOverride = _optionalChain([adjustments, 'optionalAccess', _258 => _258.dayOverride]) || null;
+  const nutritionOverride = _optionalChain([adjustments, 'optionalAccess', _259 => _259.nutritionOverride]) || null;
+  const injuryRule = _optionalChain([adjustments, 'optionalAccess', _260 => _260.injuryRule]) || null;
+  const injuryState = clonePlainValue(_optionalChain([adjustments, 'optionalAccess', _261 => _261.injuryState]) || null);
+  const failureMode = _optionalChain([adjustments, 'optionalAccess', _262 => _262.failureMode]) || null;
+  const garminReadiness = _optionalChain([adjustments, 'optionalAccess', _263 => _263.garminReadiness]) || null;
+  const deviceSyncAudit = _optionalChain([adjustments, 'optionalAccess', _264 => _264.deviceSyncAudit]) || null;
+  const environmentSelection = _optionalChain([adjustments, 'optionalAccess', _265 => _265.environmentSelection]) || null;
   const supplementsPlan = _recoverysupplementservicejs.buildCanonicalSupplementPlan.call(void 0, {
     dateKey,
     supplementPlan: clonePlainValue(
-      _optionalChain([nutritionPrescription, 'optionalAccess', _265 => _265.supplements])
-      || _optionalChain([context, 'optionalAccess', _266 => _266.supplementPlan])
+      _optionalChain([nutritionPrescription, 'optionalAccess', _266 => _266.supplements])
+      || _optionalChain([context, 'optionalAccess', _267 => _267.supplementPlan])
       || []
     ),
     training: resolvedTraining,
@@ -4974,32 +4997,32 @@ const resolveWeeklyNutritionEmphasis = ({
 
   const adjustmentEvents = [
     dayOverride ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
-      actor: _optionalChain([dayOverride, 'optionalAccess', _267 => _267.provenance, 'optionalAccess', _268 => _268.actor]) || _provenanceservicejs.PROVENANCE_ACTORS.user,
+      actor: _optionalChain([dayOverride, 'optionalAccess', _268 => _268.provenance, 'optionalAccess', _269 => _269.actor]) || _provenanceservicejs.PROVENANCE_ACTORS.user,
       trigger: "day_override",
       mutationType: "daily_override",
-      revisionReason: String(_optionalChain([dayOverride, 'optionalAccess', _269 => _269.reason]) || "day override").replace(/_/g, " "),
-      sourceInputs: _optionalChain([dayOverride, 'optionalAccess', _270 => _270.provenance, 'optionalAccess', _271 => _271.sourceInputs]) || ["coachPlanAdjustments.dayOverrides"],
-      confidence: _optionalChain([dayOverride, 'optionalAccess', _272 => _272.provenance, 'optionalAccess', _273 => _273.confidence]) || "high",
-      timestamp: _optionalChain([dayOverride, 'optionalAccess', _274 => _274.provenance, 'optionalAccess', _275 => _275.timestamp]) || provenanceTimestamp,
+      revisionReason: String(_optionalChain([dayOverride, 'optionalAccess', _270 => _270.reason]) || "day override").replace(/_/g, " "),
+      sourceInputs: _optionalChain([dayOverride, 'optionalAccess', _271 => _271.provenance, 'optionalAccess', _272 => _272.sourceInputs]) || ["coachPlanAdjustments.dayOverrides"],
+      confidence: _optionalChain([dayOverride, 'optionalAccess', _273 => _273.provenance, 'optionalAccess', _274 => _274.confidence]) || "high",
+      timestamp: _optionalChain([dayOverride, 'optionalAccess', _275 => _275.provenance, 'optionalAccess', _276 => _276.timestamp]) || provenanceTimestamp,
       details: {
-        mode: _optionalChain([dayOverride, 'optionalAccess', _276 => _276.type]) || "",
+        mode: _optionalChain([dayOverride, 'optionalAccess', _277 => _277.type]) || "",
         sourcePath: "coachPlanAdjustments.dayOverrides",
       },
     }) : null,
     nutritionOverride ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
-      actor: _optionalChain([nutritionOverride, 'optionalAccess', _277 => _277.provenance, 'optionalAccess', _278 => _278.actor]) || _provenanceservicejs.PROVENANCE_ACTORS.user,
+      actor: _optionalChain([nutritionOverride, 'optionalAccess', _278 => _278.provenance, 'optionalAccess', _279 => _279.actor]) || _provenanceservicejs.PROVENANCE_ACTORS.user,
       trigger: "nutrition_override",
       mutationType: "nutrition_override",
-      revisionReason: String(_optionalChain([nutritionOverride, 'optionalAccess', _279 => _279.reason]) || _optionalChain([nutritionOverride, 'optionalAccess', _280 => _280.dayType]) || nutritionOverride).replace(/_/g, " "),
-      sourceInputs: _optionalChain([nutritionOverride, 'optionalAccess', _281 => _281.provenance, 'optionalAccess', _282 => _282.sourceInputs]) || ["coachPlanAdjustments.nutritionOverrides"],
-      confidence: _optionalChain([nutritionOverride, 'optionalAccess', _283 => _283.provenance, 'optionalAccess', _284 => _284.confidence]) || "high",
-      timestamp: _optionalChain([nutritionOverride, 'optionalAccess', _285 => _285.provenance, 'optionalAccess', _286 => _286.timestamp]) || provenanceTimestamp,
+      revisionReason: String(_optionalChain([nutritionOverride, 'optionalAccess', _280 => _280.reason]) || _optionalChain([nutritionOverride, 'optionalAccess', _281 => _281.dayType]) || nutritionOverride).replace(/_/g, " "),
+      sourceInputs: _optionalChain([nutritionOverride, 'optionalAccess', _282 => _282.provenance, 'optionalAccess', _283 => _283.sourceInputs]) || ["coachPlanAdjustments.nutritionOverrides"],
+      confidence: _optionalChain([nutritionOverride, 'optionalAccess', _284 => _284.provenance, 'optionalAccess', _285 => _285.confidence]) || "high",
+      timestamp: _optionalChain([nutritionOverride, 'optionalAccess', _286 => _286.provenance, 'optionalAccess', _287 => _287.timestamp]) || provenanceTimestamp,
       details: {
-        dayType: _optionalChain([nutritionOverride, 'optionalAccess', _287 => _287.dayType]) || nutritionOverride,
+        dayType: _optionalChain([nutritionOverride, 'optionalAccess', _288 => _288.dayType]) || nutritionOverride,
         sourcePath: "coachPlanAdjustments.nutritionOverrides",
       },
     }) : null,
-    _optionalChain([injuryRule, 'optionalAccess', _288 => _288.mods, 'optionalAccess', _289 => _289.length]) ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
+    _optionalChain([injuryRule, 'optionalAccess', _289 => _289.mods, 'optionalAccess', _290 => _290.length]) ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
       actor: _provenanceservicejs.PROVENANCE_ACTORS.deterministicEngine,
       trigger: "injury_rule",
       mutationType: "protective_adjustment",
@@ -5011,7 +5034,7 @@ const resolveWeeklyNutritionEmphasis = ({
         modifications: clonePlainValue(injuryRule.mods || []),
       },
     }) : null,
-    _optionalChain([failureMode, 'optionalAccess', _290 => _290.mode]) && failureMode.mode !== "normal" ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
+    _optionalChain([failureMode, 'optionalAccess', _291 => _291.mode]) && failureMode.mode !== "normal" ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
       actor: _provenanceservicejs.PROVENANCE_ACTORS.deterministicEngine,
       trigger: "failure_mode",
       mutationType: "compliance_hardening",
@@ -5023,7 +5046,7 @@ const resolveWeeklyNutritionEmphasis = ({
         mode: failureMode.mode,
       },
     }) : null,
-    _optionalChain([garminReadiness, 'optionalAccess', _291 => _291.mode]) ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
+    _optionalChain([garminReadiness, 'optionalAccess', _292 => _292.mode]) ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
       actor: _provenanceservicejs.PROVENANCE_ACTORS.deterministicEngine,
       trigger: "device_readiness",
       mutationType: "readiness_adjustment",
@@ -5035,7 +5058,7 @@ const resolveWeeklyNutritionEmphasis = ({
         mode: garminReadiness.mode,
       },
     }) : null,
-    _optionalChain([deviceSyncAudit, 'optionalAccess', _292 => _292.planMode]) && deviceSyncAudit.planMode !== "normal" ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
+    _optionalChain([deviceSyncAudit, 'optionalAccess', _293 => _293.planMode]) && deviceSyncAudit.planMode !== "normal" ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
       actor: _provenanceservicejs.PROVENANCE_ACTORS.deterministicEngine,
       trigger: "device_sync",
       mutationType: "device_fallback",
@@ -5047,60 +5070,60 @@ const resolveWeeklyNutritionEmphasis = ({
         planMode: deviceSyncAudit.planMode,
       },
     }) : null,
-    _optionalChain([environmentSelection, 'optionalAccess', _293 => _293.scope]) === "today" ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
+    _optionalChain([environmentSelection, 'optionalAccess', _294 => _294.scope]) === "today" ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
       actor: _provenanceservicejs.PROVENANCE_ACTORS.user,
       trigger: "environment_override",
       mutationType: "daily_override",
-      revisionReason: `${String(_optionalChain([environmentSelection, 'optionalAccess', _294 => _294.mode]) || "custom")} mode for today`,
+      revisionReason: `${String(_optionalChain([environmentSelection, 'optionalAccess', _295 => _295.mode]) || "custom")} mode for today`,
       sourceInputs: ["environmentSelection", "environmentConfig.todayOverride"],
       confidence: "high",
       timestamp: provenanceTimestamp,
       details: {
-        scope: _optionalChain([environmentSelection, 'optionalAccess', _295 => _295.scope]) || "",
-        mode: _optionalChain([environmentSelection, 'optionalAccess', _296 => _296.mode]) || "",
+        scope: _optionalChain([environmentSelection, 'optionalAccess', _296 => _296.scope]) || "",
+        mode: _optionalChain([environmentSelection, 'optionalAccess', _297 => _297.mode]) || "",
       },
     }) : null,
-    _optionalChain([readinessState, 'optionalAccess', _297 => _297.state]) && readinessState.state !== "steady" ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
+    _optionalChain([readinessState, 'optionalAccess', _298 => _298.state]) && readinessState.state !== "steady" ? _provenanceservicejs.buildProvenanceEvent.call(void 0, {
       actor: _provenanceservicejs.PROVENANCE_ACTORS.deterministicEngine,
       trigger: "readiness_adjustment",
       mutationType: "readiness_adjustment",
-      revisionReason: _optionalChain([readinessState, 'optionalAccess', _298 => _298.userVisibleLine]) || _optionalChain([readinessState, 'optionalAccess', _299 => _299.stateLabel]) || _optionalChain([readinessState, 'optionalAccess', _300 => _300.state]),
+      revisionReason: _optionalChain([readinessState, 'optionalAccess', _299 => _299.userVisibleLine]) || _optionalChain([readinessState, 'optionalAccess', _300 => _300.stateLabel]) || _optionalChain([readinessState, 'optionalAccess', _301 => _301.state]),
       sourceInputs: [
         "dailyCheckins",
         "recent_session_history",
-        _optionalChain([readinessState, 'optionalAccess', _301 => _301.metrics, 'optionalAccess', _302 => _302.hasTodayRecoveryInput]) ? "today_readiness_input" : "",
-        _optionalChain([readinessState, 'optionalAccess', _303 => _303.source]) || "readiness_engine",
+        _optionalChain([readinessState, 'optionalAccess', _302 => _302.metrics, 'optionalAccess', _303 => _303.hasTodayRecoveryInput]) ? "today_readiness_input" : "",
+        _optionalChain([readinessState, 'optionalAccess', _304 => _304.source]) || "readiness_engine",
       ],
       confidence: "high",
       timestamp: provenanceTimestamp,
       details: {
-        state: _optionalChain([readinessState, 'optionalAccess', _304 => _304.state]) || "",
-        source: _optionalChain([readinessState, 'optionalAccess', _305 => _305.source]) || "deterministic_engine",
+        state: _optionalChain([readinessState, 'optionalAccess', _305 => _305.state]) || "",
+        source: _optionalChain([readinessState, 'optionalAccess', _306 => _306.source]) || "deterministic_engine",
       },
     }) : null,
   ].filter(Boolean);
 
   const keyDrivers = _collectionutilsjs.dedupeStrings.call(void 0, [
-    _optionalChain([todayPlan, 'optionalAccess', _306 => _306.reason]),
-    _optionalChain([programBlock, 'optionalAccess', _307 => _307.dominantEmphasis, 'optionalAccess', _308 => _308.label]) ? `block ${programBlock.dominantEmphasis.label}` : "",
-    _optionalChain([weeklyIntent, 'optionalAccess', _309 => _309.focus]) ? `week focus ${weeklyIntent.focus}` : "",
-    _optionalChain([weeklyIntent, 'optionalAccess', _310 => _310.aggressionLevel]) ? `week posture ${String(weeklyIntent.aggressionLevel).replace(/_/g, " ")}` : "",
-    ...(Array.isArray(_optionalChain([readinessState, 'optionalAccess', _311 => _311.factors])) ? readinessState.factors : []),
-    _optionalChain([dayOverride, 'optionalAccess', _312 => _312.reason]) ? String(dayOverride.reason).replace(/_/g, " ") : "",
+    _optionalChain([todayPlan, 'optionalAccess', _307 => _307.reason]),
+    _optionalChain([programBlock, 'optionalAccess', _308 => _308.dominantEmphasis, 'optionalAccess', _309 => _309.label]) ? `block ${programBlock.dominantEmphasis.label}` : "",
+    _optionalChain([weeklyIntent, 'optionalAccess', _310 => _310.focus]) ? `week focus ${weeklyIntent.focus}` : "",
+    _optionalChain([weeklyIntent, 'optionalAccess', _311 => _311.aggressionLevel]) ? `week posture ${String(weeklyIntent.aggressionLevel).replace(/_/g, " ")}` : "",
+    ...(Array.isArray(_optionalChain([readinessState, 'optionalAccess', _312 => _312.factors])) ? readinessState.factors : []),
+    _optionalChain([dayOverride, 'optionalAccess', _313 => _313.reason]) ? String(dayOverride.reason).replace(/_/g, " ") : "",
     nutritionOverride ? `nutrition ${String(nutritionOverride).replace(/_/g, " ")}` : "",
-    _optionalChain([injuryRule, 'optionalAccess', _313 => _313.mods, 'optionalAccess', _314 => _314[0]]) || "",
-    _optionalChain([failureMode, 'optionalAccess', _315 => _315.mode]) && failureMode.mode !== "normal" ? `failure mode ${String(failureMode.mode).replace(/_/g, " ")}` : "",
-    _optionalChain([garminReadiness, 'optionalAccess', _316 => _316.mode]) ? `garmin readiness ${String(garminReadiness.mode).replace(/_/g, " ")}` : "",
-    _optionalChain([deviceSyncAudit, 'optionalAccess', _317 => _317.planMode]) && deviceSyncAudit.planMode !== "normal" ? String(deviceSyncAudit.reason || `device plan mode ${deviceSyncAudit.planMode}`) : "",
-    _optionalChain([environmentSelection, 'optionalAccess', _318 => _318.mode]) ? `${String(environmentSelection.mode).toLowerCase()} environment` : "",
+    _optionalChain([injuryRule, 'optionalAccess', _314 => _314.mods, 'optionalAccess', _315 => _315[0]]) || "",
+    _optionalChain([failureMode, 'optionalAccess', _316 => _316.mode]) && failureMode.mode !== "normal" ? `failure mode ${String(failureMode.mode).replace(/_/g, " ")}` : "",
+    _optionalChain([garminReadiness, 'optionalAccess', _317 => _317.mode]) ? `garmin readiness ${String(garminReadiness.mode).replace(/_/g, " ")}` : "",
+    _optionalChain([deviceSyncAudit, 'optionalAccess', _318 => _318.planMode]) && deviceSyncAudit.planMode !== "normal" ? String(deviceSyncAudit.reason || `device plan mode ${deviceSyncAudit.planMode}`) : "",
+    _optionalChain([environmentSelection, 'optionalAccess', _319 => _319.mode]) ? `${String(environmentSelection.mode).toLowerCase()} environment` : "",
   ]).slice(0, 6);
 
   const modifiedFromBase = comparisonModified || adjustmentEvents.length > 0;
-  const decisionMode = _optionalChain([readinessState, 'optionalAccess', _319 => _319.state])
-    || _optionalChain([resolvedTraining, 'optionalAccess', _320 => _320.readinessState])
+  const decisionMode = _optionalChain([readinessState, 'optionalAccess', _320 => _320.state])
+    || _optionalChain([resolvedTraining, 'optionalAccess', _321 => _321.readinessState])
     || (modifiedFromBase ? "adjusted" : "planned");
-  const decisionModeLabel = _optionalChain([readinessState, 'optionalAccess', _321 => _321.stateLabel])
-    || _optionalChain([resolvedTraining, 'optionalAccess', _322 => _322.readinessStateLabel])
+  const decisionModeLabel = _optionalChain([readinessState, 'optionalAccess', _322 => _322.stateLabel])
+    || _optionalChain([resolvedTraining, 'optionalAccess', _323 => _323.readinessStateLabel])
     || (modifiedFromBase ? "Adjusted" : "Planned");
 
   return {
@@ -5109,17 +5132,17 @@ const resolveWeeklyNutritionEmphasis = ({
     dayOfWeek,
     week: {
       currentWeek,
-      phase: _optionalChain([resolvedTraining, 'optionalAccess', _323 => _323.week, 'optionalAccess', _324 => _324.phase]) || _optionalChain([programBlock, 'optionalAccess', _325 => _325.phase]) || _optionalChain([baseWeek, 'optionalAccess', _326 => _326.phase]) || "",
-      label: _optionalChain([resolvedTraining, 'optionalAccess', _327 => _327.week, 'optionalAccess', _328 => _328.label]) || _optionalChain([programBlock, 'optionalAccess', _329 => _329.label]) || _optionalChain([baseWeek, 'optionalAccess', _330 => _330.label]) || "",
-      architecture: _optionalChain([context, 'optionalAccess', _331 => _331.architecture]) || "",
+      phase: _optionalChain([resolvedTraining, 'optionalAccess', _324 => _324.week, 'optionalAccess', _325 => _325.phase]) || _optionalChain([programBlock, 'optionalAccess', _326 => _326.phase]) || _optionalChain([baseWeek, 'optionalAccess', _327 => _327.phase]) || "",
+      label: _optionalChain([resolvedTraining, 'optionalAccess', _328 => _328.week, 'optionalAccess', _329 => _329.label]) || _optionalChain([programBlock, 'optionalAccess', _330 => _330.label]) || _optionalChain([baseWeek, 'optionalAccess', _331 => _331.label]) || "",
+      architecture: _optionalChain([context, 'optionalAccess', _332 => _332.architecture]) || "",
       programBlock,
       blockIntent: compatibilityBlockIntent,
-      planWeekId: _optionalChain([planWeek, 'optionalAccess', _332 => _332.id]) || "",
-      status: _optionalChain([planWeek, 'optionalAccess', _333 => _333.status]) || _optionalChain([weeklyIntent, 'optionalAccess', _334 => _334.status]) || "planned",
-      adjusted: Boolean(_optionalChain([planWeek, 'optionalAccess', _335 => _335.adjusted]) || _optionalChain([weeklyIntent, 'optionalAccess', _336 => _336.adjusted])),
-      summary: _optionalChain([planWeek, 'optionalAccess', _337 => _337.summary]) || _optionalChain([weeklyIntent, 'optionalAccess', _338 => _338.rationale]) || _optionalChain([programBlock, 'optionalAccess', _339 => _339.summary]) || "",
-      constraints: clonePlainValue(_optionalChain([planWeek, 'optionalAccess', _340 => _340.constraints]) || _optionalChain([weeklyIntent, 'optionalAccess', _341 => _341.weeklyConstraints]) || _optionalChain([programBlock, 'optionalAccess', _342 => _342.constraints]) || []),
-      successDefinition: _optionalChain([weeklyIntent, 'optionalAccess', _343 => _343.successDefinition]) || _optionalChain([programBlock, 'optionalAccess', _344 => _344.successCriteria, 'optionalAccess', _345 => _345[0]]) || "",
+      planWeekId: _optionalChain([planWeek, 'optionalAccess', _333 => _333.id]) || "",
+      status: _optionalChain([planWeek, 'optionalAccess', _334 => _334.status]) || _optionalChain([weeklyIntent, 'optionalAccess', _335 => _335.status]) || "planned",
+      adjusted: Boolean(_optionalChain([planWeek, 'optionalAccess', _336 => _336.adjusted]) || _optionalChain([weeklyIntent, 'optionalAccess', _337 => _337.adjusted])),
+      summary: _optionalChain([planWeek, 'optionalAccess', _338 => _338.summary]) || _optionalChain([weeklyIntent, 'optionalAccess', _339 => _339.rationale]) || _optionalChain([programBlock, 'optionalAccess', _340 => _340.summary]) || "",
+      constraints: clonePlainValue(_optionalChain([planWeek, 'optionalAccess', _341 => _341.constraints]) || _optionalChain([weeklyIntent, 'optionalAccess', _342 => _342.weeklyConstraints]) || _optionalChain([programBlock, 'optionalAccess', _343 => _343.constraints]) || []),
+      successDefinition: _optionalChain([weeklyIntent, 'optionalAccess', _344 => _344.successDefinition]) || _optionalChain([programBlock, 'optionalAccess', _345 => _345.successCriteria, 'optionalAccess', _346 => _346[0]]) || "",
       weeklyIntent,
       planWeek,
       todayPlan: clonePlainValue(todayPlan || null),
@@ -5127,23 +5150,23 @@ const resolveWeeklyNutritionEmphasis = ({
     base: {
       training: baseTraining,
       nutrition: {
-        dayType: _optionalChain([baseTraining, 'optionalAccess', _346 => _346.nutri]) || _optionalChain([nutritionPrescription, 'optionalAccess', _347 => _347.dayType]) || null,
+        dayType: _optionalChain([baseTraining, 'optionalAccess', _347 => _347.nutri]) || _optionalChain([nutritionPrescription, 'optionalAccess', _348 => _348.dayType]) || null,
         prescription: null,
         actual: null,
         comparison: null,
       },
       recovery: {
-        mode: _optionalChain([baseTraining, 'optionalAccess', _348 => _348.type]) === "rest" ? "recovery" : "planned",
-        recommendation: _optionalChain([baseTraining, 'optionalAccess', _349 => _349.recoveryRecommendation]) || _optionalChain([baseRecoveryPrescription, 'optionalAccess', _350 => _350.summary]) || "",
-        success: _optionalChain([baseTraining, 'optionalAccess', _351 => _351.success]) || _optionalChain([baseRecoveryPrescription, 'optionalAccess', _352 => _352.successCriteria, 'optionalAccess', _353 => _353[0]]) || "",
+        mode: _optionalChain([baseTraining, 'optionalAccess', _349 => _349.type]) === "rest" ? "recovery" : "planned",
+        recommendation: _optionalChain([baseTraining, 'optionalAccess', _350 => _350.recoveryRecommendation]) || _optionalChain([baseRecoveryPrescription, 'optionalAccess', _351 => _351.summary]) || "",
+        success: _optionalChain([baseTraining, 'optionalAccess', _352 => _352.success]) || _optionalChain([baseRecoveryPrescription, 'optionalAccess', _353 => _353.successCriteria, 'optionalAccess', _354 => _354[0]]) || "",
         prescription: baseRecoveryPrescription,
         actual: null,
-        summary: _optionalChain([baseRecoveryPrescription, 'optionalAccess', _354 => _354.summary]) || "",
+        summary: _optionalChain([baseRecoveryPrescription, 'optionalAccess', _355 => _355.summary]) || "",
       },
       supplements: {
         plan: supplementsPlan,
         actual: null,
-        summary: _optionalChain([supplementsPlan, 'optionalAccess', _355 => _355.summary]) || "",
+        summary: _optionalChain([supplementsPlan, 'optionalAccess', _356 => _356.summary]) || "",
       },
       logging: {
         dateKey,
@@ -5153,55 +5176,55 @@ const resolveWeeklyNutritionEmphasis = ({
     resolved: {
       training: resolvedTraining,
       nutrition: {
-        dayType: _optionalChain([nutritionPrescription, 'optionalAccess', _356 => _356.dayType]) || _optionalChain([resolvedTraining, 'optionalAccess', _357 => _357.nutri]) || _optionalChain([baseTraining, 'optionalAccess', _358 => _358.nutri]) || null,
+        dayType: _optionalChain([nutritionPrescription, 'optionalAccess', _357 => _357.dayType]) || _optionalChain([resolvedTraining, 'optionalAccess', _358 => _358.nutri]) || _optionalChain([baseTraining, 'optionalAccess', _359 => _359.nutri]) || null,
         prescription: nutritionPrescription,
         reality: nutritionReality,
         actual: nutritionActual,
         comparison: nutritionComparison,
       },
       recovery: {
-        state: _optionalChain([readinessState, 'optionalAccess', _359 => _359.state]) || _optionalChain([resolvedTraining, 'optionalAccess', _360 => _360.readinessState]) || "steady",
-        stateLabel: _optionalChain([readinessState, 'optionalAccess', _361 => _361.stateLabel]) || _optionalChain([resolvedTraining, 'optionalAccess', _362 => _362.readinessStateLabel]) || "Steady",
-        source: _optionalChain([readinessState, 'optionalAccess', _363 => _363.source]) || "deterministic_engine",
-        inputDriven: Boolean(_optionalChain([readinessState, 'optionalAccess', _364 => _364.inputDriven])),
-        coachLine: _optionalChain([readinessState, 'optionalAccess', _365 => _365.coachLine]) || "",
-        recoveryLine: _optionalChain([readinessState, 'optionalAccess', _366 => _366.recoveryLine]) || _optionalChain([resolvedTraining, 'optionalAccess', _367 => _367.recoveryRecommendation]) || "",
-        userVisibleLine: _optionalChain([readinessState, 'optionalAccess', _368 => _368.userVisibleLine]) || "",
-        factors: clonePlainValue(_optionalChain([readinessState, 'optionalAccess', _369 => _369.factors]) || []),
-        metrics: clonePlainValue(_optionalChain([readinessState, 'optionalAccess', _370 => _370.metrics]) || _optionalChain([resolvedTraining, 'optionalAccess', _371 => _371.readinessInputs]) || {}),
-        summary: _optionalChain([resolvedRecoveryPrescription, 'optionalAccess', _372 => _372.summary]) || "",
+        state: _optionalChain([readinessState, 'optionalAccess', _360 => _360.state]) || _optionalChain([resolvedTraining, 'optionalAccess', _361 => _361.readinessState]) || "steady",
+        stateLabel: _optionalChain([readinessState, 'optionalAccess', _362 => _362.stateLabel]) || _optionalChain([resolvedTraining, 'optionalAccess', _363 => _363.readinessStateLabel]) || "Steady",
+        source: _optionalChain([readinessState, 'optionalAccess', _364 => _364.source]) || "deterministic_engine",
+        inputDriven: Boolean(_optionalChain([readinessState, 'optionalAccess', _365 => _365.inputDriven])),
+        coachLine: _optionalChain([readinessState, 'optionalAccess', _366 => _366.coachLine]) || "",
+        recoveryLine: _optionalChain([readinessState, 'optionalAccess', _367 => _367.recoveryLine]) || _optionalChain([resolvedTraining, 'optionalAccess', _368 => _368.recoveryRecommendation]) || "",
+        userVisibleLine: _optionalChain([readinessState, 'optionalAccess', _369 => _369.userVisibleLine]) || "",
+        factors: clonePlainValue(_optionalChain([readinessState, 'optionalAccess', _370 => _370.factors]) || []),
+        metrics: clonePlainValue(_optionalChain([readinessState, 'optionalAccess', _371 => _371.metrics]) || _optionalChain([resolvedTraining, 'optionalAccess', _372 => _372.readinessInputs]) || {}),
+        summary: _optionalChain([resolvedRecoveryPrescription, 'optionalAccess', _373 => _373.summary]) || "",
         prescription: {
           ...clonePlainValue(resolvedRecoveryPrescription || {}),
-          recommendation: _optionalChain([resolvedTraining, 'optionalAccess', _373 => _373.recoveryRecommendation]) || _optionalChain([resolvedRecoveryPrescription, 'optionalAccess', _374 => _374.summary]) || "",
-          success: _optionalChain([resolvedTraining, 'optionalAccess', _375 => _375.success]) || _optionalChain([resolvedRecoveryPrescription, 'optionalAccess', _376 => _376.successCriteria, 'optionalAccess', _377 => _377[0]]) || "",
-          intensityGuidance: _optionalChain([resolvedTraining, 'optionalAccess', _378 => _378.intensityGuidance]) || "",
+          recommendation: _optionalChain([resolvedTraining, 'optionalAccess', _374 => _374.recoveryRecommendation]) || _optionalChain([resolvedRecoveryPrescription, 'optionalAccess', _375 => _375.summary]) || "",
+          success: _optionalChain([resolvedTraining, 'optionalAccess', _376 => _376.success]) || _optionalChain([resolvedRecoveryPrescription, 'optionalAccess', _377 => _377.successCriteria, 'optionalAccess', _378 => _378[0]]) || "",
+          intensityGuidance: _optionalChain([resolvedTraining, 'optionalAccess', _379 => _379.intensityGuidance]) || "",
         },
         actual: actualRecovery,
       },
       supplements: {
         plan: supplementsPlan,
         actual: supplementsActual,
-        summary: _optionalChain([supplementsPlan, 'optionalAccess', _379 => _379.summary]) || "",
+        summary: _optionalChain([supplementsPlan, 'optionalAccess', _380 => _380.summary]) || "",
       },
       logging: {
         dateKey,
-        status: _optionalChain([logging, 'optionalAccess', _380 => _380.sessionStatus]) || "not_logged",
+        status: _optionalChain([logging, 'optionalAccess', _381 => _381.sessionStatus]) || "not_logged",
         dailyCheckin,
         sessionLog,
         nutritionLog,
-        supplementLog: _optionalChain([supplementsActual, 'optionalAccess', _381 => _381.takenMap]) || supplementsActual,
+        supplementLog: _optionalChain([supplementsActual, 'optionalAccess', _382 => _382.takenMap]) || supplementsActual,
         hasCheckin: Boolean(dailyCheckin),
         hasSessionLog: Boolean(sessionLog),
         hasNutritionLog: Boolean(nutritionLog),
-        hasRecoveryLog: Boolean(_optionalChain([actualRecovery, 'optionalAccess', _382 => _382.loggedAt])),
+        hasRecoveryLog: Boolean(_optionalChain([actualRecovery, 'optionalAccess', _383 => _383.loggedAt])),
       },
     },
     decision: {
       mode: decisionMode,
       modeLabel: decisionModeLabel,
       confidence: null,
-      source: _optionalChain([readinessState, 'optionalAccess', _383 => _383.source]) || (_optionalChain([adjustmentEvents, 'access', _384 => _384[0], 'optionalAccess', _385 => _385.trigger]) || "deterministic_engine"),
-      inputDriven: Boolean(_optionalChain([readinessState, 'optionalAccess', _386 => _386.inputDriven])),
+      source: _optionalChain([readinessState, 'optionalAccess', _384 => _384.source]) || (_optionalChain([adjustmentEvents, 'access', _385 => _385[0], 'optionalAccess', _386 => _386.trigger]) || "deterministic_engine"),
+      inputDriven: Boolean(_optionalChain([readinessState, 'optionalAccess', _387 => _387.inputDriven])),
       modifiedFromBase,
     },
     provenance: {
@@ -5238,17 +5261,17 @@ const resolveWeeklyNutritionEmphasis = ({
     flags: {
       isModified: modifiedFromBase,
       coachModified: Boolean(dayOverride || nutritionOverride),
-      environmentModified: Boolean(_optionalChain([environmentSelection, 'optionalAccess', _387 => _387.scope]) === "today" || _optionalChain([resolvedTraining, 'optionalAccess', _388 => _388.environmentNote])),
-      injuryModified: Boolean(_optionalChain([injuryRule, 'optionalAccess', _389 => _389.mods, 'optionalAccess', _390 => _390.length])),
-      readinessModified: Boolean(_optionalChain([readinessState, 'optionalAccess', _391 => _391.state]) && readinessState.state !== "steady"),
+      environmentModified: Boolean(_optionalChain([environmentSelection, 'optionalAccess', _388 => _388.scope]) === "today" || _optionalChain([resolvedTraining, 'optionalAccess', _389 => _389.environmentNote])),
+      injuryModified: Boolean(_optionalChain([injuryRule, 'optionalAccess', _390 => _390.mods, 'optionalAccess', _391 => _391.length])),
+      readinessModified: Boolean(_optionalChain([readinessState, 'optionalAccess', _392 => _392.state]) && readinessState.state !== "steady"),
       nutritionModified: Boolean(
         nutritionOverride
-        || (_optionalChain([nutritionPrescription, 'optionalAccess', _392 => _392.dayType]) && nutritionPrescription.dayType !== _optionalChain([baseTraining, 'optionalAccess', _393 => _393.nutri]))
+        || (_optionalChain([nutritionPrescription, 'optionalAccess', _393 => _393.dayType]) && nutritionPrescription.dayType !== _optionalChain([baseTraining, 'optionalAccess', _394 => _394.nutri]))
       ),
-      deviceModified: Boolean(_optionalChain([garminReadiness, 'optionalAccess', _394 => _394.mode]) || (_optionalChain([deviceSyncAudit, 'optionalAccess', _395 => _395.planMode]) && deviceSyncAudit.planMode !== "normal")),
-      failureModeModified: Boolean(_optionalChain([failureMode, 'optionalAccess', _396 => _396.mode]) && failureMode.mode !== "normal"),
-      minDay: Boolean(_optionalChain([resolvedTraining, 'optionalAccess', _397 => _397.minDay])),
-      restDay: ["rest", "recovery"].includes(String(_optionalChain([resolvedTraining, 'optionalAccess', _398 => _398.type]) || "").toLowerCase()),
+      deviceModified: Boolean(_optionalChain([garminReadiness, 'optionalAccess', _395 => _395.mode]) || (_optionalChain([deviceSyncAudit, 'optionalAccess', _396 => _396.planMode]) && deviceSyncAudit.planMode !== "normal")),
+      failureModeModified: Boolean(_optionalChain([failureMode, 'optionalAccess', _397 => _397.mode]) && failureMode.mode !== "normal"),
+      minDay: Boolean(_optionalChain([resolvedTraining, 'optionalAccess', _398 => _398.minDay])),
+      restDay: ["rest", "recovery"].includes(String(_optionalChain([resolvedTraining, 'optionalAccess', _399 => _399.type]) || "").toLowerCase()),
     },
   };
 }; exports.buildCanonicalPlanDay = buildCanonicalPlanDay;
@@ -5258,33 +5281,41 @@ const resolveWeeklyNutritionEmphasis = ({
   const primary = active[0] || null;
   const secondary = active.slice(1, 3);
   const trainingContext = _trainingcontextservicejs.deriveTrainingContextFromPersonalization.call(void 0, { personalization });
-  const env = _optionalChain([trainingContext, 'optionalAccess', _399 => _399.environment, 'optionalAccess', _400 => _400.confirmed]) ? trainingContext.environment.value : "unknown";
-  const equipmentAccess = _optionalChain([trainingContext, 'optionalAccess', _401 => _401.equipmentAccess, 'optionalAccess', _402 => _402.value]) || _trainingcontextservicejs.TRAINING_EQUIPMENT_VALUES.unknown;
-  const environmentKnown = Boolean(_optionalChain([trainingContext, 'optionalAccess', _403 => _403.environment, 'optionalAccess', _404 => _404.confirmed]));
-  const equipmentKnown = Boolean(_optionalChain([trainingContext, 'optionalAccess', _405 => _405.equipmentAccess, 'optionalAccess', _406 => _406.confirmed]));
+  const env = _optionalChain([trainingContext, 'optionalAccess', _400 => _400.environment, 'optionalAccess', _401 => _401.confirmed]) ? trainingContext.environment.value : "unknown";
+  const equipmentAccess = _optionalChain([trainingContext, 'optionalAccess', _402 => _402.equipmentAccess, 'optionalAccess', _403 => _403.value]) || _trainingcontextservicejs.TRAINING_EQUIPMENT_VALUES.unknown;
+  const environmentKnown = Boolean(_optionalChain([trainingContext, 'optionalAccess', _404 => _404.environment, 'optionalAccess', _405 => _405.confirmed]));
+  const equipmentKnown = Boolean(_optionalChain([trainingContext, 'optionalAccess', _406 => _406.equipmentAccess, 'optionalAccess', _407 => _407.confirmed]));
   const hasGym = equipmentAccess === _trainingcontextservicejs.TRAINING_EQUIPMENT_VALUES.fullGym || equipmentAccess === _trainingcontextservicejs.TRAINING_EQUIPMENT_VALUES.basicGym;
   const runningGoal = active.find(g => g.category === "running");
   const strengthGoal = active.find(g => g.category === "strength");
   const bodyCompGoal = active.find(g => g.category === "body_comp");
-  const raceNear = _canonicalathleteservicejs.daysUntil.call(void 0, _optionalChain([runningGoal, 'optionalAccess', _407 => _407.targetDate])) <= 56;
-  const inconsistencyRisk = _optionalChain([momentum, 'optionalAccess', _408 => _408.inconsistencyRisk]) || "medium";
-  const lowBandwidth = inconsistencyRisk === "high" || _optionalChain([learningLayer, 'optionalAccess', _409 => _409.adjustmentBias]) === "simplify";
-  const strengthPriority = _optionalChain([primary, 'optionalAccess', _410 => _410.category]) === "strength" && !lowBandwidth;
+  const hasRunningGoal = Boolean(runningGoal);
+  const raceNear = _canonicalathleteservicejs.daysUntil.call(void 0, _optionalChain([runningGoal, 'optionalAccess', _408 => _408.targetDate])) <= 56;
+  const inconsistencyRisk = _optionalChain([momentum, 'optionalAccess', _409 => _409.inconsistencyRisk]) || "medium";
+  const lowBandwidth = inconsistencyRisk === "high" || _optionalChain([learningLayer, 'optionalAccess', _410 => _410.adjustmentBias]) === "simplify";
+  const strengthPriority = _optionalChain([primary, 'optionalAccess', _411 => _411.category]) === "strength" && !lowBandwidth;
   const bodyCompActive = !!bodyCompGoal;
-  const resolvedGoals = active.map((goal) => _optionalChain([goal, 'optionalAccess', _411 => _411.resolvedGoal])).filter(Boolean);
+  const resolvedGoals = active.map((goal) => _optionalChain([goal, 'optionalAccess', _412 => _412.resolvedGoal])).filter(Boolean);
   const upperBodyMaintenance = Boolean(runningGoal && strengthGoal && goalLooksUpperBodyFocused(strengthGoal));
 
-  const runningScore = (_optionalChain([primary, 'optionalAccess', _412 => _412.category]) === "running" ? 3 : 0) + (runningGoal ? 2 : 0) + (raceNear ? 2 : 0);
+  const runningScore = (_optionalChain([primary, 'optionalAccess', _413 => _413.category]) === "running" ? 3 : 0) + (runningGoal ? 2 : 0) + (raceNear ? 2 : 0);
   const strengthEnvironmentScore = hasGym ? 1 : equipmentKnown ? -1 : 0;
-  const strengthScore = (_optionalChain([primary, 'optionalAccess', _413 => _413.category]) === "strength" ? 3 : 0) + (strengthGoal ? 2 : 0) + strengthEnvironmentScore;
-  const bodyCompScore = (_optionalChain([primary, 'optionalAccess', _414 => _414.category]) === "body_comp" ? 3 : 0) + (bodyCompGoal ? 2 : 0) + (lowBandwidth ? 1 : 0);
+  const strengthScore = (_optionalChain([primary, 'optionalAccess', _414 => _414.category]) === "strength" ? 3 : 0) + (strengthGoal ? 2 : 0) + strengthEnvironmentScore;
+  const bodyCompScore = (_optionalChain([primary, 'optionalAccess', _415 => _415.category]) === "body_comp" ? 3 : 0) + (bodyCompGoal ? 2 : 0) + (lowBandwidth ? 1 : 0);
 
   let architecture = "hybrid_performance";
-  if (lowBandwidth) architecture = "maintenance_rebuild";
-  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && (raceNear || _optionalChain([primary, 'optionalAccess', _415 => _415.category]) === "running") && upperBodyMaintenance) architecture = "event_prep_upper_body_maintenance";
-  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && (raceNear || _optionalChain([primary, 'optionalAccess', _416 => _416.category]) === "running")) architecture = "race_prep_dominant";
+  if (lowBandwidth) {
+    if (_optionalChain([primary, 'optionalAccess', _416 => _416.category]) === "strength") architecture = "strength_dominant";
+    else if (_optionalChain([primary, 'optionalAccess', _417 => _417.category]) === "body_comp") architecture = "body_comp_conditioning";
+    else architecture = "maintenance_rebuild";
+  } else if (_optionalChain([primary, 'optionalAccess', _418 => _418.category]) === "running" && upperBodyMaintenance) architecture = "event_prep_upper_body_maintenance";
+  else if (_optionalChain([primary, 'optionalAccess', _419 => _419.category]) === "running") architecture = "race_prep_dominant";
+  else if (_optionalChain([primary, 'optionalAccess', _420 => _420.category]) === "body_comp") architecture = "body_comp_conditioning";
+  else if (_optionalChain([primary, 'optionalAccess', _421 => _421.category]) === "strength") architecture = "strength_dominant";
+  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && raceNear && upperBodyMaintenance) architecture = "event_prep_upper_body_maintenance";
+  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && raceNear) architecture = "race_prep_dominant";
   else if (bodyCompScore >= Math.max(runningScore, strengthScore)) architecture = "body_comp_conditioning";
-  else if (strengthScore >= Math.max(runningScore, bodyCompScore)) architecture = hasGym ? "strength_dominant" : "hybrid_performance";
+  else if (strengthScore >= Math.max(runningScore, bodyCompScore)) architecture = "strength_dominant";
 
   const splits = {
     event_prep_upper_body_maintenance: { run: 4, strength: 2, conditioning: 0, recovery: 1 },
@@ -5294,18 +5325,27 @@ const resolveWeeklyNutritionEmphasis = ({
     hybrid_performance: { run: 3, strength: 3, conditioning: 1, recovery: 1 },
     maintenance_rebuild: { run: 2, strength: 2, conditioning: 1, recovery: 2 },
   };
-  const split = splits[architecture];
+  const noRunGoalSplitOverrides = {
+    strength_dominant: { run: 0, strength: 4, conditioning: 2, recovery: 1 },
+    body_comp_conditioning: { run: 0, strength: 3, conditioning: 3, recovery: 1 },
+    hybrid_performance: { run: 0, strength: 3, conditioning: 2, recovery: 1 },
+    maintenance_rebuild: { run: 0, strength: 2, conditioning: 1, recovery: 2 },
+  };
+  const split = !hasRunningGoal && noRunGoalSplitOverrides[architecture]
+    ? noRunGoalSplitOverrides[architecture]
+    : splits[architecture];
 
   const constraints = [];
   if (equipmentKnown && !hasGym && strengthGoal) constraints.push("Bench-specific progression constrained by the confirmed equipment setup; using lower-equipment substitutes.");
   if (!["race_prep_dominant", "event_prep_upper_body_maintenance"].includes(architecture) && runningGoal) constraints.push("Running kept supportive/maintenance until running priority or race proximity increases.");
   if (architecture === "event_prep_upper_body_maintenance") constraints.push("Lower-body lifting volume is capped so the event-prep lane keeps the cleanest recovery windows.");
   const why = [
-    `Primary goal: ${_optionalChain([primary, 'optionalAccess', _417 => _417.name]) || "none set"}.`,
+    `Primary goal: ${_optionalChain([primary, 'optionalAccess', _422 => _422.name]) || "none set"}.`,
     environmentKnown ? `Environment: ${env}.` : "Environment is still unconfirmed, so planning stays setup-neutral where possible.",
     `Inconsistency risk: ${inconsistencyRisk}.`,
     bodyCompGoal ? "Body-comp goal is active and materially affects split allocation." : null,
     raceNear ? "Race date is near enough to increase running weight." : null,
+    !hasRunningGoal ? "No running goal is active, so conditioning stays non-run by default." : null,
     upperBodyMaintenance ? "Secondary strength work is upper-body biased, so lower-body fatigue can stay subordinate to event prep." : null,
   ].filter(Boolean);
 
@@ -5313,10 +5353,10 @@ const resolveWeeklyNutritionEmphasis = ({
 
   const dayTemplates = {
     event_prep_upper_body_maintenance: {
-      1: { type: "hard-run", label: `${_optionalChain([baseWeek, 'access', _418 => _418.mon, 'optionalAccess', _419 => _419.t]) || "Quality"} Run`, run: baseWeek.mon, nutri: "hardRun" },
+      1: { type: "hard-run", label: `${_optionalChain([baseWeek, 'access', _423 => _423.mon, 'optionalAccess', _424 => _424.t]) || "Quality"} Run`, run: baseWeek.mon, nutri: "hardRun" },
       2: { type: "strength+prehab", label: "Upper-Body Maintenance A", strSess: baseWeek.str || "A", nutri: "strength", upperBodyBias: true },
       3: { type: "easy-run", label: "Easy Run", run: baseWeek.fri || { t: "Easy", d: "25-35 min" }, nutri: "easyRun" },
-      4: { type: "hard-run", label: `${_optionalChain([baseWeek, 'access', _420 => _420.thu, 'optionalAccess', _421 => _421.t]) || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
+      4: { type: "hard-run", label: `${_optionalChain([baseWeek, 'access', _425 => _425.thu, 'optionalAccess', _426 => _426.t]) || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
       5: { type: "strength+prehab", label: "Upper-Body Maintenance B", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength", upperBodyBias: true },
       6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: "longRun" },
       0: restDay("Active Recovery"),
@@ -5325,45 +5365,61 @@ const resolveWeeklyNutritionEmphasis = ({
       1: { type: "run+strength", label: "Quality Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "hardRun" },
       2: { type: "conditioning", label: "Conditioning / OTF", nutri: "otf" },
       3: { type: "strength+prehab", label: "Strength + Prehab", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
-      4: { type: "hard-run", label: `${_optionalChain([baseWeek, 'access', _422 => _422.thu, 'optionalAccess', _423 => _423.t]) || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
+      4: { type: "hard-run", label: `${_optionalChain([baseWeek, 'access', _427 => _427.thu, 'optionalAccess', _428 => _428.t]) || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
       5: { type: "easy-run", label: "Easy Run", run: baseWeek.fri, nutri: "easyRun" },
       6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: "longRun" },
       0: restDay("Active Recovery"),
     },
     strength_dominant: {
       1: { type: "strength+prehab", label: "Strength Priority A", strSess: "A", nutri: "strength" },
-      2: { type: "easy-run", label: "Supportive Conditioning Run", run: { t: "Easy", d: "20-30 min zone-2" }, nutri: "easyRun" },
+      2: hasRunningGoal
+        ? { type: "easy-run", label: "Supportive Conditioning Run", run: { t: "Easy", d: "20-30 min zone-2" }, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min zone-2 bike, rower, incline walk, or circuit", lowImpact: true }),
       3: { type: "strength+prehab", label: "Strength Priority B", strSess: "B", nutri: "strength" },
       4: { type: "strength+prehab", label: "Upper Push/Pull Strength", strSess: "A", nutri: "strength" },
-      5: { type: "easy-run", label: "Conditioning Support", run: { t: "Easy", d: "20-25 min + strides optional" }, nutri: "easyRun" },
+      5: hasRunningGoal
+        ? { type: "easy-run", label: "Conditioning Support", run: { t: "Easy", d: "20-25 min + strides optional" }, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Conditioning Support", detail: "15-25 min controlled conditioning + mobility finish", lowImpact: true }),
       6: { type: "strength+prehab", label: "Full-Body Strength", strSess: "B", nutri: "strength" },
       0: restDay("Active Recovery"),
     },
     body_comp_conditioning: {
       1: { type: "strength+prehab", label: "Metabolic Strength A", strSess: "A", nutri: "strength" },
-      2: { type: "easy-run", label: "Conditioning (low-friction)", run: { t: "Easy", d: "25-35 min zone-2" }, nutri: "easyRun" },
+      2: hasRunningGoal
+        ? { type: "easy-run", label: "Conditioning (low-friction)", run: { t: "Easy", d: "25-35 min zone-2" }, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Conditioning (low-friction)", detail: "25-35 min zone-2 bike, incline walk, or circuit", lowImpact: true }),
       3: { type: "strength+prehab", label: "Metabolic Strength B", strSess: "B", nutri: "strength" },
       4: { type: "conditioning", label: "Conditioning Intervals / OTF", nutri: "otf" },
       5: { type: "strength+prehab", label: "Strength Retention", strSess: "A", nutri: "strength" },
-      6: { type: "easy-run", label: "Supportive Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: "easyRun" },
+      6: hasRunningGoal
+        ? { type: "easy-run", label: "Supportive Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min easy conditioning or brisk walk", lowImpact: true }),
       0: restDay("Active Recovery - Steps + Mobility"),
     },
     hybrid_performance: {
-      1: { type: "run+strength", label: "Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "easyRun" },
+      1: hasRunningGoal
+        ? { type: "run+strength", label: "Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "easyRun" }
+        : { type: "strength+prehab", label: "Strength + Conditioning Primer", strSess: baseWeek.str, nutri: "strength" },
       2: { type: "conditioning", label: "Conditioning", nutri: "otf" },
       3: { type: "strength+prehab", label: "Strength B + Prehab", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
-      4: { type: "hard-run", label: `${_optionalChain([baseWeek, 'access', _424 => _424.thu, 'optionalAccess', _425 => _425.t]) || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
+      4: hasRunningGoal
+        ? { type: "hard-run", label: `${_optionalChain([baseWeek, 'access', _429 => _429.thu, 'optionalAccess', _430 => _430.t]) || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" }
+        : buildConditioningSession({ label: "Conditioning Intervals", detail: "20-30 min controlled intervals or mixed-modality conditioning" }),
       5: { type: "strength+prehab", label: "Strength Focus", strSess: baseWeek.str, nutri: "strength" },
-      6: { type: "easy-run", label: "Supportive Endurance", run: baseWeek.fri, nutri: "easyRun" },
+      6: hasRunningGoal
+        ? { type: "easy-run", label: "Supportive Endurance", run: baseWeek.fri, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min easy conditioning to keep work capacity alive", lowImpact: true }),
       0: restDay("Active Recovery"),
     },
     maintenance_rebuild: {
       1: { type: "strength+prehab", label: "Short Version Strength", strSess: "A", nutri: "strength" },
       2: restDay("Active Recovery - Walk"),
-      3: { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: "easyRun" },
+      3: hasRunningGoal
+        ? { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Short Conditioning", detail: "15-20 min easy conditioning or brisk walk", lowImpact: true }),
       4: { type: "strength+prehab", label: "Short Version Strength B", strSess: "B", nutri: "strength" },
       5: restDay("Active Recovery"),
-      6: { type: "conditioning", label: "Optional Conditioning", nutri: "easyRun" },
+      6: buildConditioningSession({ label: "Optional Conditioning", detail: "15-20 min optional easy conditioning", lowImpact: true }),
       0: restDay("Active Recovery"),
     },
   };
@@ -5388,42 +5444,42 @@ const resolveWeeklyNutritionEmphasis = ({
   };
 
   const annotatedTemplates = annotateTemplate(dayTemplates[architecture]);
-  let strengthSessionsPerWeek = Object.values(annotatedTemplates).filter(s => ["run+strength", "strength+prehab"].includes(_optionalChain([s, 'optionalAccess', _426 => _426.type]))).length;
+  let strengthSessionsPerWeek = Object.values(annotatedTemplates).filter(s => ["run+strength", "strength+prehab"].includes(_optionalChain([s, 'optionalAccess', _431 => _431.type]))).length;
   if (strengthGoal && strengthSessionsPerWeek < 1) {
     annotatedTemplates[3] = { type: "strength+prehab", label: "Minimum Strength Touchpoint (Short Strength)", strSess: "A", nutri: "strength", strengthDose: "20-30 min maintenance strength" };
     strengthSessionsPerWeek = 1;
   }
 
   const maintainedGoals = active
-    .filter(g => g.id !== _optionalChain([primary, 'optionalAccess', _427 => _427.id]) && g.category !== "injury_prevention")
+    .filter(g => g.id !== _optionalChain([primary, 'optionalAccess', _432 => _432.id]) && g.category !== "injury_prevention")
     .slice(0, 2)
     .map(g => g.name);
-  const minimizedGoal = _optionalChain([active, 'access', _428 => _428.find, 'call', _429 => _429(g => g.category === "injury_prevention"), 'optionalAccess', _430 => _430.name]) || "non-primary volume";
+  const minimizedGoal = _optionalChain([active, 'access', _433 => _433.find, 'call', _434 => _434(g => g.category === "injury_prevention"), 'optionalAccess', _435 => _435.name]) || "non-primary volume";
   const goalFeasibility = resolvedGoals.length
     ? _goalfeasibilityservicejs.assessGoalFeasibility.call(void 0, {
         resolvedGoals,
         userBaseline: {
-          experienceLevel: _optionalChain([personalization, 'optionalAccess', _431 => _431.profile, 'optionalAccess', _432 => _432.estimatedFitnessLevel]) || _optionalChain([personalization, 'optionalAccess', _433 => _433.canonicalAthlete, 'optionalAccess', _434 => _434.userProfile, 'optionalAccess', _435 => _435.experienceLevel]) || "unknown",
-          fitnessLevel: _optionalChain([personalization, 'optionalAccess', _436 => _436.fitnessSignals, 'optionalAccess', _437 => _437.fitnessLevel]) || _optionalChain([personalization, 'optionalAccess', _438 => _438.profile, 'optionalAccess', _439 => _439.fitnessLevel]) || "",
-          currentBaseline: _optionalChain([personalization, 'optionalAccess', _440 => _440.profile, 'optionalAccess', _441 => _441.goalMix]) || "",
-          primaryGoalLabel: _optionalChain([primary, 'optionalAccess', _442 => _442.name]) || "",
+          experienceLevel: _optionalChain([personalization, 'optionalAccess', _436 => _436.profile, 'optionalAccess', _437 => _437.estimatedFitnessLevel]) || _optionalChain([personalization, 'optionalAccess', _438 => _438.canonicalAthlete, 'optionalAccess', _439 => _439.userProfile, 'optionalAccess', _440 => _440.experienceLevel]) || "unknown",
+          fitnessLevel: _optionalChain([personalization, 'optionalAccess', _441 => _441.fitnessSignals, 'optionalAccess', _442 => _442.fitnessLevel]) || _optionalChain([personalization, 'optionalAccess', _443 => _443.profile, 'optionalAccess', _444 => _444.fitnessLevel]) || "",
+          currentBaseline: _optionalChain([personalization, 'optionalAccess', _445 => _445.profile, 'optionalAccess', _446 => _446.goalMix]) || "",
+          primaryGoalLabel: _optionalChain([primary, 'optionalAccess', _447 => _447.name]) || "",
         },
         scheduleReality: {
-          trainingDaysPerWeek: Number(_optionalChain([personalization, 'optionalAccess', _443 => _443.userGoalProfile, 'optionalAccess', _444 => _444.days_per_week]) || _optionalChain([personalization, 'optionalAccess', _445 => _445.canonicalAthlete, 'optionalAccess', _446 => _446.userProfile, 'optionalAccess', _447 => _447.daysPerWeek]) || 0),
-          sessionLength: _optionalChain([trainingContext, 'optionalAccess', _448 => _448.sessionDuration, 'optionalAccess', _449 => _449.confirmed]) ? trainingContext.sessionDuration.value : "",
+          trainingDaysPerWeek: Number(_optionalChain([personalization, 'optionalAccess', _448 => _448.userGoalProfile, 'optionalAccess', _449 => _449.days_per_week]) || _optionalChain([personalization, 'optionalAccess', _450 => _450.canonicalAthlete, 'optionalAccess', _451 => _451.userProfile, 'optionalAccess', _452 => _452.daysPerWeek]) || 0),
+          sessionLength: _optionalChain([trainingContext, 'optionalAccess', _453 => _453.sessionDuration, 'optionalAccess', _454 => _454.confirmed]) ? trainingContext.sessionDuration.value : "",
           trainingLocation: environmentKnown ? env : "",
           scheduleNotes: lowBandwidth ? "Bandwidth is currently limited." : "",
         },
         currentExperienceContext: {
           injuryConstraintContext: {
-            constraints: _optionalChain([personalization, 'optionalAccess', _450 => _450.injuryPainState, 'optionalAccess', _451 => _451.notes]) ? [personalization.injuryPainState.notes] : [],
-            injuryText: _optionalChain([personalization, 'optionalAccess', _452 => _452.injuryPainState, 'optionalAccess', _453 => _453.notes]) || "",
+            constraints: _optionalChain([personalization, 'optionalAccess', _455 => _455.injuryPainState, 'optionalAccess', _456 => _456.notes]) ? [personalization.injuryPainState.notes] : [],
+            injuryText: _optionalChain([personalization, 'optionalAccess', _457 => _457.injuryPainState, 'optionalAccess', _458 => _458.notes]) || "",
           },
           equipmentAccessContext: {
-            equipment: _optionalChain([trainingContext, 'optionalAccess', _454 => _454.equipmentAccess, 'optionalAccess', _455 => _455.confirmed]) ? (trainingContext.equipmentAccess.items || []) : [],
+            equipment: _optionalChain([trainingContext, 'optionalAccess', _459 => _459.equipmentAccess, 'optionalAccess', _460 => _460.confirmed]) ? (trainingContext.equipmentAccess.items || []) : [],
             trainingLocation: environmentKnown ? env : "",
           },
-          startingFresh: Boolean(_optionalChain([personalization, 'optionalAccess', _456 => _456.planResetUndo, 'optionalAccess', _457 => _457.startedAt])),
+          startingFresh: Boolean(_optionalChain([personalization, 'optionalAccess', _461 => _461.planResetUndo, 'optionalAccess', _462 => _462.startedAt])),
         },
         now: Date.now(),
       })
@@ -5437,7 +5493,7 @@ const resolveWeeklyNutritionEmphasis = ({
     bodyCompActive,
     inconsistencyRisk,
     trainingContext,
-    drivers: [_optionalChain([primary, 'optionalAccess', _458 => _458.name]), ...secondary.map(g => g.name)].filter(Boolean),
+    drivers: [_optionalChain([primary, 'optionalAccess', _463 => _463.name]), ...secondary.map(g => g.name)].filter(Boolean),
     unlockMessage: equipmentKnown && !hasGym && strengthGoal ? "When gym access returns, bench-specific progression can move from foundation mode to direct loading." : "",
     goalFeasibility,
   };
@@ -5453,10 +5509,10 @@ const resolveWeeklyNutritionEmphasis = ({
     programContext,
   });
   const blockIntent = buildProgramBlockCompatibilityIntent(programBlock) || {
-    prioritized: _optionalChain([primary, 'optionalAccess', _459 => _459.name]) || "Consistency and execution",
+    prioritized: _optionalChain([primary, 'optionalAccess', _464 => _464.name]) || "Consistency and execution",
     maintained: maintainedGoals.length ? maintainedGoals : ["general fitness"],
     minimized: minimizedGoal,
-    narrative: `This block prioritizes ${_optionalChain([primary, 'optionalAccess', _460 => _460.category]) || "consistency"}. ${maintainedGoals[0] ? `${maintainedGoals[0]} is maintained.` : "Secondary goals are maintained."} ${bodyCompActive ? "Core work stays minimal but consistent." : "Non-primary accessories stay intentionally limited."}`,
+    narrative: `This block prioritizes ${_optionalChain([primary, 'optionalAccess', _465 => _465.category]) || "consistency"}. ${maintainedGoals[0] ? `${maintainedGoals[0]} is maintained.` : "Secondary goals are maintained."} ${bodyCompActive ? "Core work stays minimal but consistent." : "Non-primary accessories stay intentionally limited."}`,
   };
 
   return {
@@ -5464,7 +5520,7 @@ const resolveWeeklyNutritionEmphasis = ({
     split,
     why,
     constraints,
-    drivers: [_optionalChain([primary, 'optionalAccess', _461 => _461.name]), ...secondary.map(g => g.name)].filter(Boolean),
+    drivers: [_optionalChain([primary, 'optionalAccess', _466 => _466.name]), ...secondary.map(g => g.name)].filter(Boolean),
     unlockMessage: programContext.unlockMessage,
     dayTemplates: annotatedTemplates,
     programContext,
@@ -5496,7 +5552,7 @@ const labelPhaseWeeks = (rows = []) => {
   const counts = {};
   return rows.map((row) => {
     if (row.kind !== "plan") return row;
-    const phase = _optionalChain([row, 'optionalAccess', _462 => _462.template, 'optionalAccess', _463 => _463.phase]) || "BASE";
+    const phase = _optionalChain([row, 'optionalAccess', _467 => _467.template, 'optionalAccess', _468 => _468.phase]) || "BASE";
     counts[phase] = (counts[phase] || 0) + 1;
     return { ...row, phaseWeek: counts[phase], phaseLabel: `${phase} · Week ${counts[phase]}` };
   });
@@ -5528,7 +5584,7 @@ const labelPhaseWeeks = (rows = []) => {
 
   const buildPlanWeekRow = (idx) => {
     const absoluteWeek = currentWeek + idx;
-    const templateIndex = Math.max(0, Math.min((absoluteWeek - 1), (_optionalChain([weekTemplates, 'optionalAccess', _464 => _464.length]) || 1) - 1));
+    const templateIndex = Math.max(0, Math.min((absoluteWeek - 1), (_optionalChain([weekTemplates, 'optionalAccess', _469 => _469.length]) || 1) - 1));
     const template = weekTemplates[templateIndex] || weekTemplates[weekTemplates.length - 1] || {};
     const startDate = new Date();
     startDate.setDate(startDate.getDate() + (idx * 7));
@@ -5540,7 +5596,7 @@ const labelPhaseWeeks = (rows = []) => {
       template,
       weekTemplates,
       referenceTemplate: referenceTemplate || template,
-      label: `${_optionalChain([template, 'optionalAccess', _465 => _465.phase]) || "BASE"} - Week ${absoluteWeek}`,
+      label: `${_optionalChain([template, 'optionalAccess', _470 => _470.phase]) || "BASE"} - Week ${absoluteWeek}`,
       specificity: exports.getSpecificityBand.call(void 0, idx),
       kind: "plan",
       startDate,
@@ -5554,7 +5610,7 @@ const labelPhaseWeeks = (rows = []) => {
       sessionsByDay,
       momentum,
       learningLayer,
-      weeklyCheckin: _optionalChain([weeklyCheckins, 'optionalAccess', _466 => _466[String(absoluteWeek)]]) || {},
+      weeklyCheckin: _optionalChain([weeklyCheckins, 'optionalAccess', _471 => _471[String(absoluteWeek)]]) || {},
       coachPlanAdjustments,
       failureMode: isCurrentWeek ? failureMode : {},
       environmentSelection: isCurrentWeek ? environmentSelection : null,
@@ -5577,7 +5633,7 @@ const labelPhaseWeeks = (rows = []) => {
     const fallback = Array.from({ length: horizonWeeks }).map((_, idx) => buildPlanWeekRow(idx));
     return fallback.map((row) => ({
       ...row,
-      weekLabel: _optionalChain([row, 'optionalAccess', _467 => _467.planWeek, 'optionalAccess', _468 => _468.label]) || `${_optionalChain([row, 'optionalAccess', _469 => _469.template, 'optionalAccess', _470 => _470.phase]) || "BASE"} - Week ${row.absoluteWeek}`,
+      weekLabel: _optionalChain([row, 'optionalAccess', _472 => _472.planWeek, 'optionalAccess', _473 => _473.label]) || `${_optionalChain([row, 'optionalAccess', _474 => _474.template, 'optionalAccess', _475 => _475.phase]) || "BASE"} - Week ${row.absoluteWeek}`,
     }));
   }
 
@@ -5586,7 +5642,7 @@ const labelPhaseWeeks = (rows = []) => {
     const rows = Array.from({ length: horizonWeeks }).map((_, idx) => buildPlanWeekRow(idx));
     return labelPhaseWeeks(rows).map(row => ({
       ...row,
-      weekLabel: _optionalChain([row, 'optionalAccess', _471 => _471.planWeek, 'optionalAccess', _472 => _472.label]) || row.weekLabel || row.phaseLabel || `Week ${row.absoluteWeek}`,
+      weekLabel: _optionalChain([row, 'optionalAccess', _476 => _476.planWeek, 'optionalAccess', _477 => _477.label]) || row.weekLabel || row.phaseLabel || `Week ${row.absoluteWeek}`,
     }));
   }
 
@@ -5662,15 +5718,15 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
   const experience = userProfile.experienceLevel || userProfile.experience_level || "beginner";
   const targetDays = userProfile.daysPerWeek || userProfile.days_per_week || 3;
   const trainingContext = userProfile.trainingContext || null;
-  const sessionLen = _optionalChain([trainingContext, 'optionalAccess', _473 => _473.sessionDuration, 'optionalAccess', _474 => _474.confirmed])
+  const sessionLen = _optionalChain([trainingContext, 'optionalAccess', _478 => _478.sessionDuration, 'optionalAccess', _479 => _479.confirmed])
     ? trainingContext.sessionDuration.value
     : (userProfile.sessionLength || userProfile.session_length || _trainingcontextservicejs.TRAINING_SESSION_DURATION_VALUES.min30);
   let duration = SESSION_DURATIONS[sessionLen] || 30;
   const hasConstraints = (userProfile.constraints || []).length > 0;
-  const intensityPosture = _optionalChain([trainingContext, 'optionalAccess', _475 => _475.intensityPosture, 'optionalAccess', _476 => _476.confirmed])
+  const intensityPosture = _optionalChain([trainingContext, 'optionalAccess', _480 => _480.intensityPosture, 'optionalAccess', _481 => _481.confirmed])
     ? trainingContext.intensityPosture.value
     : _trainingcontextservicejs.TRAINING_INTENSITY_VALUES.unknown;
-  const hasConfirmedSessionDuration = Boolean(_optionalChain([trainingContext, 'optionalAccess', _477 => _477.sessionDuration, 'optionalAccess', _478 => _478.confirmed]));
+  const hasConfirmedSessionDuration = Boolean(_optionalChain([trainingContext, 'optionalAccess', _482 => _482.sessionDuration, 'optionalAccess', _483 => _483.confirmed]));
 
   const todayKey = recentActivity.todayKey || new Date().toISOString().split("T")[0];
   const logs = recentActivity.logs || {};
@@ -5678,10 +5734,11 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
   const fatigueTrend = fatigueSignals.trend || "stable";
   const momentum = fatigueSignals.momentum || "stable";
   const injuryLevel = fatigueSignals.injuryLevel || "none";
-  const planWeek = _optionalChain([planningContext, 'optionalAccess', _479 => _479.planWeek]) || null;
-  const programBlock = _optionalChain([planningContext, 'optionalAccess', _480 => _480.programBlock]) || _optionalChain([planWeek, 'optionalAccess', _481 => _481.programBlock]) || null;
-  const weeklyIntent = _optionalChain([planningContext, 'optionalAccess', _482 => _482.weeklyIntent]) || _optionalChain([planWeek, 'optionalAccess', _483 => _483.weeklyIntent]) || null;
-  const plannedSession = _optionalChain([planningContext, 'optionalAccess', _484 => _484.plannedSession]) || null;
+  const planWeek = _optionalChain([planningContext, 'optionalAccess', _484 => _484.planWeek]) || null;
+  const programBlock = _optionalChain([planningContext, 'optionalAccess', _485 => _485.programBlock]) || _optionalChain([planWeek, 'optionalAccess', _486 => _486.programBlock]) || null;
+  const weeklyIntent = _optionalChain([planningContext, 'optionalAccess', _487 => _487.weeklyIntent]) || _optionalChain([planWeek, 'optionalAccess', _488 => _488.weeklyIntent]) || null;
+  const plannedSession = _optionalChain([planningContext, 'optionalAccess', _489 => _489.plannedSession]) || null;
+  const plannedSessionKind = resolvePlannedSessionKind(plannedSession);
 
   // ── 1. Compute recent activity window (last 7 days) ──────────────
   const today = new Date(todayKey + "T12:00:00");
@@ -5743,13 +5800,13 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
   }
 
   // ── 4. Re-entry logic (long gap) ─────────────────────────────────
-  if (_optionalChain([plannedSession, 'optionalAccess', _485 => _485.type]) === "rest") {
+  if (_optionalChain([plannedSession, 'optionalAccess', _490 => _490.type]) === "rest") {
     return {
       type: "recovery",
       duration: Math.min(duration, 20),
       intensity: "low",
-      label: _optionalChain([plannedSession, 'optionalAccess', _486 => _486.label]) || "Active Recovery",
-      reason: _optionalChain([weeklyIntent, 'optionalAccess', _487 => _487.focus])
+      label: _optionalChain([plannedSession, 'optionalAccess', _491 => _491.label]) || "Active Recovery",
+      reason: _optionalChain([weeklyIntent, 'optionalAccess', _492 => _492.focus])
         ? `This week's plan protects ${String(weeklyIntent.focus).toLowerCase()} with a recovery day today.`
         : "This week's plan calls for recovery today.",
     };
@@ -5757,6 +5814,16 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
 
   const isReEntry = daysSinceLastWorkout >= 4;
   if (isReEntry) {
+    if (plannedSession && plannedSessionKind && plannedSessionKind !== "recovery") {
+      const plannedLabel = _optionalChain([plannedSession, 'optionalAccess', _493 => _493.label]) || (plannedSessionKind === "strength" ? "Strength session" : "Conditioning session");
+      return {
+        type: plannedSessionKind,
+        duration: Math.min(duration, plannedSessionKind === "strength" ? 30 : 25),
+        intensity: "low",
+        label: plannedLabel,
+        reason: `${daysSinceLastWorkout} days since last session. Starting with the easiest version of today's planned ${plannedLabel.toLowerCase()} so the current block stays aligned.`,
+      };
+    }
     return {
       type: "strength",
       duration: Math.min(duration, 25),
@@ -5771,9 +5838,10 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
   // Position in rotation = total sessions completed this week
   const rotationIndex = sessionsThisWeek % rotation.length;
   let sessionType = rotation[rotationIndex];
-  const plannedSessionType = String(_optionalChain([plannedSession, 'optionalAccess', _488 => _488.type]) || "").toLowerCase();
-  if (/strength/.test(plannedSessionType)) sessionType = "strength";
-  else if (/run|conditioning/.test(plannedSessionType)) sessionType = "cardio";
+  const plannedSessionType = String(_optionalChain([plannedSession, 'optionalAccess', _494 => _494.type]) || "").toLowerCase();
+  if (plannedSessionType === "run+strength") sessionType = "cardio";
+  else if (/strength/.test(plannedSessionType)) sessionType = "strength";
+  else if (/run|conditioning|otf/.test(plannedSessionType)) sessionType = "cardio";
 
   // Balance correction: if one type is overrepresented, flip
   const targetSplit = rotation.filter(t => t === "strength").length / rotation.length;
@@ -5795,9 +5863,9 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
   if (hasConstraints || fatigue >= 5) {
     intensity = "low";
   }
-  if (_optionalChain([programBlock, 'optionalAccess', _489 => _489.recoveryPosture, 'optionalAccess', _490 => _490.level]) === "protective" || _optionalChain([weeklyIntent, 'optionalAccess', _491 => _491.recoveryBias]) === "high") {
+  if (_optionalChain([programBlock, 'optionalAccess', _495 => _495.recoveryPosture, 'optionalAccess', _496 => _496.level]) === "protective" || _optionalChain([weeklyIntent, 'optionalAccess', _497 => _497.recoveryBias]) === "high") {
     intensity = "low";
-  } else if (_optionalChain([weeklyIntent, 'optionalAccess', _492 => _492.aggressionLevel]) === "progressive" && !hasConstraints && fatigue <= 3) {
+  } else if (_optionalChain([weeklyIntent, 'optionalAccess', _498 => _498.aggressionLevel]) === "progressive" && !hasConstraints && fatigue <= 3) {
     intensity = intensityBase.push;
   }
   if (intensityPosture === _trainingcontextservicejs.TRAINING_INTENSITY_VALUES.conservative && intensity !== "low") {
@@ -5805,9 +5873,9 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
   } else if (intensityPosture === _trainingcontextservicejs.TRAINING_INTENSITY_VALUES.aggressive && !hasConstraints && fatigue <= 3 && intensity !== "low") {
     intensity = intensityBase.push;
   }
-  if (_optionalChain([weeklyIntent, 'optionalAccess', _493 => _493.volumeBias]) === "reduced") {
+  if (_optionalChain([weeklyIntent, 'optionalAccess', _499 => _499.volumeBias]) === "reduced") {
     duration = Math.max(20, duration - 10);
-  } else if (_optionalChain([weeklyIntent, 'optionalAccess', _494 => _494.volumeBias]) === "expanded") {
+  } else if (_optionalChain([weeklyIntent, 'optionalAccess', _500 => _500.volumeBias]) === "expanded") {
     duration = Math.min(60, duration + 10);
   }
 
@@ -5816,7 +5884,7 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
     ? (STRENGTH_LABELS[goal] || STRENGTH_LABELS.general_fitness)
     : (CARDIO_LABELS[goal] || CARDIO_LABELS.general_fitness);
   const labelIndex = (sessionType === "strength" ? recentStrength : recentCardio) % labelPool.length;
-  const label = _optionalChain([plannedSession, 'optionalAccess', _495 => _495.label]) || labelPool[labelIndex];
+  const label = _optionalChain([plannedSession, 'optionalAccess', _501 => _501.label]) || labelPool[labelIndex];
 
   // ── 8. Build reason ──────────────────────────────────────────────
   const reasonParts = [
@@ -5829,8 +5897,8 @@ const SESSION_DURATIONS = { "20": 20, "30": 30, "45": 45, "60+": 60 };
       : null,
     fatigue >= 4 ? `Fatigue elevated (${fatigue}/10) — intensity adjusted.` : null,
     hasConstraints ? `Active constraints: ${userProfile.constraints.join(", ")}.` : null,
-    _optionalChain([weeklyIntent, 'optionalAccess', _496 => _496.focus]) ? `Week focus: ${weeklyIntent.focus}.` : null,
-    _optionalChain([weeklyIntent, 'optionalAccess', _497 => _497.aggressionLevel]) ? `Week posture: ${String(weeklyIntent.aggressionLevel).replace(/_/g, " ")}.` : null,
+    _optionalChain([weeklyIntent, 'optionalAccess', _502 => _502.focus]) ? `Week focus: ${weeklyIntent.focus}.` : null,
+    _optionalChain([weeklyIntent, 'optionalAccess', _503 => _503.aggressionLevel]) ? `Week posture: ${String(weeklyIntent.aggressionLevel).replace(/_/g, " ")}.` : null,
     !hasConfirmedSessionDuration ? "Typical session duration is still unconfirmed, so the default plan length is being used." : null,
     intensityPosture === _trainingcontextservicejs.TRAINING_INTENSITY_VALUES.aggressive ? "User preference: push when recovery supports it." : null,
     intensityPosture === _trainingcontextservicejs.TRAINING_INTENSITY_VALUES.conservative ? "User preference: keep progression more controlled." : null,
@@ -17164,6 +17232,10 @@ const applySessionNamingRules = (session = {}, injuryState = {}) => {
       return next;
     }
     next.label = runTarget ? _textformatservicejs.joinDisplayParts.call(void 0, [SESSION_NAMING.EASY_RUN, runTarget]) : SESSION_NAMING.EASY_RUN;
+    return next;
+  }
+  if (type === "conditioning" || type === "otf") {
+    next.label = next.label || (type === "otf" ? "Conditioning / OTF" : "Conditioning");
     return next;
   }
   const lowImpactOnly = /(bike|elliptical|pool|incline walk|low-impact)/i.test(`${_optionalChain([next, 'optionalAccess', _462 => _462.label]) || ""} ${_optionalChain([next, 'optionalAccess', _463 => _463.environmentNote]) || ""}`);

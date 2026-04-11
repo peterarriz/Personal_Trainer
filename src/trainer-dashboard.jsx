@@ -2030,6 +2030,10 @@ const applySessionNamingRules = (session = {}, injuryState = {}) => {
     next.label = runTarget ? joinDisplayParts([SESSION_NAMING.EASY_RUN, runTarget]) : SESSION_NAMING.EASY_RUN;
     return next;
   }
+  if (type === "conditioning" || type === "otf") {
+    next.label = next.label || (type === "otf" ? "Conditioning / OTF" : "Conditioning");
+    return next;
+  }
   const lowImpactOnly = /(bike|elliptical|pool|incline walk|low-impact)/i.test(`${next?.label || ""} ${next?.environmentNote || ""}`);
   next.label = lowImpactOnly ? SESSION_NAMING.LOW_IMPACT : SESSION_NAMING.RECOVERY_MOBILITY;
   return next;

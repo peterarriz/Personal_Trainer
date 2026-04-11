@@ -132,6 +132,8 @@ const buildComposer = ({
   weekTemplates: WEEK_TEMPLATES,
 });
 
+const RUN_SESSION_TYPES = new Set(["run+strength", "easy-run", "hard-run", "long-run"]);
+
 test("ProgramBlock captures the main hybrid planning modes without creating separate planners", async () => {
   await withMockedNow("2026-04-09T12:00:00Z", async () => {
     const scenarios = [
@@ -524,5 +526,256 @@ test("Today planning respects a protective ProgramBlock posture through the exis
 
     assert.equal(todayPlan.intensity, "low");
     assert.equal(todayPlan.label, planWeek.sessionsByDay[3].label);
+  });
+});
+
+test("pure strength goal maps to a strength-dominant block, week, and today plan", async () => {
+  await withMockedNow("2026-04-09T12:00:00Z", async () => {
+    const goals = buildGoals([
+      {
+        name: "Bench 225",
+        category: "strength",
+        priority: 1,
+        resolvedGoal: buildResolvedGoal({
+          summary: "Bench 225",
+          planningCategory: "strength",
+          goalFamily: "strength",
+          measurabilityTier: "fully_measurable",
+          primaryMetric: { key: "bench_press_weight", label: "Bench press", unit: "lb", kind: "primary", targetValue: "225" },
+          targetHorizonWeeks: 12,
+        }),
+      },
+    ]);
+
+    const composer = buildComposer({
+      goals,
+      personalization: { trainingContext: { environment: { value: "unknown", confirmed: false }, equipmentAccess: { value: "unknown", confirmed: false } } },
+      momentum: { inconsistencyRisk: "low" },
+      learningLayer: {},
+      currentWeek: 1,
+      baseWeek: WEEK_TEMPLATES[0],
+    });
+    const planWeek = buildPlanWeek({
+      weekNumber: 1,
+      template: WEEK_TEMPLATES[0],
+      weekTemplates: WEEK_TEMPLATES,
+      referenceTemplate: WEEK_TEMPLATES[0],
+      goals,
+      architecture: composer.architecture,
+      programBlock: composer.programBlock,
+      programContext: composer.programContext,
+      blockIntent: composer.blockIntent,
+      split: composer.split,
+      sessionsByDay: composer.dayTemplates,
+      weeklyCheckin: { energy: 4, stress: 2, confidence: 4 },
+      coachPlanAdjustments: {},
+      failureMode: {},
+      constraints: composer.constraints,
+    });
+    const todayPlan = generateTodayPlan(
+      {
+        primaryGoalKey: "muscle_gain",
+        experienceLevel: "intermediate",
+        daysPerWeek: 4,
+        sessionLength: "45",
+        constraints: [],
+      },
+      { logs: {}, todayKey: "2026-04-09" },
+      { fatigueScore: 2, trend: "stable", momentum: "stable", injuryLevel: "none" },
+      {
+        planWeek,
+        programBlock: planWeek.programBlock,
+        weeklyIntent: planWeek.weeklyIntent,
+        plannedSession: planWeek.sessionsByDay[1],
+      }
+    );
+
+    assert.equal(composer.architecture, "strength_dominant");
+    assert.equal(composer.programBlock.dominantEmphasis.category, "strength");
+    assert.equal(planWeek.weeklyIntent.focus, "Bench 225");
+    assert.doesNotMatch(planWeek.weeklyIntent.focus, /getting legs back/i);
+    assert.ok(Object.values(planWeek.sessionsByDay).filter(Boolean).every((session) => !RUN_SESSION_TYPES.has(session.type)));
+    assert.equal(todayPlan.label, planWeek.sessionsByDay[1].label);
+  });
+});
+
+test("pure race goal maps to a running-dominant block, week, and today plan", async () => {
+  await withMockedNow("2026-04-09T12:00:00Z", async () => {
+    const goals = buildGoals([
+      {
+        name: "Run a 1:45 half marathon",
+        category: "running",
+        priority: 1,
+        targetDate: "2026-05-31",
+        resolvedGoal: buildResolvedGoal({
+          summary: "Run a half marathon in 1:45:00",
+          planningCategory: "running",
+          goalFamily: "performance",
+          measurabilityTier: "fully_measurable",
+          primaryMetric: { key: "half_marathon_time", label: "Half marathon time", unit: "time", kind: "primary", targetValue: "1:45:00" },
+          targetDate: "2026-05-31",
+          targetHorizonWeeks: 8,
+        }),
+      },
+    ]);
+
+    const composer = buildComposer({
+      goals,
+      personalization: { travelState: { access: "full gym" } },
+      momentum: { inconsistencyRisk: "low" },
+      learningLayer: {},
+      currentWeek: 1,
+      baseWeek: WEEK_TEMPLATES[0],
+    });
+    const planWeek = buildPlanWeek({
+      weekNumber: 1,
+      template: WEEK_TEMPLATES[0],
+      weekTemplates: WEEK_TEMPLATES,
+      referenceTemplate: WEEK_TEMPLATES[0],
+      goals,
+      architecture: composer.architecture,
+      programBlock: composer.programBlock,
+      programContext: composer.programContext,
+      blockIntent: composer.blockIntent,
+      split: composer.split,
+      sessionsByDay: composer.dayTemplates,
+      weeklyCheckin: { energy: 4, stress: 2, confidence: 4 },
+      coachPlanAdjustments: {},
+      failureMode: {},
+      constraints: composer.constraints,
+    });
+    const todayPlan = generateTodayPlan(
+      {
+        primaryGoalKey: "endurance",
+        experienceLevel: "intermediate",
+        daysPerWeek: 4,
+        sessionLength: "45",
+        constraints: [],
+      },
+      { logs: {}, todayKey: "2026-04-09" },
+      { fatigueScore: 2, trend: "stable", momentum: "stable", injuryLevel: "none" },
+      {
+        planWeek,
+        programBlock: planWeek.programBlock,
+        weeklyIntent: planWeek.weeklyIntent,
+        plannedSession: planWeek.sessionsByDay[1],
+      }
+    );
+
+    assert.equal(composer.architecture, "race_prep_dominant");
+    assert.equal(composer.programBlock.dominantEmphasis.category, "running");
+    assert.match(planWeek.weeklyIntent.focus, /half marathon/i);
+    assert.ok(Object.values(planWeek.sessionsByDay).filter(Boolean).some((session) => RUN_SESSION_TYPES.has(session.type)));
+    assert.equal(todayPlan.label, planWeek.sessionsByDay[1].label);
+  });
+});
+
+test("body-comp plus maintained strength maps to a non-race block and week", async () => {
+  await withMockedNow("2026-04-09T12:00:00Z", async () => {
+    const goals = buildGoals([
+      {
+        name: "Lose fat while keeping strength",
+        category: "body_comp",
+        priority: 1,
+        resolvedGoal: buildResolvedGoal({
+          summary: "Lose fat while keeping strength",
+          planningCategory: "body_comp",
+          goalFamily: "body_comp",
+          measurabilityTier: "proxy_measurable",
+          proxyMetrics: [
+            { key: "waist_circumference", label: "Waist circumference", unit: "in", kind: "proxy" },
+          ],
+          targetHorizonWeeks: 10,
+        }),
+      },
+      {
+        name: "Keep strength while the primary goal leads",
+        category: "strength",
+        priority: 2,
+        resolvedGoal: buildResolvedGoal({
+          summary: "Keep strength while the primary goal leads",
+          planningCategory: "strength",
+          goalFamily: "strength",
+          measurabilityTier: "exploratory_fuzzy",
+          proxyMetrics: [{ key: "top_set_load", label: "Top set load", unit: "lb", kind: "proxy" }],
+          targetHorizonWeeks: 10,
+        }),
+      },
+    ]);
+
+    const composer = buildComposer({
+      goals,
+      personalization: { travelState: { access: "full gym" } },
+      momentum: { inconsistencyRisk: "medium" },
+      learningLayer: {},
+      currentWeek: 1,
+      baseWeek: WEEK_TEMPLATES[0],
+    });
+    const planWeek = buildPlanWeek({
+      weekNumber: 1,
+      template: WEEK_TEMPLATES[0],
+      weekTemplates: WEEK_TEMPLATES,
+      referenceTemplate: WEEK_TEMPLATES[0],
+      goals,
+      architecture: composer.architecture,
+      programBlock: composer.programBlock,
+      programContext: composer.programContext,
+      blockIntent: composer.blockIntent,
+      split: composer.split,
+      sessionsByDay: composer.dayTemplates,
+      weeklyCheckin: { energy: 3, stress: 2, confidence: 4 },
+      coachPlanAdjustments: {},
+      failureMode: {},
+      constraints: composer.constraints,
+    });
+
+    assert.equal(composer.architecture, "body_comp_conditioning");
+    assert.equal(composer.programBlock.dominantEmphasis.category, "body_comp");
+    assert.equal(planWeek.weeklyIntent.focus, "Lose fat while keeping strength");
+    assert.doesNotMatch(planWeek.weeklyIntent.focus, /getting legs back/i);
+    assert.ok(Object.values(planWeek.sessionsByDay).filter(Boolean).every((session) => !RUN_SESSION_TYPES.has(session.type)));
+  });
+});
+
+test("no-running-goal path does not inject default run sessions", async () => {
+  await withMockedNow("2026-04-09T12:00:00Z", async () => {
+    const goals = buildGoals([
+      {
+        name: "Bench 225",
+        category: "strength",
+        priority: 1,
+        resolvedGoal: buildResolvedGoal({
+          summary: "Bench 225",
+          planningCategory: "strength",
+          goalFamily: "strength",
+          measurabilityTier: "fully_measurable",
+          primaryMetric: { key: "bench_press_weight", label: "Bench press", unit: "lb", kind: "primary", targetValue: "225" },
+        }),
+      },
+      {
+        name: "Keep abs visible",
+        category: "body_comp",
+        priority: 2,
+        resolvedGoal: buildResolvedGoal({
+          summary: "Keep abs visible",
+          planningCategory: "body_comp",
+          goalFamily: "appearance",
+          measurabilityTier: "proxy_measurable",
+          proxyMetrics: [{ key: "waist_circumference", label: "Waist circumference", unit: "in", kind: "proxy" }],
+        }),
+      },
+    ]);
+
+    const composer = buildComposer({
+      goals,
+      personalization: {},
+      momentum: { inconsistencyRisk: "low" },
+      learningLayer: {},
+      currentWeek: 1,
+      baseWeek: WEEK_TEMPLATES[0],
+    });
+
+    assert.ok(Object.values(composer.dayTemplates).filter(Boolean).every((session) => !RUN_SESSION_TYPES.has(session.type)));
+    assert.equal(composer.split.run, 0);
   });
 });
