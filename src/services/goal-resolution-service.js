@@ -195,6 +195,8 @@ const getCorpusText = ({ rawUserGoalIntent = "", intakeContext = {} } = {}) => d
   sanitizeText(intakeContext?.userProvidedConstraints?.additionalContext || "", 180),
   ...toArray(intakeContext?.userProvidedConstraints?.timingConstraints).map((item) => sanitizeText(item, 120)),
   ...toArray(intakeContext?.userProvidedConstraints?.appearanceConstraints).map((item) => sanitizeText(item, 120)),
+  ...toArray(intakeContext?.goalCompletenessContext?.summaryLines).map((item) => sanitizeText(item, 140)),
+  ...toArray(intakeContext?.goalCompletenessContext?.timingHints).map((item) => sanitizeText(item, 120)),
 ]).join(". ");
 
 const detectSignals = (text = "") => {
@@ -209,7 +211,7 @@ const detectSignals = (text = "") => {
     hasBench: /\bbench(?: press)?\b/i.test(corpus),
     hasSquat: /\bsquat\b/i.test(corpus),
     hasDeadlift: /\bdeadlift\b/i.test(corpus),
-    hasFatLoss: /(lose fat|fat loss|cut|lean|leaner|drop weight|lose weight)/i.test(corpus),
+    hasFatLoss: /(lose fat|fat loss|cut|lean|leaner|drop weight|lose weight|lose\s+\d{1,3}\s*(?:lb|lbs|pounds?))/i.test(corpus),
     hasAppearance: /(abs|six pack|look athletic|appearance|physique|toned|defined|lean for)/i.test(corpus),
     hasHybrid: /\bhybrid athlete\b|\bhybrid\b/i.test(corpus),
     hasKeepStrength: /(keep strength|maintain strength|keep my strength|hold strength)/i.test(corpus),
@@ -395,7 +397,17 @@ const resolveTargetWindow = ({
   const corpus = dedupeStrings([
     rawText,
     ...toArray(intakeContext?.userProvidedConstraints?.timingConstraints),
+    ...toArray(intakeContext?.goalCompletenessContext?.timingHints),
   ]).join(" ").toLowerCase();
+
+  const isoDateMatch = corpus.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (isoDateMatch?.[1]) {
+    return {
+      targetDate: isoDateMatch[1],
+      targetHorizonWeeks: calculateWeeksFromNow({ now, targetDate: isoDateMatch[1] }),
+      isApproximate: false,
+    };
+  }
 
   const monthMatch = Object.keys(MONTH_INDEX).find((month) => new RegExp(`\\b${month}\\b`, "i").test(corpus));
   if (monthMatch) {

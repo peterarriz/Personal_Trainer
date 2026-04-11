@@ -21,6 +21,7 @@ import {
 } from "./services/recovery-supplement-service.js";
 import { assessGoalFeasibility } from "./services/goal-feasibility-service.js";
 import {
+  deriveActiveIssueContextFromPersonalization,
   deriveTrainingContextFromPersonalization,
   TRAINING_EQUIPMENT_VALUES,
   TRAINING_INTENSITY_VALUES,
@@ -95,15 +96,110 @@ const buildConditioningSession = ({
   environmentNote: lowImpact ? "Use any low-impact aerobic setup available." : "",
 });
 
+const resolveFriendlyStrengthSlotLabel = (slot = "") => {
+  const safeSlot = String(slot || "").trim().toUpperCase();
+  return safeSlot ? `Full-Body Strength ${safeSlot}` : "Full-Body Strength";
+};
+
+const resolveFriendlySessionLabel = (label = "", context = {}) => {
+  const safeLabel = sanitizeText(label, 120);
+  const safeSlot = String(context?.strSess || "").trim().toUpperCase();
+  if (!safeLabel) return safeSlot ? resolveFriendlyStrengthSlotLabel(safeSlot) : "Planned session";
+  if (/^strength ([ab])$/i.test(safeLabel)) return resolveFriendlyStrengthSlotLabel(safeLabel.match(/^strength ([ab])$/i)?.[1]);
+  if (/^strength priority ([ab])$/i.test(safeLabel)) return resolveFriendlyStrengthSlotLabel(safeLabel.match(/^strength priority ([ab])$/i)?.[1]);
+  if (/^metabolic strength ([ab])$/i.test(safeLabel)) return `Strength Circuit ${String(safeLabel.match(/^metabolic strength ([ab])$/i)?.[1] || "").toUpperCase()}`;
+  if (/^upper push\/pull strength$/i.test(safeLabel)) return "Upper-Body Push/Pull Strength";
+  if (/^quality run \+ strength$/i.test(safeLabel)) return "Quality Run + Strength Finish";
+  if (/^run \+ strength$/i.test(safeLabel)) return "Easy Run + Strength Finish";
+  if (/^conditioning \/ otf$/i.test(safeLabel)) return "Conditioning Intervals";
+  if (/^conditioning \(low-friction\)$/i.test(safeLabel)) return "Low-Friction Conditioning";
+  if (/^supportive conditioning run$/i.test(safeLabel)) return "Easy Conditioning Run";
+  if (/^supportive run\/walk$/i.test(safeLabel)) return "Easy Run/Walk";
+  if (/^strength focus$/i.test(safeLabel)) return "Full-Body Strength Focus";
+  if (/^short version strength$/i.test(safeLabel)) return "Short Full-Body Strength A";
+  if (/^short version strength ([ab])$/i.test(safeLabel)) return `Short Full-Body Strength ${String(safeLabel.match(/^short version strength ([ab])$/i)?.[1] || "").toUpperCase()}`;
+  return safeLabel;
+};
+
+const normalizeSessionEntryLabel = (session = null) => {
+  if (!session || typeof session !== "object") return session;
+  return {
+    ...session,
+    label: resolveFriendlySessionLabel(session?.label || "", session),
+  };
+};
+
+const resolveResolvedGoalDescriptor = ({ goal = null, resolvedGoal = null, fallbackCategory = "" } = {}) => {
+  const metricKey = String(resolvedGoal?.primaryMetric?.key || "").toLowerCase();
+  const summary = sanitizeText(resolvedGoal?.summary || goal?.name || "", 160).toLowerCase();
+  const category = String(resolvedGoal?.planningCategory || goal?.category || fallbackCategory || "").toLowerCase();
+  if (/bench|press/.test(metricKey) || /\bbench\b/.test(summary)) return "pressing strength";
+  if (/squat/.test(metricKey) || /\bsquat\b/.test(summary)) return "squat strength";
+  if (/deadlift/.test(metricKey) || /\bdeadlift\b/.test(summary)) return "pulling strength";
+  if (/half_marathon/.test(metricKey) || /half marathon/.test(summary)) return "half-marathon endurance";
+  if (/marathon/.test(metricKey) || /\bmarathon\b/.test(summary)) return "marathon endurance";
+  if (/\b10k\b/.test(metricKey) || /\b10k\b/.test(summary)) return "10K pace support";
+  if (/\b5k\b/.test(metricKey) || /\b5k\b/.test(summary)) return "5K pace support";
+  if (/waist|progress_photos|body_fat|bodyweight/.test(metricKey) || category === "body_comp") return "body-composition progress";
+  if (category === "strength") return "strength progression";
+  if (category === "running") return "race-specific fitness";
+  if (category === "body_comp") return "body-composition progress";
+  return "primary-goal progress";
+};
+
+const resolveEmphasisLabel = ({
+  architecture = "hybrid_performance",
+  category = "",
+  role = "dominant",
+  goal = null,
+  resolvedGoal = null,
+} = {}) => {
+  const descriptor = resolveResolvedGoalDescriptor({ goal, resolvedGoal, fallbackCategory: category });
+  if (role === "secondary") {
+    if (category === "strength") return /upper-body/i.test(sanitizeText(goal?.name || resolvedGoal?.summary || "", 120)) ? "Upper-body maintenance" : "Strength maintenance";
+    if (category === "running") return "Conditioning maintenance";
+    if (category === "body_comp") return "Body-composition maintenance";
+    return "Secondary maintenance";
+  }
+  if (architecture === "event_prep_upper_body_maintenance") return "Race prep";
+  if (architecture === "race_prep_dominant") return descriptor === "race-specific fitness" ? "Race-specific running" : descriptor === "half-marathon endurance" ? "Half-marathon race prep" : "Run performance";
+  if (architecture === "strength_dominant") return descriptor === "pressing strength" ? "Pressing strength progression" : descriptor === "squat strength" ? "Squat strength progression" : descriptor === "pulling strength" ? "Pulling strength progression" : "Strength progression";
+  if (architecture === "body_comp_conditioning") return "Fat-loss momentum";
+  if (architecture === "maintenance_rebuild") return "Hybrid rebuild";
+  if (category === "running") return "Run performance";
+  if (category === "strength") return "Strength progression";
+  if (category === "body_comp") return "Body-composition progress";
+  return "Hybrid performance";
+};
+
+const resolveWeeklyFocusLabel = ({
+  architecture = "hybrid_performance",
+  dominantCategory = "",
+  secondaryCategory = "",
+  primaryGoal = null,
+  primaryResolvedGoal = null,
+} = {}) => {
+  const descriptor = resolveResolvedGoalDescriptor({ goal: primaryGoal, resolvedGoal: primaryResolvedGoal, fallbackCategory: dominantCategory });
+  if (architecture === "event_prep_upper_body_maintenance") return "Build race-specific fitness while keeping upper-body strength alive";
+  if (architecture === "race_prep_dominant") return descriptor === "half-marathon endurance" ? "Build half-marathon pace and endurance" : "Build race-specific endurance and quality";
+  if (architecture === "strength_dominant") return descriptor === "pressing strength" ? "Build pressing strength with repeatable full-body work" : "Build primary strength with repeatable full-body work";
+  if (architecture === "body_comp_conditioning") return "Drive fat-loss momentum while protecting strength";
+  if (architecture === "maintenance_rebuild") return "Rebuild repeatable run and strength rhythm";
+  if (dominantCategory === "running") return secondaryCategory === "strength" ? "Build run fitness while keeping strength in the week" : "Build run fitness with repeatable support work";
+  if (dominantCategory === "strength") return secondaryCategory === "running" ? "Build strength while keeping conditioning supportive" : "Build strength with repeatable support work";
+  if (dominantCategory === "body_comp") return "Build sustainable body-composition momentum";
+  return "Keep the primary lane moving without losing the secondary one";
+};
+
 const buildSessionsByDayFromTemplate = (template = {}) => {
   const restDay = { type: "rest", label: "Active Recovery", nutri: "rest", isRecoverySlot: true };
   return {
-    1: template?.mon ? { type: "easy-run", label: `${template.mon.t || "Easy"} Run`, run: clonePlainValue(template.mon), nutri: template?.nutri || "easyRun" } : null,
+    1: template?.mon ? normalizeSessionEntryLabel({ type: "easy-run", label: `${template.mon.t || "Easy"} Run`, run: clonePlainValue(template.mon), nutri: template?.nutri || "easyRun" }) : null,
     2: null,
-    3: template?.str ? { type: "strength+prehab", label: `Strength ${template.str}`, strSess: template.str, nutri: "strength" } : null,
-    4: template?.thu ? { type: "hard-run", label: `${template.thu.t || "Quality"} Run`, run: clonePlainValue(template.thu), nutri: template?.nutri || "hardRun" } : null,
-    5: template?.fri ? { type: "easy-run", label: `${template.fri.t || "Easy"} Run`, run: clonePlainValue(template.fri), nutri: "easyRun" } : null,
-    6: template?.sat ? { type: "long-run", label: `${template.sat.t || "Long"} Run`, run: clonePlainValue(template.sat), nutri: "longRun" } : null,
+    3: template?.str ? normalizeSessionEntryLabel({ type: "strength+prehab", label: `Strength ${template.str}`, strSess: template.str, nutri: "strength" }) : null,
+    4: template?.thu ? normalizeSessionEntryLabel({ type: "hard-run", label: `${template.thu.t || "Quality"} Run`, run: clonePlainValue(template.thu), nutri: template?.nutri || "hardRun" }) : null,
+    5: template?.fri ? normalizeSessionEntryLabel({ type: "easy-run", label: `${template.fri.t || "Easy"} Run`, run: clonePlainValue(template.fri), nutri: "easyRun" }) : null,
+    6: template?.sat ? normalizeSessionEntryLabel({ type: "long-run", label: `${template.sat.t || "Long"} Run`, run: clonePlainValue(template.sat), nutri: "longRun" }) : null,
     0: restDay,
   };
 };
@@ -165,7 +261,7 @@ const projectSessionsByDayFromCanonicalPattern = ({
         else if (alternateReference && String(nextSession.strSess) === alternateReference) nextSession.strSess = invertStrengthSession(templateStrength) || nextSession.strSess;
       }
 
-      return [dayKeyRaw, nextSession];
+      return [dayKeyRaw, normalizeSessionEntryLabel(nextSession)];
     })
   );
 
@@ -384,7 +480,13 @@ export const buildProgramBlock = ({
   let labelSuffix = "Hybrid performance";
   let dominantEmphasis = {
     category: primary?.category || "hybrid",
-    label: primary?.name || "Hybrid performance",
+    label: resolveEmphasisLabel({
+      architecture,
+      category: primary?.category || "hybrid",
+      role: "dominant",
+      goal: primary,
+      resolvedGoal: primaryResolvedGoal,
+    }),
     objective: ["Advance the primary lane while keeping the rest of the system credible.", horizonLine, feasibilityLine].filter(Boolean).join(" "),
     role: "dominant",
     measurabilityTier: primaryMeasurabilityTier,
@@ -392,7 +494,13 @@ export const buildProgramBlock = ({
   };
   let secondaryEmphasis = {
     category: secondaryGoals[0]?.category || "maintenance",
-    label: secondaryGoals[0]?.name || maintainedGoals[0] || "General fitness",
+    label: resolveEmphasisLabel({
+      architecture,
+      category: secondaryGoals[0]?.category || "maintenance",
+      role: "secondary",
+      goal: secondaryGoals[0] || null,
+      resolvedGoal: resolvedContext.resolvedSecondaryGoals[0] || null,
+    }) || "General fitness",
     objective: sequencingLine || "Secondary work stays in maintenance range while the dominant lane leads.",
     role: "secondary",
   };
@@ -423,7 +531,13 @@ export const buildProgramBlock = ({
     labelSuffix = "Event-prep + upper-body maintenance";
     dominantEmphasis = {
       category: "running",
-      label: primary?.name || runningGoal?.name || "Event prep",
+      label: resolveEmphasisLabel({
+        architecture,
+        category: "running",
+        role: "dominant",
+        goal: primary || runningGoal,
+        resolvedGoal: primaryResolvedGoal,
+      }),
       objective: [
         "Event-specific endurance or race prep takes first claim on fatigue, scheduling, and lower-body freshness this block.",
         horizonLine,
@@ -435,7 +549,13 @@ export const buildProgramBlock = ({
     };
     secondaryEmphasis = {
       category: "strength",
-      label: strengthGoal?.name || maintainedGoals[0] || "Upper-body maintenance",
+      label: resolveEmphasisLabel({
+        architecture,
+        category: "strength",
+        role: "secondary",
+        goal: strengthGoal,
+        resolvedGoal: resolvedContext.resolvedSecondaryGoals.find((goal) => goal?.planningCategory === "strength") || null,
+      }) || "Upper-body maintenance",
       objective: sequencingLine || "Upper-body strength is maintained with low leg-cost sessions so the event-prep lane stays clean.",
       role: "secondary",
     };
@@ -465,7 +585,13 @@ export const buildProgramBlock = ({
     labelSuffix = "Run-dominant + strength-maintenance";
     dominantEmphasis = {
       category: "running",
-      label: primary?.name || runningGoal?.name || "Run performance",
+      label: resolveEmphasisLabel({
+        architecture,
+        category: "running",
+        role: "dominant",
+        goal: primary || runningGoal,
+        resolvedGoal: primaryResolvedGoal,
+      }),
       objective: [
         "Run quality and endurance progression get first claim on fatigue and recovery this block.",
         horizonLine,
@@ -477,7 +603,13 @@ export const buildProgramBlock = ({
     };
     secondaryEmphasis = {
       category: strengthGoal ? "strength" : "maintenance",
-      label: strengthGoal?.name || maintainedGoals[0] || "Strength maintenance",
+      label: resolveEmphasisLabel({
+        architecture,
+        category: strengthGoal ? "strength" : "maintenance",
+        role: "secondary",
+        goal: strengthGoal,
+        resolvedGoal: resolvedContext.resolvedSecondaryGoals.find((goal) => goal?.planningCategory === "strength") || null,
+      }) || "Strength maintenance",
       objective: sequencingLine || "Strength stays in maintenance range so it supports running instead of competing with it.",
       role: "secondary",
     };
@@ -509,7 +641,13 @@ export const buildProgramBlock = ({
     labelSuffix = "Strength-dominant + conditioning-maintenance";
     dominantEmphasis = {
       category: "strength",
-      label: primary?.name || strengthGoal?.name || "Strength progression",
+      label: resolveEmphasisLabel({
+        architecture,
+        category: "strength",
+        role: "dominant",
+        goal: primary || strengthGoal,
+        resolvedGoal: primaryResolvedGoal,
+      }),
       objective: [
         "Strength progression is the main stressor to advance during this block.",
         horizonLine,
@@ -521,7 +659,13 @@ export const buildProgramBlock = ({
     };
     secondaryEmphasis = {
       category: runningGoal ? "running" : "conditioning",
-      label: runningGoal?.name || maintainedGoals[0] || "Conditioning maintenance",
+      label: resolveEmphasisLabel({
+        architecture,
+        category: runningGoal ? "running" : "conditioning",
+        role: "secondary",
+        goal: runningGoal,
+        resolvedGoal: resolvedContext.resolvedSecondaryGoals.find((goal) => goal?.planningCategory === "running") || null,
+      }) || "Conditioning maintenance",
       objective: sequencingLine || "Conditioning stays supportive so it preserves work capacity without stealing lower-body recovery.",
       role: "secondary",
     };
@@ -553,7 +697,13 @@ export const buildProgramBlock = ({
     labelSuffix = "Body-comp + strength-retention";
     dominantEmphasis = {
       category: "body_comp",
-      label: primary?.name || bodyCompGoal?.name || "Body composition",
+      label: resolveEmphasisLabel({
+        architecture,
+        category: "body_comp",
+        role: "dominant",
+        goal: primary || bodyCompGoal,
+        resolvedGoal: primaryResolvedGoal,
+      }),
       objective: [
         "Energy balance and adherence drive the block while training protects lean mass and momentum.",
         horizonLine,
@@ -565,7 +715,13 @@ export const buildProgramBlock = ({
     };
     secondaryEmphasis = {
       category: "strength",
-      label: strengthGoal?.name || maintainedGoals[0] || "Strength retention",
+      label: resolveEmphasisLabel({
+        architecture,
+        category: "strength",
+        role: "secondary",
+        goal: strengthGoal,
+        resolvedGoal: resolvedContext.resolvedSecondaryGoals.find((goal) => goal?.planningCategory === "strength") || null,
+      }) || "Strength retention",
       objective: sequencingLine || "Strength work stays present enough to retain muscle and training identity while conditioning supports expenditure.",
       role: "secondary",
     };
@@ -609,7 +765,13 @@ export const buildProgramBlock = ({
     };
     secondaryEmphasis = {
       category: primary?.category || "maintenance",
-      label: primary?.name || "Primary goal maintenance",
+      label: resolveEmphasisLabel({
+        architecture,
+        category: primary?.category || "maintenance",
+        role: "secondary",
+        goal: primary,
+        resolvedGoal: primaryResolvedGoal,
+      }) || "Primary goal maintenance",
       objective: sequencingLine || "Primary-goal qualities stay in maintenance range while consistency and recovery are restored.",
       role: "secondary",
     };
@@ -643,7 +805,13 @@ export const buildProgramBlock = ({
       : "Hybrid performance";
     dominantEmphasis = {
       category: primary?.category || "hybrid",
-      label: primary?.name || "Hybrid performance",
+      label: resolveEmphasisLabel({
+        architecture,
+        category: primary?.category || "hybrid",
+        role: "dominant",
+        goal: primary,
+        resolvedGoal: primaryResolvedGoal,
+      }),
       objective: [
         primary?.category === "running"
           ? "Run fitness advances while strength work stays present enough to keep the athlete meaningfully hybrid."
@@ -659,7 +827,13 @@ export const buildProgramBlock = ({
     };
     secondaryEmphasis = {
       category: secondaryGoals[0]?.category || (primary?.category === "running" ? "strength" : "running"),
-      label: secondaryGoals[0]?.name || maintainedGoals[0] || (primary?.category === "running" ? "Strength maintenance" : "Conditioning maintenance"),
+      label: resolveEmphasisLabel({
+        architecture,
+        category: secondaryGoals[0]?.category || (primary?.category === "running" ? "strength" : "running"),
+        role: "secondary",
+        goal: secondaryGoals[0] || null,
+        resolvedGoal: resolvedContext.resolvedSecondaryGoals[0] || null,
+      }) || (primary?.category === "running" ? "Strength maintenance" : "Conditioning maintenance"),
       objective: sequencingLine || (primary?.category === "running"
         ? "Strength stays in maintenance range so the athlete still looks and performs like a hybrid athlete."
         : primary?.category === "strength"
@@ -864,7 +1038,15 @@ export const deriveWeeklyIntent = ({
   if (recoveryBias === "high") performanceBias = "low";
   else if (["race_prep_dominant", "strength_dominant", "event_prep_upper_body_maintenance"].includes(architecture) && aggressionLevel === "progressive") performanceBias = "high";
 
-  const focus = normalizedProgramBlock?.dominantEmphasis?.label
+  const focus = resolveWeeklyFocusLabel({
+    architecture,
+    dominantCategory: normalizedProgramBlock?.dominantEmphasis?.category || primaryGoal?.category || "",
+    secondaryCategory: normalizedProgramBlock?.secondaryEmphasis?.category || "",
+    primaryGoal,
+    primaryResolvedGoal: normalizedProgramBlock?.goalStack?.primaryResolvedGoalId
+      ? active.find((goal) => (goal?.resolvedGoal?.id || "") === normalizedProgramBlock.goalStack.primaryResolvedGoalId)?.resolvedGoal || primaryGoal?.resolvedGoal || null
+      : primaryGoal?.resolvedGoal || null,
+  }) || normalizedProgramBlock?.dominantEmphasis?.label
     || blockIntent?.prioritized
     || primaryGoal?.name
     || weekTemplate?.label
@@ -1488,6 +1670,7 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
   const primary = active[0] || null;
   const secondary = active.slice(1, 3);
   const trainingContext = deriveTrainingContextFromPersonalization({ personalization });
+  const activeIssueContext = deriveActiveIssueContextFromPersonalization({ personalization });
   const env = trainingContext?.environment?.confirmed ? trainingContext.environment.value : "unknown";
   const equipmentAccess = trainingContext?.equipmentAccess?.value || TRAINING_EQUIPMENT_VALUES.unknown;
   const environmentKnown = Boolean(trainingContext?.environment?.confirmed);
@@ -1569,20 +1752,20 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
       0: restDay("Active Recovery"),
     },
     race_prep_dominant: {
-      1: { type: "run+strength", label: "Quality Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "hardRun" },
-      2: { type: "conditioning", label: "Conditioning / OTF", nutri: "otf" },
-      3: { type: "strength+prehab", label: "Strength + Prehab", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
+      1: { type: "run+strength", label: "Quality Run + Strength Finish", run: baseWeek.mon, strSess: baseWeek.str, nutri: "hardRun" },
+      2: { type: "conditioning", label: "Conditioning Intervals", nutri: "otf" },
+      3: { type: "strength+prehab", label: "Strength + Durability", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
       4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
       5: { type: "easy-run", label: "Easy Run", run: baseWeek.fri, nutri: "easyRun" },
       6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: "longRun" },
       0: restDay("Active Recovery"),
     },
     strength_dominant: {
-      1: { type: "strength+prehab", label: "Strength Priority A", strSess: "A", nutri: "strength" },
+      1: { type: "strength+prehab", label: "Full-Body Strength A", strSess: "A", nutri: "strength" },
       2: hasRunningGoal
-        ? { type: "easy-run", label: "Supportive Conditioning Run", run: { t: "Easy", d: "20-30 min zone-2" }, nutri: "easyRun" }
+        ? { type: "easy-run", label: "Easy Conditioning Run", run: { t: "Easy", d: "20-30 min zone-2" }, nutri: "easyRun" }
         : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min zone-2 bike, rower, incline walk, or circuit", lowImpact: true }),
-      3: { type: "strength+prehab", label: "Strength Priority B", strSess: "B", nutri: "strength" },
+      3: { type: "strength+prehab", label: "Full-Body Strength B", strSess: "B", nutri: "strength" },
       4: { type: "strength+prehab", label: "Upper Push/Pull Strength", strSess: "A", nutri: "strength" },
       5: hasRunningGoal
         ? { type: "easy-run", label: "Conditioning Support", run: { t: "Easy", d: "20-25 min + strides optional" }, nutri: "easyRun" }
@@ -1591,40 +1774,40 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
       0: restDay("Active Recovery"),
     },
     body_comp_conditioning: {
-      1: { type: "strength+prehab", label: "Metabolic Strength A", strSess: "A", nutri: "strength" },
+      1: { type: "strength+prehab", label: "Strength Circuit A", strSess: "A", nutri: "strength" },
       2: hasRunningGoal
         ? { type: "easy-run", label: "Conditioning (low-friction)", run: { t: "Easy", d: "25-35 min zone-2" }, nutri: "easyRun" }
         : buildConditioningSession({ label: "Conditioning (low-friction)", detail: "25-35 min zone-2 bike, incline walk, or circuit", lowImpact: true }),
-      3: { type: "strength+prehab", label: "Metabolic Strength B", strSess: "B", nutri: "strength" },
-      4: { type: "conditioning", label: "Conditioning Intervals / OTF", nutri: "otf" },
+      3: { type: "strength+prehab", label: "Strength Circuit B", strSess: "B", nutri: "strength" },
+      4: { type: "conditioning", label: "Conditioning Intervals", nutri: "otf" },
       5: { type: "strength+prehab", label: "Strength Retention", strSess: "A", nutri: "strength" },
       6: hasRunningGoal
-        ? { type: "easy-run", label: "Supportive Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: "easyRun" }
+        ? { type: "easy-run", label: "Easy Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: "easyRun" }
         : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min easy conditioning or brisk walk", lowImpact: true }),
       0: restDay("Active Recovery - Steps + Mobility"),
     },
     hybrid_performance: {
       1: hasRunningGoal
-        ? { type: "run+strength", label: "Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "easyRun" }
+        ? { type: "run+strength", label: "Easy Run + Strength Finish", run: baseWeek.mon, strSess: baseWeek.str, nutri: "easyRun" }
         : { type: "strength+prehab", label: "Strength + Conditioning Primer", strSess: baseWeek.str, nutri: "strength" },
       2: { type: "conditioning", label: "Conditioning", nutri: "otf" },
-      3: { type: "strength+prehab", label: "Strength B + Prehab", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
+      3: { type: "strength+prehab", label: "Full-Body Strength B + Durability", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
       4: hasRunningGoal
         ? { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" }
         : buildConditioningSession({ label: "Conditioning Intervals", detail: "20-30 min controlled intervals or mixed-modality conditioning" }),
-      5: { type: "strength+prehab", label: "Strength Focus", strSess: baseWeek.str, nutri: "strength" },
+      5: { type: "strength+prehab", label: "Full-Body Strength Focus", strSess: baseWeek.str, nutri: "strength" },
       6: hasRunningGoal
         ? { type: "easy-run", label: "Supportive Endurance", run: baseWeek.fri, nutri: "easyRun" }
         : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min easy conditioning to keep work capacity alive", lowImpact: true }),
       0: restDay("Active Recovery"),
     },
     maintenance_rebuild: {
-      1: { type: "strength+prehab", label: "Short Version Strength", strSess: "A", nutri: "strength" },
+      1: { type: "strength+prehab", label: "Short Full-Body Strength A", strSess: "A", nutri: "strength" },
       2: restDay("Active Recovery - Walk"),
       3: hasRunningGoal
         ? { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: "easyRun" }
         : buildConditioningSession({ label: "Short Conditioning", detail: "15-20 min easy conditioning or brisk walk", lowImpact: true }),
-      4: { type: "strength+prehab", label: "Short Version Strength B", strSess: "B", nutri: "strength" },
+      4: { type: "strength+prehab", label: "Short Full-Body Strength B", strSess: "B", nutri: "strength" },
       5: restDay("Active Recovery"),
       6: buildConditioningSession({ label: "Optional Conditioning", detail: "15-20 min optional easy conditioning", lowImpact: true }),
       0: restDay("Active Recovery"),
@@ -1645,7 +1828,7 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
       if (bodyCompActive && allowsOptionalCore) {
         nextSession.optionalSecondary = "Optional: 10 min core finisher";
       }
-      return [day, nextSession];
+      return [day, normalizeSessionEntryLabel(nextSession)];
     }));
     return out;
   };
@@ -1653,7 +1836,7 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
   const annotatedTemplates = annotateTemplate(dayTemplates[architecture]);
   let strengthSessionsPerWeek = Object.values(annotatedTemplates).filter(s => ["run+strength", "strength+prehab"].includes(s?.type)).length;
   if (strengthGoal && strengthSessionsPerWeek < 1) {
-    annotatedTemplates[3] = { type: "strength+prehab", label: "Minimum Strength Touchpoint (Short Strength)", strSess: "A", nutri: "strength", strengthDose: "20-30 min maintenance strength" };
+    annotatedTemplates[3] = { type: "strength+prehab", label: "Minimum Strength Touchpoint", strSess: "A", nutri: "strength", strengthDose: "20-30 min maintenance strength" };
     strengthSessionsPerWeek = 1;
   }
 
@@ -1679,8 +1862,8 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
         },
         currentExperienceContext: {
           injuryConstraintContext: {
-            constraints: personalization?.injuryPainState?.notes ? [personalization.injuryPainState.notes] : [],
-            injuryText: personalization?.injuryPainState?.notes || "",
+            constraints: activeIssueContext?.activeConstraints || [],
+            injuryText: activeIssueContext?.notes || "",
           },
           equipmentAccessContext: {
             equipment: trainingContext?.equipmentAccess?.confirmed ? (trainingContext.equipmentAccess.items || []) : [],

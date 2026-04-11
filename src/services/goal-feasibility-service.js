@@ -8,6 +8,12 @@ export const GOAL_REALISM_STATUSES = {
   exploratory: "exploratory",
 };
 
+export const GOAL_FEASIBILITY_ACTIONS = {
+  proceed: "proceed",
+  warn: "warn",
+  block: "block",
+};
+
 export const GOAL_CONFLICT_SEVERITIES = {
   low: "low",
   medium: "medium",
@@ -41,6 +47,22 @@ const calculateWeeksUntil = ({ now = new Date(), targetDate = "" } = {}) => {
   return Math.max(1, Math.round(diffMs / (7 * 86400000)));
 };
 
+const parseTimeLikeSeconds = (value = "") => {
+  const match = String(value || "").match(/\b(\d{1,2}:\d{2}(?::\d{2})?)\b/);
+  if (!match?.[1]) return null;
+  const parts = match[1].split(":").map((item) => Number(item));
+  if (parts.some((item) => !Number.isFinite(item))) return null;
+  if (parts.length === 3) {
+    return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+  }
+  if (parts.length === 2) {
+    return (parts[0] * 60) + parts[1];
+  }
+  return null;
+};
+
+const roundToNearestFive = (value = 0) => Math.max(0, Math.round(Number(value || 0) / 5) * 5);
+
 const normalizeScheduleReality = (scheduleReality = {}) => ({
   trainingDaysPerWeek: Math.max(0, Math.min(14, Math.round(Number(scheduleReality?.trainingDaysPerWeek) || 0))),
   sessionLength: sanitizeText(scheduleReality?.sessionLength || "", 40),
@@ -69,6 +91,20 @@ const normalizeCurrentContext = (currentContext = {}) => ({
   trainingLocation: sanitizeText(currentContext?.trainingLocation || currentContext?.equipmentAccessContext?.trainingLocation || "", 40),
   startingFresh: Boolean(currentContext?.startingFresh),
 });
+
+const normalizeIntakeCompleteness = (intakeCompleteness = null) => {
+  const safe = intakeCompleteness && typeof intakeCompleteness === "object" ? intakeCompleteness : {};
+  const facts = safe?.facts && typeof safe.facts === "object" ? safe.facts : {};
+  return {
+    facts,
+    missingRequired: toArray(safe?.missingRequired)
+      .map((item) => sanitizeText(item?.label || item, 160))
+      .filter(Boolean),
+    missingOptional: toArray(safe?.missingOptional)
+      .map((item) => sanitizeText(item?.label || item, 160))
+      .filter(Boolean),
+  };
+};
 
 const isAdvanced = (baseline = {}) => baseline?.experienceLevel === "advanced";
 const isIntermediate = (baseline = {}) => baseline?.experienceLevel === "intermediate";
@@ -209,11 +245,184 @@ const buildLongerHorizonSummary = ({ goal = {}, status = GOAL_REALISM_STATUSES.e
   return `${sanitizeText(demand.longerHorizon || goal.summary || "The full outcome", 180)} likely needs closer to ${horizon}.`;
 };
 
+const buildRunningBaselineSignals = ({
+  goal = {},
+  facts = {},
+  targetHorizonWeeks = null,
+} = {}) => {
+  const warnings = [];
+  const blocks = [];
+  const metricKey = sanitizeText(goal?.primaryMetric?.key || "", 60).toLowerCase();
+  const isHalfMarathon = metricKey.includes("half_marathon");
+  const isMarathon = metricKey.includes("marathon") && !isHalfMarathon;
+  const targetSeconds = parseTimeLikeSeconds(goal?.primaryMetric?.targetValue || "");
+  const recentPaceSeconds = parseTimeLikeSeconds(facts?.recentPaceBaseline?.paceText || facts?.recentPaceBaseline?.text || "");
+  const runFrequency = Number(facts?.currentRunFrequency);
+  const longestRunMiles = Number(facts?.longestRecentRun?.miles);
+  const minHorizon = Number(goal?.minimumRealisticHorizonWeeks || 0);
+
+  const distanceMiles = metricKey.includes("marathon")
+    ? (isHalfMarathon ? 13.1 : 26.2)
+    : metricKey.includes("10k")
+    ? 6.2
+    : metricKey.includes("5k")
+    ? 3.1
+    : null;
+  const targetPaceSeconds = targetSeconds && distanceMiles ? targetSeconds / distanceMiles : null;
+
+  if (isMarathon && targetSeconds && targetSeconds <= 9000) {
+    blocks.push("That marathon time target is beyond a credible planning range here and needs a slower first target.");
+  }
+  if (isHalfMarathon && targetSeconds && targetSeconds <= 4500) {
+    blocks.push("That half-marathon time is too aggressive for a deterministic first plan unless the current baseline is already elite.");
+  }
+  if (metricKey.includes("10k") && targetSeconds && targetSeconds <= 2100) {
+    blocks.push("That 10k time target is too aggressive for a deterministic first plan.");
+  }
+  if (metricKey.includes("5k") && targetSeconds && targetSeconds <= 1020) {
+    blocks.push("That 5k time target is too aggressive for a deterministic first plan.");
+  }
+
+  if (Number.isFinite(runFrequency) && Number.isFinite(targetHorizonWeeks)) {
+    if (isHalfMarathon && runFrequency <= 1 && targetHorizonWeeks <= 12) {
+      blocks.push("A half-marathon target on one run per week and this timeline is too compressed.");
+    } else if ((isHalfMarathon || isMarathon) && runFrequency <= 2 && targetHorizonWeeks <= 14) {
+      warnings.push("The current running frequency is light for this race target, so the block needs a gradual ramp.");
+    }
+  }
+
+  if (Number.isFinite(longestRunMiles) && Number.isFinite(targetHorizonWeeks)) {
+    if (isHalfMarathon && longestRunMiles < 5 && targetHorizonWeeks <= 10) {
+      blocks.push("The current long-run baseline is too short for this half-marathon target on the current timeline.");
+    } else if (isHalfMarathon && longestRunMiles < 8 && targetHorizonWeeks <= 14) {
+      warnings.push("The current long-run baseline suggests the full half-marathon target may need a longer runway.");
+    }
+    if (isMarathon && longestRunMiles < 10 && targetHorizonWeeks <= 16) {
+      blocks.push("The current long-run baseline is too short for a marathon target on the current timeline.");
+    }
+  }
+
+  if (Number.isFinite(recentPaceSeconds) && Number.isFinite(targetPaceSeconds) && recentPaceSeconds > 0) {
+    const improvementRatio = (recentPaceSeconds - targetPaceSeconds) / recentPaceSeconds;
+    if (improvementRatio > 0.22) {
+      blocks.push("The target pace is too far ahead of the current running baseline for this first planning block.");
+    } else if (improvementRatio > 0.12) {
+      warnings.push("The target pace is ambitious relative to the current running baseline.");
+    }
+  }
+
+  const recommendedRevisionSummary = blocks.length
+    ? `Scale the first block toward ${goal?.summary?.toLowerCase() || "this race goal"} by building run frequency and long-run support first, then revisit the full target on a longer horizon.`
+    : warnings.length
+    ? `Keep the race goal, but use the first block to raise run frequency and long-run tolerance before judging the full time target.`
+    : "";
+
+  return { warnings, blocks, recommendedRevisionSummary };
+};
+
+const buildStrengthBaselineSignals = ({
+  goal = {},
+  facts = {},
+  targetHorizonWeeks = null,
+} = {}) => {
+  const warnings = [];
+  const blocks = [];
+  const baselineWeight = Number(facts?.currentStrengthBaseline?.weight);
+  const targetWeight = Number(goal?.primaryMetric?.targetValue);
+  if (!Number.isFinite(baselineWeight) || !Number.isFinite(targetWeight) || baselineWeight <= 0) {
+    return { warnings, blocks, recommendedRevisionSummary: "" };
+  }
+
+  const absoluteJump = targetWeight - baselineWeight;
+  const improvementRatio = targetWeight / baselineWeight;
+
+  if (Number.isFinite(targetHorizonWeeks)) {
+    if ((targetHorizonWeeks <= 6 && absoluteJump >= 50) || (targetHorizonWeeks <= 8 && improvementRatio >= 1.35)) {
+      blocks.push("That strength jump is too compressed for the current lift baseline.");
+    } else if ((targetHorizonWeeks <= 10 && absoluteJump >= 35) || (targetHorizonWeeks <= 12 && improvementRatio >= 1.2)) {
+      warnings.push("That strength target is ambitious relative to the current lift baseline.");
+    }
+  }
+
+  const suggestedWeight = roundToNearestFive(Math.min(targetWeight, baselineWeight + Math.max(10, Math.min(30, absoluteJump * 0.5))));
+  const recommendedRevisionSummary = blocks.length
+    ? `A more credible first block is moving from about ${baselineWeight} toward ${suggestedWeight} before chasing the full ${targetWeight} target.`
+    : warnings.length
+    ? `Keep the lift target, but treat the first block as a smaller jump from about ${baselineWeight} before reassessing ${targetWeight}.`
+    : "";
+
+  return { warnings, blocks, recommendedRevisionSummary };
+};
+
+const buildBodyCompBaselineSignals = ({
+  goal = {},
+  facts = {},
+  targetHorizonWeeks = null,
+} = {}) => {
+  const warnings = [];
+  const blocks = [];
+  const currentBodyweight = Number(facts?.currentBodyweight);
+  const targetWeightChange = Number(facts?.targetWeightChange);
+  const weeklyChange = Number.isFinite(targetWeightChange) && Number.isFinite(targetHorizonWeeks) && targetHorizonWeeks > 0
+    ? Math.abs(targetWeightChange) / targetHorizonWeeks
+    : null;
+  const weeklyPercent = Number.isFinite(weeklyChange) && Number.isFinite(currentBodyweight) && currentBodyweight > 0
+    ? (weeklyChange / currentBodyweight) * 100
+    : null;
+  const sixPackGoal = /\bsix pack\b|\babs\b/.test(String(goal?.summary || "").toLowerCase());
+
+  if (Number.isFinite(weeklyPercent)) {
+    if (weeklyPercent > 1.4) {
+      blocks.push("That body-composition rate is too aggressive for a credible first plan.");
+    } else if (weeklyPercent > 1.0) {
+      warnings.push("That body-composition timeline is ambitious and will need conservative execution.");
+    }
+  }
+
+  if (sixPackGoal && Number.isFinite(targetHorizonWeeks)) {
+    if (targetHorizonWeeks < 10) {
+      blocks.push("A six-pack style target on this timeline is too compressed for a deterministic first plan.");
+    } else if (targetHorizonWeeks < 14) {
+      warnings.push("A visible-abs target on this timeline is ambitious and may need a phased cut.");
+    }
+  }
+
+  const weeklyPercentSummary = Number.isFinite(currentBodyweight)
+    ? "about 0.5-1.0% of bodyweight per week"
+    : "a steadier weekly rate";
+  const recommendedRevisionSummary = blocks.length
+    ? `Use a smaller first block with ${weeklyPercentSummary} instead of forcing the full physique target immediately.`
+    : warnings.length
+    ? `Keep the physique goal, but plan for a steadier cut pace and reassess after the first block.`
+    : "";
+
+  return { warnings, blocks, recommendedRevisionSummary };
+};
+
+const buildBaselineSignals = ({
+  goal = {},
+  facts = {},
+  targetHorizonWeeks = null,
+} = {}) => {
+  const planningCategory = sanitizeText(goal?.planningCategory || "", 40).toLowerCase();
+  if (planningCategory === "running") {
+    return buildRunningBaselineSignals({ goal, facts, targetHorizonWeeks });
+  }
+  if (planningCategory === "strength") {
+    return buildStrengthBaselineSignals({ goal, facts, targetHorizonWeeks });
+  }
+  if (planningCategory === "body_comp") {
+    return buildBodyCompBaselineSignals({ goal, facts, targetHorizonWeeks });
+  }
+  return { warnings: [], blocks: [], recommendedRevisionSummary: "" };
+};
+
 const assessSingleGoalFeasibility = ({
   goal = {},
   userBaseline = {},
   scheduleReality = {},
   currentContext = {},
+  intakeCompleteness = null,
   now = new Date(),
 } = {}) => {
   const demand = buildDemandProfile({ goal, baseline: userBaseline, schedule: scheduleReality });
@@ -225,13 +434,30 @@ const assessSingleGoalFeasibility = ({
   const hasConstraintPenalty = Boolean((currentContext?.injuryConstraints || []).length) && ["running", "strength"].includes(goal?.planningCategory);
   const compressedHorizon = hasTargetWindow && targetHorizonWeeks < demand.minimumRealisticHorizonWeeks;
   const severelyCompressedHorizon = hasTargetWindow && targetHorizonWeeks < Math.max(4, Math.round(demand.minimumRealisticHorizonWeeks * 0.55));
+  const baselineSignals = buildBaselineSignals({
+    goal: { ...goal, minimumRealisticHorizonWeeks: demand.minimumRealisticHorizonWeeks },
+    facts: intakeCompleteness?.facts || {},
+    targetHorizonWeeks,
+  });
+  const blockingReasons = [
+    ...(baselineSignals.blocks || []),
+    ...(severelyCompressedHorizon ? ["The target timeline is too compressed for the goal demand."] : []),
+    ...(severeScheduleShortfall ? ["The current schedule support is too low for this goal on the stated timeline."] : []),
+  ];
+  const warningReasons = [
+    ...(baselineSignals.warnings || []),
+    ...(compressedHorizon && !severelyCompressedHorizon ? ["The current target window is tight for the full outcome."] : []),
+    ...(scheduleShortfall && !severeScheduleShortfall ? ["The current weekly training frequency is light for the full goal."] : []),
+    ...(shortSessions ? ["Session length is tight for the full goal expression."] : []),
+    ...(hasConstraintPenalty ? ["Current constraints lower the safe ceiling for this goal right now."] : []),
+  ];
 
   let realismStatus = GOAL_REALISM_STATUSES.realistic;
   if (!hasTargetWindow && goal?.measurabilityTier !== GOAL_MEASURABILITY_TIERS.fullyMeasurable) {
     realismStatus = GOAL_REALISM_STATUSES.exploratory;
-  } else if (severelyCompressedHorizon || severeScheduleShortfall) {
+  } else if (blockingReasons.length) {
     realismStatus = GOAL_REALISM_STATUSES.unrealistic;
-  } else if (compressedHorizon || scheduleShortfall || shortSessions || hasConstraintPenalty) {
+  } else if (warningReasons.length) {
     realismStatus = GOAL_REALISM_STATUSES.aggressive;
   }
 
@@ -266,6 +492,9 @@ const assessSingleGoalFeasibility = ({
     scheduleFit: severeScheduleShortfall ? "under_supported" : scheduleShortfall || shortSessions ? "tight" : "supported",
     realisticByTargetDate,
     longerHorizonNeed,
+    blockingReasons: dedupeStrings(blockingReasons),
+    warningReasons: dedupeStrings(warningReasons),
+    recommendedRevisionSummary: sanitizeText(baselineSignals.recommendedRevisionSummary || "", 220),
     priorityScore,
   };
 };
@@ -412,22 +641,91 @@ const aggregateRealismStatus = ({ goalAssessments = [], conflictFlags = [] } = {
   return topStatus || GOAL_REALISM_STATUSES.exploratory;
 };
 
+const buildMissingConfidence = ({ intakeCompleteness = null, goalAssessments = [] } = {}) => {
+  const reasons = dedupeStrings([
+    ...toArray(intakeCompleteness?.missingRequired),
+    ...toArray(intakeCompleteness?.missingOptional).slice(0, 2),
+    ...goalAssessments
+      .filter((assessment) => assessment.realismStatus === GOAL_REALISM_STATUSES.exploratory)
+      .map((assessment) => `Need a sharper anchor for ${assessment.goalSummary.toLowerCase()}.`),
+  ]);
+  const level = intakeCompleteness?.missingRequired?.length
+    ? "high"
+    : reasons.length
+    ? "medium"
+    : "low";
+  return {
+    level,
+    reasons,
+  };
+};
+
+const buildRecommendedRevision = ({
+  intakeCompleteness = null,
+  goalAssessments = [],
+  conflictFlags = [],
+  realismStatus = GOAL_REALISM_STATUSES.exploratory,
+} = {}) => {
+  if (intakeCompleteness?.missingRequired?.length) {
+    return {
+      kind: "missing_context",
+      summary: `Before planning, confirm ${intakeCompleteness.missingRequired.join(", ").toLowerCase()}.`,
+    };
+  }
+
+  const blockedGoal = goalAssessments.find((assessment) => assessment.realismStatus === GOAL_REALISM_STATUSES.unrealistic) || null;
+  if (blockedGoal) {
+    return {
+      kind: "scaled_first_block",
+      goalId: blockedGoal.goalId,
+      summary: blockedGoal.recommendedRevisionSummary || blockedGoal.longerHorizonNeed || blockedGoal.realisticByTargetDate,
+      suggestedTargetHorizonWeeks: blockedGoal.minimumRealisticHorizonWeeks || null,
+    };
+  }
+
+  if (realismStatus === GOAL_REALISM_STATUSES.aggressive && conflictFlags[0]?.summary) {
+    return {
+      kind: "sequencing",
+      summary: conflictFlags[0].summary,
+    };
+  }
+
+  return null;
+};
+
+const buildConfirmationAction = ({
+  realismStatus = GOAL_REALISM_STATUSES.exploratory,
+  intakeCompleteness = null,
+  conflictFlags = [],
+} = {}) => {
+  if (intakeCompleteness?.missingRequired?.length || realismStatus === GOAL_REALISM_STATUSES.unrealistic) {
+    return GOAL_FEASIBILITY_ACTIONS.block;
+  }
+  if (realismStatus === GOAL_REALISM_STATUSES.aggressive || conflictFlags.some((flag) => flag.severity === GOAL_CONFLICT_SEVERITIES.high)) {
+    return GOAL_FEASIBILITY_ACTIONS.warn;
+  }
+  return GOAL_FEASIBILITY_ACTIONS.proceed;
+};
+
 export const assessGoalFeasibility = ({
   resolvedGoals = [],
   userBaseline = {},
   scheduleReality = {},
   currentExperienceContext = {},
+  intakeCompleteness = null,
   now = new Date(),
 } = {}) => {
   const safeGoals = Array.isArray(resolvedGoals) ? resolvedGoals.filter(Boolean) : [];
   const normalizedBaseline = normalizeUserBaseline(userBaseline);
   const normalizedSchedule = normalizeScheduleReality(scheduleReality);
   const normalizedContext = normalizeCurrentContext(currentExperienceContext);
+  const normalizedCompleteness = normalizeIntakeCompleteness(intakeCompleteness);
   const goalAssessments = safeGoals.map((goal) => assessSingleGoalFeasibility({
     goal,
     userBaseline: normalizedBaseline,
     scheduleReality: normalizedSchedule,
     currentContext: normalizedContext,
+    intakeCompleteness: normalizedCompleteness,
     now,
   }));
   const conflictFlags = buildConflictFlags({
@@ -449,9 +747,40 @@ export const assessGoalFeasibility = ({
     goalAssessments,
     conflictFlags,
   });
+  const missingConfidence = buildMissingConfidence({
+    intakeCompleteness: normalizedCompleteness,
+    goalAssessments,
+  });
+  const recommendedRevision = buildRecommendedRevision({
+    intakeCompleteness: normalizedCompleteness,
+    goalAssessments,
+    conflictFlags,
+    realismStatus,
+  });
+  const confirmationAction = buildConfirmationAction({
+    realismStatus,
+    intakeCompleteness: normalizedCompleteness,
+    conflictFlags,
+  });
+  const blockingReasons = dedupeStrings([
+    ...normalizedCompleteness.missingRequired.map((item) => `Need ${item.toLowerCase()} before the plan can lock.`),
+    ...goalAssessments.flatMap((assessment) => assessment.blockingReasons || []),
+  ]);
+  const warningReasons = dedupeStrings([
+    ...goalAssessments.flatMap((assessment) => assessment.warningReasons || []),
+    ...conflictFlags.filter((flag) => flag.severity === GOAL_CONFLICT_SEVERITIES.high).map((flag) => flag.summary),
+  ]);
+  const tradeoffSummary = dedupeStrings(conflictFlags.map((flag) => flag.summary)).join(" ");
 
   return {
     realismStatus,
+    confirmationAction,
+    canProceed: confirmationAction !== GOAL_FEASIBILITY_ACTIONS.block,
+    missingConfidence,
+    recommendedRevision,
+    tradeoffSummary,
+    blockingReasons,
+    warningReasons,
     recommendedPriorityOrdering,
     conflictFlags,
     suggestedSequencing,

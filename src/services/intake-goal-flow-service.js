@@ -1,4 +1,9 @@
 import { GOAL_MEASURABILITY_TIERS, resolveGoalTranslation } from "./goal-resolution-service.js";
+import {
+  applyIntakeCompletenessAnswer as applyStructuredIntakeCompletenessAnswer,
+  buildIntakeCompletenessContext,
+  deriveIntakeCompletenessState,
+} from "./intake-completeness-service.js";
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
@@ -59,6 +64,12 @@ const REALISM_LABELS = {
   aggressive: "Aggressive",
   exploratory: "Exploratory",
   unrealistic: "Needs a smaller first block",
+};
+
+const FEASIBILITY_ACTION_LABELS = {
+  proceed: "Ready to plan",
+  warn: "Proceed with caution",
+  block: "Adjust before planning",
 };
 
 const ROLE_LABELS = {
@@ -372,11 +383,24 @@ export const buildIntakeGoalReviewModel = ({
   orderedResolvedGoals = [],
   goalFeasibility = null,
   aiInterpretationProposal = null,
+  answers = {},
+  goalStackConfirmation = null,
 } = {}) => {
-  const resolvedGoals = Array.isArray(orderedResolvedGoals) && orderedResolvedGoals.length
+  const baseResolvedGoals = Array.isArray(orderedResolvedGoals) && orderedResolvedGoals.length
     ? orderedResolvedGoals
     : (Array.isArray(goalResolution?.resolvedGoals) ? goalResolution.resolvedGoals : []);
+  const resolvedGoals = goalStackConfirmation
+    ? applyIntakeGoalStackConfirmation({
+        resolvedGoals: baseResolvedGoals,
+        goalStackConfirmation,
+        goalFeasibility,
+      })
+    : baseResolvedGoals;
   const primaryGoal = resolvedGoals[0] || null;
+  const completeness = deriveIntakeCompletenessState({
+    resolvedGoals,
+    answers,
+  });
   const trackingLabels = dedupeStrings(
     resolvedGoals.flatMap((goal) => [
       goal?.primaryMetric?.label || "",
@@ -387,19 +411,49 @@ export const buildIntakeGoalReviewModel = ({
     ])
   ).slice(0, 6);
   const unresolvedItems = dedupeStrings([
+    ...completeness.missingRequired.map((item) => item.label),
+    ...toArray(goalFeasibility?.blockingReasons),
+    ...(goalFeasibility?.recommendedRevision?.summary ? [goalFeasibility.recommendedRevision.summary] : []),
+    ...(goalFeasibility?.tradeoffSummary ? [goalFeasibility.tradeoffSummary] : []),
+    ...toArray(goalFeasibility?.warningReasons).slice(0, 2),
     ...(goalResolution?.unresolvedGaps || []),
     ...resolvedGoals.flatMap((goal) => goal?.unresolvedGaps || []),
-  ]).slice(0, 4);
-  const clarifyingQuestions = dedupeStrings([
+  ]).slice(0, 6);
+  const dedupeQuestionObjects = (questions = []) => {
+    const seen = new Set();
+    return toArray(questions)
+      .filter(Boolean)
+      .filter((item) => {
+        const prompt = sanitizeText(typeof item === "string" ? item : item?.prompt || "", 220).toLowerCase();
+        const key = sanitizeText(typeof item === "string" ? "" : item?.key || "", 80).toLowerCase();
+        const dedupeKey = `${key}::${prompt}`;
+        if (!prompt || seen.has(dedupeKey)) return false;
+        seen.add(dedupeKey);
+        return true;
+      })
+      .map((item, index) => (
+        typeof item === "string"
+          ? {
+              key: `generic_clarify_${index}`,
+              prompt: sanitizeText(item, 220),
+              required: false,
+              source: "review",
+              label: sanitizeText(item, 160),
+            }
+          : item
+      ));
+  };
+  const nextQuestions = dedupeQuestionObjects([
+    ...completeness.nextQuestions,
     ...buildDeterministicClarifyingQuestions(resolvedGoals),
     ...(aiInterpretationProposal?.missingClarifyingQuestions || []),
-    ...unresolvedItems,
-  ]).slice(0, 2);
+  ]);
+  const clarifyingQuestions = nextQuestions.map((item) => item.prompt);
   const goalStackReview = buildIntakeGoalStackReviewModel({
     resolvedGoals,
     goalResolution,
     goalFeasibility,
-    goalStackConfirmation: null,
+    goalStackConfirmation,
   });
 
   return {
@@ -410,14 +464,24 @@ export const buildIntakeGoalReviewModel = ({
     measurabilityLabel: MEASURABILITY_LABELS[primaryGoal?.measurabilityTier] || "Pending",
     realismStatus: sanitizeText(goalFeasibility?.realismStatus || "", 40).toLowerCase(),
     realismLabel: REALISM_LABELS[goalFeasibility?.realismStatus] || "Pending",
+    confirmationAction: sanitizeText(goalFeasibility?.confirmationAction || "proceed", 20).toLowerCase() || "proceed",
+    confirmationLabel: FEASIBILITY_ACTION_LABELS[goalFeasibility?.confirmationAction] || FEASIBILITY_ACTION_LABELS.proceed,
     confidence: sanitizeText(primaryGoal?.confidence || goalResolution?.confidenceLevel || "", 20).toLowerCase(),
     confidenceLabel: CONFIDENCE_LABELS[primaryGoal?.confidence || goalResolution?.confidenceLevel] || "Pending confidence",
+    missingConfidenceLevel: sanitizeText(goalFeasibility?.missingConfidence?.level || "low", 20).toLowerCase() || "low",
+    missingConfidenceReasons: toArray(goalFeasibility?.missingConfidence?.reasons).slice(0, 3),
+    recommendedRevisionSummary: sanitizeText(goalFeasibility?.recommendedRevision?.summary || "", 220),
+    tradeoffSummary: sanitizeText(goalFeasibility?.tradeoffSummary || "", 220),
+    blockingReasons: toArray(goalFeasibility?.blockingReasons).slice(0, 3),
+    warningReasons: toArray(goalFeasibility?.warningReasons).slice(0, 3),
     trackingLabels,
     unresolvedItems,
     clarifyingQuestions,
+    nextQuestions,
+    completeness,
     orderedResolvedGoals: resolvedGoals,
     goalStackReview,
-    isPlannerReady: Boolean(primaryGoal),
+    isPlannerReady: Boolean(primaryGoal) && completeness.isComplete && sanitizeText(goalFeasibility?.confirmationAction || "proceed", 20).toLowerCase() !== "block",
   };
 };
 
@@ -431,9 +495,39 @@ export const getNextIntakeClarifyingQuestion = ({
       .map((item) => sanitizeText(item, 180).toLowerCase())
       .filter(Boolean)
   );
-  if (normalizedAsked.size >= Math.max(0, maxQuestions)) return "";
-  return toArray(reviewModel?.clarifyingQuestions)
-    .map((item) => sanitizeText(item, 180))
-    .find((item) => item && !normalizedAsked.has(item.toLowerCase()))
-    || "";
+  const nextQuestions = toArray(reviewModel?.nextQuestions).length
+    ? toArray(reviewModel?.nextQuestions)
+    : toArray(reviewModel?.clarifyingQuestions).map((item, index) => ({
+        key: `clarifying_${index}`,
+        prompt: sanitizeText(item, 220),
+        required: false,
+        source: "review",
+      }));
+  const requiredQuestion = nextQuestions.find((item) => item?.required);
+  if (requiredQuestion?.prompt) return requiredQuestion;
+  if (normalizedAsked.size >= Math.max(0, maxQuestions)) return null;
+  return nextQuestions.find((item) => {
+    const normalizedKey = sanitizeText(item?.key || "", 180).toLowerCase();
+    const normalizedPrompt = sanitizeText(item?.prompt || "", 180).toLowerCase();
+    return item?.prompt && !normalizedAsked.has(normalizedKey) && !normalizedAsked.has(normalizedPrompt);
+  })
+    || null;
 };
+
+export const applyIntakeCompletenessAnswer = ({
+  answers = {},
+  question = null,
+  answerText = "",
+} = {}) => applyStructuredIntakeCompletenessAnswer({
+  answers,
+  question,
+  answerText,
+});
+
+export const buildIntakeCompletenessPacketContext = ({
+  resolvedGoals = [],
+  answers = {},
+} = {}) => buildIntakeCompletenessContext({
+  resolvedGoals,
+  answers,
+});

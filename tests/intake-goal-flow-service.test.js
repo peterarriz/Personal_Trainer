@@ -17,6 +17,7 @@ const {
   applyResolvedGoalsToGoalSlots,
 } = require("../src/services/goal-resolution-service.js");
 const {
+  GOAL_FEASIBILITY_ACTIONS,
   assessGoalFeasibility,
   applyFeasibilityPriorityOrdering,
 } = require("../src/services/goal-feasibility-service.js");
@@ -123,12 +124,15 @@ test("review model surfaces proxy tracking and missing info for vague appearance
       interpretedGoalType: "appearance",
       missingClarifyingQuestions: ["What would make this feel visibly successful in the next 30 days?"],
     },
+    answers: {},
   });
 
   assert.equal(reviewModel.measurabilityTier, GOAL_MEASURABILITY_TIERS.proxyMeasurable);
   assert.ok(reviewModel.trackingLabels.some((label) => /waist/i.test(label)));
   assert.ok(reviewModel.unresolvedItems.length >= 1);
-  assert.equal(reviewModel.clarifyingQuestions[0], "What would make this feel visibly successful in the next 30 days?");
+  assert.equal(reviewModel.isPlannerReady, false);
+  assert.match(reviewModel.clarifyingQuestions[0], /current bodyweight, waist, or progress photos/i);
+  assert.ok(reviewModel.clarifyingQuestions.includes("What would make this feel visibly successful in the next 30 days?"));
 });
 
 test("review model asks for race timing when a measurable event goal is still missing a horizon", () => {
@@ -145,9 +149,54 @@ test("review model asks for race timing when a measurable event goal is still mi
     orderedResolvedGoals: goalResolution.resolvedGoals,
     goalFeasibility: { realismStatus: "realistic" },
     aiInterpretationProposal: null,
+    answers: {},
   });
 
   assert.equal(reviewModel.clarifyingQuestions[0], "What's the race date or target month?");
+});
+
+test("review model stays not-ready when realism blocks confirmation even after completeness is satisfied", () => {
+  const rawGoalText = "bench 225";
+  const goalResolution = resolveGoalTranslation({
+    rawUserGoalIntent: rawGoalText,
+    typedIntakePacket: buildIntakePacket(rawGoalText),
+    explicitUserConfirmation: { confirmed: false, acceptedProposal: true, targetHorizonWeeks: 6, source: "intake_preview" },
+    now: "2026-04-11",
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: goalResolution.resolvedGoals,
+    userBaseline: buildIntakePacket(rawGoalText).intake.baselineContext,
+    scheduleReality: buildIntakePacket(rawGoalText).intake.scheduleReality,
+    currentExperienceContext: {
+      injuryConstraintContext: buildIntakePacket(rawGoalText).intake.injuryConstraintContext,
+      equipmentAccessContext: buildIntakePacket(rawGoalText).intake.equipmentAccessContext,
+    },
+    intakeCompleteness: {
+      facts: {
+        currentStrengthBaseline: { text: "135 x 3", weight: 135, reps: 3 },
+      },
+      missingRequired: [],
+      missingOptional: [],
+    },
+    now: "2026-04-11",
+  });
+
+  const reviewModel = buildIntakeGoalReviewModel({
+    goalResolution,
+    orderedResolvedGoals: goalResolution.resolvedGoals,
+    goalFeasibility,
+    answers: {
+      intake_completeness: {
+        fields: {
+          current_strength_baseline: { raw: "135 x 3", value: 135, weight: 135, reps: 3 },
+        },
+      },
+    },
+  });
+
+  assert.equal(reviewModel.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
+  assert.equal(reviewModel.isPlannerReady, false);
+  assert.match(reviewModel.recommendedRevisionSummary, /135|225/i);
 });
 
 test("next clarifying question skips ones already asked", () => {
@@ -162,7 +211,7 @@ test("next clarifying question skips ones already asked", () => {
     maxQuestions: 2,
   });
 
-  assert.equal(question, "What race are you aiming for?");
+  assert.equal(question.prompt, "What race are you aiming for?");
 });
 
 test("late-stage goal edit from body-comp to event goal clears stale proxy context and leaves confirmation on the latest resolved state only", () => {
