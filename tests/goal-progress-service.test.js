@@ -119,7 +119,7 @@ test("strength goals track working sets, performance records, and projected dist
   assert.equal(result.goalCards[0].status, GOAL_PROGRESS_STATUSES.onTrack);
 });
 
-test("body-composition goals use proxy trends like bodyweight, waist, consistency, and optional photos", () => {
+test("body-composition goals use proxy trends like bodyweight, waist, consistency, and deferred manual photo review", () => {
   const result = buildGoalProgressTracking({
     resolvedGoals: [
       buildResolvedGoal({
@@ -130,7 +130,7 @@ test("body-composition goals use proxy trends like bodyweight, waist, consistenc
         proxyMetrics: [
           { key: "waist_circumference", label: "Waist circumference", unit: "in", kind: "proxy" },
           { key: "bodyweight_trend", label: "Bodyweight trend", unit: "lb", kind: "proxy" },
-          { key: "progress_photos", label: "Progress photos", unit: "checkins", kind: "proxy" },
+          { key: "progress_photos", label: "Manual photo review (future)", unit: "checkins", kind: "proxy" },
         ],
       }),
     ],
@@ -159,7 +159,8 @@ test("body-composition goals use proxy trends like bodyweight, waist, consistenc
   const itemsByKey = Object.fromEntries(result.goalCards[0].trackedItems.map((item) => [item.key, item]));
   assert.match(itemsByKey.bodyweight_trend.currentDisplay, /185\.9 lb latest/i);
   assert.match(itemsByKey.waist_circumference.currentDisplay, /34\.8 in latest/i);
-  assert.match(itemsByKey.progress_photos.currentDisplay, /1 photo check-in/i);
+  assert.match(itemsByKey.progress_photos.label, /manual photo review \(future\)/i);
+  assert.match(itemsByKey.progress_photos.currentDisplay, /1 manual photo review/i);
   assert.ok(result.goalCards[0].statusSummary.includes("trend measures"));
 });
 
@@ -174,7 +175,7 @@ test("appearance goals stay review-based and avoid fake exact precision", () => 
         proxyMetrics: [
           { key: "waist_circumference", label: "Waist circumference", unit: "in", kind: "proxy" },
           { key: "bodyweight_trend", label: "Bodyweight trend", unit: "lb", kind: "proxy" },
-          { key: "progress_photos", label: "Progress photos", unit: "checkins", kind: "proxy" },
+          { key: "progress_photos", label: "Manual photo review (future)", unit: "checkins", kind: "proxy" },
         ],
       }),
     ],

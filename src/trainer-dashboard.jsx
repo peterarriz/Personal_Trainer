@@ -86,15 +86,19 @@ import {
   trainingEquipmentToEnvironmentCode,
 } from "./services/training-context-service.js";
 import {
+  applyIntakeSecondaryGoalResponse,
   applyIntakeCompletenessAnswer,
   applyIntakeGoalAdjustment,
   applyIntakeGoalStackConfirmation,
+  buildIntakeClarificationCoachMessages,
   buildIntakeCompletenessPacketContext,
   buildIntakeGoalStackConfirmation,
   buildIntakeGoalStackReviewModel,
   buildIntakeGoalReviewModel,
+  buildIntakeSecondaryGoalPrompt,
   buildRawGoalIntentFromAnswers,
   GOAL_STACK_ROLES,
+  SECONDARY_GOAL_RESPONSE_KEYS,
   getNextIntakeClarifyingQuestion,
   resolveCompatibilityPrimaryGoalKey,
 } from "./services/intake-goal-flow-service.js";
@@ -7050,6 +7054,8 @@ Keep it plain and specific.`;
           setNutritionFavorites(DEFAULT_NUTRITION_FAVORITES);
           setNutritionActualLogs({});
           await persistAll(clearedLogs, clearedBodyweights, {}, {}, [], resetPersonalization, [], DEFAULT_COACH_PLAN_ADJUSTMENTS, clearedGoals, clearedDaily, clearedWeekly, DEFAULT_NUTRITION_FAVORITES, {}, clearedPlannedDayRecords, clearedPlanWeekRecords);
+          setAuthError("");
+          await authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
         }} onPersist={async (nextPersonalization) => {
           setPersonalization(nextPersonalization);
           await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
@@ -7197,6 +7203,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [goalStackConfirmation, setGoalStackConfirmation] = useState(null);
   const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState([]);
   const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(null);
+  const [pendingSecondaryGoalPrompt, setPendingSecondaryGoalPrompt] = useState(null);
+  const [secondaryGoalMode, setSecondaryGoalMode] = useState("");
   const [assessing, setAssessing] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
@@ -7285,6 +7293,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   }, [currentPrompt?.key]);
 
   useEffect(() => {
+    if (phase !== "secondary_goal") {
+      setSecondaryGoalMode("");
+    }
+  }, [phase]);
+
+  useEffect(() => {
     if (phase !== "building") return undefined;
     setBuildingStageIndex(0);
     const interval = setInterval(() => {
@@ -7357,6 +7371,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       askedQuestions,
       maxQuestions: 2,
     });
+    const nextSecondaryGoalPrompt = buildIntakeSecondaryGoalPrompt({
+      reviewModel: reviewModelForAssessment,
+      answers: updatedAnswers,
+    });
     setAssessmentText(cleanTimeline);
     setAssessmentBoundary({
       typedIntakePacket: assessment?.typedIntakePacket || null,
@@ -7369,14 +7387,26 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       reviewModel: reviewModelForAssessment,
     });
     setAnswers(updatedAnswers);
-    appendCoachMessage(cleanTimeline);
     if (nextQuestion) {
       setPendingClarifyingQuestion(nextQuestion);
+      setPendingSecondaryGoalPrompt(null);
       setPhase("clarify");
-      appendCoachMessage(`One quick thing before I lock this in: ${nextQuestion.prompt}`);
+      buildIntakeClarificationCoachMessages({
+        statusText: cleanTimeline,
+        nextQuestion,
+      }).forEach(appendCoachMessage);
       return;
     }
+    if (nextSecondaryGoalPrompt) {
+      setPendingClarifyingQuestion(null);
+      setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
+      setPhase("secondary_goal");
+      appendCoachMessage(nextSecondaryGoalPrompt.prompt);
+      return;
+    }
+    appendCoachMessage(cleanTimeline);
     setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
     setPhase("review");
   };
   const runAssessment = async ({
@@ -7405,6 +7435,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }
     setAskedClarifyingQuestions([]);
     setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
     await runAssessment({ updatedAnswers, askedQuestions: [] });
   };
   const submitCurrentAnswer = async (value, explicitKey = currentPrompt?.key) => {
@@ -7434,6 +7465,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setDraft("");
     setAskedClarifyingQuestions([]);
     setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
     appendCoachMessage("Tell me what you want to change and I'll recalibrate it before I build.");
   };
   const submitAdjustment = async () => {
@@ -7451,6 +7483,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     const updatedAnswers = adjustmentOutcome.answers;
     setAskedClarifyingQuestions([]);
     setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
     await runAssessment({ updatedAnswers, askedQuestions: [] });
   };
   const submitClarification = async () => {
@@ -7458,38 +7491,84 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!clean || !pendingClarifyingQuestion?.prompt) return;
     appendUserMessage(clean);
     setDraft("");
+    const questionSource = String(pendingClarifyingQuestion?.source || "").trim().toLowerCase();
     const adjustmentOutcome = applyIntakeGoalAdjustment({
       answers,
       adjustmentText: clean,
       currentResolvedGoal: assessmentPreview?.orderedResolvedGoals?.[0] || null,
       currentPrimaryGoalKey: answers.primary_goal || "",
       now: new Date(),
+      allowImplicitGoalReplacement: questionSource !== "completeness",
     });
     if (adjustmentOutcome.kind === "goal_replacement") {
       setAskedClarifyingQuestions([]);
       setPendingClarifyingQuestion(null);
+      setPendingSecondaryGoalPrompt(null);
       await runAssessment({ updatedAnswers: adjustmentOutcome.answers, askedQuestions: [] });
       return;
     }
     const structuredAnswer = applyIntakeCompletenessAnswer({
-      answers: adjustmentOutcome.answers,
+      answers,
       question: pendingClarifyingQuestion,
       answerText: clean,
     });
     const nextAskedQuestions = [...askedClarifyingQuestions, pendingClarifyingQuestion.key || pendingClarifyingQuestion.prompt];
-    const shouldMirrorToTimelineFeedback = Boolean(pendingClarifyingQuestion?.affectsTimeline)
-      || !pendingClarifyingQuestion?.source
-      || pendingClarifyingQuestion?.source !== "completeness";
+    const shouldMirrorToTimelineFeedback = Boolean(pendingClarifyingQuestion?.affectsTimeline);
+    const shouldPersistGoalClarificationNote = questionSource !== "completeness";
     const updatedAnswers = {
       ...structuredAnswer.answers,
-      goal_clarification_notes: [
-        ...(Array.isArray(structuredAnswer.answers.goal_clarification_notes) ? structuredAnswer.answers.goal_clarification_notes : []),
-        { question: pendingClarifyingQuestion.prompt, answer: clean },
-      ],
+      goal_clarification_notes: shouldPersistGoalClarificationNote
+        ? [
+            ...(Array.isArray(structuredAnswer.answers.goal_clarification_notes) ? structuredAnswer.answers.goal_clarification_notes : []),
+            {
+              question: pendingClarifyingQuestion.prompt,
+              answer: clean,
+              source: pendingClarifyingQuestion?.source || "review",
+              questionKey: pendingClarifyingQuestion?.key || "",
+              fieldKeys: Array.isArray(pendingClarifyingQuestion?.fieldKeys) ? pendingClarifyingQuestion.fieldKeys : [],
+            },
+          ]
+        : (Array.isArray(structuredAnswer.answers.goal_clarification_notes) ? structuredAnswer.answers.goal_clarification_notes : []),
       timeline_feedback: shouldMirrorToTimelineFeedback ? clean : (structuredAnswer.answers.timeline_feedback || ""),
     };
     setAskedClarifyingQuestions(nextAskedQuestions);
     await runAssessment({ updatedAnswers, askedQuestions: nextAskedQuestions });
+  };
+  const submitSecondaryGoalResponse = async (response = null) => {
+    const customText = String(draft || "").trim();
+    if (!response?.key) return;
+    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.custom && !customText) return;
+    if (response.key !== SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly) {
+      appendUserMessage(response.key === SECONDARY_GOAL_RESPONSE_KEYS.custom ? customText : response.label);
+    } else {
+      appendUserMessage(response.label || "No, just this goal");
+    }
+    setDraft("");
+    setSecondaryGoalMode("");
+    const outcome = applyIntakeSecondaryGoalResponse({
+      answers,
+      response,
+      customText,
+      resolvedGoals: reviewGoals,
+      goalStackConfirmation,
+      goalFeasibility: assessmentPreview?.goalFeasibility || null,
+    });
+    setAnswers(outcome.answers);
+    setPendingSecondaryGoalPrompt(null);
+    setPendingClarifyingQuestion(null);
+    if (!outcome.rerunAssessment) {
+      setGoalStackConfirmation(outcome.goalStackConfirmation);
+      setPhase("review");
+      appendCoachMessage(
+        response.key === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly
+          ? "Keeping this plan focused on the primary goal."
+          : "Got it. I'll keep that secondary goal in maintenance while the primary goal leads."
+      );
+      return;
+    }
+    setGoalStackConfirmation(outcome.goalStackConfirmation);
+    setAskedClarifyingQuestions([]);
+    await runAssessment({ updatedAnswers: outcome.answers, askedQuestions: [] });
   };
   const finalizePlan = async () => {
     const effectiveNextQuestion = getNextIntakeClarifyingQuestion({
@@ -7500,7 +7579,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!reviewModel?.isPlannerReady && effectiveNextQuestion?.prompt) {
       setPendingClarifyingQuestion(effectiveNextQuestion);
       setPhase("clarify");
-      appendCoachMessage(`I still need one critical detail before I can build credibly: ${effectiveNextQuestion.prompt}`);
+      buildIntakeClarificationCoachMessages({
+        statusText: "I still need one critical detail before I can build credibly.",
+        nextQuestion: effectiveNextQuestion,
+      }).forEach(appendCoachMessage);
       return;
     }
     if (reviewModel?.confirmationAction === GOAL_FEASIBILITY_ACTIONS.block) {
@@ -7685,8 +7767,85 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
               </div>
             )}
 
-            {(phase === "review" || phase === "clarify") && !isCoachStreaming && (
+            {(phase === "review" || phase === "clarify" || phase === "secondary_goal") && !isCoachStreaming && (
               <div style={{ display:"grid", gap:"0.65rem" }}>
+                {phase === "clarify" ? (
+                  <div style={{ display:"grid", gap:"0.5rem" }}>
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>One targeted clarification</div>
+                    <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingClarifyingQuestion?.prompt || ""}</div>
+                    <textarea
+                      ref={composerRef}
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      placeholder={pendingClarifyingQuestion?.placeholder || "Short answer..."}
+                      rows={3}
+                      style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
+                    />
+                    <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
+                      <button className="btn btn-primary" onClick={submitClarification} disabled={!draft.trim()}>
+                        Save this detail
+                      </button>
+                      {!pendingClarifyingQuestion?.required && (
+                        <button className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
+                          Use current interpretation
+                        </button>
+                      )}
+                      <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
+                        I want to adjust something
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {phase === "secondary_goal" ? (
+                  <div style={{ display:"grid", gap:"0.55rem" }}>
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Optional maintained goal</div>
+                    <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingSecondaryGoalPrompt?.prompt || ""}</div>
+                    {pendingSecondaryGoalPrompt?.helperText && (
+                      <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.55 }}>{pendingSecondaryGoalPrompt.helperText}</div>
+                    )}
+                    <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+                      {(pendingSecondaryGoalPrompt?.options || []).map((option) => (
+                        <button
+                          key={option.key}
+                          className="btn"
+                          onClick={() => option.requiresText ? setSecondaryGoalMode(option.key) : submitSecondaryGoalResponse(option)}
+                          style={{
+                            color:secondaryGoalMode === option.key ? C.green : "#dbe7f6",
+                            borderColor:secondaryGoalMode === option.key ? `${C.green}45` : "#324961",
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    {secondaryGoalMode === SECONDARY_GOAL_RESPONSE_KEYS.custom && (
+                      <div style={{ display:"grid", gap:"0.5rem" }}>
+                        <textarea
+                          ref={composerRef}
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          placeholder={pendingSecondaryGoalPrompt?.placeholder || "Example: keep upper body"}
+                          rows={3}
+                          style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
+                        />
+                        <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => submitSecondaryGoalResponse((pendingSecondaryGoalPrompt?.options || []).find((option) => option.key === SECONDARY_GOAL_RESPONSE_KEYS.custom) || null)}
+                            disabled={!draft.trim()}
+                          >
+                            Add maintained goal
+                          </button>
+                          <button className="btn" onClick={() => setSecondaryGoalMode("")} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
                 {reviewModel && (
                   <div style={{ display:"grid", gap:"0.65rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:18, padding:"0.8rem", background:"rgba(8,14,25,0.58)" }}>
                     <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.55rem" }}>
@@ -7699,8 +7858,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
                           Plan realism: {reviewModel.realismLabel}
                         </div>
-                        <div style={{ fontSize:"0.5rem", color:reviewModel.confirmationAction === GOAL_FEASIBILITY_ACTIONS.block ? C.amber : reviewModel.confirmationAction === GOAL_FEASIBILITY_ACTIONS.warn ? "#facc15" : "#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Confirmation gate: {reviewModel.confirmationLabel}
+                        <div style={{ fontSize:"0.5rem", color:reviewModel.gateStatus === "blocked" || reviewModel.gateStatus === "incomplete" ? C.amber : reviewModel.gateStatus === "warn" ? "#facc15" : "#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                          Confirmation gate: {reviewModel.gateLabel || reviewModel.confirmationLabel}
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
@@ -7806,33 +7965,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                   </div>
                 )}
 
-                {phase === "clarify" ? (
-                  <div style={{ display:"grid", gap:"0.5rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>One targeted clarification</div>
-                    <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingClarifyingQuestion?.prompt || ""}</div>
-                    <textarea
-                      ref={composerRef}
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      placeholder={pendingClarifyingQuestion?.placeholder || "Short answer..."}
-                      rows={3}
-                      style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
-                    />
-                    <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={submitClarification} disabled={!draft.trim()}>
-                        Save this detail
-                      </button>
-                      {!pendingClarifyingQuestion?.required && (
-                        <button className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
-                          Use current interpretation
-                        </button>
-                      )}
-                      <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
-                        I want to adjust something
-                      </button>
-                    </div>
-                  </div>
-                ) : (
+                {phase === "review" ? (
                   <div style={{ display:"grid", gap:"0.55rem" }}>
                     <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Does this feel right?</div>
                     {!reviewModel?.isPlannerReady && reviewModel?.completeness?.missingRequired?.length > 0 && (
@@ -7854,7 +7987,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       </button>
                     </div>
                   </div>
-                )}
+                ) : null}
               </div>
             )}
 

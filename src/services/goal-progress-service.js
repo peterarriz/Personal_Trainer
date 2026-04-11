@@ -612,15 +612,15 @@ const buildPhotoReviewItem = ({ now = new Date(), manualProgressInputs = {} } = 
   const countThisWindow = photoSeries.reduce((sum, entry) => sum + (Number.isFinite(entry?.count) ? Number(entry.count) : 1), 0);
   return createTrackedItem({
     key: "progress_photos",
-    label: "Progress photos",
+    label: "Manual photo review (future)",
     kind: "proxy",
     metricRefs: ["progress_photos"],
     status: latest ? GOAL_PROGRESS_STATUSES.reviewBased : GOAL_PROGRESS_STATUSES.needsData,
     currentDisplay: latest
-      ? `${countThisWindow} photo check-in${countThisWindow === 1 ? "" : "s"} in the current review window`
-      : "Optional photo review not logged yet",
-    trendDisplay: latest ? `Latest photo review ${latest.date}` : "",
-    why: "Photos stay optional, but they give appearance goals a repeatable review anchor when the user wants one.",
+      ? `${countThisWindow} manual photo review${countThisWindow === 1 ? "" : "s"} logged in the current review window`
+      : "Manual photo review is not active in the app yet",
+    trendDisplay: latest ? `Latest manual photo review ${latest.date}` : "",
+    why: "Photo-based appearance review is deferred for now, so treat this as a manual/future checkpoint rather than a live upload feature.",
   });
 };
 
@@ -795,7 +795,7 @@ const buildAppearanceTrackedItems = ({ goal = {}, dataIndex = {}, manualProgress
     { label: "training consistency logged", hit: consistencyItem.status !== GOAL_PROGRESS_STATUSES.needsData },
     { label: "bodyweight trend updated", hit: bodyweightItem.status !== GOAL_PROGRESS_STATUSES.needsData },
     { label: "waist check logged", hit: waistItem.status !== GOAL_PROGRESS_STATUSES.needsData },
-    { label: "photo review completed", hit: photoItem.status !== GOAL_PROGRESS_STATUSES.needsData },
+    { label: "manual photo review completed", hit: photoItem.status !== GOAL_PROGRESS_STATUSES.needsData },
   ];
   const hits = checklistAnchors.filter((item) => item.hit).length;
   const missing = checklistAnchors.filter((item) => !item.hit).map((item) => item.label);

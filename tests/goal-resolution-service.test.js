@@ -104,6 +104,19 @@ test("resolves a fully measurable strength goal into logged-lift planning input"
   assert.match(result.planningGoals[0].measurableTarget, /225 lb/i);
 });
 
+test("strength goal parsing preserves four-digit lift targets for downstream realism checks", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "bench press 2200 lbs",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "bench press 2200 lbs" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals[0].primaryMetric.key, "bench_press_weight");
+  assert.equal(result.resolvedGoals[0].primaryMetric.targetValue, "2200");
+  assert.match(result.planningGoals[0].measurableTarget, /2200 lb/i);
+});
+
 test("appearance goals stay proxy-measurable and use a time horizon when timing is approximate", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "have six pack by August",

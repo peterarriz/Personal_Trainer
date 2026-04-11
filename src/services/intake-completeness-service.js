@@ -39,6 +39,18 @@ export const INTAKE_COMPLETENESS_QUESTION_KEYS = {
 
 const COMPLETENESS_SOURCE = "completeness";
 
+const COMPLETENESS_FIELD_FALLBACK_PATTERNS = {
+  [INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline]: [/bench|strength baseline|current lift|upper body/i],
+  [INTAKE_COMPLETENESS_FIELDS.currentRunFrequency]: [/running baseline|runs per week|run frequency/i],
+  [INTAKE_COMPLETENESS_FIELDS.longestRecentRun]: [/running baseline|longest recent run|long run/i],
+  [INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline]: [/running baseline|recent pace|race result|pace baseline/i],
+  [INTAKE_COMPLETENESS_FIELDS.currentBodyweight]: [/current bodyweight|current weight|scale weight|proxy we can track/i],
+  [INTAKE_COMPLETENESS_FIELDS.targetWeightChange]: [/how much.*lose|target weight change|trying to lose/i],
+  [INTAKE_COMPLETENESS_FIELDS.currentWaist]: [/waist/i],
+  [INTAKE_COMPLETENESS_FIELDS.progressPhotos]: [/progress photos|photos/i],
+  [INTAKE_COMPLETENESS_FIELDS.targetTimeline]: [/race date|target month|timeline|horizon|by when/i],
+};
+
 const normalizeBoolean = (value) => {
   if (typeof value === "boolean") return value;
   const text = sanitizeText(value, 60).toLowerCase();
@@ -71,6 +83,8 @@ const parseRunFrequency = (text = "") => {
   const normalized = String(text || "").toLowerCase();
   const explicit = normalized.match(/(\d+)\s*(?:runs?|days?)\s*(?:per|\/)?\s*(?:week|wk)/i);
   if (explicit?.[1]) return Number(explicit[1]);
+  const weeklyTimes = normalized.match(/(\d+)\s*(?:x|times?)\s*(?:a|per|\/)?\s*(?:week|wk)/i);
+  if (weeklyTimes?.[1]) return Number(weeklyTimes[1]);
   if (/^\d+$/.test(normalized.trim())) return Number(normalized.trim());
   return null;
 };
@@ -152,14 +166,31 @@ const buildFieldRecord = ({ fieldKey = "", raw = "", value = null, extra = {} } 
   };
 };
 
-const getClarificationAnswerByPattern = (answers = {}, patterns = []) => {
+export const isCompletenessClarificationNote = (note = {}) => {
+  if (!note || typeof note !== "object") return false;
+  const source = sanitizeText(note?.source || "", 40).toLowerCase();
+  if (source === COMPLETENESS_SOURCE) return true;
+  const questionKey = sanitizeText(note?.questionKey || "", 80).toLowerCase();
+  if (questionKey && Object.values(INTAKE_COMPLETENESS_QUESTION_KEYS).includes(questionKey)) return true;
+  const fieldKeys = toArray(note?.fieldKeys).map((item) => sanitizeText(item, 80)).filter(Boolean);
+  if (fieldKeys.length > 0) return true;
+  const question = sanitizeText(note?.question || "", 180).toLowerCase();
+  return Object.values(COMPLETENESS_FIELD_FALLBACK_PATTERNS).some((patterns = []) => patterns.some((pattern) => pattern.test(question)));
+};
+
+const getClarificationAnswerForField = (answers = {}, fieldKey = "") => {
+  const patterns = COMPLETENESS_FIELD_FALLBACK_PATTERNS[fieldKey] || [];
   const notes = toArray(answers?.goal_clarification_notes)
-    .filter((note) => note && typeof note === "object")
+    .filter((note) => isCompletenessClarificationNote(note))
     .map((note) => ({
+      fieldKeys: toArray(note?.fieldKeys).map((item) => sanitizeText(item, 80).toLowerCase()).filter(Boolean),
       question: sanitizeText(note?.question || "", 180).toLowerCase(),
       answer: sanitizeText(note?.answer || "", 220),
     }))
     .filter((note) => note.answer);
+  const normalizedFieldKey = sanitizeText(fieldKey, 80).toLowerCase();
+  const scopedMatch = notes.find((note) => note.fieldKeys.includes(normalizedFieldKey));
+  if (scopedMatch?.answer) return scopedMatch.answer;
   for (const pattern of patterns) {
     const matched = notes.find((note) => pattern.test(note.question));
     if (matched?.answer) return matched.answer;
@@ -167,24 +198,24 @@ const getClarificationAnswerByPattern = (answers = {}, patterns = []) => {
   return "";
 };
 
-const readTextField = (answers = {}, fieldKey = "", fallbackPatterns = []) => (
+const readTextField = (answers = {}, fieldKey = "") => (
   sanitizeText(readStoredField(answers, fieldKey)?.raw || "", 160)
-  || getClarificationAnswerByPattern(answers, fallbackPatterns)
+  || getClarificationAnswerForField(answers, fieldKey)
   || ""
 );
 
 const resolveKnownFacts = ({ resolvedGoals = [], answers = {} } = {}) => {
   const primaryGoal = (resolvedGoals || [])[0] || null;
-  const currentStrengthBaselineText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline, [/bench|strength baseline|current lift|upper body/i]);
-  const currentRunFrequencyText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentRunFrequency, [/running baseline|runs per week|run frequency/i]);
-  const longestRecentRunText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.longestRecentRun, [/longest recent run|long run/i]);
-  const recentPaceBaselineText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline, [/recent pace|race result|pace baseline/i]);
-  const currentBodyweightText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight, [/current bodyweight|current weight|scale weight/i]);
-  const targetWeightChangeText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.targetWeightChange, [/how much.*lose|target weight change|trying to lose/i]);
-  const currentWaistText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentWaist, [/waist/i]);
-  const timelineText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.targetTimeline, [/race date|target month|timeline|horizon|by when/i]) || sanitizeText(answers?.timeline_feedback || "", 160);
+  const currentStrengthBaselineText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline);
+  const currentRunFrequencyText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentRunFrequency);
+  const longestRecentRunText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.longestRecentRun);
+  const recentPaceBaselineText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline);
+  const currentBodyweightText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight);
+  const targetWeightChangeText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.targetWeightChange);
+  const currentWaistText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentWaist);
+  const timelineText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.targetTimeline) || sanitizeText(answers?.timeline_feedback || "", 160);
   const progressPhotosRaw = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.progressPhotos)?.raw
-    || getClarificationAnswerByPattern(answers, [/progress photos|photos/i]);
+    || getClarificationAnswerForField(answers, INTAKE_COMPLETENESS_FIELDS.progressPhotos);
 
   const targetMetric = primaryGoal?.primaryMetric?.key === "bodyweight_change"
     ? toFiniteNumber(primaryGoal?.primaryMetric?.targetValue, parseTargetWeightChange(primaryGoal?.primaryMetric?.targetValue || ""))
@@ -433,7 +464,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
     }));
     optionalFields.push(buildRequirement({
       key: "body_comp_photos_optional",
-      label: "Progress photos",
+      label: "Manual photo review (future)",
       required: false,
       filled: facts?.progressPhotos === true,
       fieldKeys: [INTAKE_COMPLETENESS_FIELDS.progressPhotos],
@@ -451,17 +482,15 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
       fieldKeys: [
         INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
         INTAKE_COMPLETENESS_FIELDS.currentWaist,
-        INTAKE_COMPLETENESS_FIELDS.progressPhotos,
       ],
       goalRole,
       question: buildQuestion({
         key: INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
-        prompt: "What's one proxy we can track for this right now: current bodyweight, waist, or progress photos?",
-        placeholder: "Example: 198 lb, 35-inch waist, or I'm willing to use photos",
+        prompt: "What's one proxy we can track for this right now: current bodyweight or waist?",
+        placeholder: "Example: 198 lb or 35-inch waist",
         fieldKeys: [
           INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
           INTAKE_COMPLETENESS_FIELDS.currentWaist,
-          INTAKE_COMPLETENESS_FIELDS.progressPhotos,
         ],
         label: "Appearance tracking proxy",
         goalRole,
@@ -668,13 +697,6 @@ export const applyIntakeCompletenessAnswer = ({
         });
         storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.targetWeightChange);
       }
-      if (hasTimingSignal(cleanAnswer)) {
-        nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.targetTimeline, {
-          raw: cleanAnswer,
-          value: cleanAnswer,
-        });
-        storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.targetTimeline);
-      }
       break;
     }
     case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor: {
@@ -730,7 +752,7 @@ export const buildIntakeCompletenessContext = ({
     Number.isFinite(facts?.currentBodyweight) ? `Current bodyweight: ${facts.currentBodyweight} lb` : "",
     Number.isFinite(facts?.targetWeightChange) ? `Desired bodyweight change: ${facts.targetWeightChange > 0 ? "+" : ""}${facts.targetWeightChange} lb` : "",
     Number.isFinite(facts?.currentWaist) ? `Current waist: ${facts.currentWaist} in` : "",
-    facts?.progressPhotos === true ? "Progress photos are an acceptable proxy." : "",
+    facts?.progressPhotos === true ? "Manual photo review is available as a future proxy." : "",
   ]);
 
   const timingHints = dedupeStrings([
@@ -739,7 +761,7 @@ export const buildIntakeCompletenessContext = ({
 
   const appearanceHints = dedupeStrings([
     Number.isFinite(facts?.currentWaist) ? `${facts.currentWaist} in waist` : "",
-    facts?.progressPhotos === true ? "progress photos willing" : "",
+    facts?.progressPhotos === true ? "manual photo review later" : "",
   ]);
 
   return {

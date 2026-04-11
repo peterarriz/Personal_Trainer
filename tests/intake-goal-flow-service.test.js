@@ -3,11 +3,15 @@ const assert = require("node:assert/strict");
 
 const {
   applyIntakeGoalAdjustment,
+  applyIntakeSecondaryGoalResponse,
   applyIntakeGoalStackConfirmation,
+  buildIntakeClarificationCoachMessages,
   buildIntakeGoalStackReviewModel,
   buildIntakeGoalReviewModel,
+  buildIntakeSecondaryGoalPrompt,
   buildRawGoalIntentFromAnswers,
   GOAL_STACK_ROLES,
+  SECONDARY_GOAL_RESPONSE_KEYS,
   getNextIntakeClarifyingQuestion,
   resolveCompatibilityPrimaryGoalKey,
 } = require("../src/services/intake-goal-flow-service.js");
@@ -131,7 +135,7 @@ test("review model surfaces proxy tracking and missing info for vague appearance
   assert.ok(reviewModel.trackingLabels.some((label) => /waist/i.test(label)));
   assert.ok(reviewModel.unresolvedItems.length >= 1);
   assert.equal(reviewModel.isPlannerReady, false);
-  assert.match(reviewModel.clarifyingQuestions[0], /current bodyweight, waist, or progress photos/i);
+  assert.match(reviewModel.clarifyingQuestions[0], /current bodyweight or waist/i);
   assert.ok(reviewModel.clarifyingQuestions.includes("What would make this feel visibly successful in the next 30 days?"));
 });
 
@@ -195,8 +199,141 @@ test("review model stays not-ready when realism blocks confirmation even after c
   });
 
   assert.equal(reviewModel.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
+  assert.equal(reviewModel.gateStatus, "blocked");
+  assert.equal(reviewModel.gateLabel, "Blocked by realism");
   assert.equal(reviewModel.isPlannerReady, false);
   assert.match(reviewModel.recommendedRevisionSummary, /135|225/i);
+});
+
+test("review model keeps plausible but incomplete goals out of ready-to-plan state", () => {
+  const rawGoalText = "lose 20 lb";
+  const goalResolution = resolveGoalTranslation({
+    rawUserGoalIntent: rawGoalText,
+    typedIntakePacket: buildIntakePacket(rawGoalText),
+    explicitUserConfirmation: { confirmed: false, acceptedProposal: true, source: "intake_preview" },
+    now: "2026-04-11",
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: goalResolution.resolvedGoals,
+    userBaseline: buildIntakePacket(rawGoalText).intake.baselineContext,
+    scheduleReality: buildIntakePacket(rawGoalText).intake.scheduleReality,
+    currentExperienceContext: {
+      injuryConstraintContext: buildIntakePacket(rawGoalText).intake.injuryConstraintContext,
+      equipmentAccessContext: buildIntakePacket(rawGoalText).intake.equipmentAccessContext,
+    },
+    intakeCompleteness: {
+      facts: {},
+      missingRequired: [
+        { label: "Current bodyweight" },
+        { label: "Target timeline" },
+      ],
+      missingOptional: [],
+    },
+    now: "2026-04-11",
+  });
+
+  const reviewModel = buildIntakeGoalReviewModel({
+    goalResolution,
+    orderedResolvedGoals: goalResolution.resolvedGoals,
+    goalFeasibility,
+    answers: {},
+  });
+
+  assert.equal(reviewModel.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
+  assert.equal(reviewModel.gateStatus, "incomplete");
+  assert.equal(reviewModel.gateLabel, "Incomplete details");
+  assert.equal(reviewModel.isPlannerReady, false);
+});
+
+test("review model reflects a warning state without promoting it to ready-to-plan language", () => {
+  const rawGoalText = "run a 1:45 half marathon";
+  const goalResolution = resolveGoalTranslation({
+    rawUserGoalIntent: rawGoalText,
+    typedIntakePacket: buildIntakePacket(rawGoalText),
+    explicitUserConfirmation: { confirmed: false, acceptedProposal: true, targetHorizonWeeks: 12, source: "intake_preview" },
+    now: "2026-04-11",
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: goalResolution.resolvedGoals,
+    userBaseline: { experienceLevel: "intermediate", currentBaseline: "some running consistency" },
+    scheduleReality: { trainingDaysPerWeek: 3, sessionLength: "45 min", trainingLocation: "Both" },
+    currentExperienceContext: { injuryConstraintContext: { constraints: [] } },
+    intakeCompleteness: {
+      facts: {
+        currentRunFrequency: 3,
+        longestRecentRun: { text: "7 miles", miles: 7 },
+        recentPaceBaseline: { text: "8:55 pace", paceText: "8:55" },
+      },
+      missingRequired: [],
+      missingOptional: [],
+    },
+    now: "2026-04-11",
+  });
+
+  const reviewModel = buildIntakeGoalReviewModel({
+    goalResolution,
+    orderedResolvedGoals: goalResolution.resolvedGoals,
+    goalFeasibility,
+    answers: {
+      intake_completeness: {
+        fields: {
+          current_run_frequency: { raw: "3 runs/week", value: 3 },
+          longest_recent_run: { raw: "7 miles", value: 7, miles: 7 },
+          recent_pace_baseline: { raw: "8:55 pace", value: "8:55", paceText: "8:55" },
+          target_timeline: { raw: "October", value: "October" },
+        },
+      },
+    },
+  });
+
+  assert.equal(reviewModel.confirmationAction, GOAL_FEASIBILITY_ACTIONS.warn);
+  assert.equal(reviewModel.gateStatus, "warn");
+  assert.equal(reviewModel.gateLabel, "Proceed with caution");
+  assert.equal(reviewModel.isPlannerReady, true);
+});
+
+test("secondary-goal question appears after required anchors are satisfied and stays optional", () => {
+  const rawGoalText = "bench 225";
+  const goalResolution = resolveGoalTranslation({
+    rawUserGoalIntent: rawGoalText,
+    typedIntakePacket: buildIntakePacket(rawGoalText),
+    explicitUserConfirmation: { confirmed: false, acceptedProposal: true, targetHorizonWeeks: 16, source: "intake_preview" },
+    now: "2026-04-11",
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: goalResolution.resolvedGoals,
+    userBaseline: { experienceLevel: "intermediate", currentBaseline: "lifting consistently" },
+    scheduleReality: { trainingDaysPerWeek: 4, sessionLength: "45 min", trainingLocation: "Gym" },
+    currentExperienceContext: { injuryConstraintContext: { constraints: [] } },
+    intakeCompleteness: {
+      facts: {
+        currentStrengthBaseline: { text: "185 x 3", weight: 185, reps: 3 },
+      },
+      missingRequired: [],
+      missingOptional: [],
+    },
+    now: "2026-04-11",
+  });
+  const reviewModel = buildIntakeGoalReviewModel({
+    goalResolution,
+    orderedResolvedGoals: goalResolution.resolvedGoals,
+    goalFeasibility,
+    answers: {
+      intake_completeness: {
+        fields: {
+          current_strength_baseline: { raw: "185 x 3", value: 185, weight: 185, reps: 3 },
+        },
+      },
+    },
+  });
+  const prompt = buildIntakeSecondaryGoalPrompt({
+    reviewModel,
+    answers: {},
+  });
+
+  assert.match(prompt.prompt, /anything else you want to maintain/i);
+  assert.ok(prompt.options.some((option) => option.label === "No, just this goal"));
+  assert.ok(prompt.options.some((option) => option.label === "Maintain conditioning"));
 });
 
 test("next clarifying question skips ones already asked", () => {
@@ -212,6 +349,67 @@ test("next clarifying question skips ones already asked", () => {
   });
 
   assert.equal(question.prompt, "What race are you aiming for?");
+});
+
+test("required clarifying flow prefers a different missing requirement before repeating an earlier one", () => {
+  const question = getNextIntakeClarifyingQuestion({
+    reviewModel: {
+      nextQuestions: [
+        { key: "running_timing", prompt: "What's the race date or target month?", required: true, source: "completeness" },
+        { key: "running_baseline", prompt: "What's your current running baseline?", required: true, source: "completeness" },
+      ],
+    },
+    askedQuestions: ["running_timing"],
+    maxQuestions: 2,
+  });
+
+  assert.equal(question.key, "running_baseline");
+});
+
+test("clarification coach messages lead with the targeted question before the broader status copy", () => {
+  const messages = buildIntakeClarificationCoachMessages({
+    statusText: "I still need one or two critical anchors before I can build credibly.",
+    nextQuestion: { prompt: "What's your current running baseline?" },
+  });
+
+  assert.equal(messages[0], "One quick thing before I lock this in: What's your current running baseline?");
+  assert.equal(messages[1], "I still need one or two critical anchors before I can build credibly.");
+});
+
+test("completeness-scoped clarification notes do not flow back into raw goal intent", () => {
+  const rawIntent = buildRawGoalIntentFromAnswers({
+    answers: {
+      goal_intent: "look athletic again",
+      goal_clarification_notes: [
+        {
+          question: "What's one proxy we can track for this right now: current bodyweight or waist?",
+          answer: "225 lbs",
+          source: "completeness",
+          questionKey: "appearance_proxy_anchor",
+          fieldKeys: ["current_bodyweight"],
+        },
+      ],
+    },
+  });
+
+  assert.equal(rawIntent, "look athletic again");
+});
+
+test("field-scoped clarification answers do not trigger implicit goal replacement while completeness is being collected", () => {
+  const adjusted = applyIntakeGoalAdjustment({
+    answers: {
+      goal_intent: "look athletic again",
+      primary_goal: "fat_loss",
+    },
+    adjustmentText: "225 lbs",
+    currentResolvedGoal: { planningCategory: "body_comp", summary: "Look athletic again" },
+    currentPrimaryGoalKey: "fat_loss",
+    now: "2026-04-11",
+    allowImplicitGoalReplacement: false,
+  });
+
+  assert.equal(adjusted.kind, "refinement");
+  assert.equal(adjusted.answers.goal_intent, "look athletic again");
 });
 
 test("late-stage goal edit from body-comp to event goal clears stale proxy context and leaves confirmation on the latest resolved state only", () => {
@@ -295,6 +493,117 @@ test("late-stage goal edit from event goal to vague aesthetic goal clears stale 
   assert.equal(resolution.resolvedGoals[0].measurabilityTier, GOAL_MEASURABILITY_TIERS.proxyMeasurable);
   assert.equal(resolution.resolvedGoals[0].primaryMetric, null);
   assert.ok(resolution.resolvedGoals[0].proxyMetrics.some((metric) => /waist|bodyweight|progress/i.test(metric.label)));
+});
+
+test("changing goals mid-clarification still clears stale clarification context before the next review build", () => {
+  const adjusted = applyIntakeGoalAdjustment({
+    answers: {
+      goal_intent: "look athletic again",
+      goal_clarification_notes: [
+        {
+          question: "What's one proxy we can track for this right now: current bodyweight or waist?",
+          answer: "191 lbs",
+          source: "completeness",
+          questionKey: "appearance_proxy_anchor",
+          fieldKeys: ["current_bodyweight"],
+        },
+      ],
+      intake_completeness: {
+        version: "2026-04-v1",
+        fields: {
+          current_bodyweight: { raw: "191 lbs", value: 191 },
+        },
+      },
+    },
+    adjustmentText: "Actually, I want to run a 1:45 half marathon",
+    currentResolvedGoal: { planningCategory: "body_comp", summary: "Look athletic again" },
+    currentPrimaryGoalKey: "fat_loss",
+    now: "2026-04-11",
+  });
+  const rawGoalText = buildRawGoalIntentFromAnswers({ answers: adjusted.answers });
+
+  assert.equal(adjusted.kind, "goal_replacement");
+  assert.deepEqual(adjusted.answers.goal_clarification_notes, []);
+  assert.doesNotMatch(rawGoalText, /191 lbs/i);
+  assert.match(rawGoalText, /1:45 half marathon/i);
+});
+
+test("secondary-goal primary-only path keeps the stack single-goal without rerunning interpretation", () => {
+  const resolution = resolveGoalTranslation({
+    rawUserGoalIntent: "lose fat but keep strength",
+    typedIntakePacket: buildIntakePacket("lose fat but keep strength"),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  const outcome = applyIntakeSecondaryGoalResponse({
+    answers: {},
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly, label: "No, just this goal" },
+    resolvedGoals: resolution.resolvedGoals,
+    goalStackConfirmation: null,
+    goalFeasibility: { conflictFlags: [] },
+  });
+  const confirmed = applyIntakeGoalStackConfirmation({
+    resolvedGoals: resolution.resolvedGoals,
+    goalStackConfirmation: outcome.goalStackConfirmation,
+  });
+
+  assert.equal(outcome.rerunAssessment, false);
+  assert.equal(outcome.answers.secondary_goal_prompt_answered, true);
+  assert.equal(confirmed.length, 1);
+  assert.equal(confirmed[0].planningCategory, "body_comp");
+});
+
+test("secondary-goal maintained path feeds a maintained goal into canonical resolution", () => {
+  const outcome = applyIntakeSecondaryGoalResponse({
+    answers: {
+      goal_intent: "run a 1:45 half marathon",
+    },
+    response: { key: "keep_strength", label: "Keep strength", value: "keep strength" },
+    resolvedGoals: [],
+    goalStackConfirmation: null,
+    goalFeasibility: null,
+  });
+  const rawGoalText = buildRawGoalIntentFromAnswers({
+    answers: outcome.answers,
+  });
+  const resolution = resolveGoalTranslation({
+    rawUserGoalIntent: rawGoalText,
+    typedIntakePacket: buildIntakePacket(rawGoalText),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(outcome.rerunAssessment, true);
+  assert.equal(outcome.answers.other_goals, "keep strength");
+  assert.equal(resolution.resolvedGoals[0].planningCategory, "running");
+  assert.equal(resolution.resolvedGoals[1].planningCategory, "strength");
+});
+
+test("secondary-goal tradeoff path keeps the maintained goal explicit for tradeoff-heavy plans", () => {
+  const outcome = applyIntakeSecondaryGoalResponse({
+    answers: {
+      goal_intent: "lose fat",
+    },
+    response: { key: "keep_strength", label: "Keep strength", value: "keep strength" },
+    resolvedGoals: [],
+    goalStackConfirmation: null,
+    goalFeasibility: null,
+  });
+  const rawGoalText = buildRawGoalIntentFromAnswers({
+    answers: outcome.answers,
+  });
+  const resolution = resolveGoalTranslation({
+    rawUserGoalIntent: rawGoalText,
+    typedIntakePacket: buildIntakePacket(rawGoalText),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(resolution.resolvedGoals.length, 2);
+  assert.equal(resolution.resolvedGoals[0].planningCategory, "body_comp");
+  assert.equal(resolution.resolvedGoals[1].planningCategory, "strength");
+  assert.ok(resolution.tradeoffs.some((item) => /fat loss/i.test(item)));
 });
 
 test("primary body-comp plus maintained strength stays explicit in the confirmed goal stack", () => {

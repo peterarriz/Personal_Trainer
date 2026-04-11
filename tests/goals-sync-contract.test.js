@@ -124,3 +124,59 @@ test("syncGoals preserves valid UUID ids when posting to Supabase goals", async 
   assert.ok(insertRequest, "expected a POST request to /rest/v1/goals");
   assert.equal(insertRequest.body?.[0]?.id, "123e4567-e89b-12d3-a456-426614174000");
 });
+
+test("handleSignOut clears the cached auth session and marks storage as signed out", async () => {
+  const localStore = new Map();
+  const requests = [];
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+  global.localStorage = {
+    getItem: (key) => (localStore.has(key) ? localStore.get(key) : null),
+    setItem: (key, value) => { localStore.set(key, String(value)); },
+    removeItem: (key) => { localStore.delete(key); },
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+      });
+      return {
+        ok: true,
+        status: 204,
+        json: async () => ({}),
+        text: async () => "",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  const authSession = {
+    access_token: "header.payload.signature",
+    refresh_token: "refresh-token",
+    user: { id: "00000000-0000-0000-0000-000000000001" },
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+  };
+  localStorage.setItem("trainer_auth_session_v1", JSON.stringify(authSession));
+
+  let nextSession = authSession;
+  let nextStorageStatus = null;
+
+  await module.handleSignOut({
+    authSession,
+    setAuthSession: (value) => { nextSession = value; },
+    setStorageStatus: (value) => { nextStorageStatus = value; },
+  });
+
+  assert.equal(nextSession, null);
+  assert.equal(localStorage.getItem("trainer_auth_session_v1"), "null");
+  assert.equal(nextStorageStatus?.reason, "signed_out");
+  assert.ok(requests.some((request) => /\/auth\/v1\/logout$/.test(request.url) && request.method === "POST"));
+});
