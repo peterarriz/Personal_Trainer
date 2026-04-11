@@ -69,6 +69,24 @@ test("resolves a fully measurable running goal into a canonical running planning
   assert.match(result.planningGoals[0].measurableTarget, /Half marathon time 1:45:00/i);
 });
 
+test("measurable event goals infer a usable horizon from season language", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 1:45 half marathon this fall",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "run a 1:45 half marathon this fall",
+      timingConstraints: ["fall"],
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-09",
+  });
+
+  assert.equal(result.resolvedGoals[0].planningCategory, "running");
+  assert.equal(result.resolvedGoals[0].primaryMetric.key, "half_marathon_time");
+  assert.ok(Number.isFinite(result.resolvedGoals[0].targetHorizonWeeks));
+  assert.ok(result.resolvedGoals[0].targetHorizonWeeks >= 1);
+  assert.ok(!result.unresolvedGaps.some((gap) => /target race date or horizon/i.test(gap)));
+});
+
 test("resolves a fully measurable strength goal into logged-lift planning input", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "bench 225",

@@ -2,95 +2,60 @@
 
 ## Purpose
 
-This document defines the typed AI boundary for onboarding and intake interpretation.
+This document defines the intake AI boundary after moving provider access behind a backend gateway.
 
-The goal is to make intake AI follow the same architecture already used by coach chat and plan analysis:
+The architecture rule is unchanged:
 
-- typed packet in
-- proposal-only AI output
-- no direct canonical mutation
-- deterministic application state remains the source of truth
+1. user gives raw intent
+2. AI proposes interpretation
+3. user confirms or edits
+4. only confirmed structured goal state becomes canonical planner input
 
-## Audit Summary
+## Boundary Summary
 
-Before this change, intake AI lived in ad hoc prompt paths inside [`trainer-dashboard.jsx`](c:/Users/Peter/Documents/Personal_Trainer/src/trainer-dashboard.jsx):
+Intake AI is now split into two layers:
 
-- `OnboardingCoach`
-  - direct Anthropic request for timeline assessment copy
-- `OnboardingCoachLegacy`
-  - direct Anthropic request for timeline assessment copy
-- `OnboardingCoachLegacyFallback`
-  - direct Anthropic request for timeline assessment copy
+- client/runtime layer
+  - builds the typed intake packet
+  - sends the packet to the backend intake gateway
+  - re-sanitizes the returned proposal
+  - falls back to deterministic/local interpretation if the gateway fails
 
-These paths built prompt text inline, sent loosely structured intake data, and consumed returned freeform text directly for interpretation copy.
+- backend/provider layer
+  - owns provider credentials
+  - chooses Anthropic or OpenAI behind one contract
+  - converts provider output into a normalized interpretation shape
+  - returns proposal-only output
 
-They were still interpretation-only, but they sat outside the app’s typed AI runtime boundary.
+## Files
 
-## New Boundary
+Client/runtime:
 
-Intake now extends the existing AI packet system instead of creating a separate intake-only runtime.
+- [src/services/ai-runtime-service.js](c:/Users/Peter/Documents/Personal_Trainer/src/services/ai-runtime-service.js)
+- [src/modules-ai-state.js](c:/Users/Peter/Documents/Personal_Trainer/src/modules-ai-state.js)
+- [src/services/goal-resolution-service.js](c:/Users/Peter/Documents/Personal_Trainer/src/services/goal-resolution-service.js)
+- [src/trainer-dashboard.jsx](c:/Users/Peter/Documents/Personal_Trainer/src/trainer-dashboard.jsx)
 
-Shared runtime pieces:
+Backend:
 
-- `buildAiStatePacket(...)`
-- `AI_PACKET_INTENTS`
-- `requestAiText(...)`
-- packet-scoped system prompts
-- structured proposal parsing
-- provenance on runtime results
+- [api/ai/intake.js](c:/Users/Peter/Documents/Personal_Trainer/api/ai/intake.js)
+- [api/_lib/ai-provider-gateway.js](c:/Users/Peter/Documents/Personal_Trainer/api/_lib/ai-provider-gateway.js)
 
-New intake-specific pieces:
+## Typed Packet In
 
-- `AI_PACKET_INTENTS.intakeInterpretation`
-- intake packet payload under `statePacket.intake`
-- `buildIntakeInterpretationAiSystemPrompt(...)`
-- `runIntakeInterpretationRuntime(...)`
-- `sanitizeIntakeInterpretationProposal(...)`
-
-## Typed Intake Packet
-
-The intake packet is carried through the same `buildAiStatePacket(...)` contract used by the rest of the AI runtime.
-
-Shape:
+The browser still constructs the typed intake packet with the existing AI packet system:
 
 ```js
 {
   version: "2026-04-v1",
   intent: "intake_interpretation",
-  scope: {
-    input: "Interpret this onboarding intake without writing canonical goal state."
-  },
   intake: {
     rawGoalText: string,
-    baselineContext: {
-      primaryGoalKey: string,
-      primaryGoalLabel: string,
-      experienceLevel: string,
-      fitnessLevel: string,
-      startingFresh: boolean,
-      currentBaseline: string,
-      priorMemory: string[]
-    },
-    scheduleReality: {
-      trainingDaysPerWeek: number,
-      sessionLength: string,
-      trainingLocation: string,
-      scheduleNotes: string
-    },
-    equipmentAccessContext: {
-      trainingLocation: string,
-      equipment: string[],
-      accessNotes: string
-    },
-    injuryConstraintContext: {
-      injuryText: string,
-      constraints: string[]
-    },
-    userProvidedConstraints: {
-      timingConstraints: string[],
-      appearanceConstraints: string[],
-      additionalContext: string
-    }
+    baselineContext: { ... },
+    scheduleReality: { ... },
+    equipmentAccessContext: { ... },
+    injuryConstraintContext: { ... },
+    userProvidedConstraints: { ... }
   },
   boundaries: {
     sourceOfTruth: "canonical_app_state",
@@ -101,95 +66,124 @@ Shape:
 }
 ```
 
-This satisfies the intake-specific requirements while staying inside the same packet envelope as the rest of the runtime.
+The browser sends that packet to `POST /api/ai/intake`.
 
-## Proposal-Only Intake Output
+## Normalized Proposal Out
 
-The intake runtime asks AI for JSON only.
-
-Returned proposal shape:
+The backend returns a normalized proposal-only interpretation:
 
 ```js
 {
-  interpretedGoalType: "performance|strength|body_comp|appearance|hybrid|general_fitness|re_entry",
-  measurabilityTier: "fully_measurable|proxy_measurable|exploratory_fuzzy",
-  suggestedMetrics: [
-    { key: "metric_key", label: "Metric label", unit: "lb", kind: "primary|proxy" }
-  ],
-  timelineRealism: {
-    status: "realistic|aggressive|unclear",
-    summary: "short timeline realism assessment",
-    suggestedHorizonWeeks: 12
+  interpretation: {
+    interpretedGoalType: "...",
+    measurabilityTier: "...",
+    primaryMetric: null | { ... },
+    proxyMetrics: [ ... ],
+    suggestedMetrics: [ ... ],
+    confidence: "low|medium|high",
+    timelineRealism: {
+      status: "realistic|aggressive|unclear",
+      summary: "...",
+      suggestedHorizonWeeks: 12
+    },
+    detectedConflicts: [ ... ],
+    missingClarifyingQuestions: [ ... ],
+    coachSummary: "..."
   },
-  detectedConflicts: ["short tradeoff"],
-  missingClarifyingQuestions: ["short question"],
-  coachSummary: "short interpretation-only intake summary"
+  meta: {
+    requestType: "goal_interpretation",
+    provider: "anthropic|openai",
+    model: "provider-model",
+    latencyMs: 123,
+    usage: {
+      inputTokens: 100,
+      outputTokens: 40,
+      totalTokens: 140
+    }
+  }
 }
 ```
 
-The app sanitizes this proposal before using it for UI copy.
+The client then re-sanitizes `interpretation` before it is shown or passed downstream.
 
-Important rule:
+## Canonical Safety Rule
 
-- the proposal is not canonical goal truth
-- it is not allowed to write `goals`, `goalState`, or any other planning entity directly
-- final goal state still comes from user-confirmed onboarding completion and deterministic mapping
+The provider proposal is not canonical state.
+
+It may:
+
+- interpret messy goal language
+- propose metrics
+- suggest clarifying questions
+- surface tradeoffs
+- suggest a horizon
+
+It may not:
+
+- write `goals`
+- write `goalState`
+- write `planDay`
+- write `planWeek`
+- bypass explicit user confirmation
+
+Canonical planning state still comes from:
+
+- `resolveGoalTranslation(...)`
+- `applyResolvedGoalsToGoalSlots(...)`
+- `buildGoalStateFromResolvedGoals(...)`
+
+after explicit user confirmation.
 
 ## Runtime Flow
 
-1. Onboarding collects typed answers.
-2. The app builds `intakeContext` from those answers.
-3. `runIntakeInterpretationRuntime(...)` sends the typed packet through the shared AI runtime.
-4. AI returns JSON only.
-5. The app sanitizes that JSON into a bounded intake proposal.
-6. The UI renders interpretation copy from that proposal.
-7. Onboarding completion still writes canonical state through the normal deterministic app path.
+1. Intake answers are collected.
+2. The app builds a typed intake packet.
+3. `runIntakeInterpretationRuntime(...)` posts that packet to `/api/ai/intake`.
+4. The backend provider gateway calls the configured provider.
+5. The backend normalizes the provider output into the internal interpretation shape.
+6. The client re-sanitizes the interpretation.
+7. The review UI shows the interpretation and goal stack proposal.
+8. If the user confirms, deterministic goal-resolution code writes canonical planner-facing state.
 
-## What Changed In The UI
+## Failure Flow
 
-These onboarding flows now use the typed intake runtime:
+If the backend gateway fails:
 
-- `OnboardingCoach`
-- `OnboardingCoachLegacy`
-- `OnboardingCoachLegacyFallback`
+- missing provider config
+- network failure
+- provider error
+- invalid provider JSON
 
-The old inline Anthropic intake calls and inline timeline prompt construction were removed from those flows.
+then:
 
-## What Intake AI Now Shares With The Core AI Runtime
+1. `runIntakeInterpretationRuntime(...)` returns a non-OK result
+2. intake review falls back to the deterministic/local preview bundle
+3. onboarding still works
+4. no partial canonical state is written
 
-- one shared packet builder
-- one shared intent/version envelope
-- one shared proposal-only mutation policy
-- one shared request layer
-- one shared JSON parsing step
-- one shared provenance model
-- one shared rule that AI may interpret but may not become canonical truth
+## Security Boundary
 
-## Interpretation-Only Text Paths Still Outside The Typed Boundary
+Server-only:
 
-These still remain outside the shared typed packet runtime:
+- `ANTHROPIC_API_KEY`
+- `OPENAI_API_KEY`
+- provider/model routing
 
-- strength adjustment notification copy in [`trainer-dashboard.jsx`](c:/Users/Peter/Documents/Personal_Trainer/src/trainer-dashboard.jsx)
-- deterministic strength alert explanation helpers in [`trainer-dashboard.jsx`](c:/Users/Peter/Documents/Personal_Trainer/src/trainer-dashboard.jsx)
-- nutrition assistant / meal-generation copy in [`trainer-dashboard.jsx`](c:/Users/Peter/Documents/Personal_Trainer/src/trainer-dashboard.jsx)
+Client-visible:
 
-These are interpretation-only paths, but they do not yet run through the packet-scoped AI runtime.
+- typed intake packet
+- normalized proposal-only output
+- non-secret metadata like provider/model/latency
 
-## Boundary Rule
+Intake no longer depends on browser-stored provider keys.
 
-Intake AI may:
+## What This Change Does Not Do
 
-- interpret vague goal language
-- classify measurability
-- suggest metrics and proxies
-- assess timeline realism
-- surface tradeoffs
-- suggest clarifying questions
-- generate interpretation-only onboarding copy
+This intake gateway does not yet migrate:
 
-Intake AI may not:
+- coach chat
+- plan analysis
+- nutrition copy paths
+- other legacy direct-provider surfaces
 
-- write canonical goal state
-- resolve a goal as true without user confirmation
-- mutate planner inputs directly
-- invent constraints not present in the typed packet
+Those remain separate work.

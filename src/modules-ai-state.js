@@ -454,9 +454,11 @@ Return JSON in this exact format:
 {
   "interpretedGoalType": "performance|strength|body_comp|appearance|hybrid|general_fitness|re_entry",
   "measurabilityTier": "fully_measurable|proxy_measurable|exploratory_fuzzy",
-  "suggestedMetrics": [
-    { "key": "metric_key", "label": "Metric label", "unit": "lb", "kind": "primary|proxy" }
+  "primaryMetric": { "key": "metric_key", "label": "Metric label", "unit": "time", "kind": "primary", "targetValue": "1:45:00" },
+  "proxyMetrics": [
+    { "key": "metric_key", "label": "Metric label", "unit": "lb", "kind": "proxy" }
   ],
+  "confidence": "low|medium|high",
   "timelineRealism": {
     "status": "realistic|aggressive|unclear",
     "summary": "short timeline realism assessment",
@@ -468,10 +470,12 @@ Return JSON in this exact format:
 }
 
 RULES:
-- Max 4 suggestedMetrics.
+- Max 1 primaryMetric.
+- Max 4 proxyMetrics.
 - Use "unclear" for timelineRealism.status when the user has not given enough timing specificity.
 - missingClarifyingQuestions should be the smallest useful set. Max 3.
 - detectedConflicts should describe goal tension or planning tradeoffs, not generic warnings. Max 3.
+- confidence should reflect how complete and usable the current goal language is.
 - coachSummary must stay under 120 words and remain interpretation-only.
 - Never claim the goal is impossible. If the timeline is aggressive, say what is realistic first.`;
 
@@ -480,11 +484,15 @@ export const sanitizeIntakeInterpretationProposal = (proposal = null) => {
   const safeMeasurability = new Set(["fully_measurable", "proxy_measurable", "exploratory_fuzzy"]);
   const safeTimelineStatuses = new Set(["realistic", "aggressive", "unclear"]);
   const safeMetricKinds = new Set(["primary", "proxy"]);
+  const safeConfidence = new Set(["low", "medium", "high"]);
 
   const fallback = {
     interpretedGoalType: "general_fitness",
     measurabilityTier: "exploratory_fuzzy",
+    primaryMetric: null,
+    proxyMetrics: [],
     suggestedMetrics: [],
+    confidence: "low",
     timelineRealism: {
       status: "unclear",
       summary: "",
@@ -500,13 +508,17 @@ export const sanitizeIntakeInterpretationProposal = (proposal = null) => {
   const interpretedGoalType = sanitizeTextAiState(proposal?.interpretedGoalType || "", 40).toLowerCase();
   const measurabilityTier = sanitizeTextAiState(proposal?.measurabilityTier || "", 40).toLowerCase();
   const timelineStatus = sanitizeTextAiState(proposal?.timelineRealism?.status || "", 24).toLowerCase();
+  const confidence = sanitizeTextAiState(proposal?.confidence || proposal?.confidenceLevel || "", 20).toLowerCase();
   const suggestedHorizonWeeksRaw = Number(proposal?.timelineRealism?.suggestedHorizonWeeks);
   const suggestedHorizonWeeks = Number.isFinite(suggestedHorizonWeeksRaw)
     ? clampNumberAiState(suggestedHorizonWeeksRaw, 1, 104, 12)
     : null;
 
-  const suggestedMetrics = (Array.isArray(proposal?.suggestedMetrics) ? proposal.suggestedMetrics : [])
-    .slice(0, 4)
+  const candidateMetrics = [
+    proposal?.primaryMetric || null,
+    ...(Array.isArray(proposal?.proxyMetrics) ? proposal.proxyMetrics : []),
+    ...(Array.isArray(proposal?.suggestedMetrics) ? proposal.suggestedMetrics : []),
+  ]
     .map((metric, index) => {
       const rawKey = sanitizeTextAiState(metric?.key || `metric_${index + 1}`, 32)
         .toLowerCase()
@@ -525,11 +537,25 @@ export const sanitizeIntakeInterpretationProposal = (proposal = null) => {
       };
     })
     .filter(Boolean);
+  const seenMetrics = new Set();
+  const suggestedMetrics = candidateMetrics
+    .filter((metric) => {
+      const dedupeKey = `${metric.key}:${metric.kind}:${metric.unit}`;
+      if (seenMetrics.has(dedupeKey)) return false;
+      seenMetrics.add(dedupeKey);
+      return true;
+    })
+    .slice(0, 5);
+  const primaryMetric = suggestedMetrics.find((metric) => metric.kind === "primary") || null;
+  const proxyMetrics = suggestedMetrics.filter((metric) => metric.kind === "proxy").slice(0, 4);
 
   return {
     interpretedGoalType: safeGoalTypes.has(interpretedGoalType) ? interpretedGoalType : fallback.interpretedGoalType,
     measurabilityTier: safeMeasurability.has(measurabilityTier) ? measurabilityTier : fallback.measurabilityTier,
+    primaryMetric,
+    proxyMetrics,
     suggestedMetrics,
+    confidence: safeConfidence.has(confidence) ? confidence : fallback.confidence,
     timelineRealism: {
       status: safeTimelineStatuses.has(timelineStatus) ? timelineStatus : fallback.timelineRealism.status,
       summary: sanitizeTextAiState(proposal?.timelineRealism?.summary || "", 220),

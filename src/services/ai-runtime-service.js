@@ -13,6 +13,7 @@ import { buildProvenanceEvent, PROVENANCE_ACTORS } from "./provenance-service.js
 
 const DEFAULT_MODEL = "claude-3-5-haiku-latest";
 const DEFAULT_API_URL = "https://api.anthropic.com/v1/messages";
+const INTAKE_GATEWAY_PATH = "/api/ai/intake";
 
 export const AI_RUNTIME_TODO_PATHS = [
   {
@@ -318,16 +319,7 @@ export const runIntakeInterpretationRuntime = async ({
 } = {}) => {
   const runtimeInput = buildIntakeInterpretationRuntimeInput(packetArgs);
   const requestedAt = Date.now();
-  const response = await requestAiText({
-    apiKey,
-    safeFetchWithTimeout,
-    system: runtimeInput.systemPrompt,
-    user: "Interpret the typed intake packet and return a JSON proposal only.",
-    maxTokens: 500,
-    model,
-  });
-
-  if (!response.ok || !response.text) {
+  if (typeof safeFetchWithTimeout !== "function") {
     return {
       ok: false,
       status: "no_response",
@@ -335,8 +327,8 @@ export const runIntakeInterpretationRuntime = async ({
       systemPrompt: runtimeInput.systemPrompt,
       proposal: null,
       interpreted: null,
-      rawText: response.text || "",
-      error: response.error || "no_response",
+      rawText: "",
+      error: "missing_fetcher",
       provenance: buildProvenanceEvent({
         actor: PROVENANCE_ACTORS.fallback,
         trigger: "intake_interpretation_runtime",
@@ -346,7 +338,7 @@ export const runIntakeInterpretationRuntime = async ({
         confidence: "low",
         timestamp: requestedAt,
         details: {
-          error: response.error || "no_response",
+          error: "missing_fetcher",
         },
       }),
       ui: {
@@ -354,36 +346,77 @@ export const runIntakeInterpretationRuntime = async ({
       },
     };
   }
-
-  const proposal = parseAiJsonObjectFromText(response.text);
-  if (!proposal) {
+  let res;
+  try {
+    res = await safeFetchWithTimeout(INTAKE_GATEWAY_PATH, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        requestType: "goal_interpretation",
+        model,
+        statePacket: runtimeInput.statePacket,
+      }),
+    }, 9000);
+  } catch (error) {
     return {
       ok: false,
-      status: "invalid_json",
+      status: "no_response",
       statePacket: runtimeInput.statePacket,
       systemPrompt: runtimeInput.systemPrompt,
       proposal: null,
       interpreted: null,
-      rawText: response.text,
-      error: "invalid_json",
+      rawText: "",
+      error: error?.message || "request_failed",
       provenance: buildProvenanceEvent({
         actor: PROVENANCE_ACTORS.fallback,
         trigger: "intake_interpretation_runtime",
         mutationType: "ai_runtime_failure",
-        revisionReason: "AI returned invalid JSON for intake interpretation.",
+        revisionReason: "AI intake interpretation returned no response.",
         sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeInterpretation],
         confidence: "low",
         timestamp: requestedAt,
         details: {
-          error: "invalid_json",
+          error: error?.message || "request_failed",
         },
       }),
       ui: {
-        message: "AI returned an invalid intake interpretation payload.",
+        message: "No AI intake interpretation response was returned.",
+      },
+    };
+  }
+  const data = await res.json().catch(() => null);
+  if (!res?.ok || !data?.interpretation) {
+    const failureReason = data?.code || `http_${res?.status || 0}` || "provider_gateway_failed";
+    return {
+      ok: false,
+      status: "no_response",
+      statePacket: runtimeInput.statePacket,
+      systemPrompt: runtimeInput.systemPrompt,
+      proposal: null,
+      interpreted: null,
+      rawText: "",
+      error: failureReason,
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.fallback,
+        trigger: "intake_interpretation_runtime",
+        mutationType: "ai_runtime_failure",
+        revisionReason: "AI intake interpretation returned no response.",
+        sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeInterpretation],
+        confidence: "low",
+        timestamp: requestedAt,
+        details: {
+          error: failureReason,
+        },
+      }),
+      ui: {
+        message: data?.message || "No AI intake interpretation response was returned.",
       },
     };
   }
 
+  const proposal = data?.interpretation || null;
   const interpreted = sanitizeIntakeInterpretationProposal(proposal);
 
   return {
@@ -393,7 +426,7 @@ export const runIntakeInterpretationRuntime = async ({
     systemPrompt: runtimeInput.systemPrompt,
     proposal,
     interpreted,
-    rawText: response.text,
+    rawText: "",
     error: "",
     provenance: buildProvenanceEvent({
       actor: PROVENANCE_ACTORS.aiInterpretation,
@@ -404,6 +437,9 @@ export const runIntakeInterpretationRuntime = async ({
       confidence: "medium",
       timestamp: requestedAt,
       details: {
+        provider: data?.meta?.provider || "",
+        model: data?.meta?.model || model,
+        latencyMs: Number(data?.meta?.latencyMs || 0) || 0,
         metricCount: interpreted?.suggestedMetrics?.length || 0,
         questionCount: interpreted?.missingClarifyingQuestions?.length || 0,
       },
