@@ -25046,7 +25046,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       },
     }));
   };
-  const setSecondaryGoalMode = (goalId, mode = _intakegoalflowservicejs.GOAL_STACK_ROLES.maintained) => {
+  const updateSecondaryGoalMode = (goalId, mode = _intakegoalflowservicejs.GOAL_STACK_ROLES.maintained) => {
     setGoalStackConfirmation((prev) => {
       const removedGoalIds = new Set(Array.isArray(_optionalChain([prev, 'optionalAccess', _1734 => _1734.removedGoalIds])) ? prev.removedGoalIds : []);
       const rolesByGoalId = { ...(_optionalChain([prev, 'optionalAccess', _1735 => _1735.rolesByGoalId]) || {}) };
@@ -25322,12 +25322,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     )
                                   )
                                   , !isPrimary && (
-                                    React.createElement('button', { className: "btn", onClick: () => setSecondaryGoalMode(goal.id, _intakegoalflowservicejs.GOAL_STACK_ROLES.maintained), style: { fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" },}, "Keep maintained"
+                                    React.createElement('button', { className: "btn", onClick: () => updateSecondaryGoalMode(goal.id, _intakegoalflowservicejs.GOAL_STACK_ROLES.maintained), style: { fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" },}, "Keep maintained"
 
                                     )
                                   )
                                   , !isPrimary && (
-                                    React.createElement('button', { className: "btn", onClick: () => setSecondaryGoalMode(goal.id, "removed"), style: { fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" },}, "Remove"
+                                    React.createElement('button', { className: "btn", onClick: () => updateSecondaryGoalMode(goal.id, "removed"), style: { fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" },}, "Remove"
 
                                     )
                                   )
@@ -25366,7 +25366,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                               , goalStackReview.removedGoals.map((goal) => (
                                 React.createElement('div', { key: goal.id, style: { display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" },}
                                   , React.createElement('div', { style: { fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.5 },}, goal.summary)
-                                  , React.createElement('button', { className: "btn", onClick: () => setSecondaryGoalMode(goal.id, _intakegoalflowservicejs.GOAL_STACK_ROLES.maintained), style: { fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" },}, "Add back as maintained"
+                                  , React.createElement('button', { className: "btn", onClick: () => updateSecondaryGoalMode(goal.id, _intakegoalflowservicejs.GOAL_STACK_ROLES.maintained), style: { fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" },}, "Add back as maintained"
 
                                   )
                                 )

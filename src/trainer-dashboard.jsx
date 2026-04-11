@@ -7632,7 +7632,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       },
     }));
   };
-  const setSecondaryGoalMode = (goalId, mode = GOAL_STACK_ROLES.maintained) => {
+  const updateSecondaryGoalMode = (goalId, mode = GOAL_STACK_ROLES.maintained) => {
     setGoalStackConfirmation((prev) => {
       const removedGoalIds = new Set(Array.isArray(prev?.removedGoalIds) ? prev.removedGoalIds : []);
       const rolesByGoalId = { ...(prev?.rolesByGoalId || {}) };
@@ -7908,12 +7908,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     </button>
                                   )}
                                   {!isPrimary && (
-                                    <button className="btn" onClick={() => setSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
                                       Keep maintained
                                     </button>
                                   )}
                                   {!isPrimary && (
-                                    <button className="btn" onClick={() => setSecondaryGoalMode(goal.id, "removed")} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
+                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, "removed")} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
                                       Remove
                                     </button>
                                   )}
@@ -7952,7 +7952,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                               {goalStackReview.removedGoals.map((goal) => (
                                 <div key={goal.id} style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
                                   <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.5 }}>{goal.summary}</div>
-                                  <button className="btn" onClick={() => setSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                  <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
                                     Add back as maintained
                                   </button>
                                 </div>
