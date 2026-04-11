@@ -383,7 +383,7 @@ test("ProgramBlock uses resolved goal structure to express horizon, proxies, and
     assert.ok(composer.programBlock.goalStack.proxyMetricLabels.includes("Waist circumference"));
     assert.ok(composer.programBlock.tradeoffs.some((item) => /fat loss may limit strength/i.test(item)));
     assert.equal(composer.programBlock.recoveryPosture.level, "protective");
-    assert.equal(composer.programBlock.goalAllocation.prioritized, "Get leaner within the current time window");
+    assert.equal(composer.programBlock.goalAllocation.prioritized, "Fat-loss momentum");
     assert.ok(composer.programBlock.goalAllocation.maintained.includes("Keep strength while the primary goal leads"));
     assert.equal(composer.programBlock.minimizedEmphasis.role, "minimized");
     assert.ok(composer.programBlock.successCriteria.some((item) => /Waist circumference/i.test(item)));
@@ -455,7 +455,7 @@ test("WeeklyIntent carries maintained, minimized, and tradeoff posture for hybri
     });
 
     assert.equal(composer.architecture, "event_prep_upper_body_maintenance");
-    assert.equal(planWeek.weeklyIntent.maintainedFocus, "Maintain bench 225");
+    assert.equal(planWeek.weeklyIntent.maintainedFocus, "Strength maintenance");
     assert.equal(planWeek.weeklyIntent.minimizedFocus, "non-primary volume");
     assert.match(planWeek.weeklyIntent.tradeoffFocus, /lower-body|race prep/i);
     assert.match(planWeek.weeklyIntent.successDefinition, /upper-body maintenance|maintenance exposures/i);
@@ -592,8 +592,9 @@ test("pure strength goal maps to a strength-dominant block, week, and today plan
 
     assert.equal(composer.architecture, "strength_dominant");
     assert.equal(composer.programBlock.dominantEmphasis.category, "strength");
-    assert.equal(planWeek.weeklyIntent.focus, "Bench 225");
+    assert.equal(planWeek.weeklyIntent.focus, "Build pressing strength with repeatable full-body work");
     assert.doesNotMatch(planWeek.weeklyIntent.focus, /getting legs back/i);
+    assert.match(planWeek.sessionsByDay[1].label, /full-body strength/i);
     assert.ok(Object.values(planWeek.sessionsByDay).filter(Boolean).every((session) => !RUN_SESSION_TYPES.has(session.type)));
     assert.equal(todayPlan.label, planWeek.sessionsByDay[1].label);
   });
@@ -664,7 +665,7 @@ test("pure race goal maps to a running-dominant block, week, and today plan", as
 
     assert.equal(composer.architecture, "race_prep_dominant");
     assert.equal(composer.programBlock.dominantEmphasis.category, "running");
-    assert.match(planWeek.weeklyIntent.focus, /half marathon/i);
+    assert.equal(planWeek.weeklyIntent.focus, "Build half-marathon pace and endurance");
     assert.ok(Object.values(planWeek.sessionsByDay).filter(Boolean).some((session) => RUN_SESSION_TYPES.has(session.type)));
     assert.equal(todayPlan.label, planWeek.sessionsByDay[1].label);
   });
@@ -731,8 +732,9 @@ test("body-comp plus maintained strength maps to a non-race block and week", asy
 
     assert.equal(composer.architecture, "body_comp_conditioning");
     assert.equal(composer.programBlock.dominantEmphasis.category, "body_comp");
-    assert.equal(planWeek.weeklyIntent.focus, "Lose fat while keeping strength");
+    assert.equal(planWeek.weeklyIntent.focus, "Drive fat-loss momentum while protecting strength");
     assert.doesNotMatch(planWeek.weeklyIntent.focus, /getting legs back/i);
+    assert.match(planWeek.sessionsByDay[1].label, /strength circuit|full-body/i);
     assert.ok(Object.values(planWeek.sessionsByDay).filter(Boolean).every((session) => !RUN_SESSION_TYPES.has(session.type)));
   });
 });

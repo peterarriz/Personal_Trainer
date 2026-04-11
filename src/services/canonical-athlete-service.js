@@ -138,7 +138,6 @@ const buildCanonicalUserProfile = ({
   const nutritionPreferenceState = personalization?.nutritionPreferenceState || {};
   const environmentConfig = personalization?.environmentConfig || {};
   const coachMemory = personalization?.coachMemory || {};
-  const homePresetEquipment = environmentConfig?.presets?.Home?.equipment || [];
   const trainingContext = deriveTrainingContextFromPersonalization({ personalization });
 
   return {
@@ -164,7 +163,11 @@ const buildCanonicalUserProfile = ({
       environmentConfig?.base?.time,
       DEFAULT_CANONICAL_USER_PROFILE.sessionLength
     ),
-    equipmentAccess: dedupeStrings(legacyUserProfile?.equipment_access || homePresetEquipment),
+    equipmentAccess: dedupeStrings(
+      trainingContext?.equipmentAccess?.confirmed
+        ? (trainingContext?.equipmentAccess?.items || [])
+        : (legacyUserProfile?.equipment_access || [])
+    ),
     constraints: dedupeStrings(legacyUserProfile?.constraints || []),
     scheduleConstraints: dedupeStrings(coachMemory?.scheduleConstraints || []),
     trainingContext,

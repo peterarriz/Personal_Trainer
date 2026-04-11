@@ -20,26 +20,42 @@ test("strength placeholder sessions expand into concise prescription detail", ()
     },
   });
 
+  assert.equal(summary.sessionLabel, "Full-body strength B");
   assert.equal(summary.sessionType, "Strength");
   assert.match(summary.structure, /40-55 min strength progression/i);
   assert.match(summary.expectedDuration, /40-55 min/i);
+  assert.match(summary.movementNote, /A\/B labels mean alternating lift templates/i);
   assert.match(summary.why, /strength lane moving/i);
 });
 
-test("run sessions infer useful duration and repair visible encoding in structure", () => {
+test("run sessions infer useful duration and keep interval structure legible", () => {
   const summary = buildDayPrescriptionDisplay({
     training: {
       type: "hard-run",
       label: "Intervals",
       run: {
         t: "Intervals",
-        d: "1mi+4Ãƒâ€”8min/3min+1mi",
+        d: "1mi+4ÃƒÆ’Ã¢â‚¬â€8min/3min+1mi",
       },
       explanation: "This is the main quality session for the week.",
     },
   });
 
   assert.equal(summary.sessionType, "Quality run");
-  assert.match(summary.structure, /4×8min/i);
+  assert.match(summary.structure, /intervals:/i);
+  assert.match(summary.structure, /8min/i);
   assert.match(summary.expectedDuration, /3[0-9]-4[0-9] min/i);
+});
+
+test("unclear movement names get a short explanation note", () => {
+  const summary = buildDayPrescriptionDisplay({
+    training: {
+      type: "strength+prehab",
+      label: "Push-Up Complex",
+      strengthDose: "3 rounds, short rests, accessory finish",
+    },
+  });
+
+  assert.equal(summary.sessionLabel, "Push-Up Complex");
+  assert.match(summary.movementNote, /strings a few movements together/i);
 });

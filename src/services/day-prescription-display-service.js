@@ -26,6 +26,60 @@ const PURPOSE_BY_TYPE = {
   rest: "Absorb work and protect the next productive session.",
 };
 
+const SESSION_LABEL_RULES = [
+  { pattern: /^strength ([ab])$/i, build: (match) => `Full-body strength ${String(match?.[1] || "").toUpperCase()}` },
+  { pattern: /^strength priority ([ab])$/i, build: (match) => `Full-body strength ${String(match?.[1] || "").toUpperCase()}` },
+  { pattern: /^metabolic strength ([ab])$/i, build: (match) => `Strength circuit ${String(match?.[1] || "").toUpperCase()}` },
+  { pattern: /^upper push\/pull strength$/i, label: "Upper-body push/pull strength" },
+  { pattern: /^quality run \+ strength$/i, label: "Quality run + strength finish" },
+  { pattern: /^run \+ strength$/i, label: "Easy run + strength finish" },
+  { pattern: /^conditioning \/ otf$/i, label: "Conditioning intervals" },
+  { pattern: /^conditioning \(low-friction\)$/i, label: "Low-friction conditioning" },
+  { pattern: /^supportive conditioning run$/i, label: "Easy conditioning run" },
+  { pattern: /^supportive run\/walk$/i, label: "Easy run/walk" },
+  { pattern: /^strength focus$/i, label: "Full-body strength focus" },
+  { pattern: /^short version strength$/i, label: "Short full-body strength A" },
+  { pattern: /^short version strength ([ab])$/i, build: (match) => `Short full-body strength ${String(match?.[1] || "").toUpperCase()}` },
+];
+
+const resolveSessionLabel = (training = {}) => {
+  const rawLabel = sanitizeText(training?.label || "", 120);
+  if (!rawLabel) {
+    const rawType = sanitizeText(training?.type || "", 60).toLowerCase();
+    return TYPE_LABELS[rawType] || "Planned session";
+  }
+  const matchedRule = SESSION_LABEL_RULES.find((rule) => rule.pattern.test(rawLabel));
+  if (matchedRule) {
+    const match = rawLabel.match(matchedRule.pattern);
+    return sanitizeText(matchedRule.build ? matchedRule.build(match, training) : matchedRule.label, 120);
+  }
+  return rawLabel;
+};
+
+const buildMovementNote = (training = {}, sessionLabel = "") => {
+  const rawLabel = sanitizeText(training?.label || "", 120);
+  const safeLabel = sanitizeText(sessionLabel || rawLabel, 120);
+  if (!safeLabel) return "";
+  if (/complex/i.test(rawLabel)) return "A complex strings a few movements together before you rest.";
+  if (/push\/pull/i.test(rawLabel) || /push\/pull/i.test(safeLabel)) return "Push/pull means you alternate pressing and rowing or pull-down work in the same session.";
+  if (/durability/i.test(rawLabel) || /durability/i.test(safeLabel)) return "Durability work is lighter accessory or mobility work that keeps tissues and joints happy.";
+  if (/strength (?:priority )?[ab]\b/i.test(rawLabel) || /^full-body strength [ab]\b/i.test(safeLabel.toLowerCase())) {
+    return "A/B labels mean alternating lift templates so you hit the same patterns without repeating the exact same order.";
+  }
+  if (/circuit/i.test(safeLabel)) return "Circuit means you move through paired lifts with shorter rests to keep the session moving.";
+  if (/otf|interval/i.test(rawLabel) || /interval/i.test(safeLabel)) return "Intervals are controlled hard efforts with easy recoveries between them.";
+  return "";
+};
+
+const PURPOSE_LABEL_RULES = [
+  { pattern: /full-body strength/i, purpose: "Build full-body strength with repeatable main lifts and accessories." },
+  { pattern: /upper-body push\/pull/i, purpose: "Build upper-body strength without asking much from your legs." },
+  { pattern: /strength circuit/i, purpose: "Keep strength work dense enough to support body-comp or work-capacity goals." },
+  { pattern: /strength finish/i, purpose: "Get the main run done, then add a short strength touchpoint." },
+  { pattern: /conditioning intervals/i, purpose: "Build work capacity without turning the day into a full run session." },
+  { pattern: /easy conditioning run|easy run\/walk/i, purpose: "Add low-stress aerobic work without stealing recovery from bigger sessions." },
+];
+
 const estimateRunDuration = (detail = "", fallbackType = "") => {
   const text = sanitizeText(detail, 180).toLowerCase();
   if (!text) return fallbackType === "long-run" ? "45-75 min" : "25-45 min";
@@ -82,13 +136,16 @@ export const buildDayPrescriptionDisplay = ({
 } = {}) => {
   const safeTraining = training && typeof training === "object" ? training : {};
   const rawType = sanitizeText(safeTraining?.type || "", 40).toLowerCase();
+  const sessionLabel = resolveSessionLabel(safeTraining);
   const sessionType = TYPE_LABELS[rawType] || sanitizeText(rawType.replaceAll("-", " "), 60) || "Session";
   const structure = buildStructure(safeTraining);
   const expectedDuration = safeTraining?.run
     ? estimateRunDuration(safeTraining?.run?.d || structure, rawType)
     : estimateStrengthDuration(safeTraining);
+  const labelDrivenPurpose = PURPOSE_LABEL_RULES.find((rule) => rule.pattern.test(sessionLabel))?.purpose || "";
   const purpose = sanitizeText(
     safeTraining?.success
+    || labelDrivenPurpose
     || PURPOSE_BY_TYPE[rawType]
     || week?.successDefinition
     || week?.programBlock?.successCriteria?.[0]
@@ -96,12 +153,15 @@ export const buildDayPrescriptionDisplay = ({
     180
   );
   const why = includeWhy ? buildWhySummary({ training: safeTraining, week, provenance }) : "";
+  const movementNote = buildMovementNote(safeTraining, sessionLabel);
 
   return {
+    sessionLabel,
     sessionType,
     purpose,
     structure,
     expectedDuration,
+    movementNote,
     why,
   };
 };
