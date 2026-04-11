@@ -165,6 +165,20 @@ test("field-scoped appearance proxy answer stays a proxy anchor instead of a str
   assert.equal(answered.answers.intake_completeness.fields.current_strength_baseline, undefined);
 });
 
+test("appearance proxy question only stores the fields it explicitly asked for", () => {
+  const answered = applyIntakeCompletenessAnswer({
+    answers: {},
+    question: {
+      key: INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
+      fieldKeys: ["current_bodyweight", "current_waist"],
+      source: "completeness",
+    },
+    answerText: "I can do photos if needed",
+  });
+
+  assert.equal(answered.answers.intake_completeness, undefined);
+});
+
 test("running baseline answer satisfies the required baseline field when it includes frequency and long-run detail", () => {
   const resolvedGoals = buildResolvedGoals("run a 2-hour half marathon");
   const answered = applyIntakeCompletenessAnswer({
@@ -191,4 +205,102 @@ test("running baseline answer satisfies the required baseline field when it incl
   assert.equal(answered.answers.intake_completeness.fields.current_run_frequency.value, 3);
   assert.equal(answered.answers.intake_completeness.fields.longest_recent_run.miles, 6);
   assert.ok(!state.missingRequired.some((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline));
+});
+
+test("race date answer clears the running timing requirement immediately", () => {
+  const resolvedGoals = buildResolvedGoals("run a 2-hour half marathon");
+  const answered = applyIntakeCompletenessAnswer({
+    answers: {},
+    question: {
+      key: INTAKE_COMPLETENESS_QUESTION_KEYS.runningTiming,
+      fieldKeys: ["target_timeline"],
+      source: "completeness",
+    },
+    answerText: "October 12",
+  });
+  const state = deriveIntakeCompletenessState({
+    resolvedGoals,
+    answers: answered.answers,
+  });
+
+  assert.equal(answered.answers.intake_completeness.fields.target_timeline.value, "October 12");
+  assert.ok(!state.missingRequired.some((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.runningTiming));
+  assert.equal(state.nextQuestions[0]?.key, INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline);
+});
+
+test("running baseline answer with natural phrasing clears the baseline requirement immediately", () => {
+  const resolvedGoals = buildResolvedGoals("run a 2-hour half marathon");
+  const answered = applyIntakeCompletenessAnswer({
+    answers: {
+      intake_completeness: {
+        version: "2026-04-v1",
+        fields: {
+          target_timeline: { raw: "October 12", value: "October 12" },
+        },
+      },
+    },
+    question: {
+      key: INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline,
+      fieldKeys: ["current_run_frequency", "longest_recent_run", "recent_pace_baseline"],
+      source: "completeness",
+    },
+    answerText: "3 runs, longest 90 minutes",
+  });
+  const state = deriveIntakeCompletenessState({
+    resolvedGoals,
+    answers: answered.answers,
+  });
+
+  assert.equal(answered.answers.intake_completeness.fields.current_run_frequency.value, 3);
+  assert.equal(answered.answers.intake_completeness.fields.longest_recent_run.minutes, 90);
+  assert.ok(!state.missingRequired.some((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline));
+});
+
+test("bodyweight answer clears the body-comp anchor requirement without re-asking it", () => {
+  const resolvedGoals = buildResolvedGoals("lose 20 lb");
+  const answered = applyIntakeCompletenessAnswer({
+    answers: {},
+    question: {
+      key: INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor,
+      fieldKeys: ["current_bodyweight", "target_weight_change"],
+      source: "completeness",
+    },
+    answerText: "191 lbs",
+  });
+  const state = deriveIntakeCompletenessState({
+    resolvedGoals,
+    answers: answered.answers,
+  });
+
+  assert.equal(answered.answers.intake_completeness.fields.current_bodyweight.value, 191);
+  assert.ok(!state.missingRequired.some((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor));
+  assert.equal(state.nextQuestions[0]?.key, INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline);
+});
+
+test("invalid partial running baseline answer still re-prompts correctly", () => {
+  const resolvedGoals = buildResolvedGoals("run a 2-hour half marathon");
+  const answered = applyIntakeCompletenessAnswer({
+    answers: {
+      intake_completeness: {
+        version: "2026-04-v1",
+        fields: {
+          target_timeline: { raw: "October 12", value: "October 12" },
+        },
+      },
+    },
+    question: {
+      key: INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline,
+      fieldKeys: ["current_run_frequency", "longest_recent_run", "recent_pace_baseline"],
+      source: "completeness",
+    },
+    answerText: "3 runs",
+  });
+  const state = deriveIntakeCompletenessState({
+    resolvedGoals,
+    answers: answered.answers,
+  });
+
+  assert.equal(answered.answers.intake_completeness.fields.current_run_frequency.value, 3);
+  assert.ok(state.missingRequired.some((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline));
+  assert.equal(state.nextQuestions[0]?.key, INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline);
 });

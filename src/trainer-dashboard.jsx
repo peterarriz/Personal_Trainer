@@ -96,6 +96,7 @@ import {
   buildIntakeGoalStackReviewModel,
   buildIntakeGoalReviewModel,
   buildIntakeSecondaryGoalPrompt,
+  deriveIntakeConfirmationState,
   buildRawGoalIntentFromAnswers,
   GOAL_STACK_ROLES,
   SECONDARY_GOAL_RESPONSE_KEYS,
@@ -117,6 +118,10 @@ import {
   normalizeHomeEquipmentResponse,
   sanitizeIntakeText,
 } from "./services/intake-flow-service.js";
+import {
+  queueCoachTranscriptMessages,
+  resolveNextCoachStreamTargetId,
+} from "./services/intake-transcript-service.js";
 import {
   buildLegacyHistoryDisplayLabel,
   resolveLegacyPlannedDayHistoryEntry,
@@ -7205,6 +7210,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(null);
   const [pendingSecondaryGoalPrompt, setPendingSecondaryGoalPrompt] = useState(null);
   const [secondaryGoalMode, setSecondaryGoalMode] = useState("");
+  const [confirmBuildError, setConfirmBuildError] = useState("");
   const [assessing, setAssessing] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
@@ -7331,6 +7337,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     answers,
     goalStackConfirmation,
   ]);
+  const confirmationState = useMemo(() => deriveIntakeConfirmationState({
+    reviewModel,
+    askedQuestions: askedClarifyingQuestions,
+    maxQuestions: 2,
+  }), [reviewModel, askedClarifyingQuestions]);
 
   useEffect(() => {
     setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
@@ -7340,12 +7351,21 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }));
   }, [reviewGoalSignature, assessmentPreview?.goalFeasibility]);
 
-  const appendCoachMessage = (text) => {
-    const id = nextMessageIdRef.current++;
-    setMessages((prev) => [...prev, { id, role: "coach", text: sanitizeIntakeText(text), displayedText: "" }]);
-    if (!streamTargetId) setStreamTargetId(id);
-    return id;
+  const appendCoachMessages = (texts) => {
+    const queue = queueCoachTranscriptMessages({
+      texts: (Array.isArray(texts) ? texts : [texts]).map((text) => sanitizeIntakeText(text)),
+      nextMessageId: nextMessageIdRef.current,
+    });
+    nextMessageIdRef.current = queue.nextMessageId;
+    if (queue.entries.length === 0) return [];
+    setMessages((prev) => [...prev, ...queue.entries]);
+    setStreamTargetId((prev) => resolveNextCoachStreamTargetId({
+      currentStreamTargetId: prev,
+      queuedEntries: queue.entries,
+    }));
+    return queue.entries.map((entry) => entry.id);
   };
+  const appendCoachMessage = (text) => appendCoachMessages([text])[0] || null;
   const appendUserMessage = (text) => {
     const clean = String(text || "").trim();
     if (!clean) return;
@@ -7357,6 +7377,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     updatedAnswers = {},
     askedQuestions = [],
   } = {}) => {
+    setConfirmBuildError("");
     const cleanTimeline = sanitizeIntakeText(assessment?.text || "");
     const reviewModelForAssessment = buildIntakeGoalReviewModel({
       goalResolution: assessment?.goalResolution || null,
@@ -7391,10 +7412,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setPendingClarifyingQuestion(nextQuestion);
       setPendingSecondaryGoalPrompt(null);
       setPhase("clarify");
-      buildIntakeClarificationCoachMessages({
+      appendCoachMessages(buildIntakeClarificationCoachMessages({
         statusText: cleanTimeline,
         nextQuestion,
-      }).forEach(appendCoachMessage);
+      }));
       return;
     }
     if (nextSecondaryGoalPrompt) {
@@ -7460,6 +7481,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     });
   };
   const requestAdjustment = () => {
+    setConfirmBuildError("");
     appendUserMessage("I want to adjust something");
     setPhase("adjust");
     setDraft("");
@@ -7471,6 +7493,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const submitAdjustment = async () => {
     const clean = String(draft || "").trim();
     if (!clean) return;
+    setConfirmBuildError("");
     appendUserMessage(clean);
     setDraft("");
     const adjustmentOutcome = applyIntakeGoalAdjustment({
@@ -7489,16 +7512,67 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const submitClarification = async () => {
     const clean = String(draft || "").trim();
     if (!clean || !pendingClarifyingQuestion?.prompt) return;
+    setConfirmBuildError("");
     appendUserMessage(clean);
     setDraft("");
     const questionSource = String(pendingClarifyingQuestion?.source || "").trim().toLowerCase();
+    const currentResolvedGoals = Array.isArray(assessmentPreview?.orderedResolvedGoals) ? assessmentPreview.orderedResolvedGoals : [];
+
+    if (questionSource === "completeness") {
+      const structuredAnswer = applyIntakeCompletenessAnswer({
+        answers,
+        question: pendingClarifyingQuestion,
+        answerText: clean,
+      });
+      const timelineFieldStored = structuredAnswer.storedFieldKeys.includes("target_timeline");
+      const updatedAnswers = {
+        ...structuredAnswer.answers,
+        timeline_feedback: pendingClarifyingQuestion?.affectsTimeline && timelineFieldStored
+          ? clean
+          : (structuredAnswer.answers.timeline_feedback || ""),
+      };
+      const completenessAfterAnswer = deriveIntakeCompletenessState({
+        resolvedGoals: currentResolvedGoals,
+        answers: updatedAnswers,
+      });
+      const currentQuestionStillMissing = completenessAfterAnswer.missingRequired.some(
+        (item) => item?.key === pendingClarifyingQuestion?.key
+      );
+
+      if (!currentQuestionStillMissing) {
+        const nextAskedQuestions = [...askedClarifyingQuestions, pendingClarifyingQuestion.key || pendingClarifyingQuestion.prompt];
+        setAskedClarifyingQuestions(nextAskedQuestions);
+        await runAssessment({ updatedAnswers, askedQuestions: nextAskedQuestions });
+        return;
+      }
+
+      const adjustmentOutcome = applyIntakeGoalAdjustment({
+        answers,
+        adjustmentText: clean,
+        currentResolvedGoal: currentResolvedGoals[0] || null,
+        currentPrimaryGoalKey: answers.primary_goal || "",
+        now: new Date(),
+        allowImplicitGoalReplacement: false,
+      });
+      if (adjustmentOutcome.kind === "goal_replacement") {
+        setAskedClarifyingQuestions([]);
+        setPendingClarifyingQuestion(null);
+        setPendingSecondaryGoalPrompt(null);
+        await runAssessment({ updatedAnswers: adjustmentOutcome.answers, askedQuestions: [] });
+        return;
+      }
+
+      await runAssessment({ updatedAnswers, askedQuestions: askedClarifyingQuestions });
+      return;
+    }
+
     const adjustmentOutcome = applyIntakeGoalAdjustment({
       answers,
       adjustmentText: clean,
-      currentResolvedGoal: assessmentPreview?.orderedResolvedGoals?.[0] || null,
+      currentResolvedGoal: currentResolvedGoals[0] || null,
       currentPrimaryGoalKey: answers.primary_goal || "",
       now: new Date(),
-      allowImplicitGoalReplacement: questionSource !== "completeness",
+      allowImplicitGoalReplacement: true,
     });
     if (adjustmentOutcome.kind === "goal_replacement") {
       setAskedClarifyingQuestions([]);
@@ -7513,23 +7587,19 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       answerText: clean,
     });
     const nextAskedQuestions = [...askedClarifyingQuestions, pendingClarifyingQuestion.key || pendingClarifyingQuestion.prompt];
-    const shouldMirrorToTimelineFeedback = Boolean(pendingClarifyingQuestion?.affectsTimeline);
-    const shouldPersistGoalClarificationNote = questionSource !== "completeness";
     const updatedAnswers = {
       ...structuredAnswer.answers,
-      goal_clarification_notes: shouldPersistGoalClarificationNote
-        ? [
-            ...(Array.isArray(structuredAnswer.answers.goal_clarification_notes) ? structuredAnswer.answers.goal_clarification_notes : []),
-            {
-              question: pendingClarifyingQuestion.prompt,
-              answer: clean,
-              source: pendingClarifyingQuestion?.source || "review",
-              questionKey: pendingClarifyingQuestion?.key || "",
-              fieldKeys: Array.isArray(pendingClarifyingQuestion?.fieldKeys) ? pendingClarifyingQuestion.fieldKeys : [],
-            },
-          ]
-        : (Array.isArray(structuredAnswer.answers.goal_clarification_notes) ? structuredAnswer.answers.goal_clarification_notes : []),
-      timeline_feedback: shouldMirrorToTimelineFeedback ? clean : (structuredAnswer.answers.timeline_feedback || ""),
+      goal_clarification_notes: [
+        ...(Array.isArray(structuredAnswer.answers.goal_clarification_notes) ? structuredAnswer.answers.goal_clarification_notes : []),
+        {
+          question: pendingClarifyingQuestion.prompt,
+          answer: clean,
+          source: pendingClarifyingQuestion?.source || "review",
+          questionKey: pendingClarifyingQuestion?.key || "",
+          fieldKeys: Array.isArray(pendingClarifyingQuestion?.fieldKeys) ? pendingClarifyingQuestion.fieldKeys : [],
+        },
+      ],
+      timeline_feedback: pendingClarifyingQuestion?.affectsTimeline ? clean : (structuredAnswer.answers.timeline_feedback || ""),
     };
     setAskedClarifyingQuestions(nextAskedQuestions);
     await runAssessment({ updatedAnswers, askedQuestions: nextAskedQuestions });
@@ -7538,6 +7608,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     const customText = String(draft || "").trim();
     if (!response?.key) return;
     if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.custom && !customText) return;
+    setConfirmBuildError("");
     if (response.key !== SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly) {
       appendUserMessage(response.key === SECONDARY_GOAL_RESPONSE_KEYS.custom ? customText : response.label);
     } else {
@@ -7571,27 +7642,21 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     await runAssessment({ updatedAnswers: outcome.answers, askedQuestions: [] });
   };
   const finalizePlan = async () => {
-    const effectiveNextQuestion = getNextIntakeClarifyingQuestion({
-      reviewModel,
-      askedQuestions,
-      maxQuestions: 2,
-    });
-    if (!reviewModel?.isPlannerReady && effectiveNextQuestion?.prompt) {
-      setPendingClarifyingQuestion(effectiveNextQuestion);
+    setConfirmBuildError("");
+    if (!confirmationState?.canConfirm && confirmationState?.nextQuestion?.prompt) {
+      setPendingClarifyingQuestion(confirmationState.nextQuestion);
       setPhase("clarify");
-      buildIntakeClarificationCoachMessages({
-        statusText: "I still need one critical detail before I can build credibly.",
-        nextQuestion: effectiveNextQuestion,
-      }).forEach(appendCoachMessage);
+      appendCoachMessages(buildIntakeClarificationCoachMessages({
+        statusText: confirmationState.reason || "I still need one critical detail before I can build credibly.",
+        nextQuestion: confirmationState.nextQuestion,
+      }));
       return;
     }
-    if (reviewModel?.confirmationAction === GOAL_FEASIBILITY_ACTIONS.block) {
+    if (!confirmationState?.canConfirm) {
+      const blockedReason = confirmationState?.reason || "I still need a little more grounded context before I can build your plan.";
+      setConfirmBuildError(blockedReason);
       setPhase("review");
-      appendCoachMessage(
-        reviewModel?.recommendedRevisionSummary
-          || reviewModel?.blockingReasons?.[0]
-          || "The current target needs a smaller or better-specified first block before I can build the plan credibly."
-      );
+      appendCoachMessage(blockedReason);
       return;
     }
     appendUserMessage("Looks good, build my plan");
@@ -7604,8 +7669,19 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       aiInterpretationProposal: assessmentBoundary?.aiInterpretationProposal || null,
       starting_fresh: startingFresh,
     };
-    await new Promise((resolve) => setTimeout(resolve, 3200));
-    await onComplete(payload);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 3200));
+      await onComplete(payload);
+    } catch (error) {
+      const failureMessage = sanitizeIntakeText(
+        error?.message
+          ? `I hit a problem while finishing onboarding: ${error.message}`
+          : "I hit a problem while finishing onboarding. Please try again."
+      );
+      setConfirmBuildError(failureMessage);
+      setPhase("review");
+      appendCoachMessage(failureMessage);
+    }
   };
   const goalStackReview = buildIntakeGoalStackReviewModel({
     resolvedGoals: reviewGoals,
@@ -7799,7 +7875,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
                 {phase === "secondary_goal" ? (
                   <div style={{ display:"grid", gap:"0.55rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Optional maintained goal</div>
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Maintain while chasing it</div>
                     <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingSecondaryGoalPrompt?.prompt || ""}</div>
                     {pendingSecondaryGoalPrompt?.helperText && (
                       <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.55 }}>{pendingSecondaryGoalPrompt.helperText}</div>
@@ -7850,20 +7926,20 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                   <div style={{ display:"grid", gap:"0.65rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:18, padding:"0.8rem", background:"rgba(8,14,25,0.58)" }}>
                     <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.55rem" }}>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>INTERPRETATION</div>
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>GOAL</div>
                         <div style={{ fontSize:"0.68rem", color:"#f8fbff", lineHeight:1.35 }}>{displayedPrimaryGoal?.summary || reviewModel.primarySummary || "Goal preview pending"}</div>
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                          {displayedPrimaryGoal?.roleLabel || reviewModel.goalFamilyLabel || "goal"} · {displayedPrimaryGoal?.measurabilityLabel || reviewModel.measurabilityLabel} · {reviewModel.confidenceLabel}
+                          {reviewModel.goalTypeLabel || "Goal"}
                         </div>
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Plan realism: {reviewModel.realismLabel}
+                          Reality check: {reviewModel.realismLabel}
                         </div>
-                        <div style={{ fontSize:"0.5rem", color:reviewModel.gateStatus === "blocked" || reviewModel.gateStatus === "incomplete" ? C.amber : reviewModel.gateStatus === "warn" ? "#facc15" : "#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Confirmation gate: {reviewModel.gateLabel || reviewModel.confirmationLabel}
+                        <div style={{ fontSize:"0.5rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                          Review status: {confirmationState?.statusLabel || "Review pending"}
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>WE'LL TRACK</div>
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>WHAT WE'LL TRACK</div>
                         <div style={{ display:"grid", gap:"0.18rem" }}>
                           {(displayedTrackingLabels.length ? displayedTrackingLabels : (reviewModel.trackingLabels.length ? reviewModel.trackingLabels : ["First 30-day success definition"])).map((item) => (
                             <div key={item} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{item}</div>
@@ -7871,7 +7947,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>STILL MISSING</div>
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>STILL NEEDED</div>
                         <div style={{ display:"grid", gap:"0.18rem" }}>
                           {(reviewModel.unresolvedItems.length ? reviewModel.unresolvedItems : ["Nothing critical. This is specific enough to plan from."]).map((item) => (
                             <div key={item} style={{ fontSize:"0.54rem", color:reviewModel.unresolvedItems.length ? C.amber : "#8fa5c8", lineHeight:1.5 }}>{item}</div>
@@ -7882,34 +7958,31 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
                     {goalStackReview?.activeGoals?.length > 0 && (
                       <div style={{ display:"grid", gap:"0.55rem" }}>
-                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL STACK</div>
+                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>PLAN FOCUS</div>
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.55rem" }}>
                           {goalStackReview.activeGoals.map((goal, index) => {
                             const isPrimary = goal.role === GOAL_STACK_ROLES.primary || index === 0;
                             return (
                               <div key={goal.id || goal.summary} style={{ border:`1px solid ${isPrimary ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.14)"}`, borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                                <div style={{ fontSize:"0.46rem", color:isPrimary ? C.green : "#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>{goal.roleLabel}</div>
+                                <div style={{ fontSize:"0.46rem", color:isPrimary ? C.green : "#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>{isPrimary ? "Lead goal" : "Maintain while chasing it"}</div>
                                 <div style={{ fontSize:"0.62rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
-                                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
-                                  {goal.measurabilityLabel}
-                                </div>
                                 <div style={{ fontSize:"0.51rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>
-                                  Track: {(goal.trackingLabels.length ? goal.trackingLabels : ["First 30-day success definition"]).join(" - ")}
+                                  What we'll measure: {(goal.trackingLabels.length ? goal.trackingLabels : ["First 30-day success definition"]).join(" - ")}
                                 </div>
                                 {goal.tradeoff && (
                                   <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                                    Tradeoff: {goal.tradeoff}
+                                    Main tradeoff: {goal.tradeoff}
                                   </div>
                                 )}
                                 <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.45rem" }}>
                                   {!isPrimary && (
                                     <button className="btn" onClick={() => setLeadingGoal(goal.id)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
-                                      Make primary
+                                      Make this the lead goal
                                     </button>
                                   )}
                                   {!isPrimary && (
                                     <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                      Keep maintained
+                                      Keep as maintained goal
                                     </button>
                                   )}
                                   {!isPrimary && (
@@ -7924,7 +7997,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                         {goalStackReview.primaryTradeoff && (
                           <div style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>TRADEOFF</div>
+                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>MAIN TRADEOFF</div>
                             <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalStackReview.primaryTradeoff}</div>
                           </div>
                         )}
@@ -7932,28 +8005,28 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)", opacity:goalStackReview.backgroundPriority.enabled ? 1 : 0.72 }}>
                             <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
                               <div>
-                                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>BACKGROUND PRIORITY</div>
+                                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>KEEP PROTECTED</div>
                                 <div style={{ fontSize:"0.58rem", color:"#f8fbff" }}>{goalStackReview.backgroundPriority.label}</div>
                               </div>
                               <button className="btn" onClick={toggleBackgroundPriority} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                {goalStackReview.backgroundPriority.enabled ? "Keep protected" : "Add protection"}
+                                {goalStackReview.backgroundPriority.enabled ? "Keep this protected" : "Protect this too"}
                               </button>
                             </div>
                             <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>{goalStackReview.backgroundPriority.summary}</div>
                             <div style={{ fontSize:"0.5rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.5 }}>
-                              Track: {(goalStackReview.backgroundPriority.trackingLabels || []).join(" - ")}
+                              What we'll measure: {(goalStackReview.backgroundPriority.trackingLabels || []).join(" - ")}
                             </div>
                           </div>
                         )}
                         {goalStackReview?.removedGoals?.length > 0 && (
                           <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>NOT LEADING THIS PLAN</div>
+                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>NOT PART OF THIS BUILD</div>
                             <div style={{ display:"grid", gap:"0.28rem" }}>
                               {goalStackReview.removedGoals.map((goal) => (
                                 <div key={goal.id} style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
                                   <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.5 }}>{goal.summary}</div>
                                   <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                    Add back as maintained
+                                    Add as maintained goal
                                   </button>
                                 </div>
                               ))}
@@ -7967,25 +8040,35 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
                 {phase === "review" ? (
                   <div style={{ display:"grid", gap:"0.55rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Does this feel right?</div>
-                    {!reviewModel?.isPlannerReady && reviewModel?.completeness?.missingRequired?.length > 0 && (
-                      <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
-                        Need {reviewModel.completeness.missingRequired.length} more planning detail{reviewModel.completeness.missingRequired.length === 1 ? "" : "s"} before the plan can lock.
-                      </div>
-                    )}
-                    {reviewModel?.confirmationAction === GOAL_FEASIBILITY_ACTIONS.block && reviewModel?.recommendedRevisionSummary && (
-                      <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
-                        {reviewModel.recommendedRevisionSummary}
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>This is the plan direction I'm going to build from.</div>
+                    {confirmationState?.headline && (
+                      <div style={{ fontSize:"0.56rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", lineHeight:1.55 }}>
+                        {confirmationState.headline}
                       </div>
                     )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={finalizePlan}>
-                        Confirm resolved goal and build my plan
+                      <button className="btn btn-primary" onClick={finalizePlan} disabled={!confirmationState?.ctaEnabled || assessing || isCoachStreaming}>
+                        {confirmationState?.ctaLabel || "Confirm and build my plan"}
                       </button>
                       <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
-                        I want to adjust something
+                        Adjust the goal
                       </button>
                     </div>
+                    {(confirmationState?.state === "blocked" || confirmationState?.state === "incomplete") && (
+                      <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
+                        {confirmBuildError || confirmationState?.reason || "I still need one or two critical details before I can build the plan credibly."}
+                      </div>
+                    )}
+                    {confirmationState?.state === "warn" && confirmationState?.reason && (
+                      <div style={{ fontSize:"0.56rem", color:"#facc15", lineHeight:1.55 }}>
+                        {confirmationState.reason}
+                      </div>
+                    )}
+                    {confirmationState?.state === "ready" && confirmBuildError && (
+                      <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
+                        {confirmBuildError}
+                      </div>
+                    )}
                   </div>
                 ) : null}
               </div>

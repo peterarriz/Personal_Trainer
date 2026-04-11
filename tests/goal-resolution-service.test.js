@@ -69,6 +69,55 @@ test("resolves a fully measurable running goal into a canonical running planning
   assert.match(result.planningGoals[0].measurableTarget, /Half marathon time 1:45:00/i);
 });
 
+test("marathon goals resolve to running/event interpretation instead of generic hybrid phrasing", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "I want to run a marathon",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "I want to run a marathon" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "performance");
+  assert.equal(result.resolvedGoals[0].planningCategory, "running");
+  assert.equal(result.resolvedGoals[0].summary, "Run a marathon");
+  assert.ok(result.resolvedGoals[0].proxyMetrics.some((metric) => /run frequency|long run|quality session/i.test(metric.label)));
+  assert.doesNotMatch(result.resolvedGoals[0].summary, /hybrid/i);
+});
+
+test("half-marathon goals keep a specific event summary instead of generic running wording", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "I want to run a half marathon",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "I want to run a half marathon" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals[0].planningCategory, "running");
+  assert.equal(result.resolvedGoals[0].summary, "Run a half marathon");
+  assert.doesNotMatch(result.resolvedGoals[0].summary, /hybrid|aerobic base/i);
+});
+
+test("pure running goals do not become hybrid even if provider interpretation drifts", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 1:45 half marathon",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "run a 1:45 half marathon" }),
+    aiInterpretationProposal: {
+      interpretedGoalType: "hybrid",
+      measurabilityTier: "exploratory_fuzzy",
+      coachSummary: "Build aerobic base for hybrid training",
+    },
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "performance");
+  assert.equal(result.resolvedGoals[0].planningCategory, "running");
+  assert.equal(result.resolvedGoals[0].summary, "Run a half marathon in 1:45:00");
+  assert.doesNotMatch(result.resolvedGoals[0].summary, /hybrid/i);
+});
+
 test("measurable event goals infer a usable horizon from season language", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "run a 1:45 half marathon this fall",
@@ -224,6 +273,23 @@ test("mixed lose-fat-but-keep-strength intent resolves into body-comp plus stren
   assert.equal(result.resolvedGoals[1].summary, "Keep strength while the primary goal leads");
   assert.ok(result.tradeoffs.some((item) => /fat loss may limit strength/i.test(item)));
   assert.equal(result.planningGoals[1].tracking.mode, "logged_lifts");
+});
+
+test("running plus maintained strength stays run-led and event-specific when explicitly expressed", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 1:45 half marathon but keep strength",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "run a 1:45 half marathon but keep strength" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals.length, 2);
+  assert.equal(result.resolvedGoals[0].goalFamily, "performance");
+  assert.equal(result.resolvedGoals[0].planningCategory, "running");
+  assert.equal(result.resolvedGoals[0].summary, "Run a half marathon in 1:45:00");
+  assert.equal(result.resolvedGoals[1].goalFamily, "strength");
+  assert.equal(result.resolvedGoals[1].summary, "Keep strength while the primary goal leads");
+  assert.doesNotMatch(result.resolvedGoals[0].summary, /hybrid/i);
 });
 
 test("resolved goals populate canonical goal slots so planner-facing normalization reads resolved objects", () => {
