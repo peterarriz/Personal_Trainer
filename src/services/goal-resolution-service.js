@@ -116,7 +116,10 @@ const normalizeAiInterpretationProposal = (proposal = null) => {
     return {
       interpretedGoalType: "",
       measurabilityTier: "",
+      primaryMetric: null,
+      proxyMetrics: [],
       suggestedMetrics: [],
+      confidence: "",
       timelineRealism: {
         status: "",
         summary: "",
@@ -129,10 +132,18 @@ const normalizeAiInterpretationProposal = (proposal = null) => {
   }
 
   const suggestedHorizonWeeksRaw = Number(proposal?.timelineRealism?.suggestedHorizonWeeks ?? proposal?.targetHorizonWeeks);
+  const suggestedMetrics = uniqMetrics([
+    proposal?.primaryMetric || null,
+    ...(proposal?.proxyMetrics || []),
+    ...(proposal?.suggestedMetrics || proposal?.metrics || []),
+  ]);
   return {
     interpretedGoalType: sanitizeText(proposal?.interpretedGoalType || proposal?.goalFamily || "", 40).toLowerCase(),
     measurabilityTier: sanitizeText(proposal?.measurabilityTier || "", 40).toLowerCase(),
-    suggestedMetrics: uniqMetrics(proposal?.suggestedMetrics || proposal?.metrics || []),
+    primaryMetric: suggestedMetrics.find((metric) => metric.kind === "primary") || null,
+    proxyMetrics: suggestedMetrics.filter((metric) => metric.kind !== "primary"),
+    suggestedMetrics,
+    confidence: sanitizeText(proposal?.confidence || proposal?.confidenceLevel || "", 20).toLowerCase(),
     timelineRealism: {
       status: sanitizeText(proposal?.timelineRealism?.status || "", 24).toLowerCase(),
       summary: sanitizeText(proposal?.timelineRealism?.summary || "", 220),
@@ -302,14 +313,15 @@ const resolveMetricSet = ({
   const confirmationPrimary = confirmation?.edits?.primaryMetric ? uniqMetrics([{ ...(confirmation.edits.primaryMetric || {}), kind: "primary" }])[0] || null : null;
   const confirmationProxy = uniqMetrics((confirmation?.edits?.proxyMetrics || []).map((metric) => ({ ...metric, kind: "proxy" })));
   const proposalPrimary = (proposal?.suggestedMetrics || []).find((metric) => metric.kind === "primary") || null;
-  const proposalProxy = (proposal?.suggestedMetrics || []).filter((metric) => metric.kind !== "primary");
+  const proposalPrimaryMetric = proposal?.primaryMetric || proposalPrimary || null;
+  const proposalProxy = (proposal?.proxyMetrics || []).length ? proposal.proxyMetrics : (proposal?.suggestedMetrics || []).filter((metric) => metric.kind !== "primary");
 
   let heuristicPrimary = null;
   if (planningCategory === "running") heuristicPrimary = extractRunningPrimaryMetric(rawText);
   if (!heuristicPrimary && planningCategory === "strength") heuristicPrimary = extractStrengthPrimaryMetric(rawText);
   if (!heuristicPrimary && planningCategory === "body_comp") heuristicPrimary = extractWeightLossPrimaryMetric(rawText);
 
-  const primaryMetric = confirmationPrimary || heuristicPrimary || (confirmation?.acceptedProposal !== false ? proposalPrimary : null) || null;
+  const primaryMetric = confirmationPrimary || heuristicPrimary || (confirmation?.acceptedProposal !== false ? proposalPrimaryMetric : null) || null;
   const proxyMetrics = uniqMetrics([
     ...confirmationProxy,
     ...(confirmation?.acceptedProposal !== false ? proposalProxy : []),
@@ -477,6 +489,9 @@ const inferConfidenceLevel = ({
 } = {}) => {
   if (confirmation?.edits?.confidence && Object.values(GOAL_CONFIDENCE_LEVELS).includes(confirmation.edits.confidence)) {
     return confirmation.edits.confidence;
+  }
+  if (confirmation?.acceptedProposal !== false && Object.values(GOAL_CONFIDENCE_LEVELS).includes(proposal?.confidence)) {
+    return proposal.confidence;
   }
   if (measurabilityTier === GOAL_MEASURABILITY_TIERS.fullyMeasurable && primaryMetric && (targetWindow?.targetDate || targetWindow?.targetHorizonWeeks)) {
     return GOAL_CONFIDENCE_LEVELS.high;
@@ -764,6 +779,7 @@ export const projectResolvedGoalToPlanningGoal = (resolvedGoal = {}, index = 0) 
   const targetDate = sanitizeText(resolvedGoal?.targetDate || "", 24);
   const type = targetDate ? "time_bound" : "ongoing";
   const tracking = buildTrackingFromResolvedGoal(resolvedGoal);
+  const goalRole = sanitizeText(resolvedGoal?.intakeConfirmedRole || (planningPriority === 1 ? "primary" : "maintained"), 40).toLowerCase() || (planningPriority === 1 ? "primary" : "maintained");
 
   return {
     id: `goal_${planningPriority}_${slugify(resolvedGoal?.summary || "", `goal_${planningPriority}`)}`,
@@ -786,8 +802,10 @@ export const projectResolvedGoalToPlanningGoal = (resolvedGoal = {}, index = 0) 
     first30DaySuccessDefinition: sanitizeText(resolvedGoal?.first30DaySuccessDefinition || "", 220),
     reviewCadence: sanitizeText(resolvedGoal?.reviewCadence || "weekly", 40),
     refinementTrigger: sanitizeText(resolvedGoal?.refinementTrigger || "30_day_resolution_review", 60),
+    goalRole,
     resolvedGoal: {
       ...resolvedGoal,
+      intakeConfirmedRole: goalRole,
     },
   };
 };

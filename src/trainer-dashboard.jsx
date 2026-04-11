@@ -79,8 +79,13 @@ import {
   trainingEquipmentToEnvironmentCode,
 } from "./services/training-context-service.js";
 import {
+  applyIntakeGoalAdjustment,
+  applyIntakeGoalStackConfirmation,
+  buildIntakeGoalStackConfirmation,
+  buildIntakeGoalStackReviewModel,
   buildIntakeGoalReviewModel,
   buildRawGoalIntentFromAnswers,
+  GOAL_STACK_ROLES,
   getNextIntakeClarifyingQuestion,
   resolveCompatibilityPrimaryGoalKey,
 } from "./services/intake-goal-flow-service.js";
@@ -2451,30 +2456,7 @@ const buildTypedIntakeAssessment = async ({ answers = {}, existingMemory = [] } 
   });
   const fallbackText = buildIntakeTimelineFallback(answers);
   const fallbackPacket = previewFallback.typedIntakePacket;
-  const apiKey = resolveStoredAiApiKey({
-    safeStorageGet,
-    storageLike: typeof localStorage !== "undefined" ? localStorage : null,
-  });
-  if (!apiKey) {
-    const reviewModel = buildIntakeGoalReviewModel({
-      goalResolution: previewFallback.goalResolution,
-      orderedResolvedGoals: previewFallback.orderedResolvedGoals,
-      goalFeasibility: previewFallback.goalFeasibility,
-      aiInterpretationProposal: null,
-    });
-    return {
-      text: fallbackText,
-      typedIntakePacket: fallbackPacket,
-      aiInterpretationProposal: null,
-      goalResolution: previewFallback.goalResolution,
-      orderedResolvedGoals: previewFallback.orderedResolvedGoals,
-      resolvedGoalPreview: previewFallback.goalResolution?.resolvedGoals || [],
-      goalFeasibility: previewFallback.goalFeasibility,
-      reviewModel,
-    };
-  }
   const runtime = await runIntakeInterpretationRuntime({
-    apiKey,
     safeFetchWithTimeout,
     packetArgs,
   });
@@ -6316,15 +6298,23 @@ Keep it plain and specific.`;
     if (injuryText && !/nothing current|none|nope|healthy/i.test(injuryText)) {
       constraints.push(injuryText);
     }
-    const fallbackTypedIntakePacket = answers?.typedIntakePacket || {
+    const freshPacketArgs = buildIntakePacketArgsFromAnswers({ answers, existingMemory });
+    const expectedRawGoalText = sanitizeIntakeText(String(freshPacketArgs?.intakeContext?.rawGoalText || "").trim());
+    const providedPacketRawGoalText = sanitizeIntakeText(String(
+      answers?.typedIntakePacket?.intake?.rawGoalText
+      || answers?.typedIntakePacket?.intakeContext?.rawGoalText
+      || ""
+    ).trim());
+    const canReuseAssessmentBoundary = Boolean(expectedRawGoalText && providedPacketRawGoalText && expectedRawGoalText === providedPacketRawGoalText);
+    const fallbackTypedIntakePacket = canReuseAssessmentBoundary ? answers?.typedIntakePacket : {
       version: "2026-04-v1",
       intent: "intake_interpretation",
-      intake: buildIntakePacketArgsFromAnswers({ answers, existingMemory }).intakeContext,
+      intake: freshPacketArgs.intakeContext,
     };
     const goalResolution = resolveGoalTranslation({
-      rawUserGoalIntent: fallbackTypedIntakePacket?.intake?.rawGoalText || buildRawGoalIntentFromAnswers({ answers, fallbackLabel: "General Fitness" }) || "General Fitness",
+      rawUserGoalIntent: expectedRawGoalText || fallbackTypedIntakePacket?.intake?.rawGoalText || buildRawGoalIntentFromAnswers({ answers, fallbackLabel: "General Fitness" }) || "General Fitness",
       typedIntakePacket: fallbackTypedIntakePacket,
-      aiInterpretationProposal: answers?.aiInterpretationProposal || null,
+      aiInterpretationProposal: canReuseAssessmentBoundary ? (answers?.aiInterpretationProposal || null) : null,
       explicitUserConfirmation: {
         confirmed: true,
         acceptedProposal: true,
@@ -6337,9 +6327,19 @@ Keep it plain and specific.`;
       ...buildGoalFeasibilityContextFromIntake(fallbackTypedIntakePacket?.intake || {}),
       now: todayKey,
     });
-    const orderedResolvedGoals = applyFeasibilityPriorityOrdering({
+    const feasibleResolvedGoals = applyFeasibilityPriorityOrdering({
       resolvedGoals: goalResolution?.resolvedGoals || [],
       feasibility: goalFeasibility,
+    });
+    const goalStackConfirmation = buildIntakeGoalStackConfirmation({
+      resolvedGoals: feasibleResolvedGoals,
+      goalStackConfirmation: answers?.goal_stack_confirmation || null,
+      goalFeasibility,
+    });
+    const orderedResolvedGoals = applyIntakeGoalStackConfirmation({
+      resolvedGoals: feasibleResolvedGoals,
+      goalStackConfirmation,
+      goalFeasibility,
     });
     const orderedPlanningGoals = buildPlanningGoalsFromResolvedGoals({
       resolvedGoals: orderedResolvedGoals,
@@ -6395,11 +6395,13 @@ Keep it plain and specific.`;
       answers.timeline_adjustment ? `Timeline adjustment requested: ${answers.timeline_adjustment}` : null,
       `Primary goal: ${primaryGoalLabel}`,
       orderedResolvedGoals?.length ? `Resolved goals: ${orderedResolvedGoals.map((goal) => goal.summary).join(" / ")}` : null,
+      orderedResolvedGoals?.[1] ? `Maintained goal: ${orderedResolvedGoals[1].summary}` : null,
+      goalStackConfirmation?.keepResiliencePriority ? "Background priority: resilience and durability stay protected." : null,
       goalFeasibility?.realismStatus ? `Goal realism: ${goalFeasibility.realismStatus}` : null,
       goalFeasibility?.conflictFlags?.[0] ? `Goal conflict: ${goalFeasibility.conflictFlags[0].summary}` : null,
       goalFeasibility?.suggestedSequencing?.[0] ? `Goal sequencing: ${goalFeasibility.suggestedSequencing[0].summary}` : null,
-      goalResolution?.tradeoffs?.[0] ? `Goal tradeoff: ${goalResolution.tradeoffs[0]}` : null,
-      goalResolution?.unresolvedGaps?.[0] ? `Goal refinement gap: ${goalResolution.unresolvedGaps[0]}` : null,
+      orderedResolvedGoals.flatMap((goal) => goal?.tradeoffs || [])[0] ? `Goal tradeoff: ${orderedResolvedGoals.flatMap((goal) => goal?.tradeoffs || [])[0]}` : null,
+      orderedResolvedGoals.flatMap((goal) => goal?.unresolvedGaps || [])[0] ? `Goal refinement gap: ${orderedResolvedGoals.flatMap((goal) => goal?.unresolvedGaps || [])[0]}` : null,
       `Experience level: ${EXPERIENCE_LEVEL_LABELS[experienceLevel] || experienceLevel}`,
       `Session length: ${SESSION_LENGTH_LABELS[sessionLength] || sessionLength}`,
       constraints.length ? `Constraints: ${constraints.join(", ")}` : "Constraints: None",
@@ -6514,21 +6516,13 @@ Keep it plain and specific.`;
     });
     let typedIntakePacket = fallbackPreview.typedIntakePacket;
     let aiInterpretationProposal = null;
-    const apiKey = resolveStoredAiApiKey({
-      safeStorageGet,
-      storageLike: typeof localStorage !== "undefined" ? localStorage : null,
+    const runtime = await runIntakeInterpretationRuntime({
+      safeFetchWithTimeout,
+      packetArgs,
     });
-
-    if (apiKey) {
-      const runtime = await runIntakeInterpretationRuntime({
-        apiKey,
-        safeFetchWithTimeout,
-        packetArgs,
-      });
-      if (runtime?.ok && runtime?.interpreted) {
-        typedIntakePacket = runtime.statePacket || typedIntakePacket;
-        aiInterpretationProposal = runtime.interpreted;
-      }
+    if (runtime?.ok && runtime?.interpreted) {
+      typedIntakePacket = runtime.statePacket || typedIntakePacket;
+      aiInterpretationProposal = runtime.interpreted;
     }
 
     const previewBundle = buildPreviewGoalResolutionBundle({
@@ -7111,6 +7105,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [assessmentText, setAssessmentText] = useState("");
   const [assessmentBoundary, setAssessmentBoundary] = useState({ typedIntakePacket: null, aiInterpretationProposal: null });
   const [assessmentPreview, setAssessmentPreview] = useState({ goalResolution: null, goalFeasibility: null, orderedResolvedGoals: [], reviewModel: null });
+  const [goalStackConfirmation, setGoalStackConfirmation] = useState(null);
   const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState([]);
   const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState("");
   const [assessing, setAssessing] = useState(false);
@@ -7212,6 +7207,20 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   useEffect(() => {
     if (!isCoachStreaming && composerRef.current) composerRef.current.focus();
   }, [isCoachStreaming, currentPrompt?.key, phase]);
+
+  const reviewGoals = assessmentPreview?.orderedResolvedGoals || [];
+  const reviewGoalSignature = useMemo(
+    () => reviewGoals.map((goal) => `${goal?.id || ""}:${goal?.summary || ""}:${goal?.planningPriority || ""}`).join("|"),
+    [reviewGoals]
+  );
+
+  useEffect(() => {
+    setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
+      resolvedGoals: reviewGoals,
+      goalStackConfirmation: prev,
+      goalFeasibility: assessmentPreview?.goalFeasibility || null,
+    }));
+  }, [reviewGoalSignature, assessmentPreview?.goalFeasibility]);
 
   const appendCoachMessage = (text) => {
     const id = nextMessageIdRef.current++;
@@ -7321,7 +7330,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!clean) return;
     appendUserMessage(clean);
     setDraft("");
-    const updatedAnswers = { ...answers, timeline_adjustment: clean };
+    const adjustmentOutcome = applyIntakeGoalAdjustment({
+      answers,
+      adjustmentText: clean,
+      currentResolvedGoal: assessmentPreview?.orderedResolvedGoals?.[0] || null,
+      currentPrimaryGoalKey: answers.primary_goal || "",
+      now: new Date(),
+    });
+    const updatedAnswers = adjustmentOutcome.answers;
     setAskedClarifyingQuestions([]);
     setPendingClarifyingQuestion("");
     await runAssessment({ updatedAnswers, askedQuestions: [] });
@@ -7331,11 +7347,24 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!clean || !pendingClarifyingQuestion) return;
     appendUserMessage(clean);
     setDraft("");
+    const adjustmentOutcome = applyIntakeGoalAdjustment({
+      answers,
+      adjustmentText: clean,
+      currentResolvedGoal: assessmentPreview?.orderedResolvedGoals?.[0] || null,
+      currentPrimaryGoalKey: answers.primary_goal || "",
+      now: new Date(),
+    });
+    if (adjustmentOutcome.kind === "goal_replacement") {
+      setAskedClarifyingQuestions([]);
+      setPendingClarifyingQuestion("");
+      await runAssessment({ updatedAnswers: adjustmentOutcome.answers, askedQuestions: [] });
+      return;
+    }
     const nextAskedQuestions = [...askedClarifyingQuestions, pendingClarifyingQuestion];
     const updatedAnswers = {
-      ...answers,
+      ...adjustmentOutcome.answers,
       goal_clarification_notes: [
-        ...(Array.isArray(answers.goal_clarification_notes) ? answers.goal_clarification_notes : []),
+        ...(Array.isArray(adjustmentOutcome.answers.goal_clarification_notes) ? adjustmentOutcome.answers.goal_clarification_notes : []),
         { question: pendingClarifyingQuestion, answer: clean },
       ],
       timeline_feedback: clean,
@@ -7348,6 +7377,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setPhase("building");
     const payload = {
       ...answers,
+      goal_stack_confirmation: goalStackConfirmation,
       timeline_assessment: assessmentText,
       typedIntakePacket: assessmentBoundary?.typedIntakePacket || null,
       aiInterpretationProposal: assessmentBoundary?.aiInterpretationProposal || null,
@@ -7357,7 +7387,63 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     await onComplete(payload);
   };
   const reviewModel = assessmentPreview?.reviewModel || null;
-  const reviewGoals = assessmentPreview?.orderedResolvedGoals || [];
+  const goalStackReview = buildIntakeGoalStackReviewModel({
+    resolvedGoals: reviewGoals,
+    goalResolution: assessmentPreview?.goalResolution || null,
+    goalFeasibility: assessmentPreview?.goalFeasibility || null,
+    goalStackConfirmation,
+  });
+  const displayedPrimaryGoal = goalStackReview?.activeGoals?.[0] || null;
+  const displayedTrackingLabels = Array.from(new Set(
+    (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
+  ));
+  const setLeadingGoal = (goalId) => {
+    setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
+      resolvedGoals: reviewGoals,
+      goalFeasibility: assessmentPreview?.goalFeasibility || null,
+      goalStackConfirmation: {
+        ...(prev || {}),
+        primaryGoalId: goalId,
+        removedGoalIds: (Array.isArray(prev?.removedGoalIds) ? prev.removedGoalIds : []).filter((id) => id !== goalId),
+        rolesByGoalId: {
+          ...(prev?.rolesByGoalId || {}),
+          [goalId]: GOAL_STACK_ROLES.primary,
+        },
+      },
+    }));
+  };
+  const setSecondaryGoalMode = (goalId, mode = GOAL_STACK_ROLES.maintained) => {
+    setGoalStackConfirmation((prev) => {
+      const removedGoalIds = new Set(Array.isArray(prev?.removedGoalIds) ? prev.removedGoalIds : []);
+      const rolesByGoalId = { ...(prev?.rolesByGoalId || {}) };
+      if (mode === "removed") {
+        removedGoalIds.add(goalId);
+        delete rolesByGoalId[goalId];
+      } else {
+        removedGoalIds.delete(goalId);
+        rolesByGoalId[goalId] = mode;
+      }
+      return buildIntakeGoalStackConfirmation({
+        resolvedGoals: reviewGoals,
+        goalFeasibility: assessmentPreview?.goalFeasibility || null,
+        goalStackConfirmation: {
+          ...(prev || {}),
+          removedGoalIds: [...removedGoalIds],
+          rolesByGoalId,
+        },
+      });
+    });
+  };
+  const toggleBackgroundPriority = () => {
+    setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
+      resolvedGoals: reviewGoals,
+      goalFeasibility: assessmentPreview?.goalFeasibility || null,
+      goalStackConfirmation: {
+        ...(prev || {}),
+        keepResiliencePriority: prev?.keepResiliencePriority === false,
+      },
+    }));
+  };
 
   return (
     <div style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, rgba(0,194,255,0.12), transparent 36%), radial-gradient(110% 110% at 100% 0%, rgba(124,92,255,0.18), transparent 40%), linear-gradient(180deg,#05080f 0%, #0a1322 55%, #0d182b 100%)", padding:"1.25rem 1rem 1.5rem" }}>
@@ -7468,9 +7554,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.55rem" }}>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
                         <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>INTERPRETATION</div>
-                        <div style={{ fontSize:"0.68rem", color:"#f8fbff", lineHeight:1.35 }}>{reviewModel.primarySummary || "Goal preview pending"}</div>
+                        <div style={{ fontSize:"0.68rem", color:"#f8fbff", lineHeight:1.35 }}>{displayedPrimaryGoal?.summary || reviewModel.primarySummary || "Goal preview pending"}</div>
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                          {reviewModel.goalFamilyLabel || "goal"} · {reviewModel.measurabilityLabel} · {reviewModel.confidenceLabel}
+                          {displayedPrimaryGoal?.roleLabel || reviewModel.goalFamilyLabel || "goal"} · {displayedPrimaryGoal?.measurabilityLabel || reviewModel.measurabilityLabel} · {reviewModel.confidenceLabel}
                         </div>
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
                           Plan realism: {reviewModel.realismLabel}
@@ -7479,7 +7565,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
                         <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>WE'LL TRACK</div>
                         <div style={{ display:"grid", gap:"0.18rem" }}>
-                          {(reviewModel.trackingLabels.length ? reviewModel.trackingLabels : ["First 30-day success definition"]).map((item) => (
+                          {(displayedTrackingLabels.length ? displayedTrackingLabels : (reviewModel.trackingLabels.length ? reviewModel.trackingLabels : ["First 30-day success definition"])).map((item) => (
                             <div key={item} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{item}</div>
                           ))}
                         </div>
@@ -7494,19 +7580,86 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       </div>
                     </div>
 
-                    {reviewGoals.length > 0 && (
-                      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.55rem" }}>
-                        {reviewGoals.map((goal) => (
-                          <div key={goal.id || goal.summary} style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.62rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
-                            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
-                              {String(goal.measurabilityTier || "goal").replaceAll("_", " ")} · priority {goal.planningPriority}
+                    {goalStackReview?.activeGoals?.length > 0 && (
+                      <div style={{ display:"grid", gap:"0.55rem" }}>
+                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL STACK</div>
+                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.55rem" }}>
+                          {goalStackReview.activeGoals.map((goal, index) => {
+                            const isPrimary = goal.role === GOAL_STACK_ROLES.primary || index === 0;
+                            return (
+                              <div key={goal.id || goal.summary} style={{ border:`1px solid ${isPrimary ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.14)"}`, borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
+                                <div style={{ fontSize:"0.46rem", color:isPrimary ? C.green : "#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>{goal.roleLabel}</div>
+                                <div style={{ fontSize:"0.62rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
+                                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
+                                  {goal.measurabilityLabel}
+                                </div>
+                                <div style={{ fontSize:"0.51rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>
+                                  Track: {(goal.trackingLabels.length ? goal.trackingLabels : ["First 30-day success definition"]).join(" - ")}
+                                </div>
+                                {goal.tradeoff && (
+                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
+                                    Tradeoff: {goal.tradeoff}
+                                  </div>
+                                )}
+                                <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.45rem" }}>
+                                  {!isPrimary && (
+                                    <button className="btn" onClick={() => setLeadingGoal(goal.id)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
+                                      Make primary
+                                    </button>
+                                  )}
+                                  {!isPrimary && (
+                                    <button className="btn" onClick={() => setSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                      Keep maintained
+                                    </button>
+                                  )}
+                                  {!isPrimary && (
+                                    <button className="btn" onClick={() => setSecondaryGoalMode(goal.id, "removed")} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
+                                      Remove
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {goalStackReview.primaryTradeoff && (
+                          <div style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
+                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>TRADEOFF</div>
+                            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalStackReview.primaryTradeoff}</div>
+                          </div>
+                        )}
+                        {goalStackReview.backgroundPriority && (
+                          <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)", opacity:goalStackReview.backgroundPriority.enabled ? 1 : 0.72 }}>
+                            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
+                              <div>
+                                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>BACKGROUND PRIORITY</div>
+                                <div style={{ fontSize:"0.58rem", color:"#f8fbff" }}>{goalStackReview.backgroundPriority.label}</div>
+                              </div>
+                              <button className="btn" onClick={toggleBackgroundPriority} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                {goalStackReview.backgroundPriority.enabled ? "Keep protected" : "Add protection"}
+                              </button>
                             </div>
-                            <div style={{ fontSize:"0.51rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>
-                              Track: {[goal?.primaryMetric?.label, ...(goal?.proxyMetrics || []).map((metric) => metric.label)].filter(Boolean).join(" - ") || goal?.first30DaySuccessDefinition || "Planner-defined first block"}
+                            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>{goalStackReview.backgroundPriority.summary}</div>
+                            <div style={{ fontSize:"0.5rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.5 }}>
+                              Track: {(goalStackReview.backgroundPriority.trackingLabels || []).join(" - ")}
                             </div>
                           </div>
-                        ))}
+                        )}
+                        {goalStackReview?.removedGoals?.length > 0 && (
+                          <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
+                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>NOT LEADING THIS PLAN</div>
+                            <div style={{ display:"grid", gap:"0.28rem" }}>
+                              {goalStackReview.removedGoals.map((goal) => (
+                                <div key={goal.id} style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
+                                  <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.5 }}>{goal.summary}</div>
+                                  <button className="btn" onClick={() => setSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                    Add back as maintained
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

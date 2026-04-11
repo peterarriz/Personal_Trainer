@@ -194,6 +194,12 @@ const createPlanAnalysisResponse = (text) => async () => ({
   json: async () => ({ content: [{ text }] }),
 });
 
+const createIntakeGatewayResponse = (payload, status = 200) => async () => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => payload,
+});
+
 const createStreamFetch = (chunks) => async () => {
   const encoder = new TextEncoder();
   let index = 0;
@@ -383,24 +389,31 @@ test("intake interpretation runtime returns a sanitized proposal-only result wit
   await withMockedNow("2026-04-09T12:17:00Z", async () => {
     const runtimeInput = buildIntakeInterpretationRuntimeInput(createIntakePacketArgs());
     const result = await runIntakeInterpretationRuntime({
-      apiKey: "test-key",
-      safeFetchWithTimeout: createPlanAnalysisResponse(`{
-        "interpretedGoalType": "hybrid<script>",
-        "measurabilityTier": "proxy_measurable",
-        "suggestedMetrics": [
-          { "key": "waist", "label": "Waist circumference", "unit": "in", "kind": "proxy" },
-          { "key": "10k-completion", "label": "10k completion", "unit": "boolean", "kind": "primary" },
-          { "key": "", "label": "", "unit": "", "kind": "proxy" }
-        ],
-        "timelineRealism": {
-          "status": "aggressive",
-          "summary": "A fall 10k plus a leaner look is realistic if the body-comp side stays moderate.",
-          "suggestedHorizonWeeks": 18
+      safeFetchWithTimeout: createIntakeGatewayResponse({
+        interpretation: {
+          interpretedGoalType: "hybrid<script>",
+          measurabilityTier: "proxy_measurable",
+          primaryMetric: { key: "10k-completion", label: "10k completion", unit: "boolean", kind: "primary" },
+          proxyMetrics: [
+            { key: "waist", label: "Waist circumference", unit: "in", kind: "proxy" },
+            { key: "", label: "", unit: "", kind: "proxy" },
+          ],
+          confidence: "medium",
+          timelineRealism: {
+            status: "aggressive",
+            summary: "A fall 10k plus a leaner look is realistic if the body-comp side stays moderate.",
+            suggestedHorizonWeeks: 18,
+          },
+          detectedConflicts: ["Aggressive fat loss could blunt run quality."],
+          missingClarifyingQuestions: ["Is the 10k more important than appearance?"],
+          coachSummary: "We can absolutely move toward both outcomes, but the cleanest route is to treat this as a hybrid goal and keep the physique side moderate while your run base builds.",
         },
-        "detectedConflicts": ["Aggressive fat loss could blunt run quality."],
-        "missingClarifyingQuestions": ["Is the 10k more important than appearance?" ],
-        "coachSummary": "We can absolutely move toward both outcomes, but the cleanest route is to treat this as a hybrid goal and keep the physique side moderate while your run base builds."
-      }`),
+        meta: {
+          provider: "anthropic",
+          model: "claude-haiku-4-5",
+          latencyMs: 182,
+        },
+      }),
       packetArgs: createIntakePacketArgs(),
     });
 
@@ -409,9 +422,14 @@ test("intake interpretation runtime returns a sanitized proposal-only result wit
     assert.equal(result.status, "proposal_ready");
     assert.equal(result.interpreted.interpretedGoalType, "general_fitness");
     assert.equal(result.interpreted.measurabilityTier, "proxy_measurable");
-    assert.deepEqual(result.interpreted.suggestedMetrics, [
+    assert.equal(result.interpreted.primaryMetric.key, "10k_completion");
+    assert.equal(result.interpreted.confidence, "medium");
+    assert.deepEqual(result.interpreted.proxyMetrics, [
       { key: "waist", label: "Waist circumference", unit: "in", kind: "proxy" },
+    ]);
+    assert.deepEqual(result.interpreted.suggestedMetrics, [
       { key: "10k_completion", label: "10k completion", unit: "boolean", kind: "primary" },
+      { key: "waist", label: "Waist circumference", unit: "in", kind: "proxy" },
     ]);
     assert.equal(result.interpreted.timelineRealism.status, "aggressive");
     assert.equal(result.interpreted.timelineRealism.suggestedHorizonWeeks, 18);
