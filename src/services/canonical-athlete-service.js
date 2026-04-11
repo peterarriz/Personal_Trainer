@@ -1,5 +1,6 @@
 import { dedupeStrings } from "../utils/collection-utils.js";
 import { projectResolvedGoalToPlanningGoal } from "./goal-resolution-service.js";
+import { deriveTrainingContextFromPersonalization } from "./training-context-service.js";
 
 export const CANONICAL_ATHLETE_VERSION = "2026-04-athlete-v1";
 
@@ -27,6 +28,7 @@ const DEFAULT_CANONICAL_USER_PROFILE = {
   equipmentAccess: [],
   constraints: [],
   scheduleConstraints: [],
+  trainingContext: null,
   preferences: {
     coachingTone: "adaptive",
     trainingStyle: "",
@@ -137,6 +139,7 @@ const buildCanonicalUserProfile = ({
   const environmentConfig = personalization?.environmentConfig || {};
   const coachMemory = personalization?.coachMemory || {};
   const homePresetEquipment = environmentConfig?.presets?.Home?.equipment || [];
+  const trainingContext = deriveTrainingContextFromPersonalization({ personalization });
 
   return {
     ...DEFAULT_CANONICAL_USER_PROFILE,
@@ -164,6 +167,7 @@ const buildCanonicalUserProfile = ({
     equipmentAccess: dedupeStrings(legacyUserProfile?.equipment_access || homePresetEquipment),
     constraints: dedupeStrings(legacyUserProfile?.constraints || []),
     scheduleConstraints: dedupeStrings(coachMemory?.scheduleConstraints || []),
+    trainingContext,
     preferences: {
       coachingTone: pickFirstNonEmpty(profile?.preferredCoachingTone, DEFAULT_CANONICAL_USER_PROFILE.preferences.coachingTone),
       trainingStyle: pickFirstNonEmpty(profile?.preferredTrainingStyle, DEFAULT_CANONICAL_USER_PROFILE.preferences.trainingStyle),
@@ -242,6 +246,7 @@ export const deriveCanonicalAthleteState = ({
     activeTimeBoundGoal,
     primaryGoal,
     userProfile,
+    trainingContext: userProfile.trainingContext || null,
     goalState,
     legacyCompatibility: {
       deprecatedInputPaths: [...LEGACY_GOAL_PROFILE_PATHS],

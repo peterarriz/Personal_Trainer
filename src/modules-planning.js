@@ -20,6 +20,12 @@ import {
   deriveSupplementActual,
 } from "./services/recovery-supplement-service.js";
 import { assessGoalFeasibility } from "./services/goal-feasibility-service.js";
+import {
+  deriveTrainingContextFromPersonalization,
+  TRAINING_EQUIPMENT_VALUES,
+  TRAINING_INTENSITY_VALUES,
+  TRAINING_SESSION_DURATION_VALUES,
+} from "./services/training-context-service.js";
 import { dedupeStrings } from "./utils/collection-utils.js";
 
 export { daysUntil, deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
@@ -793,6 +799,9 @@ export const deriveWeeklyIntent = ({
   const cutback = Boolean(weekTemplate?.cutback);
   const chaotic = failureMode?.mode === "chaotic";
   const reEntry = Boolean(failureMode?.isReEntry);
+  const intensityPosture = programContext?.trainingContext?.intensityPosture?.confirmed
+    ? programContext.trainingContext.intensityPosture.value
+    : TRAINING_INTENSITY_VALUES.unknown;
   const adjusted = Boolean(
     chaotic
     || reEntry
@@ -813,6 +822,8 @@ export const deriveWeeklyIntent = ({
     || normalizedProgramBlock?.recoveryPosture?.level === "progressive"
     || ["race_prep_dominant", "strength_dominant", "event_prep_upper_body_maintenance"].includes(architecture)
   ) aggressionLevel = "progressive";
+  else if (intensityPosture === TRAINING_INTENSITY_VALUES.aggressive) aggressionLevel = "progressive";
+  else if (intensityPosture === TRAINING_INTENSITY_VALUES.conservative) aggressionLevel = "controlled";
 
   let recoveryBias = normalizedProgramBlock?.recoveryPosture?.level === "protective"
     ? "high"
@@ -1453,8 +1464,12 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
   const { active } = getGoalBuckets(goals);
   const primary = active[0] || null;
   const secondary = active.slice(1, 3);
-  const env = personalization?.travelState?.environmentMode || personalization?.travelState?.access || "home";
-  const hasGym = ["full gym", "limited gym"].includes(env);
+  const trainingContext = deriveTrainingContextFromPersonalization({ personalization });
+  const env = trainingContext?.environment?.confirmed ? trainingContext.environment.value : "unknown";
+  const equipmentAccess = trainingContext?.equipmentAccess?.value || TRAINING_EQUIPMENT_VALUES.unknown;
+  const environmentKnown = Boolean(trainingContext?.environment?.confirmed);
+  const equipmentKnown = Boolean(trainingContext?.equipmentAccess?.confirmed);
+  const hasGym = equipmentAccess === TRAINING_EQUIPMENT_VALUES.fullGym || equipmentAccess === TRAINING_EQUIPMENT_VALUES.basicGym;
   const runningGoal = active.find(g => g.category === "running");
   const strengthGoal = active.find(g => g.category === "strength");
   const bodyCompGoal = active.find(g => g.category === "body_comp");
@@ -1467,7 +1482,8 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
   const upperBodyMaintenance = Boolean(runningGoal && strengthGoal && goalLooksUpperBodyFocused(strengthGoal));
 
   const runningScore = (primary?.category === "running" ? 3 : 0) + (runningGoal ? 2 : 0) + (raceNear ? 2 : 0);
-  const strengthScore = (primary?.category === "strength" ? 3 : 0) + (strengthGoal ? 2 : 0) + (hasGym ? 1 : -1);
+  const strengthEnvironmentScore = hasGym ? 1 : equipmentKnown ? -1 : 0;
+  const strengthScore = (primary?.category === "strength" ? 3 : 0) + (strengthGoal ? 2 : 0) + strengthEnvironmentScore;
   const bodyCompScore = (primary?.category === "body_comp" ? 3 : 0) + (bodyCompGoal ? 2 : 0) + (lowBandwidth ? 1 : 0);
 
   let architecture = "hybrid_performance";
@@ -1488,12 +1504,12 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
   const split = splits[architecture];
 
   const constraints = [];
-  if (!hasGym && strengthGoal) constraints.push("Bench-specific progression constrained by no gym access; using home/limited-equipment substitutes.");
+  if (equipmentKnown && !hasGym && strengthGoal) constraints.push("Bench-specific progression constrained by the confirmed equipment setup; using lower-equipment substitutes.");
   if (!["race_prep_dominant", "event_prep_upper_body_maintenance"].includes(architecture) && runningGoal) constraints.push("Running kept supportive/maintenance until running priority or race proximity increases.");
   if (architecture === "event_prep_upper_body_maintenance") constraints.push("Lower-body lifting volume is capped so the event-prep lane keeps the cleanest recovery windows.");
   const why = [
     `Primary goal: ${primary?.name || "none set"}.`,
-    `Environment: ${env}.`,
+    environmentKnown ? `Environment: ${env}.` : "Environment is still unconfirmed, so planning stays setup-neutral where possible.",
     `Inconsistency risk: ${inconsistencyRisk}.`,
     bodyCompGoal ? "Body-comp goal is active and materially affects split allocation." : null,
     raceNear ? "Race date is near enough to increase running weight." : null,
@@ -1537,7 +1553,7 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
       4: { type: "conditioning", label: "Conditioning Intervals / OTF", nutri: "otf" },
       5: { type: "strength+prehab", label: "Strength Retention", strSess: "A", nutri: "strength" },
       6: { type: "easy-run", label: "Supportive Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: "easyRun" },
-      0: restDay("Active Recovery — Steps + Mobility"),
+      0: restDay("Active Recovery - Steps + Mobility"),
     },
     hybrid_performance: {
       1: { type: "run+strength", label: "Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "easyRun" },
@@ -1550,7 +1566,7 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     },
     maintenance_rebuild: {
       1: { type: "strength+prehab", label: "Short Version Strength", strSess: "A", nutri: "strength" },
-      2: restDay("Active Recovery — Walk"),
+      2: restDay("Active Recovery - Walk"),
       3: { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: "easyRun" },
       4: { type: "strength+prehab", label: "Short Version Strength B", strSess: "B", nutri: "strength" },
       5: restDay("Active Recovery"),
@@ -1601,8 +1617,8 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
         },
         scheduleReality: {
           trainingDaysPerWeek: Number(personalization?.userGoalProfile?.days_per_week || personalization?.canonicalAthlete?.userProfile?.daysPerWeek || 0),
-          sessionLength: personalization?.userGoalProfile?.session_length || personalization?.canonicalAthlete?.userProfile?.sessionLength || personalization?.environmentConfig?.base?.time || "",
-          trainingLocation: env,
+          sessionLength: trainingContext?.sessionDuration?.confirmed ? trainingContext.sessionDuration.value : "",
+          trainingLocation: environmentKnown ? env : "",
           scheduleNotes: lowBandwidth ? "Bandwidth is currently limited." : "",
         },
         currentExperienceContext: {
@@ -1611,8 +1627,8 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
             injuryText: personalization?.injuryPainState?.notes || "",
           },
           equipmentAccessContext: {
-            equipment: personalization?.environmentConfig?.presets?.Home?.equipment || [],
-            trainingLocation: env,
+            equipment: trainingContext?.equipmentAccess?.confirmed ? (trainingContext.equipmentAccess.items || []) : [],
+            trainingLocation: environmentKnown ? env : "",
           },
           startingFresh: Boolean(personalization?.planResetUndo?.startedAt),
         },
@@ -1621,13 +1637,15 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     : null;
   const programContext = {
     environmentMode: env,
+    environmentKnown,
     hasGym,
     lowBandwidth,
     strengthPriority,
     bodyCompActive,
     inconsistencyRisk,
+    trainingContext,
     drivers: [primary?.name, ...secondary.map(g => g.name)].filter(Boolean),
-    unlockMessage: !hasGym && strengthGoal ? "When gym access returns, bench-specific progression can move from foundation mode to direct loading." : "",
+    unlockMessage: equipmentKnown && !hasGym && strengthGoal ? "When gym access returns, bench-specific progression can move from foundation mode to direct loading." : "",
     goalFeasibility,
   };
   const programBlock = buildProgramBlock({
@@ -1850,9 +1868,16 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
   const goal = userProfile.primaryGoalKey || userProfile.primary_goal || "general_fitness";
   const experience = userProfile.experienceLevel || userProfile.experience_level || "beginner";
   const targetDays = userProfile.daysPerWeek || userProfile.days_per_week || 3;
-  const sessionLen = userProfile.sessionLength || userProfile.session_length || "30";
+  const trainingContext = userProfile.trainingContext || null;
+  const sessionLen = trainingContext?.sessionDuration?.confirmed
+    ? trainingContext.sessionDuration.value
+    : (userProfile.sessionLength || userProfile.session_length || TRAINING_SESSION_DURATION_VALUES.min30);
   let duration = SESSION_DURATIONS[sessionLen] || 30;
   const hasConstraints = (userProfile.constraints || []).length > 0;
+  const intensityPosture = trainingContext?.intensityPosture?.confirmed
+    ? trainingContext.intensityPosture.value
+    : TRAINING_INTENSITY_VALUES.unknown;
+  const hasConfirmedSessionDuration = Boolean(trainingContext?.sessionDuration?.confirmed);
 
   const todayKey = recentActivity.todayKey || new Date().toISOString().split("T")[0];
   const logs = recentActivity.logs || {};
@@ -1919,7 +1944,7 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
       intensity: "low",
       label: injuryLevel === "severe"
         ? "Rest Day"
-        : "Active Recovery — Walk + Mobility",
+        : "Active Recovery - Walk + Mobility",
       reason,
     };
   }
@@ -1982,6 +2007,11 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
   } else if (weeklyIntent?.aggressionLevel === "progressive" && !hasConstraints && fatigue <= 3) {
     intensity = intensityBase.push;
   }
+  if (intensityPosture === TRAINING_INTENSITY_VALUES.conservative && intensity !== "low") {
+    intensity = intensityBase.base;
+  } else if (intensityPosture === TRAINING_INTENSITY_VALUES.aggressive && !hasConstraints && fatigue <= 3 && intensity !== "low") {
+    intensity = intensityBase.push;
+  }
   if (weeklyIntent?.volumeBias === "reduced") {
     duration = Math.max(20, duration - 10);
   } else if (weeklyIntent?.volumeBias === "expanded") {
@@ -2008,6 +2038,9 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
     hasConstraints ? `Active constraints: ${userProfile.constraints.join(", ")}.` : null,
     weeklyIntent?.focus ? `Week focus: ${weeklyIntent.focus}.` : null,
     weeklyIntent?.aggressionLevel ? `Week posture: ${String(weeklyIntent.aggressionLevel).replace(/_/g, " ")}.` : null,
+    !hasConfirmedSessionDuration ? "Typical session duration is still unconfirmed, so the default plan length is being used." : null,
+    intensityPosture === TRAINING_INTENSITY_VALUES.aggressive ? "User preference: push when recovery supports it." : null,
+    intensityPosture === TRAINING_INTENSITY_VALUES.conservative ? "User preference: keep progression more controlled." : null,
   ].filter(Boolean);
 
   return {
