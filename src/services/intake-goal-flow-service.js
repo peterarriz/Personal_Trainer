@@ -50,7 +50,7 @@ export const SECONDARY_GOAL_RESPONSE_KEYS = {
 };
 
 const GOAL_SIGNAL_PATTERN = /(run|race|marathon|half marathon|10k|5k|bench|squat|deadlift|strength|lift|fat loss|lose fat|lean|athletic|abs|physique|toned|hybrid|performance|muscle|back in shape|get in shape)/i;
-const GOAL_TARGET_PATTERN = /\b\d{1,2}:\d{2}(?::\d{2})?\b|\b\d{2,3}\s*(?:lb|lbs|pounds?)\b/i;
+const GOAL_TARGET_PATTERN = /(?:\b(?:bench|squat|deadlift|overhead press|ohp)\b[\s\S]{0,24}\b\d{2,4}\s*(?:lb|lbs|pounds?)\b)|(?:\b(?:lose|drop|gain|add)\b[\s\S]{0,24}\b\d{1,3}\s*(?:lb|lbs|pounds?)\b)|(?:\b\d{1,2}:\d{2}(?::\d{2})?\b[\s\S]{0,24}\b(?:marathon|half marathon|10k|5k|race)\b)|(?:\b(?:marathon|half marathon|10k|5k|race)\b[\s\S]{0,24}\b\d{1,2}:\d{2}(?::\d{2})?\b)/i;
 const GOAL_REPLACEMENT_PATTERN = /\b(actually|instead|switch|change(?: the goal)?|pivot|goal(?: is| should be)|rather)\b/i;
 const GOAL_ADDITIVE_PATTERN = /\b(also|too|as well|plus|while|without losing|without giving up|keep|maintain)\b/i;
 
@@ -66,6 +66,16 @@ const CONFIDENCE_LABELS = {
   low: "Low confidence",
 };
 
+const GOAL_TYPE_LABELS = {
+  performance: "Event goal",
+  strength: "Strength goal",
+  body_comp: "Fat-loss goal",
+  appearance: "Appearance goal",
+  hybrid: "Hybrid goal",
+  general_fitness: "General fitness goal",
+  re_entry: "Back-to-fitness goal",
+};
+
 const REALISM_LABELS = {
   realistic: "Realistic",
   aggressive: "Aggressive",
@@ -74,16 +84,16 @@ const REALISM_LABELS = {
 };
 
 const FEASIBILITY_ACTION_LABELS = {
-  proceed: "Ready to plan",
-  warn: "Proceed with caution",
-  block: "Adjust before planning",
+  proceed: "Looks buildable",
+  warn: "Possible, but tight",
+  block: "Needs a more realistic first target",
 };
 
 const REVIEW_GATE_LABELS = {
-  incomplete: "Incomplete details",
-  blocked: "Blocked by realism",
-  warn: FEASIBILITY_ACTION_LABELS.warn,
-  ready: FEASIBILITY_ACTION_LABELS.proceed,
+  incomplete: "Still need one more anchor",
+  blocked: "Needs a more realistic first target",
+  warn: "Possible, but tight",
+  ready: "Looks buildable",
 };
 
 const ROLE_LABELS = {
@@ -96,22 +106,22 @@ const SECONDARY_GOAL_COMMON_OPTIONS_BY_CATEGORY = {
   running: [
     { key: "keep_strength", label: "Keep strength", value: "keep strength" },
     { key: "keep_upper_body", label: "Keep upper body", value: "keep upper body" },
-    { key: "avoid_getting_slower", label: "Avoid getting slower", value: "avoid getting slower" },
+    { key: "avoid_getting_slower", label: "Avoid slowing down", value: "avoid getting slower" },
   ],
   strength: [
     { key: "maintain_conditioning", label: "Maintain conditioning", value: "maintain conditioning" },
-    { key: "avoid_getting_slower", label: "Avoid getting slower", value: "avoid getting slower" },
+    { key: "avoid_getting_slower", label: "Avoid slowing down", value: "avoid getting slower" },
     { key: "keep_upper_body", label: "Keep upper body", value: "keep upper body" },
   ],
   body_comp: [
     { key: "keep_strength", label: "Keep strength", value: "keep strength" },
     { key: "maintain_conditioning", label: "Maintain conditioning", value: "maintain conditioning" },
-    { key: "avoid_getting_slower", label: "Avoid getting slower", value: "avoid getting slower" },
+    { key: "avoid_getting_slower", label: "Avoid slowing down", value: "avoid getting slower" },
   ],
   general_fitness: [
     { key: "keep_strength", label: "Keep strength", value: "keep strength" },
     { key: "maintain_conditioning", label: "Maintain conditioning", value: "maintain conditioning" },
-    { key: "avoid_getting_slower", label: "Avoid getting slower", value: "avoid getting slower" },
+    { key: "avoid_getting_slower", label: "Avoid slowing down", value: "avoid getting slower" },
   ],
 };
 
@@ -134,6 +144,11 @@ const normalizeGoalAdjustmentText = (value = "") => {
   });
   return sanitizeText(text.replace(/^[\s:,-]+|[\s.]+$/g, ""), 320);
 };
+
+const hasGoalReplacementSignal = (text = "") => (
+  GOAL_SIGNAL_PATTERN.test(text)
+  || GOAL_TARGET_PATTERN.test(text)
+);
 
 const buildMinimalIntakePacket = (rawGoalText = "") => ({
   version: "2026-04-v1",
@@ -212,6 +227,17 @@ const buildMaintainedGoalLabelFromGoal = (goal = {}) => {
   const maintainedValue = buildMaintainedGoalValueFromGoal(goal);
   if (!maintainedValue) return "Keep it maintained";
   return maintainedValue.charAt(0).toUpperCase() + maintainedValue.slice(1);
+};
+
+const buildPlainGoalTypeLabel = (goal = null, fallbackFamily = "") => {
+  const planningCategory = sanitizeText(goal?.planningCategory || "", 40).toLowerCase();
+  const goalFamily = sanitizeText(goal?.goalFamily || fallbackFamily || "", 40).toLowerCase();
+  if (planningCategory === "running" && goalFamily !== "hybrid") return "Event goal";
+  if (goalFamily && GOAL_TYPE_LABELS[goalFamily]) return GOAL_TYPE_LABELS[goalFamily];
+  if (planningCategory === "body_comp") return "Fat-loss goal";
+  if (planningCategory === "strength") return "Strength goal";
+  if (planningCategory === "running") return "Running goal";
+  return "Goal";
 };
 
 export const buildIntakeGoalStackConfirmation = ({
@@ -344,7 +370,7 @@ export const buildIntakeSecondaryGoalPrompt = ({
 
   if (inferredSecondaryGoal) {
     return {
-      prompt: `Anything else you want to maintain while chasing this? I'm currently treating "${inferredSecondaryGoal.summary}" as a maintained goal.`,
+      prompt: `Anything else you want to maintain while chasing this? Right now I have "${inferredSecondaryGoal.summary}" staying in maintenance.`,
       helperText: "Optional. You can keep it, drop it, or swap it for something else.",
       placeholder: "Example: keep upper body or maintain conditioning",
       options: [
@@ -532,10 +558,11 @@ export const applyIntakeGoalAdjustment = ({
   const nextSummary = sanitizeText(nextPrimary?.summary || "", 160).toLowerCase();
   const explicitReplacement = GOAL_REPLACEMENT_PATTERN.test(adjustmentText);
   const additiveRefinement = GOAL_ADDITIVE_PATTERN.test(adjustmentText);
-  const hasGoalSignal = GOAL_SIGNAL_PATTERN.test(normalizedText) || GOAL_TARGET_PATTERN.test(normalizedText);
+  const hasGoalSignal = hasGoalReplacementSignal(normalizedText);
+  const explicitGoalReplacement = explicitReplacement && hasGoalSignal;
   const categoryChanged = Boolean(currentCategory && nextCategory && currentCategory !== nextCategory);
   const materiallyDifferent = Boolean(nextSummary && currentSummary && nextSummary !== currentSummary);
-  const shouldReplaceGoalIntent = explicitReplacement || (
+  const shouldReplaceGoalIntent = explicitGoalReplacement || (
     allowImplicitGoalReplacement
     && !additiveRefinement
     && hasGoalSignal
@@ -568,6 +595,10 @@ export const applyIntakeGoalAdjustment = ({
       timeline_adjustment: "",
       timeline_feedback: "",
       goal_clarification_notes: [],
+      intake_completeness: {
+        version: "2026-04-v1",
+        fields: {},
+      },
     },
     preview,
   };
@@ -663,6 +694,7 @@ export const buildIntakeGoalReviewModel = ({
     primarySummary: sanitizeText(primaryGoal?.summary || "", 160),
     goalFamily: sanitizeText(primaryGoal?.goalFamily || aiInterpretationProposal?.interpretedGoalType || "", 40).toLowerCase(),
     goalFamilyLabel: sanitizeText(primaryGoal?.goalFamily || aiInterpretationProposal?.interpretedGoalType || "", 40).replaceAll("_", " "),
+    goalTypeLabel: buildPlainGoalTypeLabel(primaryGoal, aiInterpretationProposal?.interpretedGoalType || ""),
     measurabilityTier: sanitizeText(primaryGoal?.measurabilityTier || "", 40).toLowerCase(),
     measurabilityLabel: MEASURABILITY_LABELS[primaryGoal?.measurabilityTier] || "Pending",
     realismStatus: sanitizeText(goalFeasibility?.realismStatus || "", 40).toLowerCase(),
@@ -687,6 +719,114 @@ export const buildIntakeGoalReviewModel = ({
     orderedResolvedGoals: resolvedGoals,
     goalStackReview,
     isPlannerReady: Boolean(primaryGoal) && (gateStatus === "ready" || gateStatus === "warn"),
+  };
+};
+
+export const deriveIntakeConfirmationState = ({
+  reviewModel = null,
+  askedQuestions = [],
+  maxQuestions = 2,
+} = {}) => {
+  const nextQuestion = getNextIntakeClarifyingQuestion({
+    reviewModel,
+    askedQuestions,
+    maxQuestions,
+  });
+  const gateStatus = sanitizeText(reviewModel?.gateStatus || "", 20).toLowerCase();
+  const confirmationAction = sanitizeText(reviewModel?.confirmationAction || "", 20).toLowerCase();
+  const primaryGoal = toArray(reviewModel?.orderedResolvedGoals)[0] || null;
+  const unresolvedItems = toArray(reviewModel?.unresolvedItems);
+  const missingRequired = toArray(reviewModel?.completeness?.missingRequired);
+  const blockingReasons = toArray(reviewModel?.blockingReasons);
+  const warningReasons = toArray(reviewModel?.warningReasons);
+  const recommendedRevisionSummary = sanitizeText(reviewModel?.recommendedRevisionSummary || "", 220);
+  const tradeoffSummary = sanitizeText(reviewModel?.tradeoffSummary || "", 220);
+  const canonicalGateState = gateStatus || (
+    confirmationAction === "block"
+      ? "blocked"
+      : confirmationAction === "warn"
+      ? "warn"
+      : reviewModel?.isPlannerReady
+      ? "ready"
+      : "incomplete"
+  );
+
+  if (!primaryGoal) {
+    return {
+      state: "blocked",
+      statusLabel: REVIEW_GATE_LABELS.blocked,
+      headline: "I still need a clear primary goal before I can build the plan.",
+      canConfirm: false,
+      ctaEnabled: false,
+      ctaLabel: "Confirm and build my plan",
+      nextQuestion: null,
+      reason: "I still need a clear primary goal before I can build the plan.",
+    };
+  }
+
+  if (canonicalGateState === "incomplete") {
+    if (nextQuestion?.prompt) {
+      return {
+        state: "incomplete",
+        statusLabel: REVIEW_GATE_LABELS.incomplete,
+        headline: "I still need one more anchor before I can build this credibly.",
+        canConfirm: false,
+        ctaEnabled: false,
+        ctaLabel: "Confirm and build my plan",
+        nextQuestion,
+        reason: `I still need one critical detail first: ${nextQuestion.prompt}`,
+      };
+    }
+    const incompleteReason = missingRequired[0]?.label || unresolvedItems[0] || "I still need one or two critical details before I can build the plan credibly.";
+    return {
+      state: "incomplete",
+      statusLabel: REVIEW_GATE_LABELS.incomplete,
+      headline: "I still need one more anchor before I can build this credibly.",
+      canConfirm: false,
+      ctaEnabled: false,
+      ctaLabel: "Confirm and build my plan",
+      nextQuestion: null,
+      reason: incompleteReason,
+    };
+  }
+
+  if (canonicalGateState === "blocked") {
+    const blockedReason = recommendedRevisionSummary || blockingReasons[0] || unresolvedItems[0] || "The current target needs a smaller or better-specified first block before I can build credibly.";
+    return {
+      state: "blocked",
+      statusLabel: REVIEW_GATE_LABELS.blocked,
+      headline: "This target needs a more realistic first step before I build the plan.",
+      canConfirm: false,
+      ctaEnabled: false,
+      ctaLabel: "Confirm and build my plan",
+      nextQuestion: null,
+      reason: blockedReason,
+    };
+  }
+
+  if (canonicalGateState === "warn") {
+    const warningReason = warningReasons[0] || tradeoffSummary || reviewModel?.gateLabel || "";
+    return {
+      state: "warn",
+      statusLabel: REVIEW_GATE_LABELS.warn,
+      headline: "This is possible, but the near-term path is tight.",
+      canConfirm: true,
+      ctaEnabled: true,
+      ctaLabel: "Build my plan with this warning",
+      nextQuestion: null,
+      reason: warningReason,
+    };
+  }
+
+  return {
+    state: "ready",
+    statusLabel: REVIEW_GATE_LABELS.ready,
+    headline: "This looks buildable from where you are now.",
+    canConfirm: true,
+    ctaEnabled: true,
+    ctaLabel: "Confirm and build my plan",
+    nextQuestion: null,
+    reason: "",
   };
 };
 

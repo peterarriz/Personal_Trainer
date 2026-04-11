@@ -85,6 +85,12 @@ const parseRunFrequency = (text = "") => {
   if (explicit?.[1]) return Number(explicit[1]);
   const weeklyTimes = normalized.match(/(\d+)\s*(?:x|times?)\s*(?:a|per|\/)?\s*(?:week|wk)/i);
   if (weeklyTimes?.[1]) return Number(weeklyTimes[1]);
+  const bareRunCount = normalized.match(/\b(\d+)\s*runs?\b/i);
+  if (bareRunCount?.[1]) return Number(bareRunCount[1]);
+  const runVerbCount = normalized.match(/\brun(?:ning)?\s*(\d+)\s*(?:x|times?)?\b/i);
+  if (runVerbCount?.[1]) return Number(runVerbCount[1]);
+  const daysCount = normalized.match(/\b(\d+)\s*days?\b/i);
+  if (daysCount?.[1] && /(?:\brun\b|\brunning\b)/i.test(normalized)) return Number(daysCount[1]);
   if (/^\d+$/.test(normalized.trim())) return Number(normalized.trim());
   return null;
 };
@@ -619,8 +625,15 @@ export const applyIntakeCompletenessAnswer = ({
 
   let nextAnswers = answers;
   const storedFieldKeys = [];
+  const allowedFieldKeys = new Set(
+    toArray(question?.fieldKeys)
+      .map((item) => sanitizeText(item, 80))
+      .filter(Boolean)
+  );
+  const canStoreField = (fieldKey = "") => allowedFieldKeys.size === 0 || allowedFieldKeys.has(fieldKey);
 
   const storeField = (fieldKey, parsedValue, extra = {}) => {
+    if (!canStoreField(fieldKey)) return;
     if (parsedValue === null || parsedValue === "" || parsedValue === undefined || parsedValue === false) return;
     nextAnswers = applyStructuredField(nextAnswers, fieldKey, cleanAnswer, { value: parsedValue, extra });
     storedFieldKeys.push(fieldKey);
@@ -630,7 +643,7 @@ export const applyIntakeCompletenessAnswer = ({
     case INTAKE_COMPLETENESS_QUESTION_KEYS.strengthBaseline:
     case INTAKE_COMPLETENESS_QUESTION_KEYS.maintainedStrengthBaseline: {
       const parsed = parseStrengthBaseline(cleanAnswer);
-      if (parsed?.raw) {
+      if (parsed?.raw && canStoreField(INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline)) {
         nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline, {
           raw: parsed.raw,
           value: parsed.weight ?? parsed.raw,
@@ -681,7 +694,7 @@ export const applyIntakeCompletenessAnswer = ({
     case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor: {
       const weight = parseFirstWeightLikeNumber(cleanAnswer);
       const targetChange = parseTargetWeightChange(cleanAnswer);
-      if (Number.isFinite(weight)) {
+      if (Number.isFinite(weight) && canStoreField(INTAKE_COMPLETENESS_FIELDS.currentBodyweight)) {
         nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight, {
           raw: cleanAnswer,
           value: weight,
@@ -689,7 +702,7 @@ export const applyIntakeCompletenessAnswer = ({
         });
         storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.currentBodyweight);
       }
-      if (Number.isFinite(targetChange)) {
+      if (Number.isFinite(targetChange) && canStoreField(INTAKE_COMPLETENESS_FIELDS.targetWeightChange)) {
         nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.targetWeightChange, {
           raw: cleanAnswer,
           value: targetChange,
@@ -703,7 +716,7 @@ export const applyIntakeCompletenessAnswer = ({
       const weight = parseFirstWeightLikeNumber(cleanAnswer);
       const waist = parseWaistMeasurement(cleanAnswer);
       const photos = /photo/i.test(cleanAnswer) ? normalizeBoolean(cleanAnswer) ?? true : normalizeBoolean(cleanAnswer);
-      if (Number.isFinite(weight) && !/waist/i.test(cleanAnswer)) {
+      if (Number.isFinite(weight) && !/waist/i.test(cleanAnswer) && canStoreField(INTAKE_COMPLETENESS_FIELDS.currentBodyweight)) {
         nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight, {
           raw: cleanAnswer,
           value: weight,
@@ -711,7 +724,7 @@ export const applyIntakeCompletenessAnswer = ({
         });
         storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.currentBodyweight);
       }
-      if (Number.isFinite(waist)) {
+      if (Number.isFinite(waist) && canStoreField(INTAKE_COMPLETENESS_FIELDS.currentWaist)) {
         nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.currentWaist, {
           raw: cleanAnswer,
           value: waist,
@@ -719,7 +732,7 @@ export const applyIntakeCompletenessAnswer = ({
         });
         storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.currentWaist);
       }
-      if (photos === true) {
+      if (photos === true && canStoreField(INTAKE_COMPLETENESS_FIELDS.progressPhotos)) {
         nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.progressPhotos, {
           raw: cleanAnswer,
           value: true,

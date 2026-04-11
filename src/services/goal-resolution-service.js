@@ -201,6 +201,13 @@ const getCorpusText = ({ rawUserGoalIntent = "", intakeContext = {} } = {}) => d
 
 const detectSignals = (text = "") => {
   const corpus = sanitizeText(text, 1200).toLowerCase();
+  const runningTokens = "(run|marathon|half marathon|10k|5k|race|pace|endurance|aerobic)";
+  const strengthTokens = "(bench|squat|deadlift|overhead press|ohp|strength|lift|lifting|upper body)";
+  const mixedConnector = "(and|plus|while|but|without losing|without giving up|while keeping|while maintaining)";
+  const explicitRunningStrengthMixPattern = new RegExp(
+    `(?:${runningTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${strengthTokens})|(?:${strengthTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${runningTokens})`,
+    "i"
+  );
   return {
     hasRunning: /(run|marathon|half marathon|10k|5k|race|pace|endurance|aerobic)/i.test(corpus),
     hasHalfMarathon: /\bhalf marathon\b/i.test(corpus),
@@ -215,6 +222,7 @@ const detectSignals = (text = "") => {
     hasAppearance: /(abs|six pack|look athletic|appearance|physique|toned|defined|lean for)/i.test(corpus),
     hasHybrid: /\bhybrid athlete\b|\bhybrid\b/i.test(corpus),
     hasKeepStrength: /(keep strength|maintain strength|keep my strength|hold strength)/i.test(corpus),
+    hasExplicitRunningStrengthMix: explicitRunningStrengthMixPattern.test(corpus),
     hasReEntry: /(back in shape|get back in shape|again|feel like myself again|return to form)/i.test(corpus),
     raw: corpus,
   };
@@ -453,13 +461,22 @@ const inferGoalFamily = ({
   confirmation = {},
   signals = {},
 } = {}) => {
+  const explicitMixedGoal = Boolean(
+    signals.hasHybrid
+    || (signals.hasFatLoss && signals.hasKeepStrength)
+    || signals.hasExplicitRunningStrengthMix
+  );
   if (confirmation?.edits?.goalFamily && Object.values(GOAL_FAMILIES).includes(confirmation.edits.goalFamily)) {
     return confirmation.edits.goalFamily;
   }
-  if (confirmation?.acceptedProposal !== false && Object.values(GOAL_FAMILIES).includes(proposal?.interpretedGoalType)) {
+  if (
+    confirmation?.acceptedProposal !== false
+    && Object.values(GOAL_FAMILIES).includes(proposal?.interpretedGoalType)
+    && (proposal?.interpretedGoalType !== GOAL_FAMILIES.hybrid || explicitMixedGoal)
+  ) {
     return proposal.interpretedGoalType;
   }
-  if (signals.hasHybrid || (signals.hasFatLoss && signals.hasKeepStrength) || (signals.hasRunning && signals.hasStrength)) return GOAL_FAMILIES.hybrid;
+  if (explicitMixedGoal) return GOAL_FAMILIES.hybrid;
   if (signals.hasAppearance) return GOAL_FAMILIES.appearance;
   if (signals.hasFatLoss) return GOAL_FAMILIES.bodyComp;
   if (signals.hasStrength) return GOAL_FAMILIES.strength;
@@ -546,6 +563,15 @@ const buildThirtyDaySuccessDefinition = ({ goalFamily = GOAL_FAMILIES.generalFit
   return "Complete 12 planned sessions in 30 days and log 4 weekly check-ins so consistency becomes measurable.";
 };
 
+const buildRunningEventLabel = (rawText = "") => {
+  if (/\bhalf marathon\b/i.test(rawText)) return "half marathon";
+  if (/\bmarathon\b/i.test(rawText) && !/\bhalf marathon\b/i.test(rawText)) return "marathon";
+  if (/\b10k\b/i.test(rawText)) return "10k";
+  if (/\b5k\b/i.test(rawText)) return "5k";
+  if (/\brace\b/i.test(rawText)) return "race";
+  return "event";
+};
+
 const buildSummary = ({
   rawText = "",
   goalFamily = GOAL_FAMILIES.generalFitness,
@@ -556,8 +582,12 @@ const buildSummary = ({
   confirmation = {},
 } = {}) => {
   if (confirmation?.edits?.summary) return confirmation.edits.summary;
-  if (variant === "hybrid_endurance") return "Build aerobic base for hybrid training";
-  if (variant === "hybrid_strength") return "Build baseline strength for hybrid training";
+  if (variant === "hybrid_endurance") {
+    return "Build running endurance while strength stays supportive";
+  }
+  if (variant === "hybrid_strength") {
+    return "Build strength while endurance stays in the week";
+  }
   if (variant === "strength_maintenance") return "Keep strength while the primary goal leads";
   if (variant === "body_comp_primary_with_strength_retention") return "Lose fat while keeping strength";
   if (goalFamily === GOAL_FAMILIES.appearance && /\bsix pack\b/i.test(rawText)) {
@@ -569,11 +599,26 @@ const buildSummary = ({
   if (goalFamily === GOAL_FAMILIES.appearance && /\blook athletic again\b/i.test(rawText)) {
     return "Look athletic again with repeatable training";
   }
+  if (planningCategory === "running" && !primaryMetric?.targetValue && /\bhalf marathon\b/i.test(rawText)) {
+    return "Run a half marathon";
+  }
+  if (planningCategory === "running" && !primaryMetric?.targetValue && /\bmarathon\b/i.test(rawText) && !/\bhalf marathon\b/i.test(rawText)) {
+    return "Run a marathon";
+  }
+  if (planningCategory === "running" && !primaryMetric?.targetValue && /\b10k\b/i.test(rawText)) {
+    return "Run a 10k";
+  }
+  if (planningCategory === "running" && !primaryMetric?.targetValue && /\b5k\b/i.test(rawText)) {
+    return "Run a 5k";
+  }
   if (planningCategory === "running" && primaryMetric?.targetValue && /half marathon/i.test(primaryMetric?.label || "")) {
     return `Run a half marathon in ${primaryMetric.targetValue}`;
   }
+  if (planningCategory === "running" && primaryMetric?.targetValue && /marathon/i.test(primaryMetric?.label || "") && !/half marathon/i.test(primaryMetric?.label || "")) {
+    return `Run a marathon in ${primaryMetric.targetValue}`;
+  }
   if (planningCategory === "running" && primaryMetric?.targetValue) {
-    return `${primaryMetric.label} ${primaryMetric.targetValue}`;
+    return `Run your ${buildRunningEventLabel(rawText)} in ${primaryMetric.targetValue}`;
   }
   if (planningCategory === "strength" && primaryMetric?.targetValue) {
     return `${primaryMetric.label} ${primaryMetric.targetValue} ${primaryMetric.unit}`.trim();
@@ -769,6 +814,12 @@ const buildGoalBlueprints = ({
   if ((signals.hasFatLoss && signals.hasKeepStrength) || (goalFamily === GOAL_FAMILIES.hybrid && signals.hasFatLoss && signals.hasStrength)) {
     return [
       { goalFamily: GOAL_FAMILIES.bodyComp, planningCategory: "body_comp", priority: 1, variant: "body_comp_primary_with_strength_retention" },
+      { goalFamily: GOAL_FAMILIES.strength, planningCategory: "strength", priority: 2, variant: "strength_maintenance" },
+    ];
+  }
+  if (signals.hasRunning && (signals.hasKeepStrength || signals.hasExplicitRunningStrengthMix)) {
+    return [
+      { goalFamily: GOAL_FAMILIES.performance, planningCategory: "running", priority: 1, variant: "running_primary" },
       { goalFamily: GOAL_FAMILIES.strength, planningCategory: "strength", priority: 2, variant: "strength_maintenance" },
     ];
   }
