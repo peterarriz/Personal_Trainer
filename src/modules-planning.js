@@ -71,6 +71,29 @@ const buildPlanDaySummary = (drivers = [], modifiedFromBase = false) => {
 
 const clampNumber = (value, min, max) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : min));
 const sanitizeText = (value = "", maxLength = 220) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+const isRunSessionType = (value = "") => ["run+strength", "easy-run", "hard-run", "long-run"].includes(String(value || "").toLowerCase());
+const resolvePlannedSessionKind = (plannedSession = null) => {
+  const type = String(plannedSession?.type || "").toLowerCase();
+  if (!type) return "";
+  if (type === "rest" || type === "recovery") return "recovery";
+  if (type === "run+strength") return "cardio";
+  if (/strength/.test(type)) return "strength";
+  if (/run|conditioning|otf/.test(type)) return "cardio";
+  return "";
+};
+const buildConditioningSession = ({
+  label = "Conditioning",
+  detail = "20-30 min zone-2 bike, rower, incline walk, or circuit",
+  nutri = "easyRun",
+  lowImpact = false,
+} = {}) => ({
+  type: "conditioning",
+  label,
+  nutri,
+  fallback: detail,
+  intensityGuidance: lowImpact ? "easy aerobic only" : "controlled aerobic conditioning",
+  environmentNote: lowImpact ? "Use any low-impact aerobic setup available." : "",
+});
 
 const buildSessionsByDayFromTemplate = (template = {}) => {
   const restDay = { type: "rest", label: "Active Recovery", nutri: "rest", isRecoverySlot: true };
@@ -748,7 +771,7 @@ export const buildProgramBlock = ({
 };
 
 const resolveWeeklyNutritionEmphasis = ({
-  primaryCategory = "running",
+  primaryCategory = "general_fitness",
   architecture = "hybrid_performance",
   recoveryBias = "moderate",
   performanceBias = "moderate",
@@ -841,12 +864,12 @@ export const deriveWeeklyIntent = ({
   if (recoveryBias === "high") performanceBias = "low";
   else if (["race_prep_dominant", "strength_dominant", "event_prep_upper_body_maintenance"].includes(architecture) && aggressionLevel === "progressive") performanceBias = "high";
 
-  const focus = weekTemplate?.label
-    || normalizedProgramBlock?.dominantEmphasis?.label
+  const focus = normalizedProgramBlock?.dominantEmphasis?.label
     || blockIntent?.prioritized
     || primaryGoal?.name
+    || weekTemplate?.label
     || "Consistency and execution";
-  const primaryCategory = primaryGoal?.category || "running";
+  const primaryCategory = primaryGoal?.category || "general_fitness";
   const weeklyConstraints = dedupeStrings([
     ...(normalizedProgramBlock?.constraints || []),
     ...(normalizedProgramBlock?.tradeoffs || []),
@@ -1473,6 +1496,7 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
   const runningGoal = active.find(g => g.category === "running");
   const strengthGoal = active.find(g => g.category === "strength");
   const bodyCompGoal = active.find(g => g.category === "body_comp");
+  const hasRunningGoal = Boolean(runningGoal);
   const raceNear = daysUntil(runningGoal?.targetDate) <= 56;
   const inconsistencyRisk = momentum?.inconsistencyRisk || "medium";
   const lowBandwidth = inconsistencyRisk === "high" || learningLayer?.adjustmentBias === "simplify";
@@ -1487,11 +1511,18 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
   const bodyCompScore = (primary?.category === "body_comp" ? 3 : 0) + (bodyCompGoal ? 2 : 0) + (lowBandwidth ? 1 : 0);
 
   let architecture = "hybrid_performance";
-  if (lowBandwidth) architecture = "maintenance_rebuild";
-  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && (raceNear || primary?.category === "running") && upperBodyMaintenance) architecture = "event_prep_upper_body_maintenance";
-  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && (raceNear || primary?.category === "running")) architecture = "race_prep_dominant";
+  if (lowBandwidth) {
+    if (primary?.category === "strength") architecture = "strength_dominant";
+    else if (primary?.category === "body_comp") architecture = "body_comp_conditioning";
+    else architecture = "maintenance_rebuild";
+  } else if (primary?.category === "running" && upperBodyMaintenance) architecture = "event_prep_upper_body_maintenance";
+  else if (primary?.category === "running") architecture = "race_prep_dominant";
+  else if (primary?.category === "body_comp") architecture = "body_comp_conditioning";
+  else if (primary?.category === "strength") architecture = "strength_dominant";
+  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && raceNear && upperBodyMaintenance) architecture = "event_prep_upper_body_maintenance";
+  else if (runningScore >= Math.max(strengthScore, bodyCompScore) && raceNear) architecture = "race_prep_dominant";
   else if (bodyCompScore >= Math.max(runningScore, strengthScore)) architecture = "body_comp_conditioning";
-  else if (strengthScore >= Math.max(runningScore, bodyCompScore)) architecture = hasGym ? "strength_dominant" : "hybrid_performance";
+  else if (strengthScore >= Math.max(runningScore, bodyCompScore)) architecture = "strength_dominant";
 
   const splits = {
     event_prep_upper_body_maintenance: { run: 4, strength: 2, conditioning: 0, recovery: 1 },
@@ -1501,7 +1532,15 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     hybrid_performance: { run: 3, strength: 3, conditioning: 1, recovery: 1 },
     maintenance_rebuild: { run: 2, strength: 2, conditioning: 1, recovery: 2 },
   };
-  const split = splits[architecture];
+  const noRunGoalSplitOverrides = {
+    strength_dominant: { run: 0, strength: 4, conditioning: 2, recovery: 1 },
+    body_comp_conditioning: { run: 0, strength: 3, conditioning: 3, recovery: 1 },
+    hybrid_performance: { run: 0, strength: 3, conditioning: 2, recovery: 1 },
+    maintenance_rebuild: { run: 0, strength: 2, conditioning: 1, recovery: 2 },
+  };
+  const split = !hasRunningGoal && noRunGoalSplitOverrides[architecture]
+    ? noRunGoalSplitOverrides[architecture]
+    : splits[architecture];
 
   const constraints = [];
   if (equipmentKnown && !hasGym && strengthGoal) constraints.push("Bench-specific progression constrained by the confirmed equipment setup; using lower-equipment substitutes.");
@@ -1513,6 +1552,7 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     `Inconsistency risk: ${inconsistencyRisk}.`,
     bodyCompGoal ? "Body-comp goal is active and materially affects split allocation." : null,
     raceNear ? "Race date is near enough to increase running weight." : null,
+    !hasRunningGoal ? "No running goal is active, so conditioning stays non-run by default." : null,
     upperBodyMaintenance ? "Secondary strength work is upper-body biased, so lower-body fatigue can stay subordinate to event prep." : null,
   ].filter(Boolean);
 
@@ -1539,38 +1579,54 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     },
     strength_dominant: {
       1: { type: "strength+prehab", label: "Strength Priority A", strSess: "A", nutri: "strength" },
-      2: { type: "easy-run", label: "Supportive Conditioning Run", run: { t: "Easy", d: "20-30 min zone-2" }, nutri: "easyRun" },
+      2: hasRunningGoal
+        ? { type: "easy-run", label: "Supportive Conditioning Run", run: { t: "Easy", d: "20-30 min zone-2" }, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min zone-2 bike, rower, incline walk, or circuit", lowImpact: true }),
       3: { type: "strength+prehab", label: "Strength Priority B", strSess: "B", nutri: "strength" },
       4: { type: "strength+prehab", label: "Upper Push/Pull Strength", strSess: "A", nutri: "strength" },
-      5: { type: "easy-run", label: "Conditioning Support", run: { t: "Easy", d: "20-25 min + strides optional" }, nutri: "easyRun" },
+      5: hasRunningGoal
+        ? { type: "easy-run", label: "Conditioning Support", run: { t: "Easy", d: "20-25 min + strides optional" }, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Conditioning Support", detail: "15-25 min controlled conditioning + mobility finish", lowImpact: true }),
       6: { type: "strength+prehab", label: "Full-Body Strength", strSess: "B", nutri: "strength" },
       0: restDay("Active Recovery"),
     },
     body_comp_conditioning: {
       1: { type: "strength+prehab", label: "Metabolic Strength A", strSess: "A", nutri: "strength" },
-      2: { type: "easy-run", label: "Conditioning (low-friction)", run: { t: "Easy", d: "25-35 min zone-2" }, nutri: "easyRun" },
+      2: hasRunningGoal
+        ? { type: "easy-run", label: "Conditioning (low-friction)", run: { t: "Easy", d: "25-35 min zone-2" }, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Conditioning (low-friction)", detail: "25-35 min zone-2 bike, incline walk, or circuit", lowImpact: true }),
       3: { type: "strength+prehab", label: "Metabolic Strength B", strSess: "B", nutri: "strength" },
       4: { type: "conditioning", label: "Conditioning Intervals / OTF", nutri: "otf" },
       5: { type: "strength+prehab", label: "Strength Retention", strSess: "A", nutri: "strength" },
-      6: { type: "easy-run", label: "Supportive Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: "easyRun" },
+      6: hasRunningGoal
+        ? { type: "easy-run", label: "Supportive Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min easy conditioning or brisk walk", lowImpact: true }),
       0: restDay("Active Recovery - Steps + Mobility"),
     },
     hybrid_performance: {
-      1: { type: "run+strength", label: "Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "easyRun" },
+      1: hasRunningGoal
+        ? { type: "run+strength", label: "Run + Strength", run: baseWeek.mon, strSess: baseWeek.str, nutri: "easyRun" }
+        : { type: "strength+prehab", label: "Strength + Conditioning Primer", strSess: baseWeek.str, nutri: "strength" },
       2: { type: "conditioning", label: "Conditioning", nutri: "otf" },
       3: { type: "strength+prehab", label: "Strength B + Prehab", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
-      4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
+      4: hasRunningGoal
+        ? { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" }
+        : buildConditioningSession({ label: "Conditioning Intervals", detail: "20-30 min controlled intervals or mixed-modality conditioning" }),
       5: { type: "strength+prehab", label: "Strength Focus", strSess: baseWeek.str, nutri: "strength" },
-      6: { type: "easy-run", label: "Supportive Endurance", run: baseWeek.fri, nutri: "easyRun" },
+      6: hasRunningGoal
+        ? { type: "easy-run", label: "Supportive Endurance", run: baseWeek.fri, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min easy conditioning to keep work capacity alive", lowImpact: true }),
       0: restDay("Active Recovery"),
     },
     maintenance_rebuild: {
       1: { type: "strength+prehab", label: "Short Version Strength", strSess: "A", nutri: "strength" },
       2: restDay("Active Recovery - Walk"),
-      3: { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: "easyRun" },
+      3: hasRunningGoal
+        ? { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: "easyRun" }
+        : buildConditioningSession({ label: "Short Conditioning", detail: "15-20 min easy conditioning or brisk walk", lowImpact: true }),
       4: { type: "strength+prehab", label: "Short Version Strength B", strSess: "B", nutri: "strength" },
       5: restDay("Active Recovery"),
-      6: { type: "conditioning", label: "Optional Conditioning", nutri: "easyRun" },
+      6: buildConditioningSession({ label: "Optional Conditioning", detail: "15-20 min optional easy conditioning", lowImpact: true }),
       0: restDay("Active Recovery"),
     },
   };
@@ -1889,6 +1945,7 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
   const programBlock = planningContext?.programBlock || planWeek?.programBlock || null;
   const weeklyIntent = planningContext?.weeklyIntent || planWeek?.weeklyIntent || null;
   const plannedSession = planningContext?.plannedSession || null;
+  const plannedSessionKind = resolvePlannedSessionKind(plannedSession);
 
   // ── 1. Compute recent activity window (last 7 days) ──────────────
   const today = new Date(todayKey + "T12:00:00");
@@ -1964,6 +2021,16 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
 
   const isReEntry = daysSinceLastWorkout >= 4;
   if (isReEntry) {
+    if (plannedSession && plannedSessionKind && plannedSessionKind !== "recovery") {
+      const plannedLabel = plannedSession?.label || (plannedSessionKind === "strength" ? "Strength session" : "Conditioning session");
+      return {
+        type: plannedSessionKind,
+        duration: Math.min(duration, plannedSessionKind === "strength" ? 30 : 25),
+        intensity: "low",
+        label: plannedLabel,
+        reason: `${daysSinceLastWorkout} days since last session. Starting with the easiest version of today's planned ${plannedLabel.toLowerCase()} so the current block stays aligned.`,
+      };
+    }
     return {
       type: "strength",
       duration: Math.min(duration, 25),
@@ -1979,8 +2046,9 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
   const rotationIndex = sessionsThisWeek % rotation.length;
   let sessionType = rotation[rotationIndex];
   const plannedSessionType = String(plannedSession?.type || "").toLowerCase();
-  if (/strength/.test(plannedSessionType)) sessionType = "strength";
-  else if (/run|conditioning/.test(plannedSessionType)) sessionType = "cardio";
+  if (plannedSessionType === "run+strength") sessionType = "cardio";
+  else if (/strength/.test(plannedSessionType)) sessionType = "strength";
+  else if (/run|conditioning|otf/.test(plannedSessionType)) sessionType = "cardio";
 
   // Balance correction: if one type is overrepresented, flip
   const targetSplit = rotation.filter(t => t === "strength").length / rotation.length;
