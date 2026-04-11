@@ -63,6 +63,20 @@ const parseTimeLikeSeconds = (value = "") => {
 
 const roundToNearestFive = (value = 0) => Math.max(0, Math.round(Number(value || 0) / 5) * 5);
 
+const STRENGTH_IMPOSSIBLE_CEILINGS = {
+  bench_press_weight: 800,
+  squat_weight: 1200,
+  deadlift_weight: 1300,
+  overhead_press_weight: 500,
+};
+
+const STRENGTH_EXTREME_WARNING_CEILINGS = {
+  bench_press_weight: 600,
+  squat_weight: 900,
+  deadlift_weight: 1000,
+  overhead_press_weight: 365,
+};
+
 const normalizeScheduleReality = (scheduleReality = {}) => ({
   trainingDaysPerWeek: Math.max(0, Math.min(14, Math.round(Number(scheduleReality?.trainingDaysPerWeek) || 0))),
   sessionLength: sanitizeText(scheduleReality?.sessionLength || "", 40),
@@ -329,8 +343,24 @@ const buildStrengthBaselineSignals = ({
   const blocks = [];
   const baselineWeight = Number(facts?.currentStrengthBaseline?.weight);
   const targetWeight = Number(goal?.primaryMetric?.targetValue);
+  const metricKey = sanitizeText(goal?.primaryMetric?.key || "", 60).toLowerCase();
+  const liftLabel = sanitizeText(goal?.primaryMetric?.label || "strength target", 80).toLowerCase();
+  const impossibleCeiling = STRENGTH_IMPOSSIBLE_CEILINGS[metricKey] || 1000;
+  const extremeWarningCeiling = STRENGTH_EXTREME_WARNING_CEILINGS[metricKey] || 700;
+
+  if (Number.isFinite(targetWeight) && targetWeight >= impossibleCeiling) {
+    blocks.push(`That ${liftLabel} target is beyond a credible human range for a deterministic plan.`);
+  } else if (Number.isFinite(targetWeight) && targetWeight >= extremeWarningCeiling) {
+    warnings.push(`That ${liftLabel} target is exceptionally aggressive and needs a very long runway.`);
+  }
+
   if (!Number.isFinite(baselineWeight) || !Number.isFinite(targetWeight) || baselineWeight <= 0) {
-    return { warnings, blocks, recommendedRevisionSummary: "" };
+    const impossibleRevisionSummary = blocks.length
+      ? `Scale the first block toward a credible ${liftLabel} milestone before treating ${Number.isFinite(targetWeight) ? targetWeight : "the full"} lb as real.`
+      : warnings.length
+      ? `Keep the long-term ${liftLabel} goal if it matters, but use a much smaller first-block milestone before reassessing it.`
+      : "";
+    return { warnings, blocks, recommendedRevisionSummary: impossibleRevisionSummary };
   }
 
   const absoluteJump = targetWeight - baselineWeight;

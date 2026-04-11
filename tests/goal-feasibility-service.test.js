@@ -251,6 +251,37 @@ test("unrealistic strength target with a compressed horizon is blocked", () => {
   assert.match(feasibility.recommendedRevision.summary, /135|225/i);
 });
 
+test("impossible bench target is blocked even before a baseline comparison exists", () => {
+  const resolution = resolveGoalTranslation({
+    rawUserGoalIntent: "bench press 2200 lbs",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "bench press 2200 lbs" }),
+    explicitUserConfirmation: {
+      confirmed: true,
+      acceptedProposal: true,
+      targetHorizonWeeks: 24,
+    },
+    now: "2026-04-11",
+  });
+
+  const feasibility = assessGoalFeasibility({
+    resolvedGoals: resolution.resolvedGoals,
+    userBaseline: { experienceLevel: "advanced", currentBaseline: "lifting consistently" },
+    scheduleReality: { trainingDaysPerWeek: 5, sessionLength: "60 min", trainingLocation: "Gym" },
+    currentExperienceContext: { injuryConstraintContext: { constraints: [] } },
+    intakeCompleteness: {
+      facts: {},
+      missingRequired: [],
+      missingOptional: [],
+    },
+    now: "2026-04-11",
+  });
+
+  assert.equal(feasibility.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
+  assert.equal(feasibility.realismStatus, GOAL_REALISM_STATUSES.unrealistic);
+  assert.match(feasibility.blockingReasons[0], /credible human range|bench press/i);
+  assert.match(feasibility.recommendedRevision.summary, /credible bench press milestone|2200/i);
+});
+
 test("body-comp goals with missing baseline stay blocked as incomplete instead of pretending they are realistic", () => {
   const rawGoalText = "lose 20 lb";
   const typedIntakePacket = buildIntakePacket({ rawGoalText });
