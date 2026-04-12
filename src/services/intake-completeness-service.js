@@ -468,19 +468,11 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
       fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentWaist],
       goalRole,
     }));
-    optionalFields.push(buildRequirement({
-      key: "body_comp_photos_optional",
-      label: "Manual photo review (future)",
-      required: false,
-      filled: facts?.progressPhotos === true,
-      fieldKeys: [INTAKE_COMPLETENESS_FIELDS.progressPhotos],
-      goalRole,
-    }));
   }
 
   if (goalFamily === "appearance" && goalRole === "primary") {
     const appearanceHasExplicitTimingSignal = /\b(by|before|for)\b|\bspring\b|\bsummer\b|\bfall\b|\bautumn\b|\bwinter\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b|\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b/i.test(String(goal?.rawIntent?.text || ""));
-    const proxyAnchorReady = Boolean(facts?.currentBodyweight || facts?.currentWaist || facts?.progressPhotos === true);
+    const proxyAnchorReady = Boolean(facts?.currentBodyweight || facts?.currentWaist);
     requiredFields.push(buildRequirement({
       key: INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
       label: "Appearance tracking proxy",
@@ -765,7 +757,6 @@ export const buildIntakeCompletenessContext = ({
     Number.isFinite(facts?.currentBodyweight) ? `Current bodyweight: ${facts.currentBodyweight} lb` : "",
     Number.isFinite(facts?.targetWeightChange) ? `Desired bodyweight change: ${facts.targetWeightChange > 0 ? "+" : ""}${facts.targetWeightChange} lb` : "",
     Number.isFinite(facts?.currentWaist) ? `Current waist: ${facts.currentWaist} in` : "",
-    facts?.progressPhotos === true ? "Manual photo review is available as a future proxy." : "",
   ]);
 
   const timingHints = dedupeStrings([
@@ -774,7 +765,6 @@ export const buildIntakeCompletenessContext = ({
 
   const appearanceHints = dedupeStrings([
     Number.isFinite(facts?.currentWaist) ? `${facts.currentWaist} in waist` : "",
-    facts?.progressPhotos === true ? "manual photo review later" : "",
   ]);
 
   return {
