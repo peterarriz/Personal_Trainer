@@ -599,6 +599,59 @@ test("pure strength goal maps to a strength-dominant block, week, and today plan
   });
 });
 
+test("athletic-power goals stay usable inside ProgramBlock and WeeklyIntent generation", async () => {
+  await withMockedNow("2026-04-09T12:00:00Z", async () => {
+    const goals = buildGoals([
+      {
+        name: "Dunk a basketball",
+        category: "strength",
+        priority: 1,
+        resolvedGoal: buildResolvedGoal({
+          summary: "Dunk a basketball",
+          planningCategory: "strength",
+          goalFamily: "athletic_power",
+          measurabilityTier: "proxy_measurable",
+          proxyMetrics: [
+            { key: "vertical_jump_touchpoint", label: "Jump touch point", unit: "checkins", kind: "proxy" },
+            { key: "lower_body_power_sessions", label: "Lower-body power sessions", unit: "sessions", kind: "proxy" },
+          ],
+          first30DaySuccessDefinition: "Complete 8 lower-body power sessions over the next 30 days and log one jump or rim-touch check each week.",
+        }),
+      },
+    ]);
+
+    const composer = buildComposer({
+      goals,
+      personalization: { trainingContext: { environment: { value: "gym", confirmed: true }, equipmentAccess: { value: "full_gym", confirmed: true } } },
+      momentum: { inconsistencyRisk: "low" },
+      learningLayer: {},
+      currentWeek: 1,
+      baseWeek: WEEK_TEMPLATES[0],
+    });
+    const planWeek = buildPlanWeek({
+      weekNumber: 1,
+      template: WEEK_TEMPLATES[0],
+      weekTemplates: WEEK_TEMPLATES,
+      referenceTemplate: WEEK_TEMPLATES[0],
+      goals,
+      architecture: composer.architecture,
+      programBlock: composer.programBlock,
+      programContext: composer.programContext,
+      blockIntent: composer.blockIntent,
+      split: composer.split,
+      sessionsByDay: composer.dayTemplates,
+      weeklyCheckin: { energy: 4, stress: 2, confidence: 4 },
+      coachPlanAdjustments: {},
+      failureMode: {},
+      constraints: composer.constraints,
+    });
+
+    assert.equal(composer.architecture, "strength_dominant");
+    assert.equal(composer.programBlock.dominantEmphasis.label, "Athletic-power progression");
+    assert.match(planWeek.weeklyIntent.focus, /athletic power/i);
+  });
+});
+
 test("pure race goal maps to a running-dominant block, week, and today plan", async () => {
   await withMockedNow("2026-04-09T12:00:00Z", async () => {
     const goals = buildGoals([

@@ -14,6 +14,14 @@ export const GOAL_FEASIBILITY_ACTIONS = {
   block: "block",
 };
 
+export const GOAL_TARGET_VALIDATION_STATUSES = {
+  valid: "valid",
+  aggressiveButValid: "aggressive_but_valid",
+  unrealisticButValid: "unrealistic_but_valid",
+  underconstrainedPlausible: "underconstrained_plausible",
+  malformedMetric: "malformed_metric",
+};
+
 export const GOAL_CONFLICT_SEVERITIES = {
   low: "low",
   medium: "medium",
@@ -120,6 +128,16 @@ const normalizeIntakeCompleteness = (intakeCompleteness = null) => {
   };
 };
 
+const readGoalValidationIssues = (goal = {}) => toArray(goal?.validationIssues)
+  .filter((issue) => issue && typeof issue === "object")
+  .map((issue) => ({
+    key: sanitizeText(issue?.key || "", 80).toLowerCase(),
+    severity: sanitizeText(issue?.severity || "block", 20).toLowerCase() || "block",
+    summary: sanitizeText(issue?.summary || "", 220),
+    prompt: sanitizeText(issue?.prompt || "", 220),
+  }))
+  .filter((issue) => issue.summary);
+
 const isAdvanced = (baseline = {}) => baseline?.experienceLevel === "advanced";
 const isIntermediate = (baseline = {}) => baseline?.experienceLevel === "intermediate";
 
@@ -136,6 +154,16 @@ const buildDemandProfile = ({ goal = {}, baseline = {}, schedule = {} } = {}) =>
   const primaryMetricKey = sanitizeText(goal?.primaryMetric?.key || "", 60).toLowerCase();
   const hybridModifier = goalFamily === "hybrid" ? 1 : 0;
   const sessionModifier = schedule?.sessionLengthMinutes >= 45 ? 0 : 1;
+
+  if (goalFamily === "athletic_power") {
+    return {
+      minimumTrainingDays: (isAdvanced(baseline) ? 2 : isIntermediate(baseline) ? 3 : 3) + sessionModifier,
+      minimumSessionLengthMinutes: 30,
+      minimumRealisticHorizonWeeks: isAdvanced(baseline) ? 6 : isIntermediate(baseline) ? 8 : 10,
+      realisticByDate: "better jump rhythm, lower-body power, and cleaner explosive exposure",
+      longerHorizon: "the full dunk or jump-performance outcome",
+    };
+  }
 
   if (planningCategory === "running") {
     if (primaryMetricKey.includes("half_marathon")) {
@@ -429,12 +457,97 @@ const buildBodyCompBaselineSignals = ({
   return { warnings, blocks, recommendedRevisionSummary };
 };
 
+const classifyTargetValidation = ({
+  validationIssues = [],
+  baselineSignalBlocks = [],
+  baselineSignalWarnings = [],
+  intakeCompleteness = null,
+  goal = {},
+} = {}) => {
+  const malformedIssues = toArray(validationIssues).filter((issue) => issue?.severity === "block");
+  if (malformedIssues.length) {
+    return {
+      status: GOAL_TARGET_VALIDATION_STATUSES.malformedMetric,
+      clarificationRequired: true,
+      reason: sanitizeText(malformedIssues[0]?.prompt || malformedIssues[0]?.summary || "", 220),
+      issueKeys: malformedIssues.map((issue) => sanitizeText(issue?.key || "", 80).toLowerCase()).filter(Boolean),
+    };
+  }
+
+  if (toArray(intakeCompleteness?.missingRequired).length) {
+    return {
+      status: GOAL_TARGET_VALIDATION_STATUSES.underconstrainedPlausible,
+      clarificationRequired: true,
+      reason: `Need ${sanitizeText(toArray(intakeCompleteness.missingRequired)[0] || "", 160).toLowerCase()} before this target can be judged cleanly.`,
+      issueKeys: [],
+    };
+  }
+
+  if (toArray(baselineSignalBlocks).length) {
+    return {
+      status: GOAL_TARGET_VALIDATION_STATUSES.unrealisticButValid,
+      clarificationRequired: false,
+      reason: sanitizeText(toArray(baselineSignalBlocks)[0] || "", 220),
+      issueKeys: [],
+    };
+  }
+
+  if (toArray(baselineSignalWarnings).length) {
+    return {
+      status: GOAL_TARGET_VALIDATION_STATUSES.aggressiveButValid,
+      clarificationRequired: false,
+      reason: sanitizeText(toArray(baselineSignalWarnings)[0] || "", 220),
+      issueKeys: [],
+    };
+  }
+
+  return {
+    status: GOAL_TARGET_VALIDATION_STATUSES.valid,
+    clarificationRequired: false,
+    reason: "",
+    issueKeys: [],
+  };
+};
+
+const buildAthleticPowerBaselineSignals = ({
+  goal = {},
+  targetHorizonWeeks = null,
+} = {}) => {
+  const warnings = [];
+  const blocks = [];
+  const metricKey = sanitizeText(goal?.primaryMetric?.key || "", 60).toLowerCase();
+  const targetValue = Number(goal?.primaryMetric?.targetValue);
+
+  if (metricKey === "vertical_jump_height" && Number.isFinite(targetValue)) {
+    if (targetValue >= 60) {
+      blocks.push("That vertical-jump target is beyond a credible deterministic planning range.");
+    } else if (targetValue >= 44) {
+      warnings.push("That vertical-jump target is exceptionally aggressive and needs a long runway.");
+    }
+    if (Number.isFinite(targetHorizonWeeks) && targetHorizonWeeks <= 6 && targetValue >= 36) {
+      warnings.push("That jump-performance target is tight for the current timeline.");
+    }
+  }
+
+  const recommendedRevisionSummary = blocks.length
+    ? "Use the first block to raise power output and retest your jump benchmark before locking in the full target."
+    : warnings.length
+    ? "Keep the jump-performance goal, but treat the first block as power development before judging the full outcome."
+    : "";
+
+  return { warnings, blocks, recommendedRevisionSummary };
+};
+
 const buildBaselineSignals = ({
   goal = {},
   facts = {},
   targetHorizonWeeks = null,
 } = {}) => {
+  const goalFamily = sanitizeText(goal?.goalFamily || "", 40).toLowerCase();
   const planningCategory = sanitizeText(goal?.planningCategory || "", 40).toLowerCase();
+  if (goalFamily === "athletic_power") {
+    return buildAthleticPowerBaselineSignals({ goal, targetHorizonWeeks });
+  }
   if (planningCategory === "running") {
     return buildRunningBaselineSignals({ goal, facts, targetHorizonWeeks });
   }
@@ -456,6 +569,7 @@ const assessSingleGoalFeasibility = ({
   now = new Date(),
 } = {}) => {
   const demand = buildDemandProfile({ goal, baseline: userBaseline, schedule: scheduleReality });
+  const validationIssues = readGoalValidationIssues(goal);
   const targetHorizonWeeks = resolveGoalTargetWindow(goal, now);
   const hasTargetWindow = Boolean(targetHorizonWeeks);
   const scheduleShortfall = scheduleReality.trainingDaysPerWeek < demand.minimumTrainingDays;
@@ -469,12 +583,27 @@ const assessSingleGoalFeasibility = ({
     facts: intakeCompleteness?.facts || {},
     targetHorizonWeeks,
   });
+  const validationBlocks = validationIssues
+    .filter((issue) => issue.severity === "block")
+    .map((issue) => issue.summary);
+  const validationWarnings = validationIssues
+    .filter((issue) => issue.severity !== "block")
+    .map((issue) => issue.summary);
+  const targetValidation = classifyTargetValidation({
+    validationIssues,
+    baselineSignalBlocks: baselineSignals.blocks || [],
+    baselineSignalWarnings: baselineSignals.warnings || [],
+    intakeCompleteness,
+    goal,
+  });
   const blockingReasons = [
+    ...validationBlocks,
     ...(baselineSignals.blocks || []),
     ...(severelyCompressedHorizon ? ["The target timeline is too compressed for the goal demand."] : []),
     ...(severeScheduleShortfall ? ["The current schedule support is too low for this goal on the stated timeline."] : []),
   ];
   const warningReasons = [
+    ...validationWarnings,
     ...(baselineSignals.warnings || []),
     ...(compressedHorizon && !severelyCompressedHorizon ? ["The current target window is tight for the full outcome."] : []),
     ...(scheduleShortfall && !severeScheduleShortfall ? ["The current weekly training frequency is light for the full goal."] : []),
@@ -517,6 +646,10 @@ const assessSingleGoalFeasibility = ({
     goalSummary: sanitizeText(goal?.summary || "", 180),
     planningCategory: sanitizeText(goal?.planningCategory || "", 40).toLowerCase(),
     realismStatus,
+    targetValidationStatus: targetValidation.status,
+    clarificationRequired: targetValidation.clarificationRequired,
+    targetValidationReason: targetValidation.reason,
+    targetValidationIssueKeys: targetValidation.issueKeys,
     targetHorizonWeeks,
     minimumRealisticHorizonWeeks: demand.minimumRealisticHorizonWeeks,
     scheduleFit: severeScheduleShortfall ? "under_supported" : scheduleShortfall || shortSessions ? "tight" : "supported",
@@ -524,7 +657,7 @@ const assessSingleGoalFeasibility = ({
     longerHorizonNeed,
     blockingReasons: dedupeStrings(blockingReasons),
     warningReasons: dedupeStrings(warningReasons),
-    recommendedRevisionSummary: sanitizeText(baselineSignals.recommendedRevisionSummary || "", 220),
+    recommendedRevisionSummary: sanitizeText(validationIssues[0]?.prompt || baselineSignals.recommendedRevisionSummary || "", 220),
     priorityScore,
   };
 };
@@ -703,6 +836,15 @@ const buildRecommendedRevision = ({
     };
   }
 
+  const malformedGoal = goalAssessments.find((assessment) => assessment.targetValidationStatus === GOAL_TARGET_VALIDATION_STATUSES.malformedMetric) || null;
+  if (malformedGoal) {
+    return {
+      kind: "clarification_required",
+      goalId: malformedGoal.goalId,
+      summary: malformedGoal.recommendedRevisionSummary || malformedGoal.targetValidationReason || malformedGoal.blockingReasons?.[0] || "",
+    };
+  }
+
   const blockedGoal = goalAssessments.find((assessment) => assessment.realismStatus === GOAL_REALISM_STATUSES.unrealistic) || null;
   if (blockedGoal) {
     return {
@@ -727,8 +869,13 @@ const buildConfirmationAction = ({
   realismStatus = GOAL_REALISM_STATUSES.exploratory,
   intakeCompleteness = null,
   conflictFlags = [],
+  goalAssessments = [],
 } = {}) => {
-  if (intakeCompleteness?.missingRequired?.length || realismStatus === GOAL_REALISM_STATUSES.unrealistic) {
+  if (
+    intakeCompleteness?.missingRequired?.length
+    || realismStatus === GOAL_REALISM_STATUSES.unrealistic
+    || toArray(goalAssessments).some((assessment) => assessment?.targetValidationStatus === GOAL_TARGET_VALIDATION_STATUSES.malformedMetric)
+  ) {
     return GOAL_FEASIBILITY_ACTIONS.block;
   }
   if (realismStatus === GOAL_REALISM_STATUSES.aggressive || conflictFlags.some((flag) => flag.severity === GOAL_CONFLICT_SEVERITIES.high)) {
@@ -791,6 +938,7 @@ export const assessGoalFeasibility = ({
     realismStatus,
     intakeCompleteness: normalizedCompleteness,
     conflictFlags,
+    goalAssessments,
   });
   const blockingReasons = dedupeStrings([
     ...normalizedCompleteness.missingRequired.map((item) => `Need ${item.toLowerCase()} before the plan can lock.`),
@@ -801,11 +949,25 @@ export const assessGoalFeasibility = ({
     ...conflictFlags.filter((flag) => flag.severity === GOAL_CONFLICT_SEVERITIES.high).map((flag) => flag.summary),
   ]);
   const tradeoffSummary = dedupeStrings(conflictFlags.map((flag) => flag.summary)).join(" ");
+  const malformedGoalAssessment = goalAssessments.find((assessment) => assessment.targetValidationStatus === GOAL_TARGET_VALIDATION_STATUSES.malformedMetric) || null;
 
   return {
     realismStatus,
     confirmationAction,
     canProceed: confirmationAction !== GOAL_FEASIBILITY_ACTIONS.block,
+    targetValidation: {
+      status: malformedGoalAssessment?.targetValidationStatus
+        || (normalizedCompleteness.missingRequired.length ? GOAL_TARGET_VALIDATION_STATUSES.underconstrainedPlausible : GOAL_TARGET_VALIDATION_STATUSES.valid),
+      clarificationRequired: Boolean(
+        malformedGoalAssessment?.clarificationRequired
+        || normalizedCompleteness.missingRequired.length
+      ),
+      reason: malformedGoalAssessment?.targetValidationReason
+        || (normalizedCompleteness.missingRequired.length
+          ? `Need ${sanitizeText(normalizedCompleteness.missingRequired[0] || "", 160).toLowerCase()} before the target can lock.`
+          : ""),
+      issueKeys: malformedGoalAssessment?.targetValidationIssueKeys || [],
+    },
     missingConfidence,
     recommendedRevision,
     tradeoffSummary,

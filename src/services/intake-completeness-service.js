@@ -37,6 +37,15 @@ export const INTAKE_COMPLETENESS_QUESTION_KEYS = {
   maintainedStrengthBaseline: "maintained_strength_baseline",
 };
 
+export const INTAKE_COMPLETENESS_VALUE_TYPES = {
+  strengthBaseline: "strength_baseline",
+  athleticPowerBaseline: "athletic_power_baseline",
+  targetTimeline: "target_timeline",
+  runningBaseline: "running_baseline",
+  bodyCompAnchor: "body_comp_anchor",
+  appearanceProxyAnchor: "appearance_proxy_anchor",
+};
+
 const COMPLETENESS_SOURCE = "completeness";
 
 const COMPLETENESS_FIELD_FALLBACK_PATTERNS = {
@@ -69,6 +78,13 @@ const toFiniteNumber = (value, fallback = null) => {
 const normalizeNumberText = (value = "") => {
   if (value === "" || value === null || value === undefined) return "";
   return String(value).trim();
+};
+
+const readFiniteNumber = (value = "") => {
+  const normalized = normalizeNumberText(value);
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const parseFirstWeightLikeNumber = (text = "") => {
@@ -156,7 +172,33 @@ const parseExplicitDateText = (text = "") => {
   return normalized;
 };
 
-const hasTimingSignal = (text = "") => /\b(by|before|over the next|within|in)\b|\bspring\b|\bsummer\b|\bfall\b|\bautumn\b|\bwinter\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b|\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b/i.test(String(text || ""));
+const hasTimingSignal = (text = "") => /\b(by|before|over the next|within|in)\b|\bweek(?:s)?\b|\bmonth(?:s)?\b|\byear(?:s)?\b|\bspring\b|\bsummer\b|\bfall\b|\bautumn\b|\bwinter\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b|\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b/i.test(String(text || ""));
+
+const buildQuestionField = ({
+  key = "",
+  label = "",
+  inputType = "text",
+  expectedValueType = "text",
+  placeholder = "",
+  helperText = "",
+  required = false,
+  min = null,
+  max = null,
+  unit = "",
+  direction = "",
+} = {}) => ({
+  key: sanitizeText(key, 80),
+  label: sanitizeText(label, 120),
+  inputType: sanitizeText(inputType, 20) || "text",
+  expectedValueType: sanitizeText(expectedValueType, 80) || "text",
+  placeholder: sanitizeText(placeholder, 120),
+  helperText: sanitizeText(helperText, 180),
+  required: Boolean(required),
+  ...(Number.isFinite(min) ? { min } : {}),
+  ...(Number.isFinite(max) ? { max } : {}),
+  ...(unit ? { unit: sanitizeText(unit, 20) } : {}),
+  ...(direction ? { direction: sanitizeText(direction, 20).toLowerCase() } : {}),
+});
 
 const readStoredField = (answers = {}, fieldKey = "") => {
   const stored = answers?.intake_completeness?.fields?.[fieldKey];
@@ -288,6 +330,9 @@ const buildQuestion = ({
   label = "",
   goalRole = "primary",
   affectsTimeline = false,
+  expectedValueType = "",
+  inputFields = [],
+  validation = null,
 } = {}) => ({
   key,
   prompt: sanitizeText(prompt, 220),
@@ -298,11 +343,29 @@ const buildQuestion = ({
   fieldKeys: [...fieldKeys],
   goalRole,
   affectsTimeline,
+  expectedValueType: sanitizeText(expectedValueType, 80),
+  inputFields: toArray(inputFields)
+    .filter(Boolean)
+    .map((field) => buildQuestionField(field)),
+  validation: validation && typeof validation === "object"
+    ? {
+        kind: sanitizeText(validation.kind || "", 80).toLowerCase(),
+        message: sanitizeText(validation.message || "", 220),
+      }
+    : null,
 });
 
 const buildStrengthBaselinePrompt = (resolvedGoal = {}, goalRole = "primary") => {
+  const goalFamily = sanitizeText(resolvedGoal?.goalFamily || "", 40).toLowerCase();
   const liftLabel = sanitizeText(resolvedGoal?.primaryMetric?.label || "", 60).toLowerCase();
   const rolePrefix = goalRole === "maintained" ? "To protect the maintained strength goal, " : "";
+  if (goalFamily === "athletic_power") {
+    return {
+      label: goalRole === "maintained" ? "Current jump or dunk baseline for the maintained goal" : "Current jump or dunk baseline",
+      prompt: `${rolePrefix}what's your current jump baseline right now? A recent vertical estimate, rim-touch point, or how close you are to dunking is fine.`,
+      placeholder: "Example: 28-inch vertical, can grab rim, or close on one-foot jumps",
+    };
+  }
   const exerciseLabel = liftLabel || "that lift";
   return {
     label: goalRole === "maintained" ? "Current strength baseline for the maintained goal" : `Current ${exerciseLabel} baseline`,
@@ -319,6 +382,8 @@ const buildBodyCompAnchorPrompt = (facts = {}) => {
       label: "Current bodyweight and desired weight change",
       prompt: "What's your current bodyweight, and roughly how much are you trying to lose?",
       placeholder: "Example: 205 lb, trying to lose 20",
+      needsWeight,
+      needsTarget,
     };
   }
   if (needsWeight) {
@@ -326,12 +391,16 @@ const buildBodyCompAnchorPrompt = (facts = {}) => {
       label: "Current bodyweight",
       prompt: "What's your current bodyweight or closest recent scale weight?",
       placeholder: "Example: 205 lb",
+      needsWeight,
+      needsTarget,
     };
   }
   return {
     label: "Desired weight change",
     prompt: "Roughly how much weight are you trying to lose?",
     placeholder: "Example: 15-20 lb",
+    needsWeight,
+    needsTarget,
   };
 };
 
@@ -358,6 +427,52 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
         fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline],
         label: strengthPrompt.label,
         goalRole,
+        expectedValueType: goalFamily === "athletic_power"
+          ? INTAKE_COMPLETENESS_VALUE_TYPES.athleticPowerBaseline
+          : INTAKE_COMPLETENESS_VALUE_TYPES.strengthBaseline,
+        inputFields: goalFamily === "athletic_power"
+          ? [
+              {
+                key: INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline,
+                label: "Current jump or dunk baseline",
+                inputType: "text",
+                expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.athleticPowerBaseline,
+                placeholder: "Example: 28-inch vertical, can grab rim, or close on one-foot jumps",
+                helperText: "A quick note about your current jump, rim touch, or dunk status is enough.",
+                required: true,
+              },
+            ]
+          : [
+              {
+                key: "current_strength_baseline_weight",
+                label: "Current weight",
+                inputType: "number",
+                expectedValueType: "number",
+                placeholder: "185",
+                helperText: "Use a recent top set, best single, or estimated max.",
+                required: true,
+                min: 1,
+                max: 2000,
+                unit: "lb",
+              },
+              {
+                key: "current_strength_baseline_reps",
+                label: "Reps",
+                inputType: "number",
+                expectedValueType: "integer",
+                placeholder: "3",
+                helperText: "Optional if you entered a top set instead of a single.",
+                required: false,
+                min: 1,
+                max: 30,
+              },
+            ],
+        validation: {
+          kind: goalFamily === "athletic_power" ? "athletic_power_baseline" : "strength_baseline",
+          message: goalFamily === "athletic_power"
+            ? "Add a quick jump or dunk baseline so I can size this progression correctly."
+            : "Add a recent weight for this lift. Reps are optional if you only know the load.",
+        },
       }),
     }));
     optionalFields.push(buildRequirement({
@@ -386,6 +501,20 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
           label: "Race date or target month",
           goalRole,
           affectsTimeline: true,
+          expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
+          inputFields: [{
+            key: INTAKE_COMPLETENESS_FIELDS.targetTimeline,
+            label: "Race date or target month",
+            inputType: "text",
+            expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
+            placeholder: "Example: October 12 or early October",
+            helperText: "A specific date is ideal, but a target month is enough to keep moving.",
+            required: true,
+          }],
+          validation: {
+            kind: "target_timeline",
+            message: "Enter the race date, target month, or rough time window for this goal.",
+          },
         }),
       }));
     }
@@ -413,6 +542,42 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
         ],
         label: runningBaselineLabel,
         goalRole,
+        expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.runningBaseline,
+        inputFields: [
+          {
+            key: INTAKE_COMPLETENESS_FIELDS.currentRunFrequency,
+            label: "Runs per week",
+            inputType: "number",
+            expectedValueType: "integer",
+            placeholder: "3",
+            helperText: "How many times are you currently running in a normal week?",
+            required: true,
+            min: 1,
+            max: 14,
+          },
+          {
+            key: INTAKE_COMPLETENESS_FIELDS.longestRecentRun,
+            label: "Longest recent run",
+            inputType: "text",
+            expectedValueType: "distance_or_duration",
+            placeholder: "Example: 6 miles or 90 minutes",
+            helperText: "Add either distance or duration if you know it.",
+            required: false,
+          },
+          {
+            key: INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline,
+            label: "Recent pace or race result",
+            inputType: "text",
+            expectedValueType: "pace_or_result",
+            placeholder: "Example: 9:15 easy pace or 29:30 5K",
+            helperText: "Optional if the long-run field already tells the story.",
+            required: false,
+          },
+        ],
+        validation: {
+          kind: "running_baseline",
+          message: "Add runs per week plus either a longest recent run or a recent pace/race result.",
+        },
       }),
     }));
     optionalFields.push(buildRequirement({
@@ -440,6 +605,38 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
         fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentBodyweight, INTAKE_COMPLETENESS_FIELDS.targetWeightChange],
         label: anchorPrompt.label,
         goalRole,
+        expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.bodyCompAnchor,
+        inputFields: [
+          {
+            key: INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
+            label: "Current bodyweight",
+            inputType: "number",
+            expectedValueType: "number",
+            placeholder: "205",
+            helperText: "Closest recent scale weight is fine.",
+            required: anchorPrompt.needsWeight,
+            min: 1,
+            max: 1000,
+            unit: "lb",
+          },
+          {
+            key: INTAKE_COMPLETENESS_FIELDS.targetWeightChange,
+            label: "Target loss",
+            inputType: "number",
+            expectedValueType: "number",
+            placeholder: "20",
+            helperText: "Enter the pounds you want to lose.",
+            required: anchorPrompt.needsTarget,
+            min: 1,
+            max: 300,
+            unit: "lb",
+            direction: "loss",
+          },
+        ],
+        validation: {
+          kind: "body_comp_anchor",
+          message: "Add the current bodyweight and target change I need to size this goal realistically.",
+        },
       }),
     }));
     if (!facts?.targetWindowKnown) {
@@ -457,6 +654,20 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
           label: "Target timeline",
           goalRole,
           affectsTimeline: true,
+          expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
+          inputFields: [{
+            key: INTAKE_COMPLETENESS_FIELDS.targetTimeline,
+            label: "Target timeline",
+            inputType: "text",
+            expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
+            placeholder: "Example: by August or over the next 16 weeks",
+            helperText: "A rough window is enough. It does not need to be exact.",
+            required: true,
+          }],
+          validation: {
+            kind: "target_timeline",
+            message: "Enter a date, month, or rough time window for this goal.",
+          },
         }),
       }));
     }
@@ -492,6 +703,37 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
         ],
         label: "Appearance tracking proxy",
         goalRole,
+        expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.appearanceProxyAnchor,
+        inputFields: [
+          {
+            key: INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
+            label: "Current bodyweight",
+            inputType: "number",
+            expectedValueType: "number",
+            placeholder: "198",
+            helperText: "Optional if waist is the better proxy for you.",
+            required: false,
+            min: 1,
+            max: 1000,
+            unit: "lb",
+          },
+          {
+            key: INTAKE_COMPLETENESS_FIELDS.currentWaist,
+            label: "Current waist",
+            inputType: "number",
+            expectedValueType: "number",
+            placeholder: "35",
+            helperText: "Optional if bodyweight is the better proxy for you.",
+            required: false,
+            min: 1,
+            max: 100,
+            unit: "in",
+          },
+        ],
+        validation: {
+          kind: "appearance_proxy_anchor",
+          message: "Add at least one proxy we can track right away: bodyweight or waist.",
+        },
       }),
     }));
     if (!facts?.targetWindowKnown && appearanceHasExplicitTimingSignal) {
@@ -509,6 +751,20 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
           label: "Appearance goal timeline",
           goalRole,
           affectsTimeline: true,
+          expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
+          inputFields: [{
+            key: INTAKE_COMPLETENESS_FIELDS.targetTimeline,
+            label: "Appearance goal timeline",
+            inputType: "text",
+            expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
+            placeholder: "Example: by late summer",
+            helperText: "A rough target month or season is enough.",
+            required: true,
+          }],
+          validation: {
+            kind: "target_timeline",
+            message: "Enter the rough time window for this appearance goal.",
+          },
         }),
       }));
     }
@@ -553,6 +809,314 @@ const dedupeQuestions = (questions = []) => {
       seen.add(key);
       return true;
     });
+};
+
+const normalizeStructuredAnswerValues = (answerValues = {}) => Object.fromEntries(
+  Object.entries(answerValues && typeof answerValues === "object" ? answerValues : {})
+    .map(([key, value]) => [sanitizeText(key, 80), normalizeNumberText(value)])
+    .filter(([key]) => key)
+);
+
+const validateTimelineValue = (value = "") => {
+  const clean = sanitizeText(value, 120);
+  if (!clean) return "";
+  if (/\b\d{4}-\d{2}-\d{2}\b/.test(clean) || hasTimingSignal(clean)) return clean;
+  return "";
+};
+
+export const isStructuredIntakeCompletenessQuestion = (question = {}) => (
+  sanitizeText(question?.source || "", 40).toLowerCase() === COMPLETENESS_SOURCE
+  && Array.isArray(question?.inputFields)
+  && question.inputFields.length > 0
+);
+
+export const buildIntakeCompletenessDraft = ({
+  question = null,
+  answers = {},
+} = {}) => {
+  if (!isStructuredIntakeCompletenessQuestion(question)) return {};
+  const storedStrength = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline);
+  const storedTimeline = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.targetTimeline);
+  const storedRunFrequency = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentRunFrequency);
+  const storedLongestRun = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.longestRecentRun);
+  const storedRecentPace = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline);
+  const storedBodyweight = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight);
+  const storedTargetChange = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.targetWeightChange);
+  const storedWaist = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentWaist);
+  const values = {};
+
+  switch (question?.key) {
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.strengthBaseline:
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.maintainedStrengthBaseline:
+      if (question?.expectedValueType === INTAKE_COMPLETENESS_VALUE_TYPES.athleticPowerBaseline) {
+        values[INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline] = sanitizeText(storedStrength?.raw || "", 160);
+      } else {
+        values.current_strength_baseline_weight = Number.isFinite(storedStrength?.weight) ? String(storedStrength.weight) : "";
+        values.current_strength_baseline_reps = Number.isFinite(storedStrength?.reps) ? String(storedStrength.reps) : "";
+      }
+      break;
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.runningTiming:
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline:
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceTimeline:
+      values[INTAKE_COMPLETENESS_FIELDS.targetTimeline] = sanitizeText(storedTimeline?.raw || storedTimeline?.value || "", 120);
+      break;
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline:
+      values[INTAKE_COMPLETENESS_FIELDS.currentRunFrequency] = Number.isFinite(storedRunFrequency?.value) ? String(storedRunFrequency.value) : "";
+      values[INTAKE_COMPLETENESS_FIELDS.longestRecentRun] = sanitizeText(storedLongestRun?.raw || "", 160);
+      values[INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline] = sanitizeText(storedRecentPace?.raw || "", 160);
+      break;
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor: {
+      const targetField = toArray(question?.inputFields).find((field) => field?.key === INTAKE_COMPLETENESS_FIELDS.targetWeightChange);
+      const direction = sanitizeText(targetField?.direction || "", 20).toLowerCase();
+      values[INTAKE_COMPLETENESS_FIELDS.currentBodyweight] = Number.isFinite(storedBodyweight?.value) ? String(storedBodyweight.value) : "";
+      values[INTAKE_COMPLETENESS_FIELDS.targetWeightChange] = Number.isFinite(storedTargetChange?.value)
+        ? String(direction === "loss" ? Math.abs(storedTargetChange.value) : storedTargetChange.value)
+        : "";
+      break;
+    }
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor:
+      values[INTAKE_COMPLETENESS_FIELDS.currentBodyweight] = Number.isFinite(storedBodyweight?.value) ? String(storedBodyweight.value) : "";
+      values[INTAKE_COMPLETENESS_FIELDS.currentWaist] = Number.isFinite(storedWaist?.value) ? String(storedWaist.value) : "";
+      break;
+    default:
+      break;
+  }
+
+  return values;
+};
+
+export const validateIntakeCompletenessAnswer = ({
+  question = null,
+  answerText = "",
+  answerValues = null,
+} = {}) => {
+  const fieldErrors = {};
+  const cleanText = sanitizeText(answerText, 220);
+  const values = normalizeStructuredAnswerValues(answerValues);
+
+  if (!isStructuredIntakeCompletenessQuestion(question)) {
+    return {
+      isStructured: false,
+      isValid: Boolean(cleanText),
+      fieldErrors,
+      formError: cleanText ? "" : "Add the detail I asked for before continuing.",
+      summaryText: cleanText,
+      normalizedValues: {},
+    };
+  }
+
+  const setFieldError = (fieldKey, message) => {
+    const cleanKey = sanitizeText(fieldKey, 80);
+    const cleanMessage = sanitizeText(message, 180);
+    if (cleanKey && cleanMessage) fieldErrors[cleanKey] = cleanMessage;
+  };
+  const inputFieldByKey = Object.fromEntries(
+    toArray(question?.inputFields).map((field) => [sanitizeText(field?.key, 80), field]).filter(([key]) => key)
+  );
+
+  let summaryText = "";
+  let formError = "";
+  let normalizedValues = {};
+
+  switch (question?.key) {
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.strengthBaseline:
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.maintainedStrengthBaseline: {
+      if (question?.expectedValueType === INTAKE_COMPLETENESS_VALUE_TYPES.athleticPowerBaseline) {
+        const baselineText = sanitizeText(values[INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline] || "", 160);
+        if (!baselineText) {
+          setFieldError(INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline, "Add your current jump or dunk baseline.");
+          break;
+        }
+        summaryText = baselineText;
+        normalizedValues = {
+          [INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline]: {
+            raw: baselineText,
+            value: baselineText,
+          },
+        };
+        break;
+      }
+      const weight = readFiniteNumber(values.current_strength_baseline_weight);
+      const repsValue = sanitizeText(values.current_strength_baseline_reps || "", 40);
+      const reps = repsValue ? readFiniteNumber(repsValue) : null;
+      if (!Number.isFinite(weight) || weight <= 0) {
+        setFieldError("current_strength_baseline_weight", "Enter a recent weight for this lift.");
+      }
+      if (repsValue && (!Number.isFinite(reps) || reps <= 0)) {
+        setFieldError("current_strength_baseline_reps", "Enter reps as a whole number or leave it blank.");
+      }
+      if (Object.keys(fieldErrors).length > 0) break;
+      summaryText = Number.isFinite(reps) ? `${weight} x ${Math.round(reps)}` : `${weight}`;
+      normalizedValues = {
+        [INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline]: {
+          raw: summaryText,
+          value: weight,
+          weight,
+          reps: Number.isFinite(reps) ? Math.round(reps) : null,
+        },
+      };
+      break;
+    }
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.runningTiming:
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline:
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceTimeline: {
+      const timelineText = validateTimelineValue(values[INTAKE_COMPLETENESS_FIELDS.targetTimeline] || cleanText);
+      if (!timelineText) {
+        setFieldError(INTAKE_COMPLETENESS_FIELDS.targetTimeline, "Enter a date, target month, or rough time window.");
+        break;
+      }
+      summaryText = timelineText;
+      normalizedValues = {
+        [INTAKE_COMPLETENESS_FIELDS.targetTimeline]: {
+          raw: timelineText,
+          value: timelineText,
+        },
+      };
+      break;
+    }
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline: {
+      const frequency = readFiniteNumber(values[INTAKE_COMPLETENESS_FIELDS.currentRunFrequency]);
+      const longestRunText = sanitizeText(values[INTAKE_COMPLETENESS_FIELDS.longestRecentRun] || "", 160);
+      const recentPaceText = sanitizeText(values[INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline] || "", 160);
+      const longestMiles = parseDistanceMiles(longestRunText);
+      const longestMinutes = parseDurationMinutes(longestRunText);
+      const paceText = parsePaceLikeText(recentPaceText);
+      if (!Number.isFinite(frequency) || frequency <= 0) {
+        setFieldError(INTAKE_COMPLETENESS_FIELDS.currentRunFrequency, "Enter how many runs you do in a normal week.");
+      }
+      if (!longestRunText && !recentPaceText) {
+        formError = "Add either your longest recent run or a recent pace/race result.";
+      } else if (!Number.isFinite(longestMiles) && !Number.isFinite(longestMinutes) && !paceText) {
+        formError = "Add either a longest run like 6 miles / 90 minutes, or a recent pace / race result.";
+      }
+      if (Object.keys(fieldErrors).length > 0 || formError) break;
+      summaryText = [
+        `${Math.round(frequency)} runs/week`,
+        longestRunText ? `longest ${longestRunText}` : "",
+        paceText ? paceText : "",
+      ].filter(Boolean).join(", ");
+      normalizedValues = {
+        [INTAKE_COMPLETENESS_FIELDS.currentRunFrequency]: {
+          raw: `${Math.round(frequency)}`,
+          value: Math.round(frequency),
+        },
+        ...(longestRunText
+          ? {
+              [INTAKE_COMPLETENESS_FIELDS.longestRecentRun]: {
+                raw: longestRunText,
+                value: Number.isFinite(longestMiles) ? longestMiles : longestMinutes,
+                miles: Number.isFinite(longestMiles) ? longestMiles : null,
+                minutes: Number.isFinite(longestMinutes) ? longestMinutes : null,
+              },
+            }
+          : {}),
+        ...(paceText
+          ? {
+              [INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline]: {
+                raw: recentPaceText,
+                value: paceText,
+                paceText,
+              },
+            }
+          : {}),
+      };
+      break;
+    }
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor: {
+      const currentBodyweight = readFiniteNumber(values[INTAKE_COMPLETENESS_FIELDS.currentBodyweight]);
+      const targetChange = readFiniteNumber(values[INTAKE_COMPLETENESS_FIELDS.targetWeightChange]);
+      const targetField = inputFieldByKey[INTAKE_COMPLETENESS_FIELDS.targetWeightChange] || {};
+      const weightField = inputFieldByKey[INTAKE_COMPLETENESS_FIELDS.currentBodyweight] || {};
+      if (weightField.required && (!Number.isFinite(currentBodyweight) || currentBodyweight <= 0)) {
+        setFieldError(INTAKE_COMPLETENESS_FIELDS.currentBodyweight, "Enter your current bodyweight.");
+      }
+      if (targetField.required && (!Number.isFinite(targetChange) || targetChange <= 0)) {
+        setFieldError(INTAKE_COMPLETENESS_FIELDS.targetWeightChange, "Enter how many pounds you want to lose.");
+      }
+      if (Object.keys(fieldErrors).length > 0) break;
+      const normalizedTargetChange = Number.isFinite(targetChange)
+        ? (sanitizeText(targetField.direction || "", 20).toLowerCase() === "loss" ? -Math.abs(targetChange) : targetChange)
+        : null;
+      summaryText = [
+        Number.isFinite(currentBodyweight) ? `${currentBodyweight} lb` : "",
+        Number.isFinite(normalizedTargetChange)
+          ? `${normalizedTargetChange < 0 ? "lose" : "change"} ${Math.abs(normalizedTargetChange)} lb`
+          : "",
+      ].filter(Boolean).join(", ");
+      normalizedValues = {
+        ...(Number.isFinite(currentBodyweight)
+          ? {
+              [INTAKE_COMPLETENESS_FIELDS.currentBodyweight]: {
+                raw: `${currentBodyweight} lb`,
+                value: currentBodyweight,
+                unit: "lb",
+              },
+            }
+          : {}),
+        ...(Number.isFinite(normalizedTargetChange)
+          ? {
+              [INTAKE_COMPLETENESS_FIELDS.targetWeightChange]: {
+                raw: `${Math.abs(normalizedTargetChange)} lb`,
+                value: normalizedTargetChange,
+                unit: "lb",
+              },
+            }
+          : {}),
+      };
+      if (weightField.required && !normalizedValues[INTAKE_COMPLETENESS_FIELDS.currentBodyweight]) {
+        setFieldError(INTAKE_COMPLETENESS_FIELDS.currentBodyweight, "Enter your current bodyweight.");
+      }
+      if (targetField.required && !normalizedValues[INTAKE_COMPLETENESS_FIELDS.targetWeightChange]) {
+        setFieldError(INTAKE_COMPLETENESS_FIELDS.targetWeightChange, "Enter how many pounds you want to lose.");
+      }
+      break;
+    }
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor: {
+      const currentBodyweight = readFiniteNumber(values[INTAKE_COMPLETENESS_FIELDS.currentBodyweight]);
+      const currentWaist = readFiniteNumber(values[INTAKE_COMPLETENESS_FIELDS.currentWaist]);
+      if ((!Number.isFinite(currentBodyweight) || currentBodyweight <= 0) && (!Number.isFinite(currentWaist) || currentWaist <= 0)) {
+        formError = "Add either your current bodyweight or your waist so we have one clean proxy.";
+        break;
+      }
+      summaryText = [
+        Number.isFinite(currentBodyweight) && currentBodyweight > 0 ? `${currentBodyweight} lb` : "",
+        Number.isFinite(currentWaist) && currentWaist > 0 ? `${currentWaist} in waist` : "",
+      ].filter(Boolean).join(", ");
+      normalizedValues = {
+        ...(Number.isFinite(currentBodyweight) && currentBodyweight > 0
+          ? {
+              [INTAKE_COMPLETENESS_FIELDS.currentBodyweight]: {
+                raw: `${currentBodyweight} lb`,
+                value: currentBodyweight,
+                unit: "lb",
+              },
+            }
+          : {}),
+        ...(Number.isFinite(currentWaist) && currentWaist > 0
+          ? {
+              [INTAKE_COMPLETENESS_FIELDS.currentWaist]: {
+                raw: `${currentWaist} in`,
+                value: currentWaist,
+                unit: "in",
+              },
+            }
+          : {}),
+      };
+      break;
+    }
+    default:
+      formError = sanitizeText(question?.validation?.message || "", 220) || "Add the detail I asked for before continuing.";
+      break;
+  }
+
+  return {
+    isStructured: true,
+    isValid: Object.keys(fieldErrors).length === 0 && !formError && Object.keys(normalizedValues).length > 0,
+    fieldErrors,
+    formError,
+    summaryText,
+    normalizedValues,
+  };
 };
 
 export const deriveIntakeCompletenessState = ({
@@ -609,10 +1173,18 @@ export const applyIntakeCompletenessAnswer = ({
   answers = {},
   question = null,
   answerText = "",
+  answerValues = null,
 } = {}) => {
   const cleanAnswer = sanitizeText(answerText, 220);
-  if (!cleanAnswer || question?.source !== COMPLETENESS_SOURCE) {
-    return { answers, storedFieldKeys: [] };
+  const structuredValidation = validateIntakeCompletenessAnswer({
+    question,
+    answerText,
+    answerValues,
+  });
+  const hasStructuredPayload = structuredValidation.isStructured;
+
+  if (((!cleanAnswer && !hasStructuredPayload) || question?.source !== COMPLETENESS_SOURCE)) {
+    return { answers, storedFieldKeys: [], validation: structuredValidation };
   }
 
   let nextAnswers = answers;
@@ -630,6 +1202,26 @@ export const applyIntakeCompletenessAnswer = ({
     nextAnswers = applyStructuredField(nextAnswers, fieldKey, cleanAnswer, { value: parsedValue, extra });
     storedFieldKeys.push(fieldKey);
   };
+
+  if (hasStructuredPayload) {
+    if (!structuredValidation.isValid) {
+      return {
+        answers,
+        storedFieldKeys: [],
+        validation: structuredValidation,
+      };
+    }
+    Object.entries(structuredValidation.normalizedValues || {}).forEach(([fieldKey, record]) => {
+      if (!canStoreField(fieldKey) || !record) return;
+      nextAnswers = upsertCompletenessField(nextAnswers, fieldKey, record);
+      storedFieldKeys.push(fieldKey);
+    });
+    return {
+      answers: nextAnswers,
+      storedFieldKeys,
+      validation: structuredValidation,
+    };
+  }
 
   switch (question?.key) {
     case INTAKE_COMPLETENESS_QUESTION_KEYS.strengthBaseline:
@@ -740,6 +1332,7 @@ export const applyIntakeCompletenessAnswer = ({
   return {
     answers: nextAnswers,
     storedFieldKeys,
+    validation: structuredValidation,
   };
 };
 

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createAuthStorageModule } from "../src/modules-auth-storage.js";
+import { createAuthStorageModule, LOCAL_CACHE_KEY } from "../src/modules-auth-storage.js";
 
 const noop = () => {};
 
@@ -179,4 +179,58 @@ test("handleSignOut clears the cached auth session and marks storage as signed o
   assert.equal(localStorage.getItem("trainer_auth_session_v1"), "null");
   assert.equal(nextStorageStatus?.reason, "signed_out");
   assert.ok(requests.some((request) => /\/auth\/v1\/logout$/.test(request.url) && request.method === "POST"));
+});
+
+test("persistAll keeps local cache active when no signed-in session exists", async () => {
+  const localStore = new Map();
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+  global.localStorage = {
+    getItem: (key) => (localStore.has(key) ? localStore.get(key) : null),
+    setItem: (key, value) => { localStore.set(key, String(value)); },
+    removeItem: (key) => { localStore.delete(key); },
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async () => {
+      throw new Error("network should not be called without auth");
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  let nextStorageStatus = null;
+  const payload = {
+    version: "runtime_storage_v1",
+    logs: {},
+    bodyweights: [],
+    paceOverrides: {},
+    weekNotes: {},
+    planAlerts: [],
+    personalization: { profile: { onboardingComplete: true } },
+    goals: [],
+    coachActions: [],
+    coachPlanAdjustments: {},
+    dailyCheckins: {},
+    weeklyCheckins: {},
+    nutritionFavorites: {},
+    nutritionActualLogs: {},
+    plannedDayRecords: {},
+    planWeekRecords: {},
+  };
+
+  await module.persistAll({
+    payload,
+    authSession: null,
+    setStorageStatus: (value) => { nextStorageStatus = value; },
+    setAuthSession: noop,
+  });
+
+  assert.equal(nextStorageStatus?.reason, "not_signed_in");
+  assert.deepEqual(JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY)), payload);
 });
