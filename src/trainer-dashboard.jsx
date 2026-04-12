@@ -111,6 +111,7 @@ import {
   sanitizeDisplayCopy,
 } from "./services/text-format-service.js";
 import { buildDayPrescriptionDisplay } from "./services/day-prescription-display-service.js";
+import { getMovementExplanation } from "./services/movement-explanation-service.js";
 import {
   WORKOUT_LOG_FAMILIES,
   buildWorkoutLogDraft,
@@ -10716,6 +10717,7 @@ class ProgramTabErrorBoundary extends React.Component {
 function PlannedSessionDetailCard({ session = null, accentColor = "#00c2ff" }) {
   if (!session?.summary) return null;
   const summary = session.summary;
+  const exercisePreview = summary.exercisePreview || { available: false, rows: [], note: "" };
   return (
     <div style={{ border:`1px solid ${accentColor}30`, borderRadius:12, background:"#0b1220", padding:"0.75rem 0.8rem", display:"grid", gap:"0.42rem" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap" }}>
@@ -10746,6 +10748,67 @@ function PlannedSessionDetailCard({ session = null, accentColor = "#00c2ff" }) {
         <div style={{ fontSize:"0.51rem", color:"#8fa5c8", lineHeight:1.55 }}>
           Why this day exists: {summary.why}
         </div>
+      )}
+      <MovementExplanationInline
+        label={summary.sessionLabel || session.title || ""}
+        note={summary.movementNote || ""}
+        accentColor={accentColor}
+      />
+      {(exercisePreview.available || exercisePreview.note) && (
+        <div style={{ border:`1px solid ${accentColor}22`, borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
+          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>EXERCISE PREVIEW</div>
+          {exercisePreview.available ? (
+            <div style={{ display:"grid", gap:"0.22rem" }}>
+              {(exercisePreview.rows || []).map((row, index) => (
+                <div key={`${row.exercise}_${index}`} style={{ display:"grid", gap:"0.06rem" }}>
+                  <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                    {row.exercise}{row.structure ? ` · ${row.structure}` : ""}
+                  </div>
+                  {!!row.movementNote && (
+                    <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{row.movementNote}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5 }}>{exercisePreview.note}</div>
+          )}
+          {!!exercisePreview.available && !!exercisePreview.note && (
+            <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>{exercisePreview.note}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MovementExplanationInline({ label = "", note = "", accentColor = "#00c2ff" }) {
+  const explanation = getMovementExplanation(label);
+  const shortNote = sanitizeDisplayText(note || explanation?.whatItIs || "");
+  const howToDoIt = sanitizeDisplayText(explanation?.howToDoIt || "");
+  const repCountsAs = sanitizeDisplayText(explanation?.repCountsAs || "");
+  const substitutions = (explanation?.commonSubstitutions || []).map((entry) => sanitizeDisplayText(entry)).filter(Boolean).join(", ");
+  const setupNotes = sanitizeDisplayText(explanation?.setupNotes || "");
+  const cautionNotes = sanitizeDisplayText(explanation?.cautionNotes || "");
+  const hasExpandedContent = Boolean(howToDoIt || repCountsAs || substitutions || setupNotes || cautionNotes);
+
+  if (!shortNote) return null;
+
+  return (
+    <div style={{ border:`1px solid ${accentColor}24`, borderRadius:10, background:`${accentColor}0d`, padding:"0.48rem 0.55rem", display:"grid", gap:"0.26rem" }}>
+      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>WHAT THIS MEANS</div>
+      <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.55 }}>{shortNote}</div>
+      {hasExpandedContent && (
+        <details>
+          <summary style={{ cursor:"pointer", fontSize:"0.48rem", color:accentColor }}>More detail</summary>
+          <div style={{ display:"grid", gap:"0.18rem", marginTop:"0.28rem", fontSize:"0.49rem", color:"#cbd5e1", lineHeight:1.55 }}>
+            {!!howToDoIt && <div>How: {howToDoIt}</div>}
+            {!!repCountsAs && <div>Rep: {repCountsAs}</div>}
+            {!!substitutions && <div>Subs: {substitutions}</div>}
+            {!!setupNotes && <div>Setup: {setupNotes}</div>}
+            {!!cautionNotes && <div>Caution: {cautionNotes}</div>}
+          </div>
+        </details>
       )}
     </div>
   );
@@ -10849,6 +10912,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
       training: todayWorkout,
       week: planDay?.week || {},
       provenance: planDay?.provenance || null,
+      prescribedExercises: buildStrengthPrescriptionEntriesForLogging(todayWorkout),
     });
     return {
       key: `week_${currentWeek}_${dayLabel}_live`,
@@ -10878,6 +10942,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
         week: {
           weeklyIntent: sessionsByDay?.weeklyIntent || {},
         },
+        prescribedExercises: buildStrengthPrescriptionEntriesForLogging(session),
       });
       return {
         key: `week_${absoluteWeek}_${dayKey}`,
@@ -10904,6 +10969,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
             successDefinition: planWeekForRow?.successDefinition || "",
             programBlock: planWeekForRow?.programBlock || null,
           },
+          prescribedExercises: buildStrengthPrescriptionEntriesForLogging(session),
         });
         return {
           key: `week_${absoluteWeek}_${dayKey}`,
@@ -12192,11 +12258,35 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
               Prescribed: {detailed.prescribedLabel || sanitizeStatusLabel(detailed.sessionType)}
             </div>
           )}
+          <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
+            <span style={{ fontSize:"0.47rem", color:C.blue, background:`${C.blue}14`, border:`1px solid ${C.blue}24`, borderRadius:999, padding:"0.12rem 0.38rem" }}>
+              {detailed.family === WORKOUT_LOG_FAMILIES.run ? "Run-first logging"
+                : detailed.family === WORKOUT_LOG_FAMILIES.strength ? "Strength-first logging"
+                : detailed.family === WORKOUT_LOG_FAMILIES.mixed ? "Split run + strength logging"
+                : "Quick fallback logging"}
+            </span>
+            {!!detailed.substitutionSupport?.allowed && (
+              <span style={{ fontSize:"0.47rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #1e293b", borderRadius:999, padding:"0.12rem 0.38rem" }}>
+                Exercise swaps allowed
+              </span>
+            )}
+          </div>
+          <MovementExplanationInline
+            label={detailed.prescribedLabel || detailed.sessionLabel || ""}
+            note={(detailed.prescribedLabel || detailed.sessionLabel) ? buildDayPrescriptionDisplay({
+              training: {
+                type: detailed.sessionType,
+                label: detailed.prescribedLabel || detailed.sessionLabel,
+              },
+              includeWhy: false,
+            }).movementNote : ""}
+            accentColor={C.blue}
+          />
 
-          {(detailed.family === WORKOUT_LOG_FAMILIES.run || detailed.family === WORKOUT_LOG_FAMILIES.mixed || detailed.family === WORKOUT_LOG_FAMILIES.generic) && (
+          {!!detailed.sections?.run?.enabled && (
             <div style={{ display:"grid", gap:"0.35rem", borderTop:"1px solid #1e293b", paddingTop:"0.45rem" }}>
               <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Run log</div>
-              {(detailed.run?.purpose || detailed.run?.structure) && detailed.family !== WORKOUT_LOG_FAMILIES.generic && (
+              {(detailed.run?.purpose || detailed.run?.structure) && (
                 <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5 }}>
                   {joinDisplayParts([detailed.run?.purpose, detailed.run?.structure])}
                 </div>
@@ -12235,11 +12325,16 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
             </div>
           )}
 
-          {(detailed.family === WORKOUT_LOG_FAMILIES.strength || detailed.family === WORKOUT_LOG_FAMILIES.mixed) && (
+          {!!detailed.sections?.strength?.enabled && (
             <div style={{ display:"grid", gap:"0.4rem", borderTop:"1px solid #1e293b", paddingTop:"0.45rem" }}>
               <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>
                 {detailed.strength?.hasPrescribedStructure ? "Strength log" : "Strength log (generic fallback)"}
               </div>
+              {!!detailed.substitutionSupport?.allowed && (
+                <div style={{ fontSize:"0.48rem", color:"#94a3b8", lineHeight:1.45 }}>
+                  Edit the exercise name if you swapped the prescribed movement. Substitutions keep planned vs actual separate.
+                </div>
+              )}
               {(detailed.strength?.rows || []).length > 0 ? (
                 <div style={{ display:"grid", gap:"0.35rem" }}>
                   {(detailed.strength?.rows || []).map((row, index) => {
@@ -12310,7 +12405,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
             </div>
           )}
 
-          {(detailed.generic?.visible || detailed.family === WORKOUT_LOG_FAMILIES.generic) && (
+          {!!detailed.sections?.generic?.enabled && (
             <div style={{ display:"grid", gap:"0.35rem", borderTop:"1px solid #1e293b", paddingTop:"0.45rem" }}>
               <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Quick strength fallback</div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
