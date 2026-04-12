@@ -113,6 +113,11 @@ import {
 import { buildDayPrescriptionDisplay } from "./services/day-prescription-display-service.js";
 import { getMovementExplanation } from "./services/movement-explanation-service.js";
 import {
+  GOAL_ANCHOR_QUICK_ENTRY_TYPES,
+  buildGoalAnchorQuickEntryModel,
+  upsertGoalAnchorQuickEntry,
+} from "./services/goal-anchor-quick-entry-service.js";
+import {
   WORKOUT_LOG_FAMILIES,
   buildWorkoutLogDraft,
   buildWorkoutLogEntryFromDraft,
@@ -394,6 +399,15 @@ const toDateKey = (v) => {
   if (Number.isNaN(d.getTime())) return new Date().toISOString().split("T")[0];
   d.setHours(0, 0, 0, 0);
   return d.toISOString().split("T")[0];
+};
+
+const sortDatedEntries = (rows = []) => [...(Array.isArray(rows) ? rows : [])]
+  .filter((row) => String(row?.date || "").trim())
+  .sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
+
+const getLatestDatedEntry = (rows = []) => {
+  const sorted = sortDatedEntries(rows);
+  return sorted[sorted.length - 1] || null;
 };
 
 const parseLiftGoalWeights = (goals = []) => {
@@ -2688,6 +2702,11 @@ const DEFAULT_PERSONALIZATION = {
     lastKnownLng: null,
     lastUpdatedAt: 0,
   },
+  manualProgressInputs: {
+    measurements: {},
+    metrics: {},
+    benchmarks: {},
+  },
   coachMemory: {
     wins: [],
     constraints: [],
@@ -2810,6 +2829,22 @@ const mergePersonalization = (base, patch) => ({
   },
   nutritionPreferenceState: { ...base.nutritionPreferenceState, ...(patch?.nutritionPreferenceState || {}) },
   localFoodContext: { ...base.localFoodContext, ...(patch?.localFoodContext || {}) },
+  manualProgressInputs: {
+    ...(base.manualProgressInputs || DEFAULT_PERSONALIZATION.manualProgressInputs),
+    ...(patch?.manualProgressInputs || {}),
+    measurements: {
+      ...((base.manualProgressInputs || DEFAULT_PERSONALIZATION.manualProgressInputs).measurements || {}),
+      ...(patch?.manualProgressInputs?.measurements || {}),
+    },
+    metrics: {
+      ...((base.manualProgressInputs || DEFAULT_PERSONALIZATION.manualProgressInputs).metrics || {}),
+      ...(patch?.manualProgressInputs?.metrics || {}),
+    },
+    benchmarks: {
+      ...((base.manualProgressInputs || DEFAULT_PERSONALIZATION.manualProgressInputs).benchmarks || {}),
+      ...(patch?.manualProgressInputs?.benchmarks || {}),
+    },
+  },
   coachMemory: { ...base.coachMemory, ...(patch?.coachMemory || {}), wins: patch?.coachMemory?.wins || base.coachMemory.wins, constraints: patch?.coachMemory?.constraints || base.coachMemory.constraints },
 });
 
@@ -5460,6 +5495,17 @@ export default function TrainerDashboard() {
     } catch(e) { logDiag("saveBodyweights fallback", e.message); setStorageStatus(classifyStorageError(e)); }
   };
 
+  const saveManualProgressInputs = async (update) => {
+    const currentInputs = personalization?.manualProgressInputs || DEFAULT_PERSONALIZATION.manualProgressInputs;
+    const nextInputs = typeof update === "function" ? update(currentInputs) : (update || currentInputs);
+    const nextPersonalization = mergePersonalization(personalization, { manualProgressInputs: nextInputs });
+    setPersonalization(nextPersonalization);
+    try {
+      await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
+      setLastSaved(new Date().toLocaleTimeString());
+    } catch(e) { logDiag("saveManualProgressInputs fallback", e.message); setStorageStatus(classifyStorageError(e)); }
+  };
+
   const savePlanState = async (newOvr, newNotes, newAlerts) => {
     try { await persistAll(logs, bodyweights, newOvr, newNotes, newAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs); } catch(e) {}
   };
@@ -7034,12 +7080,12 @@ Keep it plain and specific.`;
         {/* PROGRAM */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} todayWorkout={planDay?.resolved?.training} />
+            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} todayWorkout={planDay?.resolved?.training} />
           </ProgramTabErrorBoundary>
         )}
 
         {/* LOG */}
-        {tab === 2 && <LogTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} />}
+        {tab === 2 && <LogTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} personalization={personalization} athleteProfile={canonicalAthlete} saveManualProgressInputs={saveManualProgressInputs} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} />}
 
         {/* NUTRITION */}
         {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} weeklyNutritionReview={weeklyNutritionReview} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} />}
@@ -10804,12 +10850,194 @@ function MovementExplanationInline({ label = "", note = "", accentColor = "#00c2
   );
 }
 
-function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, todayWorkout: legacyTodayWorkout }) {
+function GoalAnchorQuickEntryPanel({
+  goalProgressTracking = null,
+  surface = "program",
+  bodyweights = [],
+  manualProgressInputs = {},
+  saveBodyweights = async () => null,
+  saveManualProgressInputs = async () => null,
+  accentColor = "#00c2ff",
+}) {
+  const todayKey = toDateKey(new Date());
+  const anchors = useMemo(
+    () => buildGoalAnchorQuickEntryModel({ goalProgressTracking }).filter((anchor) => (anchor?.surfaces || []).includes(surface)),
+    [goalProgressTracking, surface]
+  );
+  const anchorTypes = new Set(anchors.map((anchor) => anchor.type));
+  const latestBodyweight = bodyweights?.length ? bodyweights[bodyweights.length - 1] : null;
+  const latestWaist = getLatestDatedEntry(manualProgressInputs?.measurements?.waist_circumference || []);
+  const latestRunBenchmark = getLatestDatedEntry(manualProgressInputs?.benchmarks?.run_results || []);
+  const latestLiftBenchmark = getLatestDatedEntry(manualProgressInputs?.benchmarks?.lift_results || []);
+  const [bodyweightDraft, setBodyweightDraft] = useState({ date: todayKey, value: "" });
+  const [waistDraft, setWaistDraft] = useState({ date: todayKey, value: "" });
+  const [runDraft, setRunDraft] = useState({ date: todayKey, distance: "", duration: "", pace: "" });
+  const [liftDraft, setLiftDraft] = useState({ date: todayKey, exercise: "", weight: "", reps: "", sets: "" });
+  const [saveMsg, setSaveMsg] = useState("");
+
+  if (!anchors.length) return null;
+
+  const setAck = (text = "") => {
+    setSaveMsg(text);
+    setTimeout(() => setSaveMsg(""), 2200);
+  };
+
+  const handleBodyweightSave = async () => {
+    const value = Number(bodyweightDraft.value || 0);
+    if (!bodyweightDraft.date || !Number.isFinite(value) || value <= 0) return;
+    const nextEntry = { date: bodyweightDraft.date, w: Math.round(value * 10) / 10 };
+    const nextBodyweights = [...(bodyweights || []).filter((row) => row?.date !== bodyweightDraft.date), nextEntry]
+      .sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
+    await saveBodyweights(nextBodyweights);
+    setBodyweightDraft((current) => ({ ...current, value: "" }));
+    setAck("Bodyweight anchor saved.");
+  };
+
+  const handleWaistSave = async () => {
+    const value = Number(waistDraft.value || 0);
+    if (!waistDraft.date || !Number.isFinite(value) || value <= 0) return;
+    await saveManualProgressInputs((currentInputs) => upsertGoalAnchorQuickEntry({
+      manualProgressInputs: currentInputs,
+      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.waist,
+      entry: { date: waistDraft.date, value },
+    }));
+    setWaistDraft((current) => ({ ...current, value: "" }));
+    setAck("Waist anchor saved.");
+  };
+
+  const handleRunBenchmarkSave = async () => {
+    if (!runDraft.date || !(Number(runDraft.distance || 0) > 0) || !(String(runDraft.duration || "").trim() || String(runDraft.pace || "").trim())) return;
+    await saveManualProgressInputs((currentInputs) => upsertGoalAnchorQuickEntry({
+      manualProgressInputs: currentInputs,
+      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.runBenchmark,
+      entry: {
+        date: runDraft.date,
+        distance: runDraft.distance,
+        duration: runDraft.duration,
+        pace: runDraft.pace,
+      },
+    }));
+    setRunDraft((current) => ({ ...current, distance: "", duration: "", pace: "" }));
+    setAck("Run anchor saved.");
+  };
+
+  const handleLiftBenchmarkSave = async () => {
+    if (!liftDraft.date || !liftDraft.exercise.trim() || !(Number(liftDraft.weight || 0) > 0) || !(Number(liftDraft.reps || 0) > 0) || !(Number(liftDraft.sets || 0) > 0)) return;
+    await saveManualProgressInputs((currentInputs) => upsertGoalAnchorQuickEntry({
+      manualProgressInputs: currentInputs,
+      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.liftBenchmark,
+      entry: liftDraft,
+    }));
+    setLiftDraft((current) => ({ ...current, exercise: "", weight: "", reps: "", sets: "" }));
+    setAck("Lift anchor saved.");
+  };
+
+  return (
+    <div style={{ border:`1px solid ${accentColor}26`, borderRadius:12, background:"#0f172a", padding:"0.7rem 0.75rem", display:"grid", gap:"0.55rem" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.5rem", flexWrap:"wrap" }}>
+        <div>
+          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.16rem" }}>QUICK ANCHORS</div>
+          <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>Optional: add missing proxy or benchmark anchors here without redoing intake.</div>
+        </div>
+        {saveMsg && (
+          <div style={{ fontSize:"0.47rem", color:accentColor, background:`${accentColor}12`, border:`1px solid ${accentColor}24`, borderRadius:999, padding:"0.14rem 0.4rem", whiteSpace:"nowrap" }}>
+            {saveMsg}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:"0.5rem" }}>
+        {anchorTypes.has(GOAL_ANCHOR_QUICK_ENTRY_TYPES.bodyweight) && (
+          <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.55rem", display:"grid", gap:"0.28rem" }}>
+            <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>Current bodyweight</div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {latestBodyweight?.w ? `Latest ${Number(latestBodyweight.w).toFixed(1)} lb on ${latestBodyweight.date}` : "No current bodyweight anchor yet."}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
+              <input type="date" value={bodyweightDraft.date} onChange={(e)=>setBodyweightDraft((current) => ({ ...current, date: e.target.value }))} />
+              <input type="number" step="0.1" value={bodyweightDraft.value} onChange={(e)=>setBodyweightDraft((current) => ({ ...current, value: e.target.value }))} placeholder="Weight" />
+            </div>
+            <button type="button" className="btn" onClick={handleBodyweightSave} style={{ width:"fit-content", fontSize:"0.48rem" }}>Save bodyweight</button>
+          </div>
+        )}
+
+        {anchorTypes.has(GOAL_ANCHOR_QUICK_ENTRY_TYPES.waist) && (
+          <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.55rem", display:"grid", gap:"0.28rem" }}>
+            <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>Waist</div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {latestWaist?.value ? `Latest ${Number(latestWaist.value).toFixed(1)} in on ${latestWaist.date}` : "No waist anchor yet."}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
+              <input type="date" value={waistDraft.date} onChange={(e)=>setWaistDraft((current) => ({ ...current, date: e.target.value }))} />
+              <input type="number" step="0.1" value={waistDraft.value} onChange={(e)=>setWaistDraft((current) => ({ ...current, value: e.target.value }))} placeholder="Waist" />
+            </div>
+            <button type="button" className="btn" onClick={handleWaistSave} style={{ width:"fit-content", fontSize:"0.48rem" }}>Save waist</button>
+          </div>
+        )}
+
+        {anchorTypes.has(GOAL_ANCHOR_QUICK_ENTRY_TYPES.runBenchmark) && (
+          <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.55rem", display:"grid", gap:"0.28rem" }}>
+            <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>Recent run result</div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {latestRunBenchmark?.date
+                ? joinDisplayParts([
+                    latestRunBenchmark.distanceMiles ? `Latest ${latestRunBenchmark.distanceMiles} mi` : "Latest manual run anchor",
+                    latestRunBenchmark.durationMinutes ? `${latestRunBenchmark.durationMinutes} min` : "",
+                    latestRunBenchmark.paceText || "",
+                    latestRunBenchmark.date,
+                  ])
+                : "No manual run anchor yet."}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
+              <input type="date" value={runDraft.date} onChange={(e)=>setRunDraft((current) => ({ ...current, date: e.target.value }))} />
+              <input type="number" step="0.1" value={runDraft.distance} onChange={(e)=>setRunDraft((current) => ({ ...current, distance: e.target.value }))} placeholder="Miles" />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
+              <input value={runDraft.duration} onChange={(e)=>setRunDraft((current) => ({ ...current, duration: e.target.value }))} placeholder="Time" />
+              <input value={runDraft.pace} onChange={(e)=>setRunDraft((current) => ({ ...current, pace: e.target.value }))} placeholder="Pace" />
+            </div>
+            <button type="button" className="btn" onClick={handleRunBenchmarkSave} style={{ width:"fit-content", fontSize:"0.48rem" }}>Save run anchor</button>
+          </div>
+        )}
+
+        {anchorTypes.has(GOAL_ANCHOR_QUICK_ENTRY_TYPES.liftBenchmark) && (
+          <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0b1322", padding:"0.55rem", display:"grid", gap:"0.28rem" }}>
+            <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>Lift benchmark</div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {latestLiftBenchmark?.exercise
+                ? joinDisplayParts([
+                    latestLiftBenchmark.exercise,
+                    latestLiftBenchmark.weight ? `${latestLiftBenchmark.weight} lb` : "",
+                    latestLiftBenchmark.reps ? `x ${latestLiftBenchmark.reps}` : "",
+                    latestLiftBenchmark.sets ? `for ${latestLiftBenchmark.sets} sets` : "",
+                    latestLiftBenchmark.date,
+                  ])
+                : "No manual lift anchor yet."}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.3rem" }}>
+              <input type="date" value={liftDraft.date} onChange={(e)=>setLiftDraft((current) => ({ ...current, date: e.target.value }))} />
+              <input value={liftDraft.exercise} onChange={(e)=>setLiftDraft((current) => ({ ...current, exercise: e.target.value }))} placeholder="Exercise" />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.3rem" }}>
+              <input type="number" step="2.5" value={liftDraft.weight} onChange={(e)=>setLiftDraft((current) => ({ ...current, weight: e.target.value }))} placeholder="Weight" />
+              <input type="number" value={liftDraft.reps} onChange={(e)=>setLiftDraft((current) => ({ ...current, reps: e.target.value }))} placeholder="Reps" />
+              <input type="number" value={liftDraft.sets} onChange={(e)=>setLiftDraft((current) => ({ ...current, sets: e.target.value }))} placeholder="Sets" />
+            </div>
+            <button type="button" className="btn" onClick={handleLiftBenchmarkSave} style={{ width:"fit-content", fontSize:"0.48rem" }}>Save lift anchor</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, saveBodyweights = async () => null, saveManualProgressInputs = async () => null, todayWorkout: legacyTodayWorkout }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const goalBuckets = athleteProfile?.goalBuckets || {};
   const activeTimeBoundGoal = athleteProfile?.activeTimeBoundGoal || null;
   const goalState = athleteProfile?.goalState || {};
+  const manualProgressInputs = personalization?.manualProgressInputs || {};
   const planDayWeek = planDay?.week || null;
   const [openWeek, setOpenWeek] = useState(currentWeek);
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
@@ -11040,8 +11268,9 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     bodyweights,
     dailyCheckins,
     weeklyCheckins,
+    manualProgressInputs,
     now: new Date(),
-  }), [goals, logs, bodyweights, dailyCheckins, weeklyCheckins]);
+  }), [goals, logs, bodyweights, dailyCheckins, weeklyCheckins, manualProgressInputs]);
   const goalProgressCards = goalProgressTracking?.goalCards || [];
   const latestGoalChangeEvent = personalization?.goalChangeHistory?.[0] || null;
   const latestGoalReviewEvent = personalization?.goalReviewHistory?.[0] || null;
@@ -11366,8 +11595,17 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
             </div>
             <div style={{ fontSize:"0.5rem", color:"#8fa5c8", background:"#1e293b", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>RESOLVED-GOAL NATIVE</div>
           </div>
+          <GoalAnchorQuickEntryPanel
+            goalProgressTracking={goalProgressTracking}
+            surface="program"
+            bodyweights={bodyweights}
+            manualProgressInputs={manualProgressInputs}
+            saveBodyweights={saveBodyweights}
+            saveManualProgressInputs={saveManualProgressInputs}
+            accentColor={C.blue}
+          />
           {goalProgressCards.length > 0 ? (
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:"0.7rem" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:"0.7rem", marginTop:"0.7rem" }}>
               {goalProgressCards.map((card) => {
                 const tone = getGoalProgressTone(card.status);
                 return (
@@ -11928,9 +12166,11 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
 }
 
 // LOG TAB (POLISHED)
-function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = {}, planWeekRecords = {}, weeklyCheckins = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "" }) {
+function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = {}, planWeekRecords = {}, weeklyCheckins = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, personalization, athleteProfile = null, saveManualProgressInputs = async () => null, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "" }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const plannedWorkout = planDay?.base?.training || legacyTodayWorkout;
+  const goals = athleteProfile?.goals || [];
+  const manualProgressInputs = personalization?.manualProgressInputs || {};
   const todayPlannedDayRecord = useMemo(() => buildPlannedDayRecord(planDay), [planDay]);
   const FEEL_LABELS = {
     "1": { title: "Rough", tip: "Rest, eat, sleep. Tomorrow is a new session." },
@@ -11982,6 +12222,15 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       .filter((entry) => Number(entry?.absoluteWeek || 0) <= Number(currentWeek || 0)),
     [planWeekRecords, logs, weeklyCheckins, currentWeek]
   );
+  const goalProgressTracking = useMemo(() => buildGoalProgressTrackingFromGoals({
+    goals,
+    logs,
+    bodyweights,
+    dailyCheckins,
+    weeklyCheckins,
+    manualProgressInputs,
+    now: new Date(),
+  }), [goals, logs, bodyweights, dailyCheckins, weeklyCheckins, manualProgressInputs]);
   const archivedPlanAudits = useMemo(
     () => (planArchives || []).map((archive) => buildArchivedPlanAudit({ archive })).filter(Boolean),
     [planArchives]
@@ -12131,21 +12380,27 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
           if (index !== rowIndex) return row;
           const nextExercise = updates?.exercise ?? row?.exercise ?? "";
           const nextMode = updates?.mode || inferExerciseMode(nextExercise, row?.mode || "");
+          const prescribedKey = normalizeExerciseKey(row?.prescribedExercise || "");
+          const actualKey = normalizeExerciseKey(nextExercise || "");
+          const substituted = Boolean(prescribedKey && actualKey && prescribedKey !== actualKey);
           return {
             ...row,
             ...updates,
             exercise: nextExercise,
             mode: nextMode,
             bodyweightOnly: nextMode === "bodyweight",
-            bandTension: nextMode === "band"
-              ? (updates?.bandTension ?? row?.bandTension ?? BAND_TENSION_LEVELS[0] ?? "Light")
-              : (updates?.bandTension ?? row?.bandTension ?? ""),
-            actualWeight: nextMode === "weighted" ? (updates?.actualWeight ?? row?.actualWeight ?? "") : "",
-          };
-        }),
-      },
-    }));
-  };
+              bandTension: nextMode === "band"
+                ? (updates?.bandTension ?? row?.bandTension ?? BAND_TENSION_LEVELS[0] ?? "Light")
+                : (updates?.bandTension ?? row?.bandTension ?? ""),
+              actualWeight: nextMode === "weighted" ? (updates?.actualWeight ?? row?.actualWeight ?? "") : "",
+              isSubstituted: substituted,
+              substitutionState: substituted ? "substituted" : (row?.prescribedExercise ? "prescribed" : "unplanned"),
+              canResetToPrescribed: substituted && Boolean(row?.prescribedExercise),
+            };
+          }),
+        },
+      }));
+    };
   useEffect(() => {
     if (detailedHydratedRef.current) return;
     setDetailed(buildDetailedDraft(today, logs?.[today] || {}));
@@ -12226,6 +12481,18 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
           <button className="btn btn-primary" onClick={savePrescribed} style={{ fontSize:"0.55rem" }}>Mark Prescribed Workout Complete</button>
           {saved && <div className="completion-pop" style={{ fontSize:"0.57rem", color:C.green, display:"inline-flex", alignItems:"center", gap:"0.3rem", background:"rgba(39,245,154,0.1)", border:"1px solid rgba(39,245,154,0.38)", borderRadius:999, padding:"0.18rem 0.5rem" }}><span className="mono">OK</span> {savedMsg}</div>}
         </div>
+      </div>
+
+      <div style={{ marginBottom:"0.8rem" }}>
+        <GoalAnchorQuickEntryPanel
+          goalProgressTracking={goalProgressTracking}
+          surface="log"
+          bodyweights={bodyweights}
+          manualProgressInputs={manualProgressInputs}
+          saveBodyweights={saveBodyweights}
+          saveManualProgressInputs={saveManualProgressInputs}
+          accentColor={C.green}
+        />
       </div>
 
       <details className="card" style={{ marginBottom:"0.8rem" }} open={detailedOpen} onToggle={e=>setDetailedOpen(e.currentTarget.open)}>
@@ -12321,8 +12588,13 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
                 {detailed.strength?.hasPrescribedStructure ? "Strength log" : "Strength log (generic fallback)"}
               </div>
               {!!detailed.substitutionSupport?.allowed && (
-                <div style={{ fontSize:"0.48rem", color:"#94a3b8", lineHeight:1.45 }}>
-                  Edit the exercise name if you swapped the prescribed movement. Substitutions keep planned vs actual separate.
+                <div style={{ display:"grid", gap:"0.14rem" }}>
+                  <div style={{ fontSize:"0.48rem", color:"#94a3b8", lineHeight:1.45 }}>
+                    Keep the exercise name as-is to log the prescription, or type over it to log a substitution. Planned vs actual stay separate.
+                  </div>
+                  <div style={{ fontSize:"0.48rem", color:"#94a3b8", lineHeight:1.45 }}>
+                    Fast path: fill sets, reps, and weight, then use Save strength log.
+                  </div>
                 </div>
               )}
               {(detailed.strength?.rows || []).length > 0 ? (
@@ -12344,9 +12616,24 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
                             onChange={e=>updateStrengthRow(index, { exercise: e.target.value })}
                             placeholder="Exercise"
                           />
-                          {substituted && (
-                            <span style={{ fontSize:"0.45rem", color:C.amber, border:`1px solid ${C.amber}35`, borderRadius:999, padding:"0.05rem 0.35rem" }}>Sub</span>
-                          )}
+                          <div style={{ display:"flex", gap:"0.22rem", alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
+                            {!substituted && !!row?.prescribedExercise && (
+                              <span style={{ fontSize:"0.45rem", color:"#8fa5c8", border:"1px solid #334155", borderRadius:999, padding:"0.05rem 0.35rem" }}>Using prescribed</span>
+                            )}
+                            {substituted && (
+                              <span style={{ fontSize:"0.45rem", color:C.amber, border:`1px solid ${C.amber}35`, borderRadius:999, padding:"0.05rem 0.35rem" }}>Substitution</span>
+                            )}
+                            {!!row?.canResetToPrescribed && (
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={()=>updateStrengthRow(index, { exercise: row?.prescribedExercise || "" })}
+                                style={{ fontSize:"0.44rem", padding:"0.14rem 0.36rem" }}
+                              >
+                                Use prescribed
+                              </button>
+                            )}
+                          </div>
                         </div>
                         {prescribedLine && (
                           <div style={{ fontSize:"0.48rem", color:"#94a3b8", lineHeight:1.45 }}>
@@ -12392,6 +12679,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
                   No exercise-by-exercise prescription was stored for this day. Use the quick strength fallback below.
                 </div>
               )}
+              <button className="btn btn-primary" onClick={saveDetailed} style={{ width:"fit-content", fontSize:"0.52rem" }}>Save strength log</button>
             </div>
           )}
 

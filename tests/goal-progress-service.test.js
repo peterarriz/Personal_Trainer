@@ -119,6 +119,57 @@ test("strength goals track working sets, performance records, and projected dist
   assert.equal(result.goalCards[0].status, GOAL_PROGRESS_STATUSES.onTrack);
 });
 
+test("running goals can use manual benchmark pace anchors when full run logs are not available yet", () => {
+  const result = buildGoalProgressTracking({
+    resolvedGoals: [
+      buildResolvedGoal({
+        summary: "Run a half marathon in 1:45:00",
+        planningCategory: "running",
+        goalFamily: "performance",
+        primaryMetric: { key: "half_marathon_time", label: "Half marathon time", unit: "time", targetValue: "1:45:00" },
+      }),
+    ],
+    manualProgressInputs: {
+      benchmarks: {
+        run_results: [
+          { date: "2026-04-09", distanceMiles: 4, durationMinutes: "31:40", paceText: "7:55" },
+        ],
+      },
+    },
+    now: "2026-04-10",
+  });
+
+  const paceItem = result.goalCards[0].trackedItems.find((item) => item.key === "goal_pace_anchor");
+  assert.match(paceItem.currentDisplay, /recent benchmark pace 7:55\/mi on 2026-04-09/i);
+  assert.equal(paceItem.status, GOAL_PROGRESS_STATUSES.onTrack);
+});
+
+test("strength goals can use manual lift benchmarks before structured lift logs are present", () => {
+  const result = buildGoalProgressTracking({
+    resolvedGoals: [
+      buildResolvedGoal({
+        summary: "Bench 225",
+        planningCategory: "strength",
+        goalFamily: "strength",
+        primaryMetric: { key: "bench_press_weight", label: "Bench press", unit: "lb", targetValue: "225" },
+      }),
+    ],
+    manualProgressInputs: {
+      benchmarks: {
+        lift_results: [
+          { date: "2026-04-09", exercise: "Bench Press", weight: 205, reps: 3, sets: 2 },
+        ],
+      },
+    },
+    now: "2026-04-10",
+  });
+
+  const itemsByKey = Object.fromEntries(result.goalCards[0].trackedItems.map((item) => [item.key, item]));
+  assert.match(itemsByKey.top_set_load.currentDisplay, /205 lb x 3 x 2 on 2026-04-09/i);
+  assert.match(itemsByKey.performance_record.currentDisplay, /best logged top set 205 lb on 2026-04-09/i);
+  assert.match(itemsByKey.projected_goal_progress.currentDisplay, /20 lb remaining to 225 lb/i);
+});
+
 test("body-composition goals use proxy trends like bodyweight, waist, consistency, and deferred manual photo review", () => {
   const result = buildGoalProgressTracking({
     resolvedGoals: [
