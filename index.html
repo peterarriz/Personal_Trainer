@@ -18724,14 +18724,14 @@ const buildStrengthHistoryByExercise = (logs = {}) => {
 
 const getRecordActualWeight = (record = {}) => toFiniteNumber(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _67 => _67.actual, 'optionalAccess', _68 => _68.weight]), () => ( _optionalChain([record, 'optionalAccess', _69 => _69.actualWeight]))), null);
 const getRecordPrescribedWeight = (record = {}) => toFiniteNumber(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _70 => _70.prescribed, 'optionalAccess', _71 => _71.weight]), () => ( _optionalChain([record, 'optionalAccess', _72 => _72.prescribedWeight]))), null);
-const getRecordActualReps = (record = {}) => Number(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _73 => _73.actual, 'optionalAccess', _74 => _74.reps]), () => ( _optionalChain([record, 'optionalAccess', _75 => _75.actualReps]))) || 0);
-const getRecordPrescribedReps = (record = {}) => Number(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _76 => _76.prescribed, 'optionalAccess', _77 => _77.reps]), () => ( _optionalChain([record, 'optionalAccess', _78 => _78.prescribedReps]))) || 0);
-const getRecordActualSets = (record = {}) => Number(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _79 => _79.actual, 'optionalAccess', _80 => _80.sets]), () => ( _optionalChain([record, 'optionalAccess', _81 => _81.actualSets]))) || 0);
-const getRecordPrescribedSets = (record = {}) => Number(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _82 => _82.prescribed, 'optionalAccess', _83 => _83.sets]), () => ( _optionalChain([record, 'optionalAccess', _84 => _84.prescribedSets]))) || 0);
+const getRecordActualReps = (record = {}) => Number(_nullishCoalesce(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _73 => _73.actual, 'optionalAccess', _74 => _74.reps]), () => ( _optionalChain([record, 'optionalAccess', _75 => _75.actualReps]))), () => ( 0)));
+const getRecordPrescribedReps = (record = {}) => Number(_nullishCoalesce(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _76 => _76.prescribed, 'optionalAccess', _77 => _77.reps]), () => ( _optionalChain([record, 'optionalAccess', _78 => _78.prescribedReps]))), () => ( 0)));
+const getRecordActualSets = (record = {}) => Number(_nullishCoalesce(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _79 => _79.actual, 'optionalAccess', _80 => _80.sets]), () => ( _optionalChain([record, 'optionalAccess', _81 => _81.actualSets]))), () => ( 0)));
+const getRecordPrescribedSets = (record = {}) => Number(_nullishCoalesce(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _82 => _82.prescribed, 'optionalAccess', _83 => _83.sets]), () => ( _optionalChain([record, 'optionalAccess', _84 => _84.prescribedSets]))), () => ( 0)));
 const getRecordBandTension = (record = {}) => String(_optionalChain([record, 'optionalAccess', _85 => _85.prescribed, 'optionalAccess', _86 => _86.bandTension]) || _optionalChain([record, 'optionalAccess', _87 => _87.bandTension]) || "").trim();
 const getRecordBodyweightOnly = (record = {}) => Boolean(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _88 => _88.prescribed, 'optionalAccess', _89 => _89.bodyweightOnly]), () => ( _optionalChain([record, 'optionalAccess', _90 => _90.bodyweightOnly]))));
 const getRecordFeelScore = (record = {}) => Number(_nullishCoalesce(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _91 => _91.metrics, 'optionalAccess', _92 => _92.feelScore]), () => ( _optionalChain([record, 'optionalAccess', _93 => _93.feelThisSession]))), () => ( 3)));
-const getRecordCompletionRatio = (record = {}) => Number(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _94 => _94.metrics, 'optionalAccess', _95 => _95.completionRatio]), () => ( _optionalChain([record, 'optionalAccess', _96 => _96.completionRatio]))) || 0);
+const getRecordCompletionRatio = (record = {}) => Number(_nullishCoalesce(_nullishCoalesce(_optionalChain([record, 'optionalAccess', _94 => _94.metrics, 'optionalAccess', _95 => _95.completionRatio]), () => ( _optionalChain([record, 'optionalAccess', _96 => _96.completionRatio]))), () => ( 0)));
 
 const isFullExerciseCompletion = (record = {}) => getRecordActualReps(record) >= getRecordPrescribedReps(record) && getRecordActualSets(record) >= getRecordPrescribedSets(record);
 const isHoldSignal = (record = {}) => getRecordActualReps(record) < (getRecordPrescribedReps(record) * 0.8) || getRecordActualSets(record) < getRecordPrescribedSets(record) || getRecordFeelScore(record) <= 2;
@@ -23462,7 +23462,7 @@ const buildAdjustmentProvenance = ({
     if (loading || typeof window === "undefined" || typeof Notification === "undefined") return;
     const now = new Date();
     const checkinDayMap = { Sun: 0, Mon: 1, Sat: 6 };
-    const targetDow = _nullishCoalesce(checkinDayMap[_optionalChain([personalization, 'optionalAccess', _1235 => _1235.settings, 'optionalAccess', _1236 => _1236.trainingPreferences, 'optionalAccess', _1237 => _1237.weeklyCheckinDay]) || "Sun"], () => ( 0));
+    const targetDow = _nullishCoalesce(checkinDayMap[_nullishCoalesce(_optionalChain([personalization, 'optionalAccess', _1235 => _1235.settings, 'optionalAccess', _1236 => _1236.trainingPreferences, 'optionalAccess', _1237 => _1237.weeklyCheckinDay]), () => ( "Sun"))], () => ( 0));
     if (now.getDay() !== targetDow) return;
     const weekTag = `${now.getUTCFullYear()}_W${currentWeek}`;
     const lastPushWeek = _optionalChain([personalization, 'optionalAccess', _1238 => _1238.coachMemory, 'optionalAccess', _1239 => _1239.lastSundayPushWeek]) || "";
