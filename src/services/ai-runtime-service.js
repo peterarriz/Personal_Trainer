@@ -4,6 +4,7 @@ import {
   parseAiJsonObjectFromText,
   acceptAiPlanAnalysisProposal,
   buildCoachAiSystemPrompt,
+  buildIntakeFieldExtractionAiSystemPrompt,
   buildPlanAnalysisAiSystemPrompt,
   buildIntakeInterpretationAiSystemPrompt,
   sanitizeIntakeInterpretationProposal,
@@ -311,6 +312,69 @@ export const buildIntakeInterpretationRuntimeInput = ({
   return { statePacket, systemPrompt };
 };
 
+const sanitizeExtractionText = (value = "", maxLength = 600) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
+
+const sanitizeExtractionField = (field = {}) => ({
+  field_id: sanitizeExtractionText(field?.field_id || "", 80),
+  label: sanitizeExtractionText(field?.label || "", 120),
+  input_type: sanitizeExtractionText(field?.input_type || "text", 30).toLowerCase() || "text",
+  validation: field?.validation && typeof field.validation === "object"
+    ? {
+        kind: sanitizeExtractionText(field.validation.kind || "", 80),
+        message: sanitizeExtractionText(field.validation.message || "", 220),
+        ...(Number.isFinite(field.validation.min) ? { min: field.validation.min } : {}),
+        ...(Number.isFinite(field.validation.max) ? { max: field.validation.max } : {}),
+        ...(field.validation.direction ? { direction: sanitizeExtractionText(field.validation.direction, 20).toLowerCase() } : {}),
+      }
+    : {},
+  examples: toArray(field?.examples).map((item) => sanitizeExtractionText(item, 120)).filter(Boolean).slice(0, 4),
+  options: toArray(field?.options)
+    .map((item) => ({
+      value: sanitizeExtractionText(item?.value || "", 80),
+      label: sanitizeExtractionText(item?.label || item?.value || "", 120),
+    }))
+    .filter((item) => item.value && item.label)
+    .slice(0, 6),
+  unit_options: toArray(field?.unit_options)
+    .map((item) => ({
+      value: sanitizeExtractionText(item?.value || item, 40),
+      label: sanitizeExtractionText(item?.label || item, 60),
+    }))
+    .filter((item) => item.value && item.label)
+    .slice(0, 4),
+});
+
+export const buildIntakeFieldExtractionRuntimeInput = ({
+  utterance = "",
+  missingFields = [],
+  statePacket = null,
+  packetArgs = {},
+} = {}) => {
+  const resolvedStatePacket = statePacket && typeof statePacket === "object"
+    ? statePacket
+    : buildAiStatePacket({
+        intent: AI_PACKET_INTENTS.intakeFieldExtraction,
+        input: "Extract candidate values for explicitly allowed intake fields only.",
+        ...packetArgs,
+      });
+  const extractionRequest = {
+    utterance: sanitizeExtractionText(utterance, 600),
+    missingFields: toArray(missingFields)
+      .map((item) => sanitizeExtractionField(item))
+      .filter((item) => item.field_id && item.label),
+  };
+  const systemPrompt = buildIntakeFieldExtractionAiSystemPrompt({
+    statePacket: resolvedStatePacket,
+    extractionRequest,
+  });
+  return {
+    statePacket: resolvedStatePacket,
+    systemPrompt,
+    extractionRequest,
+  };
+};
+
 export const runIntakeInterpretationRuntime = async ({
   apiKey = "",
   safeFetchWithTimeout,
@@ -446,6 +510,149 @@ export const runIntakeInterpretationRuntime = async ({
     }),
     ui: {
       message: "AI intake interpretation returned a proposal-only assessment.",
+    },
+  };
+};
+
+export const runIntakeFieldExtractionRuntime = async ({
+  safeFetchWithTimeout,
+  utterance = "",
+  missingFields = [],
+  packetArgs = {},
+  statePacket = null,
+  model = DEFAULT_MODEL,
+} = {}) => {
+  const runtimeInput = buildIntakeFieldExtractionRuntimeInput({
+    utterance,
+    missingFields,
+    packetArgs,
+    statePacket,
+  });
+  const requestedAt = Date.now();
+  if (typeof safeFetchWithTimeout !== "function") {
+    return {
+      ok: false,
+      status: "no_response",
+      statePacket: runtimeInput.statePacket,
+      systemPrompt: runtimeInput.systemPrompt,
+      extractionRequest: runtimeInput.extractionRequest,
+      extraction: null,
+      rawText: "",
+      error: "missing_fetcher",
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.fallback,
+        trigger: "intake_field_extraction_runtime",
+        mutationType: "ai_runtime_failure",
+        revisionReason: "AI intake field extraction returned no response.",
+        sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeFieldExtraction],
+        confidence: "low",
+        timestamp: requestedAt,
+        details: {
+          error: "missing_fetcher",
+        },
+      }),
+      ui: {
+        message: "No AI intake field extraction response was returned.",
+      },
+    };
+  }
+  let res;
+  try {
+    res = await safeFetchWithTimeout(INTAKE_GATEWAY_PATH, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        requestType: "missing_field_extraction",
+        model,
+        statePacket: runtimeInput.statePacket,
+        extractionRequest: runtimeInput.extractionRequest,
+      }),
+    }, 9000);
+  } catch (error) {
+    return {
+      ok: false,
+      status: "no_response",
+      statePacket: runtimeInput.statePacket,
+      systemPrompt: runtimeInput.systemPrompt,
+      extractionRequest: runtimeInput.extractionRequest,
+      extraction: null,
+      rawText: "",
+      error: error?.message || "request_failed",
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.fallback,
+        trigger: "intake_field_extraction_runtime",
+        mutationType: "ai_runtime_failure",
+        revisionReason: "AI intake field extraction returned no response.",
+        sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeFieldExtraction],
+        confidence: "low",
+        timestamp: requestedAt,
+        details: {
+          error: error?.message || "request_failed",
+        },
+      }),
+      ui: {
+        message: "No AI intake field extraction response was returned.",
+      },
+    };
+  }
+  const data = await res.json().catch(() => null);
+  if (!res?.ok || !data?.extraction) {
+    const failureReason = data?.code || `http_${res?.status || 0}` || "provider_gateway_failed";
+    return {
+      ok: false,
+      status: "no_response",
+      statePacket: runtimeInput.statePacket,
+      systemPrompt: runtimeInput.systemPrompt,
+      extractionRequest: runtimeInput.extractionRequest,
+      extraction: null,
+      rawText: "",
+      error: failureReason,
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.fallback,
+        trigger: "intake_field_extraction_runtime",
+        mutationType: "ai_runtime_failure",
+        revisionReason: "AI intake field extraction returned no response.",
+        sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeFieldExtraction],
+        confidence: "low",
+        timestamp: requestedAt,
+        details: {
+          error: failureReason,
+        },
+      }),
+      ui: {
+        message: data?.message || "No AI intake field extraction response was returned.",
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    status: "proposal_ready",
+    statePacket: runtimeInput.statePacket,
+    systemPrompt: runtimeInput.systemPrompt,
+    extractionRequest: runtimeInput.extractionRequest,
+    extraction: data.extraction,
+    rawText: "",
+    error: "",
+    provenance: buildProvenanceEvent({
+      actor: PROVENANCE_ACTORS.aiInterpretation,
+      trigger: "intake_field_extraction_runtime",
+      mutationType: "ai_runtime_result",
+      revisionReason: "AI intake field extraction returned bounded candidate values only.",
+      sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeFieldExtraction],
+      confidence: "medium",
+      timestamp: requestedAt,
+      details: {
+        provider: data?.meta?.provider || "",
+        model: data?.meta?.model || model,
+        latencyMs: Number(data?.meta?.latencyMs || 0) || 0,
+        candidateCount: toArray(data?.extraction?.candidates).length,
+      },
+    }),
+    ui: {
+      message: "AI intake field extraction returned bounded candidate values only.",
     },
   };
 };

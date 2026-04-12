@@ -65,6 +65,9 @@ test("event goal plus strength and appearance goals resolve into lead, maintaine
   assert.equal(arbitration.maintainedGoals[0]?.planningCategory, "strength");
   assert.equal(arbitration.supportGoals[0]?.goalFamily, "appearance");
   assert.equal(arbitration.deferredGoals.length, 0);
+  assert.equal(arbitration.lanes.lead_goal?.id, arbitration.leadGoal?.id);
+  assert.equal(arbitration.lanes.maintained_goals[0]?.id, arbitration.maintainedGoals[0]?.id);
+  assert.equal(arbitration.lanes.support_goals[0]?.id, arbitration.supportGoals[0]?.id);
   assert.equal(arbitration.goalStack.leadGoal?.id, arbitration.leadGoal?.id);
   assert.equal(arbitration.conflictSummary.status, "clear");
   assert.equal(arbitration.arbitrationReasoning.leadGoalId, arbitration.leadGoal?.id);
@@ -205,6 +208,10 @@ test("review keeps background and later goals visible while planner-facing confi
   assert.equal(review.activeGoals.length, 2);
   assert.equal(review.backgroundGoals.length, 1);
   assert.equal(review.deferredGoals.length, 0);
+  assert.equal(review.reviewContract.lead_goal?.summary, review.activeGoals[0]?.summary);
+  assert.equal(review.reviewContract.maintained_goals[0]?.summary, review.activeGoals[1]?.summary);
+  assert.equal(review.reviewContract.support_goals[0]?.summary, review.backgroundGoals[0]?.summary);
+  assert.match(review.reviewContract.tradeoff_statement, /leads now/i);
   assert.deepEqual(confirmedStack.map((goal) => goal.planningCategory), ["running", "strength"]);
 });
 

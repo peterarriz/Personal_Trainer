@@ -108,6 +108,7 @@ const normalizeGoalCandidate = ({
   sourceText = "",
   explicitPrimaryId = "",
   feasibilityPriorityMap = new Map(),
+  goalAssessmentMap = new Map(),
 } = {}) => ({
   ...goal,
   planningPriority: Number(goal?.planningPriority || index + 1) || (index + 1),
@@ -118,6 +119,7 @@ const normalizeGoalCandidate = ({
     || source === "confirmed_primary"
   ),
   feasibilityPriority: feasibilityPriorityMap.get(goal?.id || "") || null,
+  feasibilityAssessment: goalAssessmentMap.get(goal?.id || "") || null,
   validationIssues: normalizeValidationIssues(goal?.validationIssues || []),
 });
 
@@ -175,6 +177,7 @@ const resolveAdditionalGoalCandidates = ({
   typedIntakePacket = null,
   now = new Date(),
   feasibilityPriorityMap = new Map(),
+  goalAssessmentMap = new Map(),
 } = {}) => (
   dedupeStrings(additionalGoalTexts).flatMap((goalText, textIndex) => {
     const packet = buildMinimalIntakePacket({
@@ -197,6 +200,7 @@ const resolveAdditionalGoalCandidates = ({
       source: "additional_text",
       sourceText: goalText,
       feasibilityPriorityMap,
+      goalAssessmentMap,
     }));
   })
 );
@@ -270,6 +274,13 @@ const buildLeadPriorityScore = (goal = {}) => {
   if (goal?.measurabilityTier === GOAL_MEASURABILITY_TIERS.exploratoryFuzzy) score -= 8;
   if (hasExplicitTarget(goal)) score += 15;
   if (isHardOutcomeGoal(goal)) score += 40;
+  if (goal?.feasibilityAssessment?.realismStatus === "realistic") score += 28;
+  if (goal?.feasibilityAssessment?.realismStatus === "aggressive") score += 10;
+  if (goal?.feasibilityAssessment?.realismStatus === "unrealistic") score -= 45;
+  if (goal?.feasibilityAssessment?.scheduleFit === "supported") score += 12;
+  if (goal?.feasibilityAssessment?.scheduleFit === "tight") score -= 8;
+  if (goal?.feasibilityAssessment?.scheduleFit === "under_supported") score -= 22;
+  if (goal?.feasibilityAssessment?.clarificationRequired) score -= 25;
   if (isMaintenanceIntent(goal)) score -= 140;
   if (isAppearanceGoal(goal)) score -= 35;
   if (isConditioningSupportGoal(goal)) score -= 20;
@@ -577,6 +588,11 @@ export const buildGoalArbitrationStack = ({
       .map((item) => [sanitizeText(item?.goalId || "", 120), Number(item?.recommendedPriority || 0) || null])
       .filter(([goalId, priority]) => goalId && Number.isFinite(priority))
   );
+  const goalAssessmentMap = new Map(
+    toArray(goalFeasibility?.goalAssessments || [])
+      .map((item) => [sanitizeText(item?.goalId || "", 120), item])
+      .filter(([goalId]) => goalId)
+  );
   const explicitPrimaryId = sanitizeText(confirmedPrimaryGoal?.id || "", 120);
   const primaryCandidate = confirmedPrimaryGoal
     ? [normalizeGoalCandidate({
@@ -586,6 +602,7 @@ export const buildGoalArbitrationStack = ({
         sourceText: confirmedPrimaryGoal?.rawIntent?.text || confirmedPrimaryGoal?.summary || "",
         explicitPrimaryId,
         feasibilityPriorityMap,
+        goalAssessmentMap,
       })]
     : [];
   const confirmedAdditionalCandidates = toArray(confirmedAdditionalGoals).map((goal, index) => normalizeGoalCandidate({
@@ -595,6 +612,7 @@ export const buildGoalArbitrationStack = ({
     sourceText: goal?.rawIntent?.text || goal?.summary || "",
     explicitPrimaryId,
     feasibilityPriorityMap,
+    goalAssessmentMap,
   }));
   const resolvedCandidates = toArray(resolvedGoals)
     .filter(Boolean)
@@ -604,12 +622,14 @@ export const buildGoalArbitrationStack = ({
       source: "resolved",
       explicitPrimaryId,
       feasibilityPriorityMap,
+      goalAssessmentMap,
     }));
   const additionalCandidates = resolveAdditionalGoalCandidates({
     additionalGoalTexts,
     typedIntakePacket,
     now,
     feasibilityPriorityMap,
+    goalAssessmentMap,
   });
   const candidates = dedupeGoalCandidates([
     ...primaryCandidate,
@@ -630,6 +650,12 @@ export const buildGoalArbitrationStack = ({
       maintainedGoals: [],
       supportGoals: [],
       deferredGoals: [],
+      lanes: {
+        lead_goal: null,
+        maintained_goals: [],
+        support_goals: [],
+        deferred_goals: [],
+      },
       goalStack: {
         leadGoal: null,
         maintainedGoals: [],
@@ -797,6 +823,12 @@ export const buildGoalArbitrationStack = ({
     maintainedGoals,
     supportGoals,
     deferredGoals,
+    lanes: {
+      lead_goal: normalizedLeadGoal,
+      maintained_goals: maintainedGoals,
+      support_goals: supportGoals,
+      deferred_goals: deferredGoals,
+    },
     goalStack: {
       leadGoal: normalizedLeadGoal,
       maintainedGoals,

@@ -99,6 +99,7 @@ import {
   buildIntakeSecondaryGoalPrompt,
   deriveIntakeConfirmationState,
   buildRawGoalIntentFromAnswers,
+  GOAL_REVIEW_LANE_KEYS,
   GOAL_STACK_ROLES,
   readAdditionalGoalEntries,
   SECONDARY_GOAL_RESPONSE_KEYS,
@@ -138,6 +139,8 @@ import {
   INTAKE_MACHINE_EVENTS,
   INTAKE_MACHINE_STATES,
 } from "./services/intake-machine-service.js";
+import { buildAnchorCollectionViewModel } from "./services/intake-anchor-collection-service.js";
+import { aiExtractForMissingFields } from "./services/intake-ai-extraction-service.js";
 import {
   queueCoachTranscriptMessages,
   resolveNextCoachStreamTargetId,
@@ -2555,23 +2558,9 @@ const buildIntakeTimelineFallback = (payload = {}) => {
   });
   const topGoal = preview?.orderedResolvedGoals?.[0] || preview?.goalResolution?.resolvedGoals?.[0] || null;
   const focusLabel = topGoal?.summary || PRIMARY_GOAL_LABELS[payload.primary_goal] || payload.primary_goal || "your goal";
-  const statusLine = preview?.goalFeasibility?.realismStatus === GOAL_REALISM_STATUSES.unrealistic
-    ? `The current target for ${String(focusLabel).toLowerCase()} needs a smaller first block before I can plan credibly.`
-    : preview?.goalFeasibility?.confirmationAction === GOAL_FEASIBILITY_ACTIONS.block
-    ? `I still need one or two critical anchors before I can build a credible plan for ${String(focusLabel).toLowerCase()}.`
-    : preview?.goalFeasibility?.realismStatus === GOAL_REALISM_STATUSES.aggressive
-    ? `This goal stack can work, but the current schedule or tradeoffs make the near-term path tight.`
-    : preview?.goalFeasibility?.realismStatus === GOAL_REALISM_STATUSES.exploratory
-    ? `This goal is real, but the first block should focus on a concrete 30-day win instead of pretending every detail is settled.`
-    : `This goal stack fits your current schedule and baseline well enough to plan directly from it.`;
-  const realisticLine = preview?.goalFeasibility?.realisticByTargetDate?.[0]?.summary || "";
-  const revisionLine = preview?.goalFeasibility?.recommendedRevision?.summary
-    ? `Recommended revision: ${preview.goalFeasibility.recommendedRevision.summary}`
-    : "";
-  const conflictLine = preview?.goalFeasibility?.conflictFlags?.[0]?.summary
-    ? `Main tradeoff: ${preview.goalFeasibility.conflictFlags[0].summary}`
-    : "";
-  return sanitizeIntakeText([statusLine, realisticLine, revisionLine, conflictLine].filter(Boolean).join(" "));
+  const gateLine = sanitizeIntakeText(preview?.goalFeasibility?.explanation_text || "");
+  if (gateLine) return gateLine;
+  return sanitizeIntakeText(`I need a little more grounded context before I can finish the gate for ${String(focusLabel).toLowerCase()}.`);
 };
 
 const buildIntakeAssessmentTextFromProposal = ({
@@ -2586,32 +2575,7 @@ const buildIntakeAssessmentTextFromProposal = ({
   });
   const topGoal = orderedResolvedGoals?.[0] || previewGoalResolution?.resolvedGoals?.[0] || null;
   if (!topGoal || !goalFeasibility) return buildIntakeTimelineFallback(payload);
-  const trackingLabels = [
-    topGoal?.primaryMetric?.label,
-    ...(Array.isArray(topGoal?.proxyMetrics) ? topGoal.proxyMetrics.map((metric) => metric.label) : []),
-  ].filter(Boolean).slice(0, 3);
-  const statusLine = goalFeasibility.realismStatus === GOAL_REALISM_STATUSES.unrealistic
-    ? `The full ${String(topGoal.summary || "goal").toLowerCase()} outcome is too compressed for your current schedule and baseline, so the first block needs a scaled target.`
-    : goalFeasibility.confirmationAction === GOAL_FEASIBILITY_ACTIONS.block
-    ? `I still need a little more grounded context before I can build this plan credibly.`
-    : goalFeasibility.realismStatus === GOAL_REALISM_STATUSES.aggressive
-    ? `This goal stack is workable, but the current window or tradeoffs are tight for your schedule and baseline.`
-    : goalFeasibility.realismStatus === GOAL_REALISM_STATUSES.exploratory
-    ? `This goal direction is valid, but the first block should lock in a concrete 30-day win before we push a more exact outcome.`
-    : `This goal stack fits your current schedule and baseline well enough to plan directly from it.`;
-  const trackingLine = trackingLabels.length
-    ? `We'll track ${trackingLabels.join(", ")} first so progress stays grounded in something visible.`
-    : "";
-  const realisticLine = goalFeasibility?.realisticByTargetDate?.[0]?.summary || "";
-  const longerLine = goalFeasibility?.longerHorizonNeeds?.[0]?.summary
-    ? `Longer horizon: ${goalFeasibility.longerHorizonNeeds[0].summary}`
-    : "";
-  const revisionLine = goalFeasibility?.recommendedRevision?.summary
-    ? `Recommended revision: ${goalFeasibility.recommendedRevision.summary}`
-    : "";
-  const conflictLine = goalFeasibility?.conflictFlags?.[0]?.summary
-    ? `Main tradeoff: ${goalFeasibility.conflictFlags[0].summary}`
-    : "";
+  const gateLine = sanitizeIntakeText(goalFeasibility?.explanation_text || "");
   const priorityLine = orderedResolvedGoals.length > 1
     ? `Priority order: ${orderedResolvedGoals.map((goal) => goal.summary).join(", then ")}.`
     : `Priority order: ${topGoal.summary}.`;
@@ -2619,12 +2583,7 @@ const buildIntakeAssessmentTextFromProposal = ({
     ? `Main open question: ${interpretation.missingClarifyingQuestions[0]}`
     : "";
   return sanitizeIntakeText([
-    statusLine,
-    trackingLine,
-    realisticLine,
-    longerLine,
-    revisionLine,
-    conflictLine,
+    gateLine,
     priorityLine,
     optionalInterpretationLine,
   ].filter(Boolean).join(" "));
@@ -7431,6 +7390,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [clarificationValues, setClarificationValues] = useState({});
   const [clarificationFieldErrors, setClarificationFieldErrors] = useState({});
   const [clarificationFormError, setClarificationFormError] = useState("");
+  const [naturalAnchorDraft, setNaturalAnchorDraft] = useState("");
+  const [naturalAnchorSubmitting, setNaturalAnchorSubmitting] = useState(false);
+  const [anchorCapturePreview, setAnchorCapturePreview] = useState(null);
+  const [adjustmentTargetGoal, setAdjustmentTargetGoal] = useState(null);
   const [confirmBuildError, setConfirmBuildError] = useState("");
   const [confirmBuildSubmitting, setConfirmBuildSubmitting] = useState(false);
   const [assessing, setAssessing] = useState(false);
@@ -7534,6 +7497,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setClarificationValues({});
       setClarificationFieldErrors({});
       setClarificationFormError("");
+      setNaturalAnchorDraft("");
+      setAnchorCapturePreview(null);
       return;
     }
     if (activeMachineAnchor?.field_id) {
@@ -7558,12 +7523,16 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setClarificationFieldErrors({});
       setClarificationFormError("");
       setDraft("");
+      setNaturalAnchorDraft("");
+      setAnchorCapturePreview(null);
       return;
     }
     if (!isStructuredQuestion) {
       setClarificationValues({});
       setClarificationFieldErrors({});
       setClarificationFormError("");
+      setNaturalAnchorDraft("");
+      setAnchorCapturePreview(null);
       return;
     }
     setClarificationValues(buildIntakeCompletenessDraft({
@@ -7573,6 +7542,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setClarificationFieldErrors({});
     setClarificationFormError("");
     setDraft("");
+    setNaturalAnchorDraft("");
+    setAnchorCapturePreview(null);
   }, [phase, activeMachineAnchor?.anchor_id, pendingClarifyingQuestion?.key, pendingClarifyingQuestion?.prompt, answers]);
 
   useEffect(() => {
@@ -7720,6 +7691,26 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     });
     if (clarificationFormError) setClarificationFormError("");
   };
+  const hydrateClarificationValuesFromAiCandidate = (anchor, candidate) => {
+    if (!anchor?.field_id || !candidate) return;
+    const fieldId = anchor.field_id;
+    const nextValues = {};
+    if (anchor.input_type === "choice_chips") {
+      nextValues[fieldId] = String(candidate?.answer_value?.value || candidate?.raw_text || "").trim();
+    } else if (anchor.input_type === "date_or_month") {
+      nextValues[fieldId] = String(candidate?.answer_value?.value || "").trim();
+      nextValues[`${fieldId}__mode`] = String(candidate?.answer_value?.mode || "month").trim().toLowerCase() || "month";
+    } else if (anchor.input_type === "number_with_unit") {
+      nextValues[fieldId] = String(candidate?.answer_value?.value ?? "").trim();
+      nextValues[`${fieldId}__unit`] = String(candidate?.answer_value?.unit || anchor?.unit || anchor?.unit_options?.[0]?.value || "").trim();
+    } else {
+      nextValues[fieldId] = String(candidate?.answer_value?.raw || candidate?.raw_text || candidate?.capturePreviewText || "").trim();
+    }
+    setClarificationValues((prev) => ({
+      ...prev,
+      ...nextValues,
+    }));
+  };
   const formatMonthInputLabel = (value = "") => {
     const match = String(value || "").match(/^(\d{4})-(\d{2})$/);
     if (!match) return String(value || "").trim();
@@ -7788,6 +7779,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       raw_text: cleanValue,
     };
   };
+  const buildNaturalAnchorExtractionContext = () => ({
+    safeFetchWithTimeout,
+    typedIntakePacket: intakeMachineRef.current?.draft?.typedIntakePacket || assessmentBoundary?.typedIntakePacket || null,
+    answers: intakeMachineRef.current?.draft?.answers || answers,
+  });
   const finalizeAssessmentState = ({
     assessment = null,
     updatedAnswers = {},
@@ -7898,24 +7894,31 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       home_equipment_other: equipmentResponse.otherText,
     });
   };
-  const requestAdjustment = () => {
+  const requestAdjustment = ({ goalSummary = "", goalId = "" } = {}) => {
+    const cleanGoalSummary = sanitizeIntakeText(goalSummary || "");
     setConfirmBuildError("");
+    setAdjustmentTargetGoal(cleanGoalSummary ? { id: goalId || "", summary: cleanGoalSummary } : null);
     dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_EDITED, {
       answers,
       now: new Date().toISOString(),
     });
-    appendUserMessage("Adjust this goal");
+    appendUserMessage(cleanGoalSummary ? `Edit a goal: ${cleanGoalSummary}` : "Edit a goal");
     setPhase("adjust");
     setDraft("");
     setAskedClarifyingQuestions([]);
     setPendingClarifyingQuestion(null);
     setPendingSecondaryGoalPrompt(null);
-    appendCoachMessage("Tell me what you want to change and I'll recalibrate it before I build.");
+    appendCoachMessage(
+      cleanGoalSummary
+        ? `Tell me what you want to change about "${cleanGoalSummary}" and I'll recalibrate it before I build.`
+        : "Tell me what you want to change and I'll recalibrate it before I build."
+    );
   };
   const submitAdjustment = async () => {
     const clean = String(draft || "").trim();
     if (!clean) return;
     setConfirmBuildError("");
+    setAdjustmentTargetGoal(null);
     appendUserMessage(clean);
     setDraft("");
     const adjustmentOutcome = applyIntakeGoalAdjustment({
@@ -7935,6 +7938,103 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.prompt) return;
     setConfirmBuildError("");
     if (activeMachineAnchor?.field_id) {
+      const naturalReply = activeAnchorStrictMode ? "" : String(naturalAnchorDraft || "").trim();
+      if (naturalReply) {
+        appendUserMessage(naturalReply);
+        setNaturalAnchorSubmitting(true);
+        setAnchorCapturePreview(null);
+        setClarificationFieldErrors({});
+        setClarificationFormError("");
+        const extraction = await aiExtractForMissingFields({
+          utterance: naturalReply,
+          missing_fields: [activeMachineAnchor],
+          context: buildNaturalAnchorExtractionContext(),
+        });
+        setNaturalAnchorSubmitting(false);
+        if (extraction?.status === "ready_to_persist" && extraction?.validatedCandidates?.[0]) {
+          const extractedCandidate = extraction.validatedCandidates[0];
+          const nextMachineState = settleIntakeMachine(dispatchIntakeMachineEvent(
+            INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+            {
+              anchor: activeMachineAnchor,
+              field_id: activeMachineAnchor.field_id,
+              answer_value: extractedCandidate.answer_value,
+              raw_text: extractedCandidate.raw_text,
+              source: "user",
+              capture_label: `Here's what I captured: ${extractedCandidate.capturePreviewText}.`,
+              now: new Date().toISOString(),
+            }
+          ));
+          if (nextMachineState?.ui?.lastParseError) {
+            setClarificationFieldErrors({ [activeMachineAnchor.field_id]: nextMachineState.ui.lastParseError });
+            setClarificationFormError(nextMachineState.ui.lastParseError);
+            setAnchorCapturePreview({
+              field_id: activeMachineAnchor.field_id,
+              captureText: extractedCandidate.capturePreviewText,
+              question: "",
+              evidenceSpans: extractedCandidate.evidence_spans || [],
+            });
+            return;
+          }
+          syncMachineDraftToIntakeView(nextMachineState);
+          setClarificationValues({});
+          setClarificationFieldErrors({});
+          setClarificationFormError("");
+          setNaturalAnchorDraft("");
+          setAnchorCapturePreview(null);
+          setPendingClarifyingQuestion(null);
+          const nextSecondaryGoalPrompt = nextMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
+            ? buildIntakeSecondaryGoalPrompt({
+                reviewModel: nextMachineState?.draft?.reviewModel || null,
+                answers: nextMachineState?.draft?.answers || answers,
+              })
+            : null;
+          if (nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
+            setPendingSecondaryGoalPrompt(null);
+            setPhase("clarify");
+            return;
+          }
+          if (nextSecondaryGoalPrompt) {
+            setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
+            setPhase("secondary_goal");
+            return;
+          }
+          setPendingSecondaryGoalPrompt(null);
+          setPhase("review");
+          return;
+        }
+
+        if (extraction?.status === "needs_clarification" && extraction?.validatedCandidates?.[0]) {
+          const extractedCandidate = extraction.validatedCandidates[0];
+          hydrateClarificationValuesFromAiCandidate(activeMachineAnchor, extractedCandidate);
+          setNaturalAnchorDraft("");
+          setAnchorCapturePreview({
+            field_id: activeMachineAnchor.field_id,
+            captureText: extractedCandidate.capturePreviewText,
+            question: extractedCandidate.clarifyingQuestion || extraction.userFacingError,
+            evidenceSpans: extractedCandidate.evidence_spans || [],
+          });
+          const failedState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.ANCHOR_PARSE_FAILED, {
+            field_id: activeMachineAnchor.field_id,
+            formError: extractedCandidate.clarifyingQuestion || extraction.userFacingError || "Can you confirm that before I save it?",
+            now: new Date().toISOString(),
+          });
+          setClarificationFieldErrors({});
+          setClarificationFormError(failedState?.ui?.lastParseError || extractedCandidate.clarifyingQuestion || extraction.userFacingError || "Can you confirm that before I save it?");
+          return;
+        }
+
+        const failedState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.ANCHOR_PARSE_FAILED, {
+          field_id: activeMachineAnchor.field_id,
+          formError: extraction?.userFacingError || "I couldn't confidently bind that to the current field.",
+          now: new Date().toISOString(),
+        });
+        setAnchorCapturePreview(null);
+        setClarificationFieldErrors({});
+        setClarificationFormError(failedState?.ui?.lastParseError || extraction?.userFacingError || "I couldn't confidently bind that to the current field.");
+        return;
+      }
+
       const submissionPayload = buildAnchorSubmissionPayload(activeMachineAnchor);
       if (!submissionPayload?.raw_text) return;
       const nextMachineState = settleIntakeMachine(dispatchIntakeMachineEvent(
@@ -7958,6 +8058,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setClarificationValues({});
       setClarificationFieldErrors({});
       setClarificationFormError("");
+      setNaturalAnchorDraft("");
+      setAnchorCapturePreview(null);
       setPendingClarifyingQuestion(null);
       const nextSecondaryGoalPrompt = nextMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
         ? buildIntakeSecondaryGoalPrompt({
@@ -8202,7 +8304,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_CONFIRMED, {
       now: new Date().toISOString(),
     });
-    appendUserMessage("Looks good, build my plan");
+    appendUserMessage("Confirm and build my plan");
     setPhase("building");
     const payload = {
       ...answers,
@@ -8233,15 +8335,24 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     goalFeasibility: assessmentPreview?.goalFeasibility || null,
     goalStackConfirmation,
   });
-  const displayedPrimaryGoal = goalStackReview?.activeGoals?.[0] || null;
+  const goalReviewContract = goalStackReview?.reviewContract || reviewModel?.reviewContract || null;
+  const displayedPrimaryGoal = goalReviewContract?.lead_goal || goalStackReview?.activeGoals?.[0] || null;
   const displayedTrackingLabels = Array.from(new Set(
     (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
   ));
+  const anchorCollectionViewModel = useMemo(() => buildAnchorCollectionViewModel({
+    machineState: intakeMachine,
+    maxVisibleCards: 3,
+  }), [intakeMachine]);
   const machineDebugView = useMemo(() => buildIntakeMachineDebugView(intakeMachine), [intakeMachine]);
-  const visibleMachineAnchorCards = phase === "clarify" && activeMachineAnchor?.field_id
-    ? (Array.isArray(intakeMachine?.draft?.missingAnchorsEngine?.missingAnchors) ? intakeMachine.draft.missingAnchorsEngine.missingAnchors.slice(0, 3) : [])
+  const visibleMachineAnchorCards = phase === "clarify" && anchorCollectionViewModel?.isVisible
+    ? (Array.isArray(anchorCollectionViewModel?.visibleCards) ? anchorCollectionViewModel.visibleCards : [])
     : [];
-  const isMachineAnchorClarification = phase === "clarify" && Boolean(activeMachineAnchor?.field_id);
+  const isMachineAnchorClarification = phase === "clarify" && Boolean(anchorCollectionViewModel?.isVisible);
+  const activeAnchorFailureCount = isMachineAnchorClarification
+    ? Number(intakeMachine?.anchorFailureCounts?.[activeMachineAnchor?.field_id] || 0)
+    : 0;
+  const activeAnchorStrictMode = isMachineAnchorClarification && activeAnchorFailureCount >= 2;
   const isStructuredClarification = isMachineAnchorClarification || (phase === "clarify" && isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion));
   const activeMachineAnchorSubmission = isMachineAnchorClarification ? buildAnchorSubmissionPayload(activeMachineAnchor) : null;
   const clarificationInputFields = isMachineAnchorClarification
@@ -8414,6 +8525,23 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     )}
                     {isMachineAnchorClarification ? (
                       <div style={{ display:"grid", gap:"0.65rem" }}>
+                        <div style={{ border:"1px solid rgba(0,194,255,0.18)", borderRadius:18, padding:"0.78rem 0.84rem", background:"linear-gradient(180deg, rgba(0,194,255,0.08), rgba(15,23,42,0.72))" }}>
+                          <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>FIELD CARDS</div>
+                          <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.4 }}>
+                            {anchorCollectionViewModel?.heading || "A few quick anchors before I lock this in."}
+                          </div>
+                          {anchorCollectionViewModel?.goalSummary && (
+                            <div style={{ fontSize:"0.52rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.5 }}>
+                              Goal: {anchorCollectionViewModel.goalSummary}
+                            </div>
+                          )}
+                          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
+                            {anchorCollectionViewModel?.progressLabel || ""}
+                          </div>
+                          <div style={{ fontSize:"0.49rem", color:"#64748b", marginTop:"0.12rem", lineHeight:1.45 }}>
+                            {anchorCollectionViewModel?.helperText || ""}
+                          </div>
+                        </div>
                         {visibleMachineAnchorCards.map((anchorCard, index) => {
                           const isActiveCard = index === 0;
                           const fieldId = anchorCard.field_id;
@@ -8444,12 +8572,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                               <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"baseline" }}>
                                 <div style={{ display:"grid", gap:"0.18rem" }}>
                                   <div style={{ fontSize:"0.46rem", color:isActiveCard ? "#8fa5c8" : "#64748b", letterSpacing:"0.12em" }}>
-                                    {isActiveCard ? "ACTIVE FIELD" : "UP NEXT"}
+                                    {anchorCard.status_label || (isActiveCard ? "ACTIVE FIELD" : "UP NEXT")}
                                   </div>
                                   <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.35 }}>{anchorCard.label}</div>
                                 </div>
                                 <div style={{ fontSize:"0.48rem", color:"#64748b" }}>
-                                  {index + 1} / {Math.max(visibleMachineAnchorCards.length, 1)}
+                                  {anchorCard.stack_position || index + 1} / {Math.max(anchorCollectionViewModel?.totalRemaining || visibleMachineAnchorCards.length, 1)}
                                 </div>
                               </div>
                               {anchorCard.why_it_matters && (
@@ -8632,6 +8760,46 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       ))}
                                     </div>
                                   )}
+                                  {anchorCapturePreview?.field_id === fieldId && (
+                                    <div style={{ border:"1px solid rgba(0,194,255,0.2)", borderRadius:14, padding:"0.62rem", background:"rgba(3,20,36,0.72)", display:"grid", gap:"0.22rem" }}>
+                                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.1em" }}>HERE'S WHAT I CAPTURED</div>
+                                      <div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.45 }}>
+                                        {anchorCapturePreview?.captureText || "Pending capture"}
+                                      </div>
+                                      {anchorCapturePreview?.question && (
+                                        <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                                          {anchorCapturePreview.question}
+                                        </div>
+                                      )}
+                                      {(anchorCapturePreview?.evidenceSpans || []).length > 0 && (
+                                        <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>
+                                          From your reply: {(anchorCapturePreview.evidenceSpans || []).map((item) => item.text).filter(Boolean).join(" • ")}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {activeAnchorStrictMode ? (
+                                    <div style={{ border:"1px solid rgba(255,138,0,0.22)", borderRadius:14, padding:"0.62rem", background:"rgba(38,24,7,0.38)", display:"grid", gap:"0.18rem" }}>
+                                      <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.1em" }}>STRICT MODE</div>
+                                      <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                                        Two parsing attempts missed. Use the field control above and one of the examples so I bind only this field.
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div style={{ display:"grid", gap:"0.3rem" }}>
+                                      <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>OR TYPE IT NATURALLY</div>
+                                      <textarea
+                                        value={naturalAnchorDraft}
+                                        onChange={(e) => setNaturalAnchorDraft(e.target.value)}
+                                        placeholder="Example: my bench is around 185 x 5 right now"
+                                        rows={2}
+                                        style={{ minHeight:72, resize:"vertical", fontSize:"0.82rem", lineHeight:1.45 }}
+                                      />
+                                      <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>
+                                        I'll only try to capture this field from your reply. Everything else gets ignored.
+                                      </div>
+                                    </div>
+                                  )}
                                   {clarificationFieldErrors?.[fieldId] && (
                                     <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[fieldId]}</div>
                                   )}
@@ -8706,19 +8874,19 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         className="btn btn-primary"
                         onClick={submitClarification}
                         disabled={isMachineAnchorClarification
-                          ? !activeMachineAnchorSubmission?.raw_text
+                          ? !(activeMachineAnchorSubmission?.raw_text || (!activeAnchorStrictMode && String(naturalAnchorDraft || "").trim())) || naturalAnchorSubmitting
                           : isStructuredClarification
                           ? clarificationInputFields.every((field) => !String(clarificationValues?.[field.key] || "").trim())
                           : !draft.trim()}
                       >
-                        Save this detail
+                        {naturalAnchorSubmitting ? "Capturing..." : "Save this detail"}
                       </button>
                       {!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.required && (
                         <button className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
                           Keep this goal
                         </button>
                       )}
-                      <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
+                      <button className="btn" onClick={() => requestAdjustment()} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
                         Adjust this goal
                       </button>
                     </div>
@@ -8795,7 +8963,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                   </div>
                 ) : null}
 
-                {reviewModel && (
+                {reviewModel && !isMachineAnchorClarification && (
                   <div style={{ display:"grid", gap:"0.65rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:18, padding:"0.8rem", background:"rgba(8,14,25,0.58)" }}>
                     <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.55rem" }}>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
@@ -8820,89 +8988,91 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>NEED BEFORE I BUILD</div>
-                        <div style={{ display:"grid", gap:"0.18rem" }}>
-                          {(reviewModel.unresolvedItems.length ? reviewModel.unresolvedItems : ["Nothing critical. I have enough to build from here."]).map((item) => (
-                            <div key={item} style={{ fontSize:"0.54rem", color:reviewModel.unresolvedItems.length ? C.amber : "#8fa5c8", lineHeight:1.5 }}>{item}</div>
-                          ))}
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>REALISM GATE</div>
+                        <div style={{ fontSize:"0.54rem", color:reviewModel.gateExplanationText ? (confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8") : "#8fa5c8", lineHeight:1.55 }}>
+                          {reviewModel.gateExplanationText || "Nothing critical. I have enough to build from here."}
                         </div>
+                        {(reviewModel.gateSuggestedRevision?.requested_data || []).length > 0 && (
+                          <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.45 }}>
+                            What would change this: {(reviewModel.gateSuggestedRevision?.requested_data || []).join(" - ")}
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    {goalStackReview?.activeGoals?.length > 0 && (
+                    {goalReviewContract && (
                       <div style={{ display:"grid", gap:"0.55rem" }}>
-                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>FOCUS RIGHT NOW</div>
-                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.55rem" }}>
-                          {goalStackReview.activeGoals.map((goal, index) => {
-                            const isPrimary = goal.role === GOAL_STACK_ROLES.primary || index === 0;
-                            return (
-                              <div key={goal.id || goal.summary} style={{ border:`1px solid ${isPrimary ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.14)"}`, borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                                <div style={{ fontSize:"0.46rem", color:isPrimary ? C.green : "#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>{isPrimary ? "Lead goal" : "Also keep"}</div>
-                                <div style={{ fontSize:"0.62rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
-                                <div style={{ fontSize:"0.51rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>
-                                  What we'll measure: {(goal.trackingLabels.length ? goal.trackingLabels : ["First 30-day success definition"]).join(" - ")}
-                                </div>
-                                {goal.tradeoff && (
-                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                                    What to expect: {goal.tradeoff}
-                                  </div>
-                                )}
-                                {!goal.tradeoff && goal.reason && (
-                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                                    {goal.reason}
-                                  </div>
-                                )}
-                                <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.45rem" }}>
-                                  {!isPrimary && (
-                                    <button className="btn" onClick={() => setLeadingGoal(goal.id)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
-                                      Make this the lead goal
-                                    </button>
-                                  )}
-                                  {!isPrimary && (
-                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                      Keep as an also-keep goal
-                                    </button>
-                                  )}
-                                  {!isPrimary && (
-                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, "removed")} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
-                                      Remove
-                                    </button>
-                                  )}
-                                </div>
+                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>REVIEW LANES</div>
+                        {(goalReviewContract?.lane_sections || []).map((section) => {
+                          const goals = Array.isArray(section?.goals) ? section.goals : [];
+                          return (
+                            <div key={section.lane_key} style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
+                              <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>
+                                {String(section?.title || "").toUpperCase()}
                               </div>
-                            );
-                          })}
-                        </div>
-                        {goalStackReview?.backgroundGoals?.length > 0 && (
-                          <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>NOT THE FOCUS RIGHT NOW</div>
-                            <div style={{ display:"grid", gap:"0.36rem" }}>
-                              {goalStackReview.backgroundGoals.map((goal) => (
-                                <div key={goal.id} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
-                                  <div style={{ fontSize:"0.58rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
-                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
-                                    {goal.reason || "We’ll keep this in mind, but it won’t drive the plan right now."}
-                                  </div>
-                                  <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.45 }}>
-                                    What we'll watch: {(goal.trackingLabels.length ? goal.trackingLabels : ["Weekly check-ins"]).join(" - ")}
-                                  </div>
-                                  <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.38rem" }}>
-                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                      Also keep this
-                                    </button>
-                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.deferred)} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
-                                      Not the focus right now
-                                    </button>
-                                  </div>
+                              {goals.length > 0 ? (
+                                <div style={{ display:"grid", gap:"0.36rem" }}>
+                                  {goals.map((goal) => {
+                                    const isLeadLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.leadGoal;
+                                    const isMaintainedLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.maintainedGoals;
+                                    const isSupportLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.supportGoals;
+                                    const isDeferredLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.deferredGoals;
+                                    const trackingLabel = isSupportLane ? "What we'll watch" : "What we'll measure";
+                                    return (
+                                      <div key={goal.id || goal.summary} style={{ border:`1px solid ${isLeadLane ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.12)"}`, borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
+                                        <div style={{ fontSize:"0.6rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
+                                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
+                                          {goal.rationale || goal.reason || goal.tradeoff || "We'll keep this lane deliberate and explicit."}
+                                        </div>
+                                        <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.45 }}>
+                                          {trackingLabel}: {(goal.trackingLabels?.length ? goal.trackingLabels : [isSupportLane ? "Weekly check-ins" : "First 30-day success definition"]).join(" - ")}
+                                        </div>
+                                        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.4rem" }}>
+                                          {!isLeadLane && (
+                                            <button className="btn" onClick={() => setLeadingGoal(goal.id)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
+                                              {goalReviewContract?.actions?.changePriority?.label || "Change priority"}
+                                            </button>
+                                          )}
+                                          {!isLeadLane && isMaintainedLane && (
+                                            <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.background)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                              Support in background
+                                            </button>
+                                          )}
+                                          {!isLeadLane && (isSupportLane || isDeferredLane) && (
+                                            <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                              Move to maintain
+                                            </button>
+                                          )}
+                                          {!isLeadLane && !isDeferredLane && (
+                                            <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.deferred)} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
+                                              Defer this
+                                            </button>
+                                          )}
+                                          <button className="btn" onClick={() => requestAdjustment({ goalSummary: goal.summary, goalId: goal.id })} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                            {goalReviewContract?.actions?.editGoal?.label || "Edit a goal"}
+                                          </button>
+                                          {!isLeadLane && (
+                                            <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, "removed")} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
+                                              {goalReviewContract?.actions?.dropGoal?.label || "Drop a goal"}
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
-                              ))}
+                              ) : (
+                                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                                  {section?.empty_state || "Nothing is sitting in this lane right now."}
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        )}
-                        {goalStackReview.primaryTradeoff && (
+                          );
+                        })}
+                        {goalReviewContract?.tradeoff_statement && (
                           <div style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>WHAT TO EXPECT</div>
-                            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalStackReview.primaryTradeoff}</div>
+                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>TRADEOFF STATEMENT</div>
+                            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalReviewContract.tradeoff_statement}</div>
                           </div>
                         )}
                         {goalStackReview.backgroundPriority && (
@@ -8922,31 +9092,6 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                             </div>
                           </div>
                         )}
-                        {goalStackReview?.deferredGoals?.length > 0 && (
-                          <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>LATER, NOT NOW</div>
-                            <div style={{ display:"grid", gap:"0.28rem" }}>
-                              {goalStackReview.deferredGoals.map((goal) => (
-                                <div key={goal.id} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
-                                  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
-                                    <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.4 }}>{goal.summary}</div>
-                                    <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                                      <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.background)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                        Not the focus right now
-                                      </button>
-                                      <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
-                                        Also keep this
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
-                                    {goal.reason || "This makes more sense after the current block has a cleaner focus."}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
@@ -8955,6 +9100,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                 {phase === "review" ? (
                   <div style={{ display:"grid", gap:"0.55rem" }}>
                     <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Here’s the direction I’d build from.</div>
+                    <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                      Before you confirm, use the lane cards above to change priority, edit a goal, or drop a goal.
+                    </div>
                     {confirmationState?.headline && (
                       <div style={{ fontSize:"0.56rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", lineHeight:1.55 }}>
                         {confirmationState.headline}
@@ -8962,10 +9110,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
                       <button className="btn btn-primary" onClick={finalizePlan} disabled={!confirmationState?.ctaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting}>
-                        {confirmationState?.ctaLabel || "Confirm and build my plan"}
+                        {goalReviewContract?.actions?.confirm?.label || confirmationState?.ctaLabel || "Confirm and build my plan"}
                       </button>
-                      <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
-                        Adjust this goal
+                      <button className="btn" onClick={() => requestAdjustment()} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
+                        {goalReviewContract?.actions?.editGoal?.label || "Edit a goal"}
                       </button>
                     </div>
                     {(confirmationState?.state === "blocked" || confirmationState?.state === "incomplete") && (
@@ -8994,7 +9142,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                   ref={composerRef}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  placeholder="Tell me what you want to change..."
+                  placeholder={adjustmentTargetGoal?.summary ? `Tell me what should change about "${adjustmentTargetGoal.summary}"...` : "Tell me what you want to change..."}
                   rows={3}
                   style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
                 />

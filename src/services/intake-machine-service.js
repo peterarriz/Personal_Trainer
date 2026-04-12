@@ -1643,11 +1643,13 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
         : INTAKE_MACHINE_STATES.REALISM_GATE;
       const messages = [];
       if (binding?.field_id) {
+        const captureLabel = sanitizeText(event?.payload?.capture_label || "", 220);
+        const defaultCaptureText = `Got it. ${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 180)}.`;
         messages.push({
           key: `anchor_saved:${binding.field_id}:${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 120).toLowerCase()}`,
           text: nextAnchor
-            ? `Got it. ${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 180)}. Next: ${nextAnchor.question}`
-            : `Got it. ${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 180)}.`,
+            ? `${captureLabel || defaultCaptureText} Next: ${nextAnchor.question}`
+            : (captureLabel || defaultCaptureText),
         });
       }
       return commitTransition({

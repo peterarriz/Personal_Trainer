@@ -107,6 +107,51 @@ const ROLE_LABELS = {
   [GOAL_STACK_ROLES.deferred]: "Later",
 };
 
+export const GOAL_REVIEW_LANE_KEYS = {
+  leadGoal: "lead_goal",
+  maintainedGoals: "maintained_goals",
+  supportGoals: "support_goals",
+  deferredGoals: "deferred_goals",
+};
+
+const GOAL_REVIEW_LANE_META = {
+  [GOAL_REVIEW_LANE_KEYS.leadGoal]: {
+    title: "Leading now",
+    emptyState: "No lead goal is selected yet.",
+  },
+  [GOAL_REVIEW_LANE_KEYS.maintainedGoals]: {
+    title: "We will maintain",
+    emptyState: "Nothing else needs active maintenance right now.",
+  },
+  [GOAL_REVIEW_LANE_KEYS.supportGoals]: {
+    title: "We will support in the background",
+    emptyState: "No support-only goals are sitting in the background right now.",
+  },
+  [GOAL_REVIEW_LANE_KEYS.deferredGoals]: {
+    title: "We are deferring",
+    emptyState: "Nothing is being deferred right now.",
+  },
+};
+
+const GOAL_REVIEW_ACTIONS = {
+  confirm: {
+    key: "confirm_and_build",
+    label: "Confirm and build my plan",
+  },
+  changePriority: {
+    key: "change_priority",
+    label: "Change priority",
+  },
+  editGoal: {
+    key: "edit_goal",
+    label: "Edit a goal",
+  },
+  dropGoal: {
+    key: "drop_goal",
+    label: "Drop a goal",
+  },
+};
+
 const normalizeGoalAdjustmentText = (value = "") => {
   let text = sanitizeText(value, 320);
   if (!text) return "";
@@ -223,6 +268,165 @@ const buildMaintainedGoalLabelFromGoal = (goal = {}) => {
   const maintainedValue = buildMaintainedGoalValueFromGoal(goal);
   if (!maintainedValue) return "Keep it maintained";
   return maintainedValue.charAt(0).toUpperCase() + maintainedValue.slice(1);
+};
+
+const sentenceCase = (value = "") => {
+  const text = sanitizeText(value, 260);
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
+};
+
+const formatGoalSummaryList = (items = []) => {
+  const labels = dedupeStrings(
+    toArray(items)
+      .map((item) => sanitizeText(item?.summary || item, 160))
+      .filter(Boolean)
+  );
+  if (labels.length === 0) return "";
+  if (labels.length === 1) return labels[0];
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+};
+
+const buildGoalReviewEntry = ({ goal = {}, role = GOAL_STACK_ROLES.deferred } = {}) => {
+  const trackingLabels = buildPerGoalTrackingLabels(goal);
+  const tradeoff = sanitizeText(goal?.tradeoffs?.[0] || "", 180);
+  const reason = sanitizeText(goal?.goalArbitrationReason || "", 220);
+  const fallbackRationale = role === GOAL_STACK_ROLES.primary
+    ? "This sets the direction for the current block."
+    : role === GOAL_STACK_ROLES.maintained
+    ? "This stays in maintenance range while the lead goal gets the clearest push."
+    : role === GOAL_STACK_ROLES.background
+    ? "This stays present in the background without competing with the lead goal."
+    : "This is intentionally parked for a later block so the current plan can stay coherent.";
+  return {
+    id: goal?.id,
+    summary: sanitizeText(goal?.summary || "", 160),
+    role,
+    roleLabel: ROLE_LABELS[role] || "Goal",
+    planningPriority: Number(goal?.planningPriority || 0) || null,
+    targetDate: sanitizeText(goal?.targetDate || "", 24),
+    targetHorizonWeeks: Number.isFinite(Number(goal?.targetHorizonWeeks)) ? Number(goal.targetHorizonWeeks) : null,
+    primaryMetric: goal?.primaryMetric || null,
+    arbitrationConfirmedPrimary: Boolean(goal?.arbitrationConfirmedPrimary),
+    measurabilityLabel: MEASURABILITY_LABELS[goal?.measurabilityTier] || "Goal",
+    trackingLabels,
+    tradeoff,
+    reason,
+    rationale: reason || tradeoff || fallbackRationale,
+    actions: {
+      canChangePriority: role !== GOAL_STACK_ROLES.primary,
+      canEdit: true,
+      canDrop: role !== GOAL_STACK_ROLES.primary,
+    },
+  };
+};
+
+const buildLeadPriorityBasis = ({ leadGoal = null, goalFeasibility = null } = {}) => {
+  if (!leadGoal) return "it gives the block the clearest direction";
+  const goalId = sanitizeText(leadGoal?.id || "", 120);
+  const recommendedLeadId = sanitizeText(toArray(goalFeasibility?.recommendedPriorityOrdering)[0]?.goalId || "", 120);
+  const conflictKeys = new Set(
+    toArray(goalFeasibility?.conflictFlags)
+      .map((flag) => sanitizeText(flag?.key || "", 80).toLowerCase())
+      .filter(Boolean)
+  );
+  const parts = [];
+  if (leadGoal?.targetDate || Number(leadGoal?.targetHorizonWeeks || 0) > 0 || sanitizeText(leadGoal?.primaryMetric?.targetValue || "", 40)) {
+    parts.push("it is the most specific target");
+  }
+  if (goalId && recommendedLeadId && goalId === recommendedLeadId) {
+    parts.push("it came through the feasibility gate as the cleanest lead");
+  }
+  if (leadGoal?.arbitrationConfirmedPrimary || Number(leadGoal?.planningPriority || 99) === 1) {
+    parts.push("it carries the strongest user priority signal");
+  }
+  if (conflictKeys.has("limited_schedule_multi_goal_stack") || conflictKeys.has("constraint_ceiling")) {
+    parts.push("it best fits the current schedule and recovery constraints");
+  }
+  return parts.slice(0, 2).join(" and ") || "it gives the block the clearest direction";
+};
+
+const buildReviewTradeoffStatement = ({
+  leadGoal = null,
+  maintainedGoals = [],
+  supportGoals = [],
+  deferredGoals = [],
+  goalFeasibility = null,
+  primaryTradeoff = "",
+} = {}) => {
+  if (!leadGoal?.summary) return "";
+  const firstSentence = `${leadGoal.summary} leads now because ${buildLeadPriorityBasis({ leadGoal, goalFeasibility })}.`;
+  const clauses = [];
+  const maintainedSummary = formatGoalSummaryList(maintainedGoals);
+  const supportSummary = formatGoalSummaryList(supportGoals);
+  const deferredSummary = formatGoalSummaryList(deferredGoals);
+  if (maintainedSummary) clauses.push(`${maintainedSummary} ${maintainedGoals.length === 1 ? "stays" : "stay"} maintained`);
+  if (supportSummary) clauses.push(`${supportSummary} ${supportGoals.length === 1 ? "stays" : "stay"} in the background`);
+  if (deferredSummary) clauses.push(`${deferredSummary} ${deferredGoals.length === 1 ? "is" : "are"} deferred until a later block`);
+  if (clauses.length > 0) {
+    return `${firstSentence} ${sentenceCase(clauses.join(", "))} so the plan does not try to push every lane at once.`;
+  }
+  if (primaryTradeoff) {
+    return `${firstSentence} ${sentenceCase(primaryTradeoff).replace(/[.]+$/g, "")}.`;
+  }
+  return firstSentence;
+};
+
+const buildGoalReviewContract = ({
+  leadGoal = null,
+  maintainedGoals = [],
+  supportGoals = [],
+  deferredGoals = [],
+  goalFeasibility = null,
+  primaryTradeoff = "",
+} = {}) => {
+  const laneSections = [
+    {
+      lane_key: GOAL_REVIEW_LANE_KEYS.leadGoal,
+      title: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.leadGoal].title,
+      empty_state: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.leadGoal].emptyState,
+      goals: leadGoal ? [leadGoal] : [],
+    },
+    {
+      lane_key: GOAL_REVIEW_LANE_KEYS.maintainedGoals,
+      title: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.maintainedGoals].title,
+      empty_state: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.maintainedGoals].emptyState,
+      goals: maintainedGoals,
+    },
+    {
+      lane_key: GOAL_REVIEW_LANE_KEYS.supportGoals,
+      title: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.supportGoals].title,
+      empty_state: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.supportGoals].emptyState,
+      goals: supportGoals,
+    },
+    {
+      lane_key: GOAL_REVIEW_LANE_KEYS.deferredGoals,
+      title: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.deferredGoals].title,
+      empty_state: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.deferredGoals].emptyState,
+      goals: deferredGoals,
+    },
+  ];
+  return {
+    lead_goal: leadGoal,
+    maintained_goals: maintainedGoals,
+    support_goals: supportGoals,
+    deferred_goals: deferredGoals,
+    tradeoff_statement: buildReviewTradeoffStatement({
+      leadGoal,
+      maintainedGoals,
+      supportGoals,
+      deferredGoals,
+      goalFeasibility,
+      primaryTradeoff,
+    }),
+    lane_sections: laneSections,
+    actions: {
+      confirm: { ...GOAL_REVIEW_ACTIONS.confirm },
+      changePriority: { ...GOAL_REVIEW_ACTIONS.changePriority },
+      editGoal: { ...GOAL_REVIEW_ACTIONS.editGoal },
+      dropGoal: { ...GOAL_REVIEW_ACTIONS.dropGoal },
+    },
+  };
 };
 
 const normalizeAdditionalGoalText = (value = "") => sanitizeText(value, 180);
@@ -453,6 +657,23 @@ export const buildIntakeGoalStackReviewModel = ({
         trackingLabels: ["Session completion", "Readiness", "Recovery drift"],
       }
     : null;
+  const leadGoal = confirmedGoals.find((entry) => entry.role === GOAL_STACK_ROLES.primary)?.goal || null;
+  const leadGoalReview = leadGoal ? buildGoalReviewEntry({ goal: leadGoal, role: GOAL_STACK_ROLES.primary }) : null;
+  const maintainedGoalReviews = confirmedGoals
+    .filter((entry) => entry.role === GOAL_STACK_ROLES.maintained)
+    .map((entry) => buildGoalReviewEntry({ goal: entry.goal, role: GOAL_STACK_ROLES.maintained }));
+  const supportGoalReviews = backgroundGoals
+    .map((entry) => buildGoalReviewEntry({ goal: entry.goal, role: GOAL_STACK_ROLES.background }));
+  const deferredGoalReviews = deferredGoals
+    .map((entry) => buildGoalReviewEntry({ goal: entry.goal, role: GOAL_STACK_ROLES.deferred }));
+  const reviewContract = buildGoalReviewContract({
+    leadGoal: leadGoalReview,
+    maintainedGoals: maintainedGoalReviews,
+    supportGoals: supportGoalReviews,
+    deferredGoals: deferredGoalReviews,
+    goalFeasibility,
+    primaryTradeoff,
+  });
 
   return {
     confirmation,
@@ -460,42 +681,17 @@ export const buildIntakeGoalStackReviewModel = ({
     activeGoalIds: confirmedGoals.map((entry) => entry?.goal?.id).filter(Boolean),
     backgroundGoalIds: backgroundGoals.map((entry) => entry?.goal?.id).filter(Boolean),
     deferredGoalIds: deferredGoals.map((entry) => entry?.goal?.id).filter(Boolean),
-    activeGoals: confirmedGoals.map((entry) => ({
-      id: entry.goal.id,
-      summary: sanitizeText(entry?.goal?.summary || "", 160),
-      role: entry.role,
-      roleLabel: ROLE_LABELS[entry.role] || "Goal",
-      measurabilityLabel: MEASURABILITY_LABELS[entry?.goal?.measurabilityTier] || "Goal",
-      trackingLabels: buildPerGoalTrackingLabels(entry.goal),
-      tradeoff: sanitizeText(entry?.goal?.tradeoffs?.[0] || "", 180),
-      reason: sanitizeText(entry?.goal?.goalArbitrationReason || "", 220),
-    })),
-    backgroundGoals: backgroundGoals.map((entry) => ({
-      id: entry.goal.id,
-      summary: sanitizeText(entry?.goal?.summary || "", 160),
-      role: GOAL_STACK_ROLES.background,
-      roleLabel: ROLE_LABELS[GOAL_STACK_ROLES.background] || "Not the focus right now",
-      trackingLabels: buildPerGoalTrackingLabels(entry.goal),
-      reason: sanitizeText(entry?.goal?.goalArbitrationReason || "", 220),
-    })),
-    deferredGoals: deferredGoals.map((entry) => ({
-      id: entry.goal.id,
-      summary: sanitizeText(entry?.goal?.summary || "", 160),
-      role: GOAL_STACK_ROLES.deferred,
-      roleLabel: ROLE_LABELS[GOAL_STACK_ROLES.deferred] || "Later",
-      trackingLabels: buildPerGoalTrackingLabels(entry.goal),
-      reason: sanitizeText(entry?.goal?.goalArbitrationReason || "", 220),
-    })),
-    removedGoals: deferredGoals.map((entry) => ({
-      id: entry.goal.id,
-      summary: sanitizeText(entry?.goal?.summary || "", 160),
-      role: GOAL_STACK_ROLES.deferred,
-      roleLabel: ROLE_LABELS[GOAL_STACK_ROLES.deferred] || "Later",
-      trackingLabels: buildPerGoalTrackingLabels(entry.goal),
-      reason: sanitizeText(entry?.goal?.goalArbitrationReason || "", 220),
-    })),
+    activeGoals: [leadGoalReview, ...maintainedGoalReviews].filter(Boolean),
+    leadGoal: leadGoalReview,
+    maintainedGoals: maintainedGoalReviews,
+    supportGoals: supportGoalReviews,
+    backgroundGoals: supportGoalReviews,
+    deferredGoals: deferredGoalReviews,
+    removedGoals: deferredGoalReviews,
     primaryTradeoff,
+    tradeoffStatement: reviewContract.tradeoff_statement,
     backgroundPriority,
+    reviewContract,
   };
 };
 
@@ -753,6 +949,9 @@ export const buildIntakeGoalReviewModel = ({
     resolvedGoals: activeResolvedGoals.length ? activeResolvedGoals : resolvedGoals,
     answers,
   });
+  const gateReasonLines = sanitizeText(goalFeasibility?.primary_reason_code || "", 80).toLowerCase() === "missing_required_context"
+    ? []
+    : toArray(goalFeasibility?.reasons).map((item) => sanitizeText(item?.summary || item, 220)).filter(Boolean).slice(0, 2);
   const trackingLabels = dedupeStrings(
     (activeResolvedGoals.length ? activeResolvedGoals : resolvedGoals).flatMap((goal) => [
       goal?.primaryMetric?.label || "",
@@ -764,13 +963,11 @@ export const buildIntakeGoalReviewModel = ({
   ).slice(0, 6);
   const unresolvedItems = dedupeStrings([
     ...completeness.missingRequired.map((item) => item.label),
-    ...toArray(goalFeasibility?.blockingReasons),
-    ...(goalFeasibility?.recommendedRevision?.summary ? [goalFeasibility.recommendedRevision.summary] : []),
-    ...(goalFeasibility?.tradeoffSummary ? [goalFeasibility.tradeoffSummary] : []),
-    ...toArray(goalFeasibility?.warningReasons).slice(0, 2),
+    ...gateReasonLines,
+    ...(goalFeasibility?.suggested_revision?.summary ? [goalFeasibility.suggested_revision.summary] : []),
     ...(goalResolution?.unresolvedGaps || []),
     ...resolvedGoals.flatMap((goal) => goal?.unresolvedGaps || []),
-  ]).slice(0, 6);
+  ]).slice(0, 5);
   const dedupeQuestionObjects = (questions = []) => {
     const seen = new Set();
     return toArray(questions)
@@ -827,7 +1024,16 @@ export const buildIntakeGoalReviewModel = ({
     confidenceLabel: CONFIDENCE_LABELS[primaryGoal?.confidence || goalResolution?.confidenceLevel] || "Pending confidence",
     missingConfidenceLevel: sanitizeText(goalFeasibility?.missingConfidence?.level || "low", 20).toLowerCase() || "low",
     missingConfidenceReasons: toArray(goalFeasibility?.missingConfidence?.reasons).slice(0, 3),
-    recommendedRevisionSummary: sanitizeText(goalFeasibility?.recommendedRevision?.summary || "", 220),
+    gateStructuredStatus: sanitizeText(goalFeasibility?.status || "", 40).toUpperCase(),
+    gatePrimaryReasonCode: sanitizeText(goalFeasibility?.primary_reason_code || goalFeasibility?.primaryReasonCode || "", 80).toLowerCase(),
+    gateReasons: toArray(goalFeasibility?.reasons).map((item) => ({
+      code: sanitizeText(item?.code || "", 80).toLowerCase(),
+      summary: sanitizeText(item?.summary || "", 220),
+      severity: sanitizeText(item?.severity || "warning", 20).toLowerCase(),
+    })).filter((item) => item.summary),
+    gateSuggestedRevision: goalFeasibility?.suggested_revision ? { ...(goalFeasibility.suggested_revision || {}) } : null,
+    gateExplanationText: sanitizeText(goalFeasibility?.explanation_text || "", 680),
+    recommendedRevisionSummary: sanitizeText(goalFeasibility?.suggested_revision?.summary || goalFeasibility?.recommendedRevision?.summary || "", 220),
     tradeoffSummary: sanitizeText(goalFeasibility?.tradeoffSummary || "", 220),
     blockingReasons: toArray(goalFeasibility?.blockingReasons).slice(0, 3),
     warningReasons: toArray(goalFeasibility?.warningReasons).slice(0, 3),
@@ -839,6 +1045,8 @@ export const buildIntakeGoalReviewModel = ({
     orderedResolvedGoals: candidateResolvedGoals,
     activeResolvedGoals,
     goalStackReview,
+    reviewContract: goalStackReview?.reviewContract || null,
+    tradeoffStatement: sanitizeText(goalStackReview?.tradeoffStatement || goalStackReview?.reviewContract?.tradeoff_statement || "", 320),
     isPlannerReady: Boolean(primaryGoal) && (gateStatus === "ready" || gateStatus === "warn"),
   };
 };
@@ -862,6 +1070,7 @@ export const deriveIntakeConfirmationState = ({
   const warningReasons = toArray(reviewModel?.warningReasons);
   const recommendedRevisionSummary = sanitizeText(reviewModel?.recommendedRevisionSummary || "", 220);
   const tradeoffSummary = sanitizeText(reviewModel?.tradeoffSummary || "", 220);
+  const gateExplanationText = sanitizeText(reviewModel?.gateExplanationText || "", 680);
   const canonicalGateState = gateStatus || (
     confirmationAction === "block"
       ? "blocked"
@@ -912,7 +1121,7 @@ export const deriveIntakeConfirmationState = ({
   }
 
   if (canonicalGateState === "blocked") {
-    const blockedReason = recommendedRevisionSummary || blockingReasons[0] || unresolvedItems[0] || "This target needs a more realistic first step before I build around it.";
+    const blockedReason = gateExplanationText || recommendedRevisionSummary || blockingReasons[0] || unresolvedItems[0] || "This target needs a more realistic first step before I build around it.";
     return {
       state: "blocked",
       statusLabel: REVIEW_GATE_LABELS.blocked,
@@ -926,18 +1135,18 @@ export const deriveIntakeConfirmationState = ({
   }
 
   if (canonicalGateState === "warn") {
-    const warningReason = warningReasons[0] || tradeoffSummary || reviewModel?.gateLabel || "";
+    const warningReason = gateExplanationText || warningReasons[0] || tradeoffSummary || reviewModel?.gateLabel || "";
     return {
       state: "warn",
       statusLabel: REVIEW_GATE_LABELS.warn,
       headline: "This is aggressive, but I can build for it.",
-      canConfirm: true,
-      ctaEnabled: true,
-      ctaLabel: "Build my plan anyway",
-      nextQuestion: null,
-      reason: warningReason,
-    };
-  }
+        canConfirm: true,
+        ctaEnabled: true,
+        ctaLabel: GOAL_REVIEW_ACTIONS.confirm.label,
+        nextQuestion: null,
+        reason: warningReason,
+      };
+    }
 
   return {
     state: "ready",
@@ -945,7 +1154,7 @@ export const deriveIntakeConfirmationState = ({
     headline: "This looks realistic from where you're starting.",
     canConfirm: true,
     ctaEnabled: true,
-    ctaLabel: "Confirm and build my plan",
+    ctaLabel: GOAL_REVIEW_ACTIONS.confirm.label,
     nextQuestion: null,
     reason: "",
   };

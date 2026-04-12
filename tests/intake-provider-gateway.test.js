@@ -245,6 +245,64 @@ test("multi-goal hybrid interpretation through provider stays normalized and pro
   });
 });
 
+test("missing-field extraction through provider stays bounded to the allowed field ids", async () => {
+  const statePacket = buildAiStatePacket({
+    intent: AI_PACKET_INTENTS.intakeFieldExtraction,
+    ...createIntakePacketArgs("run a 2-hour half marathon"),
+  });
+
+  await withMockedEnv({
+    ANTHROPIC_API_KEY: "server-secret",
+    OPENAI_API_KEY: null,
+    AI_INTAKE_PROVIDER: "anthropic",
+  }, async () => {
+    const result = await runIntakeProviderGateway({
+      statePacket,
+      requestType: "missing_field_extraction",
+      extractionRequest: {
+        utterance: "my bench is around 185 x 5 and maybe October 12",
+        missingFields: [
+          {
+            field_id: "current_strength_baseline",
+            label: "Current bench baseline",
+            input_type: "strength_top_set",
+            validation: {
+              message: "Add a recent top set, best single, or estimated max for this lift.",
+            },
+            examples: ["185x5"],
+          },
+        ],
+      },
+      fetchImpl: createAnthropicFetch({
+        text: JSON.stringify({
+          candidates: [
+            {
+              field_id: "current_strength_baseline",
+              confidence: 0.96,
+              raw_text: "185 x 5",
+              parsed_value: { weight: 185, reps: 5, raw: "185 x 5" },
+              evidence_spans: [{ start: 19, end: 26, text: "185 x 5" }],
+            },
+            {
+              field_id: "target_timeline",
+              confidence: 0.9,
+              raw_text: "October 12",
+              parsed_value: { mode: "month", value: "2026-10", raw: "October 12" },
+              evidence_spans: [{ start: 38, end: 48, text: "October 12" }],
+            },
+          ],
+        }),
+      }),
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.meta.requestType, "missing_field_extraction");
+    assert.equal(result.extraction.candidates.length, 1);
+    assert.equal(result.extraction.candidates[0].field_id, "current_strength_baseline");
+    assert.equal(result.extraction.candidates[0].raw_text, "185 x 5");
+  });
+});
+
 test("provider failure falls back cleanly to deterministic/local goal resolution", async () => {
   const packetArgs = createIntakePacketArgs("look athletic again");
   const runtime = await runIntakeInterpretationRuntime({
