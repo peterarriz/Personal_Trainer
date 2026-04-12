@@ -105,7 +105,12 @@ import {
   getNextIntakeClarifyingQuestion,
   resolveCompatibilityPrimaryGoalKey,
 } from "./services/intake-goal-flow-service.js";
-import { deriveIntakeCompletenessState } from "./services/intake-completeness-service.js";
+import {
+  buildIntakeCompletenessDraft,
+  deriveIntakeCompletenessState,
+  isStructuredIntakeCompletenessQuestion,
+  validateIntakeCompletenessAnswer,
+} from "./services/intake-completeness-service.js";
 import {
   joinDisplayParts,
   sanitizeDisplayCopy,
@@ -126,6 +131,13 @@ import {
   normalizeHomeEquipmentResponse,
   sanitizeIntakeText,
 } from "./services/intake-flow-service.js";
+import {
+  buildIntakeMachineDebugView,
+  createIntakeMachineState,
+  intakeReducer,
+  INTAKE_MACHINE_EVENTS,
+  INTAKE_MACHINE_STATES,
+} from "./services/intake-machine-service.js";
 import {
   queueCoachTranscriptMessages,
   resolveNextCoachStreamTargetId,
@@ -1276,15 +1288,15 @@ const buildTrustSummary = ({
     deviceData ? "device data" : null,
     inferredHeuristics ? "inferred heuristics" : null,
   ].filter(Boolean);
-  let summary = sources.length ? `Using ${joinHumanList(sources)}.` : "Using limited data.";
+  let summary = sources.length ? `Guidance is currently leaning on ${joinHumanList(sources)}.` : "Guidance is currently leaning on limited data.";
   if (!explicitUserInput && !loggedActuals && !deviceData) {
     summary = inferredHeuristics
-      ? "Using inferred heuristics because no explicit input, actual log, or device data is available."
+      ? "Guidance is currently leaning on inferred heuristics because no explicit input, actual log, or device data is available."
       : "No explicit input, actual log, or device data is available yet.";
   } else if (!explicitUserInput && !loggedActuals) {
-    summary = `Using ${joinHumanList(sources)}. No explicit input or actual log is available yet.`;
+    summary = `Guidance is currently leaning on ${joinHumanList(sources)}. No explicit input or actual log is available yet.`;
   } else if (!deviceData && inferredHeuristics) {
-    summary = `Using ${joinHumanList(sources)}. No device data is contributing here.`;
+    summary = `Guidance is currently leaning on ${joinHumanList(sources)}. No device data is contributing here.`;
   }
   if (stale) summary += " Some supporting data is stale.";
   if (limitation) summary += ` ${limitation}`;
@@ -1467,7 +1479,7 @@ const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().spl
   }
   if (isPositiveRecovery(activeCheckin)) {
     progressScore += 3;
-    progressReasons.push("today's recovery input is supportive");
+    progressReasons.push("today's recovery input looks supportive");
   } else if (recentSupportiveCount >= 2) {
     progressScore += 1;
     progressReasons.push("recent recovery inputs have been steady");
@@ -1554,17 +1566,17 @@ const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().spl
     adjustedWorkout.intensityGuidance = "steady with one small progression";
     adjustedWorkout.extendedFinisher = adjustedWorkout?.extendedFinisher || (adjustedWorkout?.run ? "Optional: 4 × 20s strides if the session stays smooth." : "Optional: add one final quality set if form stays crisp.");
     appendEnvironmentNote("Progression-ready today: one small progression is available if execution stays controlled.");
-    coachLine = "Progression is available today: keep the plan intact and add only one small progression if it stays smooth.";
+    coachLine = "Current signals may support one small progression today: keep the plan intact and add it only if the session stays smooth.";
     recoveryLine = "Recovery recommendation: normal fueling, normal mobility, and no extra bonus work after the progression.";
-    userVisibleLine = "Your recovery and recent consistency allow a small progression today.";
-    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "supportive recovery and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
+    userVisibleLine = "Current recovery and consistency signals may support a small progression today.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "recovery signals that look supportive and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
   } else {
     adjustedWorkout.recoveryRecommendation = "Normal recovery: finish the session, refuel, and do your usual mobility.";
     adjustedWorkout.intensityGuidance = "planned";
     appendEnvironmentNote("Readiness is steady today: run the planned session with clean control.");
     coachLine = "Readiness is steady today: execute the planned session cleanly and keep the effort controlled.";
     recoveryLine = "Recovery recommendation: follow your normal fueling and mobility routine after the session.";
-    userVisibleLine = "Your recent recovery and training load support the planned session.";
+    userVisibleLine = "Current signals do not suggest changing the planned session.";
     adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness looks steady based on ${reasonText || "recent completion, recovery, and training load"}. Run the planned session as written and keep recovery normal.`;
   }
 
@@ -1734,7 +1746,7 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
   }
   if (strongPositiveCheckin) {
     progressScore += 3;
-    progressReasons.push("the latest recovery check-in is supportive");
+    progressReasons.push("the latest recovery check-in looks supportive");
   } else if (recentSupportiveRows.length >= 2) {
     progressScore += 1;
     progressReasons.push("recent recovery inputs have stayed steady");
@@ -1831,17 +1843,17 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
     adjustedWorkout.intensityGuidance = "planned plus one small progression";
     adjustedWorkout.extendedFinisher = adjustedWorkout?.extendedFinisher || (adjustedWorkout?.run ? "Optional: 4 x 20s strides if the session stays smooth." : "Optional: add one final quality set if form stays crisp.");
     appendEnvironmentNote("Progression-ready today: one small progression is available if execution stays controlled.");
-    coachLine = "Progression is available today: keep the plan intact and add only one small progression if it stays smooth.";
+    coachLine = "Current signals may support one small progression today: keep the plan intact and add it only if the session stays smooth.";
     recoveryLine = "Recovery recommendation: normal fueling, normal mobility, and no extra bonus work after the progression.";
-    userVisibleLine = "Supportive recovery and reliable recent completion allow a small progression today.";
-    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "supportive recovery and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
+    userVisibleLine = "Supportive-looking recovery signals and reliable recent completion may allow a small progression today.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "recovery signals that look supportive and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
   } else {
     adjustedWorkout.recoveryRecommendation = "Normal recovery: finish the session, refuel, and do your usual mobility.";
     adjustedWorkout.intensityGuidance = "planned";
     appendEnvironmentNote("Readiness is steady today: run the planned session with clean control.");
     coachLine = "Readiness is steady today: execute the planned session cleanly and keep the effort controlled.";
     recoveryLine = "Recovery recommendation: follow your normal fueling and mobility routine after the session.";
-    userVisibleLine = "Recent completion, recovery, and load support the planned session.";
+    userVisibleLine = "Current signals do not suggest changing the planned session.";
     adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness looks steady based on ${reasonText || "recent completion, recovery, and training load"}. Run the planned session as written and keep recovery normal.`;
   }
 
@@ -2413,6 +2425,65 @@ const buildGoalFeasibilityContextFromIntake = (intakeContext = {}) => ({
   },
 });
 
+const buildArbitrationIntakePacket = ({ typedIntakePacket = null, rawGoalText = "" } = {}) => {
+  const packet = typedIntakePacket && typeof typedIntakePacket === "object"
+    ? typedIntakePacket
+    : { version: "2026-04-v1", intent: "intake_interpretation" };
+  const intake = packet?.intake || packet?.intakeContext || {};
+  return {
+    ...packet,
+    intake: {
+      ...intake,
+      rawGoalText,
+    },
+  };
+};
+
+const buildConfirmedArbitrationInputs = ({
+  answers = {},
+  typedIntakePacket = null,
+  now = new Date(),
+} = {}) => {
+  const primaryGoalText = sanitizeIntakeText(String(answers?.goal_intent || "").trim()).slice(0, 320);
+  const additionalGoalTexts = readAdditionalGoalEntries({ answers });
+  const confirmedPrimaryGoal = primaryGoalText
+    ? resolveGoalTranslation({
+        rawUserGoalIntent: primaryGoalText,
+        typedIntakePacket: buildArbitrationIntakePacket({
+          typedIntakePacket,
+          rawGoalText: primaryGoalText,
+        }),
+        explicitUserConfirmation: {
+          confirmed: true,
+          acceptedProposal: true,
+          source: "confirmed_primary_goal",
+        },
+        now,
+      })?.resolvedGoals?.[0] || null
+    : null;
+  const confirmedAdditionalGoals = additionalGoalTexts.flatMap((goalText) => {
+    const resolution = resolveGoalTranslation({
+      rawUserGoalIntent: goalText,
+      typedIntakePacket: buildArbitrationIntakePacket({
+        typedIntakePacket,
+        rawGoalText: goalText,
+      }),
+      explicitUserConfirmation: {
+        confirmed: true,
+        acceptedProposal: true,
+        source: "confirmed_additional_goal",
+      },
+      now,
+    });
+    return Array.isArray(resolution?.resolvedGoals) ? resolution.resolvedGoals : [];
+  });
+  return {
+    confirmedPrimaryGoal,
+    confirmedAdditionalGoals,
+    additionalGoalTexts,
+  };
+};
+
 const buildPreviewGoalResolutionBundle = ({
   intakeContext = {},
   aiInterpretationProposal = null,
@@ -2449,9 +2520,16 @@ const buildPreviewGoalResolutionBundle = ({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     feasibility: goalFeasibility,
   });
+  const arbitrationInputs = buildConfirmedArbitrationInputs({
+    answers,
+    typedIntakePacket,
+    now,
+  });
   const arbitration = buildGoalArbitrationStack({
     resolvedGoals: feasibleResolvedGoals,
-    additionalGoalTexts: readAdditionalGoalEntries({ answers }),
+    confirmedPrimaryGoal: arbitrationInputs.confirmedPrimaryGoal,
+    confirmedAdditionalGoals: arbitrationInputs.confirmedAdditionalGoals,
+    additionalGoalTexts: arbitrationInputs.additionalGoalTexts,
     goalFeasibility,
     intakeCompleteness,
     typedIntakePacket,
@@ -4117,6 +4195,8 @@ export default function TrainerDashboard() {
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authInitializing, setAuthInitializing] = useState(true);
+  const [startupLocalResumeAvailable, setStartupLocalResumeAvailable] = useState(false);
+  const [startupLocalResumeAccepted, setStartupLocalResumeAccepted] = useState(false);
   const realtimeClientRef = useRef(null);
   const realtimeChannelRef = useRef(null);
   const realtimeResyncTimerRef = useRef(null);
@@ -4130,6 +4210,7 @@ export default function TrainerDashboard() {
   const [startFreshConfirmOpen, setStartFreshConfirmOpen] = useState(false);
   const [showAppleHealthFirstLaunch, setShowAppleHealthFirstLaunch] = useState(false);
   const DEBUG_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
+  const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "apple_health_supported", "0") === "1";
   const logDiag = (...args) => { if (DEBUG_MODE) console.log("[trainer-debug]", ...args); };
   const canonicalAthlete = useMemo(
     () => deriveCanonicalAthleteState({ goals, personalization, profileDefaults: PROFILE }),
@@ -4322,7 +4403,7 @@ export default function TrainerDashboard() {
     : garminReadiness?.mode === "reduced_load"
     ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Reduced-load)`, explanation: `Garmin readiness is pointing to partial recovery, so today's session is reduced as a caution move rather than a hard stop.` }
     : deviceSyncAudit?.planMode === "recovery"
-    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data points toward a recovery day.", explanation: `Connected device data is leaning recovery today. The app is using that signal cautiously because device context is supportive, not definitive, on its own.` }
+    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data suggests a recovery day.", explanation: `Connected device data is leaning recovery today. The app is using that signal cautiously because device context is suggestive, not definitive, on its own.` }
     : deviceSyncAudit?.planMode === "reduced_load"
     ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Device-adjusted)`, explanation: `Device signals suggest slightly reducing today's load to stay within productive training ranges.` }
     : todayWorkoutHardenedBase;
@@ -4916,6 +4997,29 @@ export default function TrainerDashboard() {
     await authStorage.persistAll({ payload, authSession, setStorageStatus, setAuthSession });
   };
 
+  const hydrateLocalRuntimeCache = ({ statusOverride = null } = {}) => {
+    const cache = localLoad();
+    const hasCache = Boolean(cache && typeof cache === "object");
+    setStartupLocalResumeAvailable(hasCache);
+    if (hasCache) {
+      try {
+        const cachedRuntimeState = buildCanonicalRuntimeStateFromStorage({
+          storedPayload: cache,
+          mergePersonalization,
+          DEFAULT_PERSONALIZATION,
+          normalizeGoals,
+          DEFAULT_MULTI_GOALS,
+        });
+        validateCanonicalRuntimeStateInvariant(cachedRuntimeState, "buildCanonicalRuntimeStateFromStorage.startup");
+        applyCanonicalRuntimeState(cachedRuntimeState);
+      } catch (cacheErr) {
+        logDiag("startup.local_cache.import_failed", cacheErr?.message || "unknown");
+      }
+    }
+    if (statusOverride) setStorageStatus(statusOverride);
+    return hasCache;
+  };
+
   const sbLoad = async () => {
     await authStorage.sbLoad({
       authSession,
@@ -5188,13 +5292,15 @@ export default function TrainerDashboard() {
   useEffect(() => {
     console.log("[supabase] resolved URL:", SB_URL || "(missing)");
     if (SB_CONFIG_ERROR) {
-      setAuthError(`Cloud sync provider unavailable: ${SB_CONFIG_ERROR}`);
-      setStorageStatus(buildStorageStatus({
+      const providerStatus = buildStorageStatus({
         mode: "local",
         label: "PROVIDER ERROR",
         reason: STORAGE_STATUS_REASONS.providerUnavailable,
         detail: "Cloud sync provider is unavailable or misconfigured.",
-      }));
+      });
+      setAuthError(`Cloud sync provider unavailable: ${SB_CONFIG_ERROR}`);
+      hydrateLocalRuntimeCache({ statusOverride: providerStatus });
+      setStartupLocalResumeAccepted(true);
       setAuthInitializing(false);
       setLoading(false);
       return;
@@ -5215,6 +5321,9 @@ export default function TrainerDashboard() {
         } else {
           logDiag("auth.boot.transient_or_unknown", ensured?.status);
         }
+      }
+      if (!restored || !authSessionRef.current?.user?.id) {
+        setStartupLocalResumeAvailable(Boolean(localLoad()));
       }
       setAuthInitializing(false);
       setLoading(false);
@@ -5836,10 +5945,11 @@ Keep it plain and specific.`;
   useEffect(() => {
     if (loading || authInitializing) return;
     if (!personalization?.profile?.onboardingComplete) return;
+    if (!(DEBUG_MODE || APPLE_HEALTH_SUPPORTED_MODE)) return;
     const apple = personalization?.connectedDevices?.appleHealth || {};
     if (apple?.permissionRequestedAt || apple?.skipped) return;
     setShowAppleHealthFirstLaunch(true);
-  }, [loading, authInitializing, personalization?.profile?.onboardingComplete, personalization?.connectedDevices?.appleHealth?.permissionRequestedAt, personalization?.connectedDevices?.appleHealth?.skipped]);
+  }, [loading, authInitializing, personalization?.profile?.onboardingComplete, personalization?.connectedDevices?.appleHealth?.permissionRequestedAt, personalization?.connectedDevices?.appleHealth?.skipped, DEBUG_MODE, APPLE_HEALTH_SUPPORTED_MODE]);
 
   const updateAppleHealthState = async (patch = {}) => {
     const nextPersonalization = mergePersonalization(personalization, {
@@ -6313,17 +6423,52 @@ Keep it plain and specific.`;
     </div>
   );
 
-  if (!authSession?.user?.id) return (
+  if (!authSession?.user?.id && !startupLocalResumeAccepted) return (
     <div style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#e7edf7", padding:"1rem" }}>
       <div style={{ width:"100%", maxWidth:380, border:"1px solid rgba(114,138,173,0.24)", borderRadius:16, padding:"1rem", background:"#162131", boxShadow:"0 14px 28px rgba(5,10,18,0.28)" }}>
         <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1.08rem", fontWeight:700, letterSpacing:"0.05em", color:"#f6f8fc", marginBottom:"0.5rem" }}>ACCOUNT ACCESS</div>
-        <div style={{ fontSize:"0.58rem", color:"#8da0bb", marginBottom:"0.5rem" }}>Sign in to load your private training state.</div>
+        <div style={{ fontSize:"0.58rem", color:"#8da0bb", marginBottom:"0.5rem" }}>
+          {storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable
+            ? "Cloud sign-in is unavailable right now. You can still keep going locally on this device."
+            : startupLocalResumeAvailable
+            ? "Sign in to sync your private training state, or continue locally with the data already on this device."
+            : "Sign in to load your private training state."}
+        </div>
         <input value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="email" style={{ marginBottom:"0.4rem" }} />
         <input type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="password" style={{ marginBottom:"0.5rem" }} />
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
-          <button className="btn btn-primary" onClick={handleSignIn} style={{ fontSize:"0.56rem" }}>SIGN IN</button>
-          <button className="btn" onClick={handleSignUp} style={{ fontSize:"0.56rem", color:"#94a3b8" }}>SIGN UP</button>
+          <button className="btn btn-primary" onClick={handleSignIn} style={{ fontSize:"0.56rem" }} disabled={storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable}>SIGN IN</button>
+          <button className="btn" onClick={handleSignUp} style={{ fontSize:"0.56rem", color:"#94a3b8" }} disabled={storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable}>SIGN UP</button>
         </div>
+        {(startupLocalResumeAvailable || storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable) && (
+          <button
+            className="btn"
+            onClick={() => {
+              if (startupLocalResumeAvailable) {
+                hydrateLocalRuntimeCache({
+                  statusOverride: buildStorageStatus({
+                    mode: "local",
+                    label: "NOT SIGNED IN",
+                    reason: STORAGE_STATUS_REASONS.notSignedIn,
+                    detail: "You are using local data because no signed-in cloud session is active.",
+                  }),
+                });
+              } else {
+                setStorageStatus(buildStorageStatus({
+                  mode: "local",
+                  label: "LOCAL MODE",
+                  reason: STORAGE_STATUS_REASONS.providerUnavailable,
+                  detail: "Cloud sign-in is unavailable, so the app is continuing with local-only storage.",
+                }));
+              }
+              setAuthError("");
+              setStartupLocalResumeAccepted(true);
+            }}
+            style={{ marginTop:"0.45rem", width:"100%", color:"#dbe7f6", borderColor:"#324961", fontSize:"0.56rem" }}
+          >
+            {startupLocalResumeAvailable ? "Continue with local data" : "Continue in local mode"}
+          </button>
+        )}
         {authError && <div style={{ marginTop:"0.45rem", fontSize:"0.55rem", color:"#f59e0b" }}>{authError}</div>}
       </div>
     </div>
@@ -6479,9 +6624,16 @@ Keep it plain and specific.`;
       resolvedGoals: goalResolution?.resolvedGoals || [],
       feasibility: goalFeasibility,
     });
+    const arbitrationInputs = buildConfirmedArbitrationInputs({
+      answers,
+      typedIntakePacket: fallbackTypedIntakePacket,
+      now: todayKey,
+    });
     const arbitration = buildGoalArbitrationStack({
       resolvedGoals: feasibleResolvedGoals,
-      additionalGoalTexts: readAdditionalGoalEntries({ answers }),
+      confirmedPrimaryGoal: arbitrationInputs.confirmedPrimaryGoal,
+      confirmedAdditionalGoals: arbitrationInputs.confirmedAdditionalGoals,
+      additionalGoalTexts: arbitrationInputs.additionalGoalTexts,
       goalFeasibility,
       intakeCompleteness,
       typedIntakePacket: fallbackTypedIntakePacket,
@@ -7257,6 +7409,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const scrollRef = useRef(null);
   const composerRef = useRef(null);
   const nextMessageIdRef = useRef(1);
+  const nextIntakeEventIdRef = useRef(1);
+  const processedIntakeMessageKeysRef = useRef(new Set());
+  const secondaryGoalAddedMessageKeysRef = useRef(new Set());
   const startedRef = useRef(false);
   const [messages, setMessages] = useState([]);
   const [answers, setAnswers] = useState({});
@@ -7272,12 +7427,17 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState([]);
   const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(null);
   const [pendingSecondaryGoalPrompt, setPendingSecondaryGoalPrompt] = useState(null);
-  const [secondaryGoalMode, setSecondaryGoalMode] = useState("");
   const [secondaryGoalEntries, setSecondaryGoalEntries] = useState([]);
+  const [clarificationValues, setClarificationValues] = useState({});
+  const [clarificationFieldErrors, setClarificationFieldErrors] = useState({});
+  const [clarificationFormError, setClarificationFormError] = useState("");
   const [confirmBuildError, setConfirmBuildError] = useState("");
+  const [confirmBuildSubmitting, setConfirmBuildSubmitting] = useState(false);
   const [assessing, setAssessing] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
+  const [intakeMachine, setIntakeMachine] = useState(() => createIntakeMachineState());
+  const intakeMachineRef = useRef(intakeMachine);
 
   const buildFlow = (currentAnswers = {}) => ([
     {
@@ -7286,8 +7446,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       message: initialPrompt,
       placeholder: "Examples: run a 1:45 half, look athletic again, get abs by summer, lose fat but keep strength",
     },
-    { key: "experience_level", type: "buttons", message: "Got it. How long have you been training consistently?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week — not your best one.", options: ["2", "3", "4", "5", "6+"] },
+    { key: "experience_level", type: "buttons", message: "Got it. What's your training experience level?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
+    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week - not your best one.", options: ["2", "3", "4", "5", "6+"] },
     { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
     ...(["Home", "Both"].includes(currentAnswers.training_location || "") ? [{
@@ -7307,6 +7467,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     messagesRef.current = messages;
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
+
+  useEffect(() => {
+    intakeMachineRef.current = intakeMachine;
+  }, [intakeMachine]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -7362,11 +7526,54 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }
   }, [currentPrompt?.key]);
 
+  const activeMachineAnchor = intakeMachine?.draft?.missingAnchorsEngine?.currentAnchor || null;
+
   useEffect(() => {
-    if (phase !== "secondary_goal") {
-      setSecondaryGoalMode("");
+    const isStructuredQuestion = isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion);
+    if (phase !== "clarify") {
+      setClarificationValues({});
+      setClarificationFieldErrors({});
+      setClarificationFormError("");
+      return;
     }
-  }, [phase]);
+    if (activeMachineAnchor?.field_id) {
+      const fieldId = activeMachineAnchor.field_id;
+      const nextValues = activeMachineAnchor?.draftValue
+        ? { [fieldId]: activeMachineAnchor.draftValue }
+        : {};
+      if (activeMachineAnchor?.input_type === "number_with_unit") {
+        nextValues[`${fieldId}__unit`] = activeMachineAnchor?.unit
+          || activeMachineAnchor?.unit_options?.[0]?.value
+          || "";
+      }
+      if (activeMachineAnchor?.input_type === "date_or_month") {
+        const storedMode = /^\d{4}-\d{2}-\d{2}$/.test(String(activeMachineAnchor?.draftValue || ""))
+          ? "date"
+          : /^\d{4}-\d{2}$/.test(String(activeMachineAnchor?.draftValue || ""))
+          ? "month"
+          : "month";
+        nextValues[`${fieldId}__mode`] = storedMode;
+      }
+      setClarificationValues(nextValues);
+      setClarificationFieldErrors({});
+      setClarificationFormError("");
+      setDraft("");
+      return;
+    }
+    if (!isStructuredQuestion) {
+      setClarificationValues({});
+      setClarificationFieldErrors({});
+      setClarificationFormError("");
+      return;
+    }
+    setClarificationValues(buildIntakeCompletenessDraft({
+      question: pendingClarifyingQuestion,
+      answers,
+    }));
+    setClarificationFieldErrors({});
+    setClarificationFormError("");
+    setDraft("");
+  }, [phase, activeMachineAnchor?.anchor_id, pendingClarifyingQuestion?.key, pendingClarifyingQuestion?.prompt, answers]);
 
   useEffect(() => {
     if (phase !== "secondary_goal") return;
@@ -7435,11 +7642,151 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     return queue.entries.map((entry) => entry.id);
   };
   const appendCoachMessage = (text) => appendCoachMessages([text])[0] || null;
+  const buildIntakeEventId = (prefix = "intake") => `${prefix}_${String(nextIntakeEventIdRef.current++).padStart(6, "0")}`;
+  const dispatchIntakeMachineEvent = (type, payload = {}) => {
+    const nextEvent = {
+      event_id: payload?.event_id || buildIntakeEventId(String(type || "intake").toLowerCase()),
+      type,
+      timestamp: new Date().toISOString(),
+      payload,
+    };
+    let nextState = intakeMachineRef.current;
+    setIntakeMachine((prev) => {
+      nextState = intakeReducer(prev, nextEvent);
+      return nextState;
+    });
+    return nextState;
+  };
+  const settleIntakeMachine = (machineState = null) => {
+    let nextState = machineState || intakeMachineRef.current;
+    let guard = 0;
+    while (nextState && guard < 4) {
+      if (nextState.stage === INTAKE_MACHINE_STATES.REALISM_GATE) {
+        nextState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.REALISM_RESULT, {
+          now: new Date().toISOString(),
+        });
+        guard += 1;
+        continue;
+      }
+      if (nextState.stage === INTAKE_MACHINE_STATES.GOAL_ARBITRATION) {
+        nextState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.ARBITRATION_RESULT, {
+          now: new Date().toISOString(),
+        });
+        guard += 1;
+        continue;
+      }
+      break;
+    }
+    return nextState || machineState || intakeMachineRef.current;
+  };
+  const syncMachineDraftToIntakeView = (machineState = null) => {
+    const draftState = machineState?.draft || null;
+    if (!draftState) return;
+    setAnswers(draftState.answers || {});
+    setAssessmentBoundary({
+      typedIntakePacket: draftState.typedIntakePacket || null,
+      aiInterpretationProposal: draftState.aiInterpretationProposal || null,
+    });
+    setAssessmentPreview({
+      goalResolution: draftState.goalResolution || null,
+      goalFeasibility: draftState.goalFeasibility || null,
+      orderedResolvedGoals: draftState.orderedResolvedGoals || [],
+      reviewModel: draftState.reviewModel || null,
+    });
+  };
   const appendUserMessage = (text) => {
     const clean = String(text || "").trim();
     if (!clean) return;
     const id = nextMessageIdRef.current++;
     setMessages((prev) => [...prev, { id, role: "user", text: clean, displayedText: clean }]);
+  };
+  useEffect(() => {
+    const pendingMessages = (Array.isArray(intakeMachine?.outbox) ? intakeMachine.outbox : [])
+      .filter((message) => message?.key && !processedIntakeMessageKeysRef.current.has(message.key));
+    if (pendingMessages.length === 0) return;
+    pendingMessages.forEach((message) => processedIntakeMessageKeysRef.current.add(message.key));
+    appendCoachMessages(pendingMessages.map((message) => message.text));
+  }, [intakeMachine?.outbox]);
+  const updateClarificationValue = (fieldKey, value) => {
+    setClarificationValues((prev) => ({
+      ...prev,
+      [fieldKey]: value,
+    }));
+    setClarificationFieldErrors((prev) => {
+      if (!prev?.[fieldKey]) return prev;
+      const next = { ...(prev || {}) };
+      delete next[fieldKey];
+      return next;
+    });
+    if (clarificationFormError) setClarificationFormError("");
+  };
+  const formatMonthInputLabel = (value = "") => {
+    const match = String(value || "").match(/^(\d{4})-(\d{2})$/);
+    if (!match) return String(value || "").trim();
+    const [, year, month] = match;
+    const monthIndex = Math.max(0, Math.min(11, Number(month) - 1));
+    const monthLabel = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December",
+    ][monthIndex] || month;
+    return `${monthLabel} ${year}`;
+  };
+  const buildAnchorSubmissionPayload = (anchor = null) => {
+    if (!anchor?.field_id) return null;
+    const fieldId = anchor.field_id;
+    const rawValue = clarificationValues?.[fieldId];
+    if (anchor.input_type === "choice_chips") {
+      const selectedValue = String(rawValue || "").trim();
+      const selectedOption = (Array.isArray(anchor.options) ? anchor.options : []).find((option) => option?.value === selectedValue) || null;
+      if (!selectedValue) return null;
+      return {
+        answer_value: {
+          value: selectedValue,
+          raw: selectedOption?.label || selectedValue,
+        },
+        raw_text: selectedOption?.label || selectedValue,
+      };
+    }
+    if (anchor.input_type === "date_or_month") {
+      const modeKey = `${fieldId}__mode`;
+      const mode = String(clarificationValues?.[modeKey] || "month").trim().toLowerCase() || "month";
+      const selectedValue = String(rawValue || "").trim();
+      if (!selectedValue) return null;
+      const displayValue = mode === "month" ? formatMonthInputLabel(selectedValue) : selectedValue;
+      return {
+        answer_value: {
+          mode,
+          value: selectedValue,
+          raw: displayValue,
+        },
+        raw_text: displayValue,
+      };
+    }
+    if (anchor.input_type === "number_with_unit") {
+      const unitKey = `${fieldId}__unit`;
+      const numericValue = String(rawValue || "").trim();
+      const selectedUnit = String(
+        clarificationValues?.[unitKey]
+        || anchor?.unit
+        || (Array.isArray(anchor?.unit_options) ? anchor.unit_options[0]?.value : "")
+        || ""
+      ).trim();
+      if (!numericValue) return null;
+      return {
+        answer_value: {
+          value: numericValue,
+          unit: selectedUnit,
+          raw: selectedUnit ? `${numericValue} ${selectedUnit}` : numericValue,
+        },
+        raw_text: selectedUnit ? `${numericValue} ${selectedUnit}` : numericValue,
+      };
+    }
+    const cleanValue = String(rawValue || "").trim();
+    if (!cleanValue) return null;
+    return {
+      answer_value: cleanValue,
+      raw_text: cleanValue,
+    };
   };
   const finalizeAssessmentState = ({
     assessment = null,
@@ -7448,7 +7795,17 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   } = {}) => {
     setConfirmBuildError("");
     const cleanTimeline = sanitizeIntakeText(assessment?.text || "");
-    const reviewModelForAssessment = buildIntakeGoalReviewModel({
+    const interpretedMachineState = settleIntakeMachine(dispatchIntakeMachineEvent(
+      INTAKE_MACHINE_EVENTS.INTERPRETATION_READY,
+      {
+        assessment,
+        answers: updatedAnswers,
+        goalStackConfirmation,
+        now: new Date().toISOString(),
+      }
+    ));
+    syncMachineDraftToIntakeView(interpretedMachineState);
+    const reviewModelForAssessment = interpretedMachineState?.draft?.reviewModel || buildIntakeGoalReviewModel({
       goalResolution: assessment?.goalResolution || null,
       orderedResolvedGoals: assessment?.orderedResolvedGoals || [],
       goalFeasibility: assessment?.goalFeasibility || null,
@@ -7456,34 +7813,21 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       answers: updatedAnswers,
       goalStackConfirmation,
     });
-    const nextQuestion = getNextIntakeClarifyingQuestion({
-      reviewModel: reviewModelForAssessment,
-      askedQuestions,
-      maxQuestions: 2,
-    });
-    const nextSecondaryGoalPrompt = buildIntakeSecondaryGoalPrompt({
-      reviewModel: reviewModelForAssessment,
-      answers: updatedAnswers,
-    });
+    const nextMachineAnchor = interpretedMachineState?.draft?.missingAnchorsEngine?.currentAnchor || null;
+    const nextSecondaryGoalPrompt = interpretedMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
+      ? buildIntakeSecondaryGoalPrompt({
+          reviewModel: reviewModelForAssessment,
+          answers: interpretedMachineState?.draft?.answers || updatedAnswers,
+        })
+      : null;
     setAssessmentText(cleanTimeline);
-    setAssessmentBoundary({
-      typedIntakePacket: assessment?.typedIntakePacket || null,
-      aiInterpretationProposal: assessment?.aiInterpretationProposal || null,
-    });
-    setAssessmentPreview({
-      goalResolution: assessment?.goalResolution || null,
-      goalFeasibility: assessment?.goalFeasibility || null,
-      orderedResolvedGoals: assessment?.orderedResolvedGoals || [],
-      reviewModel: reviewModelForAssessment,
-    });
-    setAnswers(updatedAnswers);
-    if (nextQuestion) {
-      setPendingClarifyingQuestion(nextQuestion);
+    if (nextMachineAnchor) {
+      setPendingClarifyingQuestion(null);
       setPendingSecondaryGoalPrompt(null);
       setPhase("clarify");
       appendCoachMessages(buildIntakeClarificationCoachMessages({
         statusText: cleanTimeline,
-        nextQuestion,
+        nextQuestion: { prompt: nextMachineAnchor.question },
       }));
       return;
     }
@@ -7505,6 +7849,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   } = {}) => {
     setAssessing(true);
     setPhase("assessment");
+    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED, {
+      answers: updatedAnswers,
+      askedQuestions,
+      now: new Date().toISOString(),
+    });
     const assessment = await buildTypedIntakeAssessment({ answers: updatedAnswers, existingMemory });
     finalizeAssessmentState({
       assessment,
@@ -7551,7 +7900,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   };
   const requestAdjustment = () => {
     setConfirmBuildError("");
-    appendUserMessage("I want to adjust something");
+    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_EDITED, {
+      answers,
+      now: new Date().toISOString(),
+    });
+    appendUserMessage("Adjust this goal");
     setPhase("adjust");
     setDraft("");
     setAskedClarifyingQuestions([]);
@@ -7579,15 +7932,108 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     await runAssessment({ updatedAnswers, askedQuestions: [] });
   };
   const submitClarification = async () => {
-    const clean = String(draft || "").trim();
-    if (!clean || !pendingClarifyingQuestion?.prompt) return;
+    if (!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.prompt) return;
     setConfirmBuildError("");
-    appendUserMessage(clean);
-    setDraft("");
+    if (activeMachineAnchor?.field_id) {
+      const submissionPayload = buildAnchorSubmissionPayload(activeMachineAnchor);
+      if (!submissionPayload?.raw_text) return;
+      const nextMachineState = settleIntakeMachine(dispatchIntakeMachineEvent(
+        INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+        {
+          anchor: activeMachineAnchor,
+          field_id: activeMachineAnchor.field_id,
+          answer_value: submissionPayload.answer_value,
+          raw_text: submissionPayload.raw_text,
+          source: "user",
+          now: new Date().toISOString(),
+        }
+      ));
+      appendUserMessage(submissionPayload.raw_text);
+      if (nextMachineState?.ui?.lastParseError) {
+        setClarificationFieldErrors({ [activeMachineAnchor.field_id]: nextMachineState.ui.lastParseError });
+        setClarificationFormError(nextMachineState.ui.lastParseError);
+        return;
+      }
+      syncMachineDraftToIntakeView(nextMachineState);
+      setClarificationValues({});
+      setClarificationFieldErrors({});
+      setClarificationFormError("");
+      setPendingClarifyingQuestion(null);
+      const nextSecondaryGoalPrompt = nextMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
+        ? buildIntakeSecondaryGoalPrompt({
+            reviewModel: nextMachineState?.draft?.reviewModel || null,
+            answers: nextMachineState?.draft?.answers || answers,
+          })
+        : null;
+      if (nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
+        setPendingSecondaryGoalPrompt(null);
+        setPhase("clarify");
+        return;
+      }
+      if (nextSecondaryGoalPrompt) {
+        setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
+        setPhase("secondary_goal");
+        return;
+      }
+      setPendingSecondaryGoalPrompt(null);
+      setPhase("review");
+      return;
+    }
     const questionSource = String(pendingClarifyingQuestion?.source || "").trim().toLowerCase();
     const currentResolvedGoals = Array.isArray(assessmentPreview?.orderedResolvedGoals) ? assessmentPreview.orderedResolvedGoals : [];
 
     if (questionSource === "completeness") {
+      if (isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion)) {
+        const validation = validateIntakeCompletenessAnswer({
+          question: pendingClarifyingQuestion,
+          answerValues: clarificationValues,
+        });
+        if (!validation.isValid) {
+          setClarificationFieldErrors(validation.fieldErrors || {});
+          setClarificationFormError(validation.formError || pendingClarifyingQuestion?.validation?.message || "Add the detail I asked for before continuing.");
+          return;
+        }
+        const transcriptSummary = validation.summaryText || pendingClarifyingQuestion.prompt;
+        appendUserMessage(transcriptSummary);
+        const structuredAnswer = applyIntakeCompletenessAnswer({
+          answers,
+          question: pendingClarifyingQuestion,
+          answerValues: clarificationValues,
+        });
+        const timelineFieldStored = structuredAnswer.storedFieldKeys.includes("target_timeline");
+        const updatedAnswers = {
+          ...structuredAnswer.answers,
+          timeline_feedback: pendingClarifyingQuestion?.affectsTimeline && timelineFieldStored
+            ? transcriptSummary
+            : (structuredAnswer.answers.timeline_feedback || ""),
+        };
+        const completenessAfterAnswer = deriveIntakeCompletenessState({
+          resolvedGoals: currentResolvedGoals,
+          answers: updatedAnswers,
+        });
+        const currentQuestionStillMissing = completenessAfterAnswer.missingRequired.some(
+          (item) => item?.key === pendingClarifyingQuestion?.key
+        );
+
+        if (!currentQuestionStillMissing) {
+          const nextAskedQuestions = [...askedClarifyingQuestions, pendingClarifyingQuestion.key || pendingClarifyingQuestion.prompt];
+          setAskedClarifyingQuestions(nextAskedQuestions);
+          setClarificationValues({});
+          setClarificationFieldErrors({});
+          setClarificationFormError("");
+          await runAssessment({ updatedAnswers, askedQuestions: nextAskedQuestions });
+          return;
+        }
+
+        setClarificationFieldErrors({});
+        setClarificationFormError("I still need one more piece of this answer before I can move on.");
+        return;
+      }
+
+      const clean = String(draft || "").trim();
+      if (!clean) return;
+      appendUserMessage(clean);
+      setDraft("");
       const structuredAnswer = applyIntakeCompletenessAnswer({
         answers,
         question: pendingClarifyingQuestion,
@@ -7635,6 +8081,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       return;
     }
 
+    const clean = String(draft || "").trim();
+    if (!clean) return;
+    appendUserMessage(clean);
+    setDraft("");
     const adjustmentOutcome = applyIntakeGoalAdjustment({
       answers,
       adjustmentText: clean,
@@ -7702,7 +8152,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setSecondaryGoalEntries(readAdditionalGoalEntries({ answers: outcome.answers }));
     if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal && outcome.keepCollecting) {
       setDraft("");
-      appendCoachMessage("Added. If there's another goal that matters, drop it in. Otherwise continue.");
+      const goalMessageKey = String(customText || "").trim().toLowerCase();
+      if (goalMessageKey && !secondaryGoalAddedMessageKeysRef.current.has(goalMessageKey)) {
+        secondaryGoalAddedMessageKeysRef.current.add(goalMessageKey);
+        processedIntakeMessageKeysRef.current.add(`goal_added:${goalMessageKey}`);
+        appendCoachMessage(`Added ${customText.trim()}. If there's another goal that matters, drop it in. Otherwise we can keep moving.`);
+      }
       return;
     }
     setDraft("");
@@ -7713,10 +8168,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setPhase("review");
       appendCoachMessage(
         response.key === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly
-          ? "Keeping this plan focused on the primary goal."
+          ? "Perfect. We'll keep the plan focused on the main goal."
           : stagedEntries.length
-          ? "Got it. I'll fold those extra goals into the review before I build."
-          : "Keeping the review focused on the current goal stack."
+          ? "Perfect. I'll fold those extra goals into the review."
+          : "No problem. We'll keep the review centered on the main goal."
       );
       return;
     }
@@ -7725,6 +8180,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     await runAssessment({ updatedAnswers: outcome.answers, askedQuestions: [] });
   };
   const finalizePlan = async () => {
+    if (confirmBuildSubmitting) return;
     setConfirmBuildError("");
     if (!confirmationState?.canConfirm && confirmationState?.nextQuestion?.prompt) {
       setPendingClarifyingQuestion(confirmationState.nextQuestion);
@@ -7742,6 +8198,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       appendCoachMessage(blockedReason);
       return;
     }
+    setConfirmBuildSubmitting(true);
+    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_CONFIRMED, {
+      now: new Date().toISOString(),
+    });
     appendUserMessage("Looks good, build my plan");
     setPhase("building");
     const payload = {
@@ -7762,6 +8222,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           : "I hit a problem while finishing onboarding. Please try again."
       );
       setConfirmBuildError(failureMessage);
+      setConfirmBuildSubmitting(false);
       setPhase("review");
       appendCoachMessage(failureMessage);
     }
@@ -7776,6 +8237,18 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const displayedTrackingLabels = Array.from(new Set(
     (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
   ));
+  const machineDebugView = useMemo(() => buildIntakeMachineDebugView(intakeMachine), [intakeMachine]);
+  const visibleMachineAnchorCards = phase === "clarify" && activeMachineAnchor?.field_id
+    ? (Array.isArray(intakeMachine?.draft?.missingAnchorsEngine?.missingAnchors) ? intakeMachine.draft.missingAnchorsEngine.missingAnchors.slice(0, 3) : [])
+    : [];
+  const isMachineAnchorClarification = phase === "clarify" && Boolean(activeMachineAnchor?.field_id);
+  const isStructuredClarification = isMachineAnchorClarification || (phase === "clarify" && isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion));
+  const activeMachineAnchorSubmission = isMachineAnchorClarification ? buildAnchorSubmissionPayload(activeMachineAnchor) : null;
+  const clarificationInputFields = isMachineAnchorClarification
+    ? []
+    : (Array.isArray(pendingClarifyingQuestion?.inputFields) ? pendingClarifyingQuestion.inputFields : []);
+  const clarificationPromptText = activeMachineAnchor?.question || pendingClarifyingQuestion?.prompt || "";
+  const clarificationValidationMessage = activeMachineAnchor?.validation?.message || pendingClarifyingQuestion?.validation?.message || "";
   const setLeadingGoal = (goalId) => {
     setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
       resolvedGoals: reviewGoals,
@@ -7930,27 +8403,323 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
               <div style={{ display:"grid", gap:"0.65rem" }}>
                 {phase === "clarify" ? (
                   <div style={{ display:"grid", gap:"0.5rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>One targeted clarification</div>
-                    <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingClarifyingQuestion?.prompt || ""}</div>
-                    <textarea
-                      ref={composerRef}
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      placeholder={pendingClarifyingQuestion?.placeholder || "Short answer..."}
-                      rows={3}
-                      style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
-                    />
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>
+                      {isMachineAnchorClarification || isStructuredClarification ? "One required detail" : "One targeted clarification"}
+                    </div>
+                    <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{clarificationPromptText}</div>
+                    {!isMachineAnchorClarification && isStructuredClarification && clarificationValidationMessage && (
+                      <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                        {clarificationValidationMessage}
+                      </div>
+                    )}
+                    {isMachineAnchorClarification ? (
+                      <div style={{ display:"grid", gap:"0.65rem" }}>
+                        {visibleMachineAnchorCards.map((anchorCard, index) => {
+                          const isActiveCard = index === 0;
+                          const fieldId = anchorCard.field_id;
+                          const fieldValue = String(clarificationValues?.[fieldId] || "");
+                          const unitKey = `${fieldId}__unit`;
+                          const modeKey = `${fieldId}__mode`;
+                          const selectedUnit = String(
+                            clarificationValues?.[unitKey]
+                            || anchorCard?.unit
+                            || anchorCard?.unit_options?.[0]?.value
+                            || ""
+                          );
+                          const selectedMode = String(clarificationValues?.[modeKey] || "month");
+                          const selectedChoice = String(clarificationValues?.[fieldId] || "");
+                          return (
+                            <div
+                              key={anchorCard.anchor_id}
+                              style={{
+                                display:"grid",
+                                gap:"0.55rem",
+                                border:isActiveCard ? "1px solid rgba(0,194,255,0.28)" : "1px solid rgba(111,148,198,0.12)",
+                                borderRadius:18,
+                                padding:"0.8rem",
+                                background:isActiveCard ? "rgba(7,18,33,0.92)" : "rgba(10,18,32,0.6)",
+                                opacity:isActiveCard ? 1 : 0.72,
+                              }}
+                            >
+                              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"baseline" }}>
+                                <div style={{ display:"grid", gap:"0.18rem" }}>
+                                  <div style={{ fontSize:"0.46rem", color:isActiveCard ? "#8fa5c8" : "#64748b", letterSpacing:"0.12em" }}>
+                                    {isActiveCard ? "ACTIVE FIELD" : "UP NEXT"}
+                                  </div>
+                                  <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.35 }}>{anchorCard.label}</div>
+                                </div>
+                                <div style={{ fontSize:"0.48rem", color:"#64748b" }}>
+                                  {index + 1} / {Math.max(visibleMachineAnchorCards.length, 1)}
+                                </div>
+                              </div>
+                              {anchorCard.why_it_matters && (
+                                <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>
+                                  {anchorCard.why_it_matters}
+                                </div>
+                              )}
+                              {anchorCard.coach_voice_line && (
+                                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                                  {anchorCard.coach_voice_line}
+                                </div>
+                              )}
+                              {isActiveCard ? (
+                                <div style={{ display:"grid", gap:"0.55rem" }}>
+                                  {anchorCard.input_type === "choice_chips" && (
+                                    <div style={{ display:"grid", gap:"0.5rem" }}>
+                                      <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+                                        {(anchorCard.options || []).map((option) => {
+                                          const selected = selectedChoice === option.value;
+                                          return (
+                                            <button
+                                              key={option.value}
+                                              className="btn"
+                                              onClick={() => updateClarificationValue(fieldId, option.value)}
+                                              style={{
+                                                minHeight:44,
+                                                fontSize:"0.62rem",
+                                                color:selected ? "#07131f" : "#dbe7f6",
+                                                borderColor:selected ? "rgba(39,245,154,0.45)" : "#324961",
+                                                background:selected ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)",
+                                              }}
+                                            >
+                                              {option.label}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                      {(anchorCard.options || []).find((option) => option.value === selectedChoice)?.description && (
+                                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                                          {(anchorCard.options || []).find((option) => option.value === selectedChoice)?.description}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {anchorCard.input_type === "date_or_month" && (
+                                    <div style={{ display:"grid", gap:"0.5rem" }}>
+                                      <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+                                        {[
+                                          { value: "month", label: "Target month" },
+                                          { value: "date", label: "Exact date" },
+                                        ].map((option) => {
+                                          const selected = selectedMode === option.value;
+                                          return (
+                                            <button
+                                              key={option.value}
+                                              className="btn"
+                                              onClick={() => updateClarificationValue(modeKey, option.value)}
+                                              style={{
+                                                minHeight:40,
+                                                fontSize:"0.58rem",
+                                                color:selected ? "#07131f" : "#dbe7f6",
+                                                borderColor:selected ? "rgba(0,194,255,0.45)" : "#324961",
+                                                background:selected ? "linear-gradient(135deg, rgba(0,194,255,0.9), rgba(127,221,255,0.72))" : "rgba(15,23,42,0.72)",
+                                              }}
+                                            >
+                                              {option.label}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                      <input
+                                        ref={composerRef}
+                                        type={selectedMode === "date" ? "date" : "month"}
+                                        value={fieldValue}
+                                        onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+                                        style={{ fontSize:"0.86rem" }}
+                                      />
+                                    </div>
+                                  )}
+                                  {anchorCard.input_type === "number_with_unit" && (
+                                    <div style={{ display:"grid", gap:"0.5rem" }}>
+                                      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
+                                        <input
+                                          ref={composerRef}
+                                          type="number"
+                                          inputMode="decimal"
+                                          min={Number.isFinite(anchorCard?.validation?.min) ? anchorCard.validation.min : undefined}
+                                          max={Number.isFinite(anchorCard?.validation?.max) ? anchorCard.validation.max : undefined}
+                                          step="any"
+                                          value={fieldValue}
+                                          onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+                                          placeholder={anchorCard.placeholder || "Add this detail..."}
+                                          style={{
+                                            fontSize:"0.86rem",
+                                            borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
+                                            boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                          }}
+                                        />
+                                        {(anchorCard.unit_options?.length || 0) > 1 ? (
+                                          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                                            {anchorCard.unit_options.map((option) => {
+                                              const selected = selectedUnit === option.value;
+                                              return (
+                                                <button
+                                                  key={option.value}
+                                                  className="btn"
+                                                  onClick={() => updateClarificationValue(unitKey, option.value)}
+                                                  style={{
+                                                    minHeight:40,
+                                                    fontSize:"0.56rem",
+                                                    color:selected ? "#07131f" : "#dbe7f6",
+                                                    borderColor:selected ? "rgba(39,245,154,0.45)" : "#324961",
+                                                    background:selected ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)",
+                                                  }}
+                                                >
+                                                  {option.label}
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        ) : (
+                                          <div style={{ alignSelf:"center", fontSize:"0.56rem", color:"#8fa5c8", padding:"0 0.3rem" }}>
+                                            {anchorCard.unit || anchorCard.unit_options?.[0]?.label || ""}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {anchorCard.input_type === "strength_top_set" && (
+                                    <input
+                                      ref={composerRef}
+                                      type="text"
+                                      value={fieldValue}
+                                      onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+                                      placeholder={anchorCard.placeholder || "Example: 185x5"}
+                                      style={{
+                                        fontSize:"0.86rem",
+                                        borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
+                                        boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                      }}
+                                    />
+                                  )}
+                                  {anchorCard.input_type !== "choice_chips" && anchorCard.input_type !== "date_or_month" && anchorCard.input_type !== "number_with_unit" && anchorCard.input_type !== "strength_top_set" && (
+                                    <input
+                                      ref={composerRef}
+                                      type={anchorCard.input_type === "number" ? "number" : "text"}
+                                      inputMode={anchorCard.input_type === "number" ? "decimal" : undefined}
+                                      min={Number.isFinite(anchorCard?.validation?.min) ? anchorCard.validation.min : undefined}
+                                      max={Number.isFinite(anchorCard?.validation?.max) ? anchorCard.validation.max : undefined}
+                                      step={anchorCard.input_type === "number" ? "any" : undefined}
+                                      value={fieldValue}
+                                      onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+                                      placeholder={anchorCard.placeholder || "Add this detail..."}
+                                      style={{
+                                        fontSize:"0.86rem",
+                                        borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
+                                        boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                      }}
+                                    />
+                                  )}
+                                  {anchorCard.helper_text && (
+                                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                                      {anchorCard.helper_text}
+                                    </div>
+                                  )}
+                                  {(anchorCard.examples || []).length > 0 && (
+                                    <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                                      {anchorCard.examples.map((example) => (
+                                        <button
+                                          key={example}
+                                          className="btn"
+                                          onClick={() => {
+                                            if (anchorCard.input_type === "choice_chips") return;
+                                            updateClarificationValue(fieldId, example);
+                                          }}
+                                          style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
+                                        >
+                                          {example}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {clarificationFieldErrors?.[fieldId] && (
+                                    <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[fieldId]}</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize:"0.5rem", color:"#64748b", lineHeight:1.5 }}>
+                                  {(anchorCard.examples || []).length > 0
+                                    ? `Examples: ${anchorCard.examples.join(" • ")}`
+                                    : anchorCard.helper_text || "This card will open next."}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {clarificationFormError && (
+                          <div style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
+                            {clarificationFormError}
+                          </div>
+                        )}
+                      </div>
+                    ) : isStructuredClarification ? (
+                      <div style={{ display:"grid", gap:"0.55rem" }}>
+                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.55rem" }}>
+                          {clarificationInputFields.map((field, index) => (
+                            <label key={field.key} style={{ display:"grid", gap:"0.24rem" }}>
+                              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>
+                                {field.label}{field.required ? " *" : ""}
+                              </div>
+                              <input
+                                ref={index === 0 ? composerRef : null}
+                                type={field.inputType === "number" ? "number" : "text"}
+                                inputMode={field.inputType === "number" ? "decimal" : undefined}
+                                min={Number.isFinite(field.min) ? field.min : undefined}
+                                max={Number.isFinite(field.max) ? field.max : undefined}
+                                step={field.inputType === "number" ? "any" : undefined}
+                                value={clarificationValues?.[field.key] || ""}
+                                onChange={(e) => updateClarificationValue(field.key, e.target.value)}
+                                placeholder={field.placeholder || "Add this detail..."}
+                                style={{
+                                  fontSize:"0.86rem",
+                                  borderColor:clarificationFieldErrors?.[field.key] ? "rgba(255,138,0,0.65)" : undefined,
+                                  boxShadow:clarificationFieldErrors?.[field.key] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                }}
+                              />
+                              {field.helperText && (
+                                <div style={{ fontSize:"0.5rem", color:"#64748b", lineHeight:1.45 }}>{field.helperText}</div>
+                              )}
+                              {clarificationFieldErrors?.[field.key] && (
+                                <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[field.key]}</div>
+                              )}
+                            </label>
+                          ))}
+                        </div>
+                        {clarificationFormError && (
+                          <div style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
+                            {clarificationFormError}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <textarea
+                        ref={composerRef}
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        placeholder={pendingClarifyingQuestion?.placeholder || "Short answer..."}
+                        rows={3}
+                        style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
+                      />
+                    )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={submitClarification} disabled={!draft.trim()}>
+                      <button
+                        className="btn btn-primary"
+                        onClick={submitClarification}
+                        disabled={isMachineAnchorClarification
+                          ? !activeMachineAnchorSubmission?.raw_text
+                          : isStructuredClarification
+                          ? clarificationInputFields.every((field) => !String(clarificationValues?.[field.key] || "").trim())
+                          : !draft.trim()}
+                      >
                         Save this detail
                       </button>
-                      {!pendingClarifyingQuestion?.required && (
+                      {!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.required && (
                         <button className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
-                          Use current interpretation
+                          Keep this goal
                         </button>
                       )}
                       <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
-                        I want to adjust something
+                        Adjust this goal
                       </button>
                     </div>
                   </div>
@@ -7958,7 +8727,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
                 {phase === "secondary_goal" ? (
                   <div style={{ display:"grid", gap:"0.55rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Anything else that matters?</div>
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Anything else?</div>
                     <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingSecondaryGoalPrompt?.prompt || ""}</div>
                     {pendingSecondaryGoalPrompt?.helperText && (
                       <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.55 }}>{pendingSecondaryGoalPrompt.helperText}</div>
@@ -7977,7 +8746,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     )}
                     {secondaryGoalEntries.length > 0 && (
                       <div style={{ display:"grid", gap:"0.3rem" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>ADDED GOALS</div>
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>YOUR EXTRA GOALS</div>
                         <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
                           {secondaryGoalEntries.map((goal) => (
                             <button
@@ -8036,10 +8805,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           {reviewModel.goalTypeLabel || "Goal"}
                         </div>
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Reality check: {reviewModel.realismLabel}
+                          How this looks: {reviewModel.realismLabel}
                         </div>
                         <div style={{ fontSize:"0.5rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Review status: {confirmationState?.statusLabel || "Review pending"}
+                          Plan status: {confirmationState?.statusLabel || "Review pending"}
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
@@ -8051,9 +8820,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>STILL NEEDED</div>
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>NEED BEFORE I BUILD</div>
                         <div style={{ display:"grid", gap:"0.18rem" }}>
-                          {(reviewModel.unresolvedItems.length ? reviewModel.unresolvedItems : ["Nothing critical. This is specific enough to plan from."]).map((item) => (
+                          {(reviewModel.unresolvedItems.length ? reviewModel.unresolvedItems : ["Nothing critical. I have enough to build from here."]).map((item) => (
                             <div key={item} style={{ fontSize:"0.54rem", color:reviewModel.unresolvedItems.length ? C.amber : "#8fa5c8", lineHeight:1.5 }}>{item}</div>
                           ))}
                         </div>
@@ -8062,20 +8831,20 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
                     {goalStackReview?.activeGoals?.length > 0 && (
                       <div style={{ display:"grid", gap:"0.55rem" }}>
-                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>PLAN FOCUS</div>
+                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>FOCUS RIGHT NOW</div>
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.55rem" }}>
                           {goalStackReview.activeGoals.map((goal, index) => {
                             const isPrimary = goal.role === GOAL_STACK_ROLES.primary || index === 0;
                             return (
                               <div key={goal.id || goal.summary} style={{ border:`1px solid ${isPrimary ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.14)"}`, borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                                <div style={{ fontSize:"0.46rem", color:isPrimary ? C.green : "#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>{isPrimary ? "Lead goal" : "Maintain while chasing it"}</div>
+                                <div style={{ fontSize:"0.46rem", color:isPrimary ? C.green : "#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>{isPrimary ? "Lead goal" : "Also keep"}</div>
                                 <div style={{ fontSize:"0.62rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
                                 <div style={{ fontSize:"0.51rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>
                                   What we'll measure: {(goal.trackingLabels.length ? goal.trackingLabels : ["First 30-day success definition"]).join(" - ")}
                                 </div>
                                 {goal.tradeoff && (
                                   <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                                    Main tradeoff: {goal.tradeoff}
+                                    What to expect: {goal.tradeoff}
                                   </div>
                                 )}
                                 {!goal.tradeoff && goal.reason && (
@@ -8091,7 +8860,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                   )}
                                   {!isPrimary && (
                                     <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                      Keep as maintained goal
+                                      Keep as an also-keep goal
                                     </button>
                                   )}
                                   {!isPrimary && (
@@ -8106,23 +8875,23 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                         {goalStackReview?.backgroundGoals?.length > 0 && (
                           <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>SUPPORT IN THE BACKGROUND</div>
+                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>NOT THE FOCUS RIGHT NOW</div>
                             <div style={{ display:"grid", gap:"0.36rem" }}>
                               {goalStackReview.backgroundGoals.map((goal) => (
                                 <div key={goal.id} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
                                   <div style={{ fontSize:"0.58rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
                                   <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
-                                    {goal.reason || "This stays acknowledged, but the block will not optimize it directly."}
+                                    {goal.reason || "We’ll keep this in mind, but it won’t drive the plan right now."}
                                   </div>
                                   <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.45 }}>
                                     What we'll watch: {(goal.trackingLabels.length ? goal.trackingLabels : ["Weekly check-ins"]).join(" - ")}
                                   </div>
                                   <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.38rem" }}>
                                     <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                      Pull this into the block
+                                      Also keep this
                                     </button>
                                     <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.deferred)} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
-                                      Move this later
+                                      Not the focus right now
                                     </button>
                                   </div>
                                 </div>
@@ -8132,7 +8901,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         )}
                         {goalStackReview.primaryTradeoff && (
                           <div style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>MAIN TRADEOFF</div>
+                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>WHAT TO EXPECT</div>
                             <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalStackReview.primaryTradeoff}</div>
                           </div>
                         )}
@@ -8140,11 +8909,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)", opacity:goalStackReview.backgroundPriority.enabled ? 1 : 0.72 }}>
                             <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
                               <div>
-                                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>KEEP PROTECTED</div>
+                                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>RECOVERY STAYS PROTECTED</div>
                                 <div style={{ fontSize:"0.58rem", color:"#f8fbff" }}>{goalStackReview.backgroundPriority.label}</div>
                               </div>
                               <button className="btn" onClick={toggleBackgroundPriority} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                {goalStackReview.backgroundPriority.enabled ? "Keep this protected" : "Protect this too"}
+                                {goalStackReview.backgroundPriority.enabled ? "Let recovery flex more" : "Keep recovery protected"}
                               </button>
                             </div>
                             <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>{goalStackReview.backgroundPriority.summary}</div>
@@ -8155,7 +8924,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         )}
                         {goalStackReview?.deferredGoals?.length > 0 && (
                           <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>LATER GOALS</div>
+                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>LATER, NOT NOW</div>
                             <div style={{ display:"grid", gap:"0.28rem" }}>
                               {goalStackReview.deferredGoals.map((goal) => (
                                 <div key={goal.id} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
@@ -8163,15 +8932,15 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.4 }}>{goal.summary}</div>
                                     <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
                                       <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.background)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                        Keep in the background
+                                        Not the focus right now
                                       </button>
                                       <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
-                                        Pull into this block
+                                        Also keep this
                                       </button>
                                     </div>
                                   </div>
                                   <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
-                                    {goal.reason || "This fits better after the current block gets a cleaner focus."}
+                                    {goal.reason || "This makes more sense after the current block has a cleaner focus."}
                                   </div>
                                 </div>
                               ))}
@@ -8185,23 +8954,23 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
                 {phase === "review" ? (
                   <div style={{ display:"grid", gap:"0.55rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>This is the plan direction I'm going to build from.</div>
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Here’s the direction I’d build from.</div>
                     {confirmationState?.headline && (
                       <div style={{ fontSize:"0.56rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", lineHeight:1.55 }}>
                         {confirmationState.headline}
                       </div>
                     )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={finalizePlan} disabled={!confirmationState?.ctaEnabled || assessing || isCoachStreaming}>
+                      <button className="btn btn-primary" onClick={finalizePlan} disabled={!confirmationState?.ctaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting}>
                         {confirmationState?.ctaLabel || "Confirm and build my plan"}
                       </button>
                       <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
-                        Adjust the goal
+                        Adjust this goal
                       </button>
                     </div>
                     {(confirmationState?.state === "blocked" || confirmationState?.state === "incomplete") && (
                       <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
-                        {confirmBuildError || confirmationState?.reason || "I still need one or two critical details before I can build the plan credibly."}
+                        {confirmBuildError || confirmationState?.reason || "I still need one or two details before I can build this well."}
                       </div>
                     )}
                     {confirmationState?.state === "warn" && confirmationState?.reason && (
@@ -8230,7 +8999,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                   style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
                 />
                 <button className="btn btn-primary" onClick={submitAdjustment} disabled={!draft.trim()}>
-                  Update the assessment
+                  Update this goal
                 </button>
               </div>
             )}
@@ -8254,6 +9023,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, deviceSyncAudit }) {
   const appleHealth = personalization?.connectedDevices?.appleHealth || {};
   const garmin = personalization?.connectedDevices?.garmin || {};
+  const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
+  const appleHealthSupportedMode = typeof window !== "undefined" && safeStorageGet(localStorage, "apple_health_supported", "0") === "1";
+  const appleHealthPromptSupported = debugMode || appleHealthSupportedMode;
   const [connectOpen, setConnectOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkMsg, setCheckMsg] = useState("");
@@ -8427,9 +9199,9 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     if (appleMode === "live" && appleHealth?.lastSyncStatus === "garmin_detected") {
       return {
         state: "operational",
-        label: "Operational",
-        summary: "Apple Health is live and recent Garmin-origin workouts were verified.",
-        detail: `Last verified check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
+        label: "Recent data found",
+        summary: "Apple Health permission was requested, and recent Garmin-origin workouts were found here.",
+        detail: `Last recorded check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
       };
     }
     if (appleMode === "live") {
@@ -8437,9 +9209,9 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         state: "pending",
         label: "Connected, awaiting verification",
         summary: appleHealth?.lastSyncStatus === "health_only"
-          ? "Apple Health is connected, but Garmin-origin workouts have not been verified yet."
-          : "Apple Health permissions were requested, but a recent live workout verification has not happened yet.",
-        detail: `Last check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
+          ? "Recent Apple Health workouts were found, but Garmin-origin entries were not confirmed here yet."
+          : "Apple Health permission was requested, but recent workout data has not been confirmed here yet.",
+        detail: `Last recorded check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
       };
     }
     if (appleMode === "manual_import") {
@@ -8454,8 +9226,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       return {
         state: "simulated",
         label: "Simulated on web",
-        summary: "Apple Health cannot be authorized in this web environment, so the app is using a simulated placeholder state.",
-        detail: "Use an iPhone-capable environment for a real Apple Health permission flow.",
+        summary: "This web environment is using a simulated Apple Health placeholder, not a real device link.",
+        detail: "A real Apple Health permission flow needs an iPhone-capable environment.",
       };
     }
     if (appleHealth?.skipped) {
@@ -8463,14 +9235,14 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         state: "unavailable",
         label: "Not enabled",
         summary: "Apple Health has been skipped or not enabled yet.",
-        detail: "Connect it when you want live workout/device context.",
+        detail: "No Apple Health data is being used right now.",
       };
     }
     return {
       state: "unavailable",
       label: "Not configured",
       summary: "Apple Health is not connected.",
-      detail: "No live permission flow or manual import is active.",
+      detail: "No Apple Health permission state or manual import is active.",
     };
   })();
   const garminMode = garmin?.connectionMode || (garmin?.status === "manual_import" ? "manual_import" : garmin?.status === "connected" ? "live" : "unavailable");
@@ -8478,8 +9250,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     if (garminMode === "live" && garmin?.lastSyncAt && (garmin?.activities || []).length > 0) {
       return {
         state: "operational",
-        label: "Operational",
-        summary: "Garmin Connect is live and recent activities have synced through the server integration.",
+        label: "Recent sync found",
+        summary: "Garmin authorization exists, and recent activities were pulled through the server-side connection.",
         detail: `Last sync: ${garminLastSyncLabel}.`,
       };
     }
@@ -8495,7 +9267,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       return {
         state: "manual",
         label: "Manual import only",
-        summary: "Garmin activity data exists from a manual import, not from the live server-side integration.",
+        summary: "Garmin activity data came from a manual import, not from the server-side connection.",
         detail: `Imported: ${formatIntegrationTimestamp(garmin?.importedAt)}.`,
       };
     }
@@ -8511,8 +9283,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     if (status === "granted") {
       return {
         state: "operational",
-        label: "Available",
-        summary: "Location access is available for travel context and local nutrition guidance.",
+        label: "Permission granted",
+        summary: "Location permission was granted for travel context and local nutrition suggestions.",
       };
     }
     if (status === "denied") {
@@ -8550,8 +9322,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       const msg = recent.length === 0
         ? "No Apple Health workouts found in last 7 days."
         : hasGarmin
-        ? `Connected: ${recent.length} workouts found, Garmin sessions detected.`
-        : `Apple Health connected: ${recent.length} workouts found, but Garmin source not detected yet.`;
+        ? `Recent Apple Health data found: ${recent.length} workouts, including Garmin-origin sessions.`
+        : `Recent Apple Health data found: ${recent.length} workouts, but Garmin-origin sessions were not detected.`;
       setCheckMsg(msg);
       await persistAppleHealth({ lastConnectionCheck: Date.now(), lastSyncStatus: hasGarmin ? "garmin_detected" : "health_only" });
     } finally {
@@ -8720,7 +9492,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
         {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:C.green, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
         <div style={{ fontSize:"0.56rem", color:"#8ea4c7", lineHeight:1.7, marginBottom:"1rem" }}>
-          Manage profile, devices, preferences, appearance, notifications, and privacy in one place.
+          Review profile, device status, preferences, appearance, notifications, and privacy in one place.
         </div>
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.4rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>PROFILE</div>
@@ -8770,7 +9542,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>INTEGRATIONS</div>
           <div style={{ fontSize:"0.55rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.5rem" }}>
-            Live integrations, manual imports, simulated states, and unavailable services are shown separately so device status is easier to trust.
+            Connection states, manual imports, and simulated placeholders are shown separately so it is clearer what is actually active.
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:"0.4rem", marginBottom:"0.55rem" }}>
             {[
@@ -8791,7 +9563,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             })}
           </div>
           <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5, marginBottom:"0.55rem" }}>
-            Current data use: {(deviceSyncAudit?.utilization || ["No live device utilization signals are available yet."]).slice(0, 3).join(" ")}
+            Current device signals in use: {(deviceSyncAudit?.utilization || ["No device signals are being used yet."]).slice(0, 3).join(" ")}
           </div>
 
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:"0.6rem" }}>
@@ -8803,23 +9575,31 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.55 }}>{appleIntegration.summary}</div>
               <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>{appleIntegration.detail}</div>
               <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.18rem", lineHeight:1.5 }}>
-                Permission requested: {formatIntegrationTimestamp(appleHealth?.permissionRequestedAt)} · Last check: {formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}
+                Permission request recorded: {formatIntegrationTimestamp(appleHealth?.permissionRequestedAt)} · Last check: {formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}
               </div>
-              <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.12rem", lineHeight:1.5 }}>Active data types: {activeAppleTypes}</div>
-              <div style={{ marginTop:"0.35rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
-                  {appleMode === "live" || appleMode === "simulated" ? "Reconnect Apple Health" : "Connect Apple Health"}
-                </button>
-                <button className="btn" onClick={checkConnection} disabled={checking || appleMode === "manual_import"} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
-                  {checking ? "Checking..." : "Verify sync"}
-                </button>
-                <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
-                  I enabled permissions
-                </button>
-              </div>
-              <div style={{ marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
-                {sanitizeDisplayText("iPhone path: Settings → Privacy & Security → Health → Personal Trainer → Allow all categories.")}
-              </div>
+              <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.12rem", lineHeight:1.5 }}>Granted categories: {activeAppleTypes}</div>
+              {appleHealthPromptSupported ? (
+                <>
+                  <div style={{ marginTop:"0.35rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                    <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
+                      {appleMode === "live" || appleMode === "simulated" ? "Reconnect Apple Health" : "Connect Apple Health"}
+                    </button>
+                    <button className="btn" onClick={checkConnection} disabled={checking || appleMode === "manual_import"} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
+                      {checking ? "Checking..." : "Check recent data"}
+                    </button>
+                    <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
+                      I enabled permissions
+                    </button>
+                  </div>
+                  <div style={{ marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
+                    {sanitizeDisplayText("iPhone path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ Allow all categories.")}
+                  </div>
+                </>
+              ) : (
+                <div style={{ marginTop:"0.3rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                  Apple Health connection is currently hidden in the normal live product flow. Manual import remains available for restore/testing.
+                </div>
+              )}
               {checkMsg && <div style={{ marginTop:"0.22rem", fontSize:"0.51rem", color:"#cbd5e1" }}>{checkMsg}</div>}
             </div>
 
@@ -8861,7 +9641,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               <span style={{ fontSize:"0.46rem", color:integrationStateTone(locationIntegration.state).color, background:integrationStateTone(locationIntegration.state).bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{locationIntegration.label}</span>
             </div>
             <div style={{ fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.6 }}>{locationIntegration.summary}</div>
-            <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Enable location permission</button>
+            <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Request location permission</button>
             <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
               {sanitizeDisplayText("iPhone path: Settings → Privacy & Security → Location Services → Personal Trainer → While Using App.")}
             </div>
@@ -8873,13 +9653,13 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             <div style={{ marginTop:"0.38rem", display:"grid", gap:"0.5rem" }}>
               <div style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
                 <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>Apple Health JSON import</div>
-                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only when you are restoring or testing data without a live Apple Health link.</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only for restore or testing when there is no confirmed Apple Health link.</div>
                 <textarea value={appleImportText} onChange={e=>setAppleImportText(e.target.value)} placeholder='{"workouts":{"2026-04-07":{"distanceMiles":3.2,"avgHr":148}}}' style={{ minHeight:62, fontSize:"0.5rem" }} />
                 <button className="btn" onClick={()=>importDeviceData("apple")} style={{ width:"fit-content", fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"35" }}>Import Apple JSON</button>
               </div>
               <div style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
                 <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>Garmin JSON import</div>
-                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only when you need Garmin activity data without the live server-side connection.</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only for restore or testing when there is no confirmed Garmin server-side connection.</div>
                 <textarea value={garminImportText} onChange={e=>setGarminImportText(e.target.value)} placeholder='{"activities":[{"startTime":"2026-04-07T07:30:00Z","type":"Run","distanceMiles":4.1}]}' style={{ minHeight:62, fontSize:"0.5rem" }} />
                 <button className="btn" onClick={()=>importDeviceData("garmin")} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Import Garmin JSON</button>
               </div>
@@ -8893,7 +9673,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.35rem" }}>
                 {appleMode === "simulated" && (
                   <div style={{ fontSize:"0.5rem", color:"#9fb2d2", lineHeight:1.6 }}>
-                    Apple Health is currently marked `simulated_web`, which is a web-only placeholder and should not be treated like a live connection.
+                    Apple Health is currently marked `simulated_web`, which is a web-only placeholder and should not be read like a real connection.
                   </div>
                 )}
                 <div style={{ fontSize:"0.5rem", color:"#9fb2d2", lineHeight:1.6 }}>
@@ -9010,11 +9790,11 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
           </button>
         </div>
       </div>
-      {connectOpen && (
+      {appleHealthPromptSupported && connectOpen && (
         <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
           <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
             <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
-              Personal Trainer can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
+              Personal Trainer may read Apple Health workouts and device context if permission is granted. We never share this data. You can revoke access anytime in iOS Settings.
             </div>
             <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
             <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
@@ -9043,8 +9823,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 function OnboardingCoachLegacy({ onComplete }) {
   const SCRIPT = [
     { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
-    { key: "experience_level", text: "How long have you been training consistently?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
+    { key: "experience_level", text: "What's your training experience level?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
+    { key: "training_days", text: "How many days per week can you realistically train? Not your best week - your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
     { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
@@ -9375,8 +10155,8 @@ function OnboardingCoachLegacy({ onComplete }) {
 function OnboardingCoachLegacyFallback({ onComplete }) {
   const SCRIPT = [
     { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
-    { key: "experience_level", text: "How long have you been training consistently?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
+    { key: "experience_level", text: "What's your training experience level?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
+    { key: "training_days", text: "How many days per week can you realistically train? Not your best week - your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
     { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
@@ -9690,14 +10470,14 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     : environmentSelection?.equipment === "mixed"
     ? "Mixed equipment"
     : environmentSelection?.equipment === "unknown"
-    ? "Setup unconfirmed"
+    ? "Setup not confirmed"
     : "Dumbbells";
   const timeLabel = environmentSelection?.time === "60+"
     ? "60+ min"
     : environmentSelection?.time === "45+"
     ? "45+ min"
     : environmentSelection?.time === "unknown"
-    ? "Time unconfirmed"
+    ? "Time not confirmed"
     : `${environmentSelection?.time || "30"} min`;
   const injuryLevel = personalization.injuryPainState.level;
   const injuryBadge = injuryLevel === "none" ? null : injuryLevel === "mild_tightness" ? { label: "Mild", color: C.blue } : injuryLevel === "moderate_pain" ? { label: "Moderate", color: C.amber } : { label: "Pain/Stop", color: C.red };
@@ -9707,6 +10487,18 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
   const environmentSourceLabel = describeTrainingContextSource(activeTrainingContext?.environment?.source);
   const equipmentSourceLabel = describeTrainingContextSource(activeTrainingContext?.equipmentAccess?.source);
   const durationSourceLabel = describeTrainingContextSource(activeTrainingContext?.sessionDuration?.source);
+  const toPlainContextSource = (label = "") => {
+    if (label === "Confirmed in intake") return "Confirmed in profile";
+    if (label === "Edited by user") return "Set by you";
+    if (label === "Recovered from older settings") return "Recovered from earlier settings";
+    if (label === "Inferred from older profile") return "Inferred from older profile";
+    if (label === "Historical carry-over") return "Carried over from earlier training";
+    if (label === "Default placeholder") return "Fallback default";
+    return label || "Source unclear";
+  };
+  const plainEnvironmentSourceLabel = toPlainContextSource(environmentSourceLabel);
+  const plainEquipmentSourceLabel = toPlainContextSource(equipmentSourceLabel);
+  const plainDurationSourceLabel = toPlainContextSource(durationSourceLabel);
   const issueContextLabel = activeIssueContext?.active
     ? `${activeIssueContext.area || "Issue"} ${String(activeIssueContext.level || "").replaceAll("_", " ")}`
     : activeIssueContext?.historicalNotes
@@ -9941,7 +10733,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     validationLayer?.coachNudge || null,
   ].filter(Boolean);
   const readinessBadgeLabel = readinessInfluence?.stateLabel || displayWorkout?.variantBadge || readinessInfluence?.badge || "On plan";
-  const readinessSourceLabel = readinessInfluence?.source || (todayUsesDeviceRecovery ? "device" : "plan");
   const shortProvenance = normalizeCoachOneLine(todayProvenance || "");
   const todayTrust = buildTrustSummary({
     explicitUserInput: Boolean(readinessMetrics?.hasTodayRecoveryInput),
@@ -9960,29 +10751,32 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
   const rationaleHeadline = normalizeCoachOneLine(primaryAdjustment?.summary || readinessInfluence?.coachLine || conciseFocus);
   const rationaleSupport = normalizeCoachOneLine(primaryAdjustment?.reason || readinessInfluence?.userVisibleLine || shortProvenance);
   const successHeadline = normalizeCoachOneLine(displayWorkout?.success || conciseSuccess || "Complete the session and log it.");
-  const successSupport = normalizeCoachOneLine(
-    displayWorkout?.intensityGuidance
-      ? `Keep intensity at ${displayWorkout.intensityGuidance}.`
-      : readinessInfluence?.recoveryLine
-      ? readinessInfluence.recoveryLine
-      : displayWorkout?.recoveryRecommendation
-      ? displayWorkout.recoveryRecommendation
-      : displayWorkout?.compressionWhy
-      ? displayWorkout.compressionWhy
-      : displayWorkout?.extendedFinisher
-      ? displayWorkout.extendedFinisher
-      : ""
-  );
+  const readinessBasisLine = (() => {
+    if (readinessMetrics?.hasTodayRecoveryInput) return "Using today's check-in first.";
+    if (todayUsesDeviceRecovery) return "Using recent device recovery signals.";
+    if (readinessMetrics?.hasRecoveryHistory) return "Using recent logged training and recovery.";
+    if (readinessMetrics?.countableCount) return "Using recent logged training.";
+    return "Using the current plan with limited recent data.";
+  })();
+  const reducedLoadSourceLine = ["recovery", "reduced_load"].includes(readinessState)
+    ? `Reduced load is based on ${readinessMetrics?.hasTodayRecoveryInput
+        ? "today's check-in"
+        : todayUsesDeviceRecovery
+        ? "recent device recovery signals"
+        : readinessMetrics?.hasRecoveryHistory
+        ? "recent recovery history"
+        : readinessMetrics?.countableCount
+        ? "recent training load"
+        : "the current plan"
+      }.`
+    : "";
   const recoveryPrescription = planDayRecovery?.prescription || null;
   const actualRecovery = planDayRecovery?.actual || null;
-  const recoveryPrescriptionLine = recoveryPrescription?.summary || planDayRecovery?.recoveryLine || "Recovery posture follows the current daily decision.";
+  const recoveryPrescriptionLine = recoveryPrescription?.summary || planDayRecovery?.recoveryLine || "Recovery guidance currently follows today's daily decision.";
   const recoveryActualLine = actualRecovery?.loggedAt
     ? actualRecovery.summary
     : "Recovery actuals have not been logged yet.";
-  const supplementPlanLine = Array.isArray(planDaySupplements?.plan?.items) && planDaySupplements.plan.items.length
-    ? planDaySupplements.plan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
-    : "No supplement plan prescribed today.";
-  const supplementActualLine = planDaySupplements?.actual?.summary || "Supplement adherence will appear after nutrition logging.";
+  const supplementActualLine = planDaySupplements?.actual?.summary || "Supplement adherence can appear here after nutrition logging.";
   const tomorrowPreviewText = `${tomorrowWorkout?.label || "Rest"}${tomorrowWorkout?.run ? ` - ${tomorrowWorkout.run.d}` : ""}`;
   const primaryActionSummary = sessionVariant === "short"
     ? "Short version active"
@@ -10132,7 +10926,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
                   {displayRun.t} - {displayRun.d} at {runPace}/mi
                 </div>
                 {displayWorkout?.environmentNote && <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" }}>{displayWorkout.environmentNote}</div>}
-                {readinessInfluence?.recoveryLine && <div style={{ fontSize:"0.54rem", color:readinessTone, marginTop:"0.2rem" }}>{readinessInfluence.recoveryLine}</div>}
               </div>
             )}
 
@@ -10209,9 +11002,9 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       <div className="card card-soft" style={{ marginBottom:"0.8rem", borderColor:contextStatusTone+"30", background:"rgba(8,14,25,0.82)" }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"flex-start", flexWrap:"wrap" }}>
           <div>
-            <div className="sect-title" style={{ color:contextStatusTone, marginBottom:"0.18rem" }}>ACTIVE PLANNING CONTEXT</div>
+            <div className="sect-title" style={{ color:contextStatusTone, marginBottom:"0.18rem" }}>ACTIVE CONTEXT</div>
             <div style={{ fontSize:"0.55rem", color:"#9fb4d3", lineHeight:1.55 }}>
-              This is the setup the planner is using right now.
+              What Today is using right now.
             </div>
           </div>
           <button
@@ -10228,15 +11021,15 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
             }}
             style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
           >
-            Inspect / edit
+            Review / edit
           </button>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:"0.45rem", marginTop:"0.55rem" }}>
           {[
-            { label: "Environment", value: trainingContextSummary.environmentLabel, meta: environmentSourceLabel },
-            { label: "Equipment", value: trainingContextSummary.equipmentLabel, meta: equipmentSourceLabel },
-            { label: "Session window", value: trainingContextSummary.sessionLabel, meta: durationSourceLabel },
-            { label: "Issue context", value: issueContextLabel, meta: activeIssueContext?.active ? "Active in planning" : activeIssueContext?.historicalNotes ? "Stale note kept out" : "Neutral" },
+            { label: "Environment", value: trainingContextSummary.environmentLabel, meta: plainEnvironmentSourceLabel },
+            { label: "Equipment", value: trainingContextSummary.equipmentLabel, meta: plainEquipmentSourceLabel },
+            { label: "Session window", value: trainingContextSummary.sessionLabel, meta: plainDurationSourceLabel },
+            { label: "Issue context", value: issueContextLabel, meta: activeIssueContext?.active ? "Active in plan" : activeIssueContext?.historicalNotes ? "Older note kept out" : "No active issue" },
           ].map((item) => (
             <div key={item.label} style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:12, padding:"0.65rem", background:"rgba(15,23,42,0.72)" }}>
               <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.18rem" }}>{item.label}</div>
@@ -10247,7 +11040,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
         </div>
         {activeIssueContext?.historicalNotes && !activeIssueContext?.active && (
           <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55, marginTop:"0.5rem" }}>
-            Historical note: {activeIssueContext.historicalNotes}
+            Older note kept out of today's plan: {activeIssueContext.historicalNotes}
           </div>
         )}
       </div>
@@ -10260,7 +11053,9 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
               <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>{readinessBadgeLabel}</div>
               <span style={{ fontSize:"0.46rem", color:todayTrustTone.color, background:todayTrustTone.bg, padding:"0.14rem 0.4rem", borderRadius:999 }}>{todayTrust.label}</span>
             </div>
-            {!!successSupport && <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{successSupport}</div>}
+            <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {reducedLoadSourceLine || readinessBasisLine}
+            </div>
           </div>
           <div className="card card-soft" style={{ borderColor:C.green+"26", background:"#0d1711" }}>
             <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.26rem" }}>WIN TODAY</div>
@@ -10286,16 +11081,17 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
 
         <details className="card card-soft" style={{ borderColor:"#2b3f5e", background:"#0d1420", marginBottom:0 }}>
           <summary style={{ cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.45rem", listStyle:"none" }}>
-            <span style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>Why and recovery</span>
+            <span style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>Why this setup</span>
             <span style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Optional</span>
           </summary>
           <div style={{ marginTop:"0.55rem", display:"grid", gap:"0.4rem" }}>
             <div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.5 }}>{rationaleHeadline}</div>
             {!!rationaleSupport && <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{rationaleSupport}</div>}
-            {!!programBlockLine && <div style={{ fontSize:"0.5rem", color:"#93c5fd", lineHeight:1.45 }}>Block posture: {programBlockLine}</div>}
             <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>Recovery: {recoveryPrescriptionLine}</div>
-            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{supplementPlanLine}</div>
-            <div style={{ fontSize:"0.48rem", color:"#64748b", lineHeight:1.4 }}>Source: {readinessSourceLabel}{shortProvenance ? ` - ${shortProvenance}` : ""}</div>
+            {!!programBlockLine && <div style={{ fontSize:"0.49rem", color:"#93c5fd", lineHeight:1.45 }}>Current block: {programBlockLine}</div>}
+            <div style={{ fontSize:"0.48rem", color:"#64748b", lineHeight:1.4 }}>
+              Support basis: {readinessBasisLine}{shortProvenance ? ` ${shortProvenance}` : ""}
+            </div>
           </div>
         </details>
       </div>
@@ -11428,6 +12224,49 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     currentProgramBlock?.nutritionPosture?.mode ? `nutrition ${String(currentProgramBlock.nutritionPosture.mode).replaceAll("_", " ")}` : null,
     currentWeeklyIntent?.nutritionEmphasis || null,
   ].filter(Boolean);
+  const compressWeekCopy = (text = "", maxLen = 165) => {
+    const normalized = String(text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+    if (normalized.length <= maxLen) return normalized;
+    return `${normalized.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
+  };
+  const currentWeekPurposeLine = compressWeekCopy(currentWeeklyIntent?.focus || currentWeekLabel, 140);
+  const currentWeekMattersLine = compressWeekCopy(weeklyCoachBrief || blockSummaryLine || "Current week plan", 165);
+  const currentWeekChangesLine = compressWeekCopy(
+    badWeekTriage
+      || (Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0
+        ? currentWeekModel.constraints.slice(0, 2).join(" - ")
+        : hierarchyIntentBits.join(" - ")),
+    165
+  ) || "No major week-level change flags are active.";
+  const currentWeekWinLine = compressWeekCopy(weeklyConsistencyAnchor, 165);
+  const currentWeekMetaLine = [
+    `${sessionsCompletedThisWeek}/${Math.max(1, plannedSessionsThisWeek)} sessions done`,
+    nextWeekType,
+    currentWeekModel?.adjusted ? "plan adjusted" : "",
+  ].filter(Boolean).join(" - ");
+  const currentWeekContextLine = currentCommittedWeekReview
+    ? `Saved week snapshot for ${currentCommittedWeekReview.label}.`
+    : "This week's saved history appears once the week closes.";
+  const humanizeGoalReviewPrompt = (key = "") => {
+    if (key === "are_we_progressing") return "Is this still moving in the right direction?";
+    if (key === "is_goal_still_right") return "Is this still the right goal?";
+    if (key === "are_metrics_still_useful") return "Are we tracking the right things?";
+    return "Does anything need to change?";
+  };
+  const humanizeGoalReviewVerdict = (verdict = "") => {
+    if (verdict === "aligned") return "on track";
+    if (verdict === "mixed") return "mixed";
+    if (verdict === "refine") return "needs tightening";
+    if (verdict === "reprioritize") return "needs a priority shift";
+    if (verdict === "review") return "worth reviewing";
+    return String(verdict || "review").replaceAll("_", " ");
+  };
+  const goalReviewRecommendationLine = [
+    goalReview?.recommendation?.label || "Keep current goal",
+    goalReview?.recommendation?.reason || "",
+  ].filter(Boolean).join(". ");
+  const goalReviewSummaryLine = goalReview?.summary || "Use this check-in to confirm the goal, the signals you're tracking, and anything that still needs tightening.";
   const handleGoalChangePreview = async () => {
     const cleanGoalText = sanitizeIntakeText(goalChangeIntent || "");
     if (!cleanGoalText) {
@@ -11662,13 +12501,13 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
               <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>GOAL REVIEW</div>
               <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>{goalReview?.headline || "Goal review snapshot"}</div>
               <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.14rem", lineHeight:1.55 }}>
-                {goalReview?.due?.summary || "Use canonical goal and progress data to keep the review lightweight."}
+                {goalReview?.due?.summary || "Quick check on whether the goal still fits and the tracking still makes sense."}
               </div>
-              <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{goalReview?.summary}</div>
+              <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{goalReviewSummaryLine}</div>
             </div>
             <div style={{ display:"grid", gap:"0.22rem", justifyItems:"end" }}>
               <div style={{ fontSize:"0.48rem", color:goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.dueNow ? C.amber : "#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.2rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>
-                {String(goalReview?.due?.dueState || "not_due").replaceAll("_", " ")}
+                {goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.dueNow ? "review due" : goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.soon ? "review soon" : "not due"}
               </div>
               {latestGoalReviewEvent?.effectiveDate && (
                 <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.06em" }}>last reviewed {latestGoalReviewEvent.effectiveDate}</div>
@@ -11683,10 +12522,10 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                 <div key={item?.key} style={{ border:`1px solid ${tone.border}`, borderRadius:12, background:"#0f172a", padding:"0.7rem" }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.35rem", marginBottom:"0.28rem" }}>
                     <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.45 }}>
-                      {item?.key === "are_we_progressing" ? "Are we progressing?" : item?.key === "is_goal_still_right" ? "Is the goal still right?" : item?.key === "are_metrics_still_useful" ? "Are the metrics still useful?" : "Should we refine or re-prioritize?"}
+                      {humanizeGoalReviewPrompt(item?.key)}
                     </div>
                     <div style={{ fontSize:"0.45rem", color:tone.color, background:tone.bg, border:`1px solid ${tone.border}`, padding:"0.14rem 0.38rem", borderRadius:999, letterSpacing:"0.08em", whiteSpace:"nowrap" }}>
-                      {String(item?.verdict || "review").replaceAll("_", " ")}
+                      {humanizeGoalReviewVerdict(item?.verdict)}
                     </div>
                   </div>
                   <div style={{ fontSize:"0.56rem", color:"#f8fafc", lineHeight:1.5 }}>{item?.answer}</div>
@@ -11698,17 +12537,17 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
 
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginTop:"0.7rem" }}>
             <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
-              Recommendation: <span style={{ color:"#dbe7f6" }}>{goalReview?.recommendation?.label || "Keep current goal"}</span>. {goalReview?.recommendation?.reason || ""}
+              Recommendation: <span style={{ color:"#dbe7f6" }}>{goalReviewRecommendationLine}</span>
             </div>
             <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
               <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.keepCurrentGoal)} disabled={goalReviewSaving} style={{ borderColor:"#2b3d55", color:"#dbe7f6" }}>
-                {goalReviewSaving ? "Saving..." : "Looks Right"}
+                {goalReviewSaving ? "Saving..." : "Keep it"}
               </button>
               <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.refineCurrentGoal)} disabled={goalReviewSaving} style={{ borderColor:`${C.blue}40`, color:C.blue }}>
-                Refine Goal
+                Tighten it
               </button>
               <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.reprioritizeGoalStack)} disabled={goalReviewSaving} style={{ borderColor:`${C.amber}40`, color:C.amber }}>
-                Re-prioritize
+                Shift priority
               </button>
             </div>
           </div>
@@ -11880,6 +12719,27 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                     Tradeoffs to respect: {goalChangePreview.goalFeasibility.conflictFlags.map((item) => item.summary).filter(Boolean).join(" - ")}
                   </div>
                 )}
+
+                <details style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(8,14,25,0.58)" }}>
+                  <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>INTAKE DEBUG</summary>
+                  <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.65rem" }}>
+                    <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.55 }}>
+                      State: {machineDebugView?.state || "pending"}
+                    </div>
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                      Missing anchors: {(machineDebugView?.missing_anchors?.length || 0)
+                        ? machineDebugView.missing_anchors.map((item) => item.field_id).join(", ")
+                        : "none"}
+                    </div>
+                    <div style={{ display:"grid", gap:"0.28rem" }}>
+                      {(machineDebugView?.last_events || []).map((entry) => (
+                        <div key={entry.transition_id} style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.5 }}>
+                          {entry.type} | {entry.stage_before} -> {entry.stage_after}{entry.field_id ? ` | ${entry.field_id}` : ""}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </details>
               </div>
             )}
           </div>
@@ -11890,13 +12750,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
             <div>
               <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>CURRENT WEEK DETAIL</div>
               <div style={{ fontSize:"1rem", color:"#f8fafc", fontWeight:650 }}>{sanitizeDisplayText(currentWeekLabel)}</div>
-              <div style={{ fontSize:"0.55rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Current committed plan week. Today can still reflect live PlanDay adjustments.</div>
-              <div style={{ fontSize:"0.5rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>
-                {currentCommittedWeekReview
-                  ? `Durable PlanWeek snapshot saved for ${currentCommittedWeekReview.label}. Future horizon rows remain projected until their week becomes current.`
-                  : "Durable week history will populate as each week becomes current. Older data can still fall back to derived week context where no snapshot exists yet."}
-              </div>
-              <div style={{ fontSize:"0.5rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>{programTrust.summary}</div>
+              <div style={{ fontSize:"0.55rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Your current plan week. Today may still reflect live day-level adjustments.</div>
             </div>
             <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
               <div style={{ fontSize:"0.5rem", color:C.green, background:C.green+"14", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>CURRENT</div>
@@ -11905,14 +12759,39 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
           </div>
 
           <div style={{ display:"grid", gridTemplateColumns:"1.1fr 0.9fr", gap:"0.8rem", marginBottom:"0.75rem" }}>
-            <div style={{ display:"grid", gap:"0.45rem" }}>
-              <div style={{ fontSize:"0.6rem", color:"#dbe7f6", lineHeight:1.55 }}>{currentWeeklyIntent?.focus || "Current week plan"}</div>
-              <div style={{ fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 }}>{weeklyCoachBrief}</div>
-              <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>{weeklyConsistencyAnchor}</div>
-              {!!badWeekTriage && <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.55 }}>{badWeekTriage}</div>}
-              {Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0 && (
-                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>Constraints: {currentWeekModel.constraints.slice(0, 4).join(" - ")}</div>
-              )}
+            <div style={{ display:"grid", gap:"0.42rem" }}>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WEEK PURPOSE</div>
+                <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.45 }}>{currentWeekPurposeLine}</div>
+              </div>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WHAT MATTERS MOST</div>
+                <div style={{ fontSize:"0.54rem", color:"#cbd5e1", lineHeight:1.5 }}>{currentWeekMattersLine}</div>
+              </div>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WHAT CHANGES THIS WEEK</div>
+                <div style={{ fontSize:"0.53rem", color:badWeekTriage ? C.amber : "#8fa5c8", lineHeight:1.5 }}>{currentWeekChangesLine}</div>
+              </div>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WIN THE WEEK</div>
+                <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.5 }}>{currentWeekWinLine}</div>
+              </div>
+              <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.45 }}>{currentWeekContextLine}</div>
+              {!!currentWeekMetaLine && <div style={{ fontSize:"0.49rem", color:"#7f93b2", lineHeight:1.4 }}>{currentWeekMetaLine}</div>}
+              <details>
+                <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>Week context</summary>
+                <div style={{ marginTop:"0.28rem", display:"grid", gap:"0.2rem" }}>
+                  <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>
+                    {currentCommittedWeekReview
+                      ? `A saved week snapshot exists for ${currentCommittedWeekReview.label}. Future weeks stay projected until they become current.`
+                      : "Saved week history appears as each week becomes current. Older weeks can still fall back to derived context when no snapshot exists yet."}
+                  </div>
+                  <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>{programTrust.summary}</div>
+                  {Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0 && (
+                    <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>Constraints: {currentWeekModel.constraints.slice(0, 4).join(" - ")}</div>
+                  )}
+                </div>
+              </details>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:"0.45rem" }}>
               <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
@@ -12865,13 +13744,13 @@ const buildSundayStoreGroceryList = ({ store, nutritionLayer, realWorldNutrition
 const buildLocationAwareOrderSuggestion = ({ nearby = [] }) => {
   const nameList = (nearby || []).map(n => String(n?.name || "").toLowerCase());
   if (nameList.some(n => n.includes("chipotle"))) {
-    return "You're near Chipotle: double chicken, fajita veggies, black beans, no sour cream = 54g protein, on plan.";
+    return "Nearby option: Chipotle with double chicken, fajita veggies, and black beans keeps protein high and fits today's target.";
   }
   if (nameList.some(n => n.includes("cava"))) {
-    return "You're near CAVA: greens + grains, double chicken, hummus on side = ~48g protein, on plan.";
+    return "Nearby option: CAVA with greens + grains, double chicken, and hummus on the side keeps the meal balanced and protein-forward.";
   }
   if (nameList.some(n => n.includes("panera"))) {
-    return "You're near Panera: teriyaki chicken bowl + Greek yogurt = ~42g protein, on plan.";
+    return "Nearby option: Panera with a teriyaki chicken bowl plus Greek yogurt is an easy protein-forward fallback.";
   }
   return null;
 };
@@ -12883,11 +13762,17 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
   const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
   const planDayWeek = planDay?.week || null;
-  const localFoodContext = personalization?.localFoodContext || { city: "Chicago", groceryOptions: ["Trader Joe's"] };
+  const localFoodContext = personalization?.localFoodContext || {};
   const savedLocation = personalization?.connectedDevices?.location || {};
-  const resolvedLocationLabel = localFoodContext.city || localFoodContext.locationLabel || (savedLocation?.status === "granted" ? "Nearby area" : "Chicago");
-  const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || "Trader Joe's");
   const favorites = nutritionFavorites || DEFAULT_NUTRITION_FAVORITES;
+  const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
+  const locationUnavailable = !locationPermissionGranted && ["denied", "unavailable"].includes(String(localFoodContext?.locationStatus || savedLocation?.status || "").toLowerCase());
+  const showNearbySection = locationPermissionGranted;
+  const resolvedLocationLabel = showNearbySection
+    ? localFoodContext.city || localFoodContext.locationLabel || "Nearby area"
+    : "";
+  const hasSavedStorePreference = Boolean(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0]);
+  const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0] || "Saved default");
   const [nutritionCheck, setNutritionCheck] = useState({ status: "on_track", deviationKind: "followed", issue: "", note: "" });
   const [lastKey, setLastKey] = useState("");
   const [showNutritionWhy, setShowNutritionWhy] = useState(false);
@@ -12905,12 +13790,14 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const [newSupplementTiming, setNewSupplementTiming] = useState("");
   const goalContext = getGoalContext(goals) || { primary: null, secondary: [] };
   const dayType = nutritionLayer?.dayType || todayWorkout?.nutri || "easyRun";
-  const city = resolvedLocationLabel;
-  const nearby = (getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" }) || [])
+  const city = showNearbySection ? resolvedLocationLabel : "";
+  const nearby = (showNearbySection
+    ? getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" })
+    : [])
     .map((x, i) => ({ id: x?.id || `nearby_${i}_${x?.name || "option"}`, name: x?.name || "Nearby option", meal: x?.meal || "Protein + carbs + produce" }))
     .filter(x => x.id !== lastKey)
     .slice(0, 2);
-  const locationAwareOrder = buildLocationAwareOrderSuggestion({ nearby });
+  const locationAwareOrder = showNearbySection ? buildLocationAwareOrderSuggestion({ nearby }) : null;
   const basket = buildGroceryBasket({ store, city, days: 3, dayType });
   const fastest = nearby[0] || { name: "Saved default", meal: "Protein shake + fruit + sandwich", tag: "fallback" };
   const travelBreakfast = ["Starbucks: egg bites + oatmeal + banana", "Hotel breakfast: eggs + Greek yogurt + fruit", "Airport: wrap + extra protein + water"];
@@ -12947,7 +13834,10 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     : (["easy", "otf", "strength"].includes(workoutType) || ["easyRun", "otf", "strength"].includes(dayType))
     ? 18
     : 8;
-  const hydrationTargetOz = Math.max(80, Math.round((latestWeight * 0.5) + intensityBonus));
+  const storedHydrationTargetOz = Number(nutritionLayer?.targets?.hydrationTargetOz || nutritionLayer?.hydrationTargetOz || 0) || 0;
+  const inferredHydrationTargetOz = Math.max(80, Math.round((latestWeight * 0.5) + intensityBonus));
+  const hydrationTargetOz = storedHydrationTargetOz || inferredHydrationTargetOz;
+  const hydrationTargetLabel = storedHydrationTargetOz ? `Target ${hydrationTargetOz} oz` : `Suggested ${hydrationTargetOz} oz`;
   const hydrationPct = Math.max(0, Math.min(100, Math.round(((hydrationOz || 0) / hydrationTargetOz) * 100)));
 
   const proteinLevel = `${Math.round(resolvedTargets.p)}g`;
@@ -12976,9 +13866,6 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     : recoveryDay
     ? joinDisplayParts(["Recovery day", "keep protein high and appetite decisions simple."])
     : joinDisplayParts(["Steady day", "balanced meals and consistency win."]);
-  const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
-  const locationUnavailable = !locationPermissionGranted && ["denied", "unavailable"].includes(String(localFoodContext?.locationStatus || savedLocation?.status || "").toLowerCase());
-  const showNearbySection = locationPermissionGranted;
   const shoppingDay = Number(favorites?.shoppingDay ?? 0);
   const todayDow = new Date().getDay();
   const showSundayGrocerySection = todayDow === shoppingDay || todayDow === ((shoppingDay + 6) % 7);
@@ -13068,10 +13955,14 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     actualNutritionLog: actualNutritionToday,
   });
   const nutritionGoalName = goalContext?.primary?.name || "current goal";
+  const currentSessionLabel = sanitizeDisplayText(todayWorkout?.label || todayWorkout?.type || dayType || "session");
+  const nutritionBasisLabel = planDay?.resolved?.nutrition?.prescription
+    ? "stored nutrition target for today"
+    : "suggested nutrition defaults for today";
   const nutritionProvenance = buildProvenanceText({
     inputs: [
-      "today's training demand",
-      `your ${nutritionGoalName}`,
+      nutritionBasisLabel,
+      `your current goal (${nutritionGoalName})`,
       "time of day",
       actualNutritionToday?.loggedAt ? "your logged nutrition today" : null,
     ],
@@ -13079,12 +13970,17 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   });
   const recoveryPrescription = planDay?.resolved?.recovery?.prescription || null;
   const supplementPlan = planDay?.resolved?.supplements?.plan || null;
-  const supplementPrescriptionLine = Array.isArray(supplementPlan?.items) && supplementPlan.items.length
-    ? supplementPlan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
-    : "No explicit supplement plan stored for today.";
-  const hydrationSupportLine = recoveryPrescription?.hydrationSupport?.summary || "Hydration support follows today's nutrition target.";
+  const hasStoredSupplementPlan = Array.isArray(supplementPlan?.items) && supplementPlan.items.length > 0;
+  const supplementPrescriptionLine = hasStoredSupplementPlan
+    ? `Stored plan: ${supplementPlan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")}`
+    : supplementRows.length
+    ? "No explicit supplement plan is stored for today. The checklist below is suggested support only."
+    : "No explicit supplement plan is stored for today.";
+  const hydrationSupportLine = storedHydrationTargetOz
+    ? recoveryPrescription?.hydrationSupport?.summary || `Stored hydration target: ${Math.round(storedHydrationTargetOz)} oz.`
+    : "No explicit hydration target is stored for today. The tracker below uses a suggested baseline from bodyweight and session load.";
   const weeklyNutritionHeadline = weeklyNutritionReview?.coaching?.headline || "Weekly nutrition review will populate as actual logs accumulate.";
-  const weeklyPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned-vs-actual nutrition remains separate.";
+  const weeklyPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned nutrition guidance and logged actual intake stay separate.";
   const weeklyAdherenceLine = weeklyNutritionReview?.adherence?.summary || "Adherence trend is still forming.";
   const weeklyHydrationLine = weeklyNutritionReview?.hydration?.summary || "Hydration consistency is still forming.";
   const weeklySupplementLine = weeklyNutritionReview?.supplements?.summary || "Supplement adherence is still forming.";
@@ -13163,10 +14059,19 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const complianceLine = actualNutritionToday?.loggedAt
     ? sanitizeDisplayText(nutritionComparison?.summary || "Nutrition logged.")
     : "Log a quick outcome once the day settles so today's prescription and actual intake stay separated.";
+  const savedFallbackMeal = sanitizeDisplayText(
+    favorites?.safeMeals?.[0]?.meal
+    || favorites?.safeMeals?.[0]?.name
+    || favorites?.defaultMeals?.[0]?.meal
+    || favorites?.defaultMeals?.[0]?.name
+    || ""
+  );
   const fastFallback = locationAwareOrder || (showNearbySection
     ? `${fastest.name}: ${fastest.meal}`
     : nutritionLayer?.travelMode
     ? travelBreakfast[0]
+    : savedFallbackMeal
+    ? `Saved default: ${savedFallbackMeal}`
     : "Use your default: protein + carb + fruit + water.");
 
   return (
@@ -13202,11 +14107,11 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
             <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
               <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>TRAINING LINK</div>
-              <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{sanitizeDisplayText(todayWorkout?.type || dayType || "session")}</div>
+              <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{currentSessionLabel}</div>
               <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{macroShiftLine}</div>
             </div>
             <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PRESCRIPTION BASIS</div>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>GUIDANCE BASIS</div>
               <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.55 }}>{nutritionProvenance}</div>
             </div>
           </div>
@@ -13244,7 +14149,9 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
               <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>
                 {nutritionLayer?.travelMode
                   ? travelBreakfast[0]
-                  : `${store}: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`}
+                  : hasSavedStorePreference
+                  ? `${store}: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`
+                  : `Suggested staples: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`}
               </div>
             </div>
           </div>
@@ -13315,12 +14222,12 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
       </div>
 
       <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.blue+"24" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>RECOVERY + SUPPLEMENT PRESCRIPTION</div>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>RECOVERY + SUPPLEMENT GUIDANCE</div>
         <div style={{ display:"grid", gap:"0.34rem" }}>
           <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
             <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>RECOVERY</div>
             <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>
-              {recoveryPrescription?.summary || "Recovery posture is attached to today's PlanDay."}
+              {recoveryPrescription?.summary || "Recovery guidance is currently attached to today's PlanDay."}
             </div>
             <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{hydrationSupportLine}</div>
           </div>
@@ -13332,18 +14239,23 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
       </div>
 
       <div className="card" style={{ marginBottom:"0.8rem" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>HYDRATION / SUPPLEMENTS</div>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>HYDRATION / SUPPLEMENT CHECKLIST</div>
         <div style={{ display:"grid", gap:"0.42rem" }}>
           <button className="btn" onClick={()=>logHydration(12)} style={{ width:"100%", display:"block", textAlign:"left", borderColor:"#2a3b56", padding:"0.42rem 0.46rem" }}>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:"0.56rem", color:"#dbe7f6", marginBottom:"0.22rem" }}>
               <span>{Math.round(hydrationOz)} oz logged</span>
-              <span style={{ color:"#8fa5c8" }}>Target {hydrationTargetOz} oz</span>
+              <span style={{ color:"#8fa5c8" }}>{hydrationTargetLabel}</span>
             </div>
             <div style={{ width:"100%", height:10, borderRadius:999, background:"#0f172a", border:"1px solid #243752", overflow:"hidden" }}>
               <div style={{ width:`${hydrationPct}%`, height:"100%", background: hydrationPct >= 100 ? C.green : C.blue, transition:"width 180ms ease" }} />
             </div>
             <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#8fa5c8" }}>Tap to add 12 oz</div>
           </button>
+          {!hasStoredSupplementPlan && supplementRows.length > 0 && (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              Suggested defaults only. Save or confirm a specific supplement plan elsewhere before treating this like a stored prescription.
+            </div>
+          )}
           {supplementRows.length > 0 && (
             <div style={{ display:"grid", gap:"0.3rem" }}>
               {supplementRows.map((supp, i) => (
@@ -13483,6 +14395,29 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
   const coachPhase = planDayWeek?.phase || todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
   const coachWeekFocus = planDayWeek?.weeklyIntent?.focus || planDayWeek?.planWeek?.weeklyIntent?.focus || "";
   const coachWeekSummary = planDayWeek?.summary || planDayWeek?.planWeek?.summary || "";
+  const activeGoalsOrdered = [...(goals || [])]
+    .filter((goal) => goal?.active)
+    .sort((a, b) => (a?.priority || 99) - (b?.priority || 99));
+  const currentPrimaryGoal = activeGoalsOrdered[0]?.name || arbitration?.priorityStack?.primary || "Consistency";
+  const currentSupportGoals = activeGoalsOrdered.slice(1, 3).map((goal) => goal?.name).filter(Boolean);
+  const currentBlockLabel = sanitizeDisplayText(
+    planDayWeek?.programBlock?.label
+    || planDayWeek?.label
+    || `${coachPhase} block`
+  );
+  const currentPlanFocus = sanitizeDisplayText(
+    planDayWeek?.weeklyIntent?.focus
+    || planDayWeek?.successDefinition
+    || coachWeekFocus
+    || coachWeekSummary
+    || planDayWeek?.programBlock?.summary
+    || "Current week plan"
+  );
+  const coachPlanLine = joinDisplayParts([
+    currentPrimaryGoal ? `Goal: ${currentPrimaryGoal}` : "",
+    currentSupportGoals.length ? `Support: ${currentSupportGoals.join(" / ")}` : "",
+    currentBlockLabel,
+  ]);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -13511,18 +14446,6 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
   useEffect(() => {
     safeStorageSet(localStorage, "coach_feedback_log", JSON.stringify(feedbackLog.slice(0, 100)));
   }, [feedbackLog]);
-
-  useEffect(() => {
-    const packet = deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
-    validateDeterministicCoachPacketInvariant(packet, "deterministicCoachPacket.status");
-    setMessages([{
-      role:"assistant",
-      text: packet?.coachBrief || packet?.recommendations?.[0] || packet?.notices?.[0] || "Coach ready.",
-      source: "deterministic",
-      ts: Date.now(),
-      helpful: null,
-    }]);
-  }, []);
 
   const commitAction = async (action) => {
     const commitResult = coordinateCoachActionCommit({
@@ -13556,10 +14479,8 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
 
   const getSessionContextPrompt = () => {
     const activeGoals = (arbitration?.priorityStack?.ordered || []).filter(Boolean);
-    const primaryGoal = activeGoals[0] || goalState?.primaryGoal || "Consistency";
+    const primaryGoal = activeGoals[0] || currentPrimaryGoal || goalState?.primaryGoal || "Consistency";
     const secondaryGoals = activeGoals.slice(1, 4).join(", ") || "None listed";
-    const deadline = goalState?.deadline || "";
-    const daysRemaining = deadline ? Math.max(0, Math.ceil((new Date(deadline) - new Date()) / 86400000)) : "N/A";
     const todayDetails = todayWorkout?.run
       ? `${todayWorkout.run.t || "Run"} · ${todayWorkout.run.d || "target pending"}`
       : `${todayWorkout?.type || "session"} · ${todayWorkout?.strengthDuration || todayWorkout?.fallback || "as prescribed"}`;
@@ -13587,10 +14508,16 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
 
 Current user state:
 - Goals: ${primaryGoal} | ${secondaryGoals}
+<<<<<<< HEAD
+- Current block: ${currentBlockLabel}
+- Weekly intent: ${currentPlanFocus}
+- Today's prescription: ${todayWorkout?.label || "Session"} Ã‚Â· ${todayDetails}
+=======
 - Phase: ${coachPhase} · Week ${currentWeek}
 - Weekly intent: ${coachWeekFocus || coachWeekSummary || "Current week plan"}
 - Days to race/deadline: ${daysRemaining}
 - Today's prescription: ${todayWorkout?.label || "Session"} · ${todayDetails}
+>>>>>>> origin/main
 - Achilles status: ${injury}
 - Last 5 sessions: ${last5}
 - Consistency last 2 weeks: ${consistency}
@@ -13626,7 +14553,7 @@ Rules for every response:
       "I'm traveling today": `${label}. Travel preset is active when needed. Today's prescription: ${todayWorkout?.label || "session"}.`,
       "I feel amazing this week": `${label}. Last 3 sessions: ${last3 || "none"}. Current phase: ${coachPhase}.`,
       "I slept badly": `${label}. Today's session type: ${todayWorkout?.type || "unknown"}. Readiness context: energy ${personalization?.trainingState?.fatigueScore || "n/a"}.`,
-      "I want to push harder": `${label}. Phase ${coachPhase}, days to goal ${goalState?.deadline ? Math.max(0, Math.ceil((new Date(goalState.deadline) - new Date()) / 86400000)) : "N/A"}, last feels ${(dated.slice(-5).map(([,l]) => l?.feel || 3).join(", ") || "none")}.`,
+      "I want to push harder": `${label}. Current block: ${currentBlockLabel}. Primary goal: ${currentPrimaryGoal}. Last feels ${(dated.slice(-5).map(([,l]) => l?.feel || 3).join(", ") || "none")}.`,
     };
     return map[label] || label;
   };
@@ -13760,7 +14687,7 @@ Rules for every response:
   const recoveryAdjustedToday = coachReadiness?.state === "recovery" || todayWorkout?.type === "rest" || todayWorkout?.type === "recovery" || /recovery/i.test(String(todayWorkout?.label || ""));
   const reducedLoadToday = coachReadiness?.state === "reduced_load" || Boolean(todayWorkout?.minDay);
   const progressionReadyToday = coachReadiness?.state === "progression" || /progression-ready/i.test(String(todayWorkout?.label || ""));
-  const goalPriority = arbitration?.priorityStack?.primary || "Consistency";
+  const goalPriority = currentPrimaryGoal;
   const recentEntries = Array.from(new Set([...(Object.keys(logs || {})), ...(Object.keys(dailyCheckins || {}))]))
     .sort((a, b) => a.localeCompare(b))
     .slice(-7)
@@ -13878,7 +14805,7 @@ Rules for every response:
       : lowRecoverySignal
       ? `latest recovery check-in is strained (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
       : highRecoverySignal
-      ? `latest recovery check-in is supportive (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
+      ? `latest recovery check-in looked supportive (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
       : `latest session felt ${feelDescriptor}`;
 
     let watching = "";
@@ -13917,6 +14844,46 @@ Rules for every response:
 
     return { watch: watching, doToday, noticed };
   })();
+
+  useEffect(() => {
+    const packet = deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
+    validateDeterministicCoachPacketInvariant(packet, "deterministicCoachPacket.status");
+    const seededMessage = {
+      role:"assistant",
+      text: packet?.coachBrief || packet?.recommendations?.[0] || packet?.notices?.[0] || "Coach ready.",
+      source: "deterministic",
+      ts: Date.now(),
+      helpful: null,
+      seedKey: `${todayKey}_${currentWeek}_${todayWorkout?.label || todayWorkout?.type || "session"}_${coachDecisionMode}_${goalPriority}`,
+    };
+    setMessages((prev) => {
+      const hasUserConversation = prev.some((message) => message.role === "user");
+      if (hasUserConversation) return prev;
+      if (!prev.length) return [seededMessage];
+      if (prev.length === 1 && prev[0]?.role === "assistant") {
+        const previousSeedKey = String(prev[0]?.seedKey || "");
+        if (previousSeedKey !== seededMessage.seedKey || String(prev[0]?.text || "") !== seededMessage.text) {
+          return [seededMessage];
+        }
+      }
+      return prev;
+    });
+  }, [
+    todayKey,
+    currentWeek,
+    todayWorkout?.label,
+    todayWorkout?.type,
+    coachDecisionMode,
+    goalPriority,
+    coachPhase,
+    currentBlockLabel,
+    currentPlanFocus,
+    coachWeekSummary,
+    nutritionLayer?.dayType,
+    recentCompletedCount,
+    recentSkippedCount,
+    recentModifiedCount,
+  ]);
 
   useEffect(() => {
     const isSunday = new Date().getDay() === 0;
@@ -13983,12 +14950,38 @@ Rules for every response:
   const boundaryLine = "Coach can recommend and prepare accepted actions, but state only changes when you explicitly apply a recommendation.";
   const recentAcceptedAction = (coachActions || []).find((action) => action?.acceptedBy) || null;
   const weeklyNutritionCoachLine = weeklyNutritionReview?.coaching?.coachLine || "Weekly nutrition signal is still forming.";
-  const weeklyNutritionPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned-vs-actual nutrition remains separate.";
+  const weeklyNutritionPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned nutrition guidance and logged actual intake stay separate.";
   const weeklyNutritionActionLine = weeklyNutritionReview?.adaptation?.actions?.[0] || "Keep logging intake and hydration so future nutrition changes stay deterministic.";
-  const recoveryPrescriptionLine = canonicalCoachRecovery?.prescription?.summary || canonicalCoachRecovery?.recoveryLine || "Recovery posture is attached to today's decision.";
+  const recoveryPrescriptionLine = canonicalCoachRecovery?.prescription?.summary || canonicalCoachRecovery?.recoveryLine || "Recovery guidance is currently attached to today's decision.";
   const supplementCoachLine = Array.isArray(canonicalCoachSupplements?.plan?.items) && canonicalCoachSupplements.plan.items.length
     ? canonicalCoachSupplements.plan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
     : "No explicit supplement plan stored for today.";
+  const compressCoachCopy = (text = "", maxLen = 180) => {
+    const normalized = String(text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+    if (normalized.length <= maxLen) return normalized;
+    return `${normalized.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
+  };
+  const coachRecommendationLine = compressCoachCopy(coachDecision.stance, 140);
+  const coachWhyLine = compressCoachCopy(coachDecision.why, 170);
+  const coachNextLine = compressCoachCopy(coachSnapshot.doToday, 150);
+  const coachWatchLine = compressCoachCopy(coachSnapshot.watch, 120);
+  const coachNoticedLine = compressCoachCopy(coachSnapshot.noticed, 145);
+  const latestAssistantSummary = compressCoachCopy(latestAssistantMessage?.text || "Coach update ready.", 180);
+  const acceptedActionHeadline = recentAcceptedAction
+    ? `${sanitizeStatusLabel(recentAcceptedAction.type, "accepted")} by ${sanitizeDisplayText(recentAcceptedAction.acceptedBy || "gate")}`
+    : "No accepted coach action yet.";
+  const acceptedActionSummary = compressCoachCopy(
+    recentAcceptedAction
+      ? sanitizeDisplayText(recentAcceptedAction.reason || recentAcceptedAction.rationale || "Accepted action saved.")
+      : boundaryLine,
+    170
+  );
+  const supportNutritionLine = compressCoachCopy(weeklyNutritionActionLine, 140);
+  const supportRecoveryLine = compressCoachCopy(recoveryPrescriptionLine, 140);
+  const supportSupplementLine = compressCoachCopy(supplementCoachLine, 120);
+  const latestWeeklyReviewLine = compressCoachCopy(sundayArchive[0]?.paragraph || weeklyNotice, 180);
+  const latestNoteMatchesSummary = latestAssistantSummary === coachRecommendationLine || latestAssistantSummary === coachNextLine;
 
   return (
     <div className="fi" style={{ display:"grid", gap:"0.75rem" }}>
@@ -13996,7 +14989,7 @@ Rules for every response:
         <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.35rem" }}>
           <div>
             <div className="sect-title" style={{ color:C.blue, marginBottom:"0.16rem" }}>COACH SUMMARY</div>
-            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{coachProvenance}</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{coachPlanLine || coachProvenance}</div>
           </div>
           <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
             <span style={{ fontSize:"0.48rem", color:decisionTone.color, background:decisionTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachDecisionMode}</span>
@@ -14004,23 +14997,32 @@ Rules for every response:
             <span style={{ fontSize:"0.48rem", color:coachTrustTone.color, background:coachTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachTrust.label}</span>
           </div>
         </div>
-        <div className="coach-copy" style={{ display:"grid", gap:"0.22rem", fontSize:"0.61rem", lineHeight:1.65 }}>
-          <div><span style={{ color:"#94a3b8" }}>Watching:</span> {coachSnapshot.watch}</div>
-          <div><span style={{ color:"#94a3b8" }}>Recommendation:</span> {coachDecision.stance}</div>
-          <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachDecision.why}</div>
-          <div><span style={{ color:"#94a3b8" }}>Next:</span> {coachSnapshot.doToday}</div>
+        <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.45, marginBottom:"0.18rem" }}>{coachRecommendationLine}</div>
+        <div className="coach-copy" style={{ display:"grid", gap:"0.18rem", fontSize:"0.56rem", lineHeight:1.6 }}>
+          <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachWhyLine}</div>
+          <div><span style={{ color:"#94a3b8" }}>Take:</span> {coachNextLine}</div>
+          <div><span style={{ color:"#94a3b8" }}>Plan:</span> {compressCoachCopy(currentPlanFocus, 150)}</div>
         </div>
-        <div style={{ marginTop:"0.22rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{coachTrust.summary}</div>
-        <div style={{ marginTop:"0.38rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{boundaryLine}</div>
+        <div style={{ marginTop:"0.22rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
+          {coachNoticedLine ? `${coachNoticedLine} ` : ""}Watch: {coachWatchLine}
+        </div>
+        <div style={{ marginTop:"0.22rem", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT PLAN</div>
+            <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{currentBlockLabel}</div>
+            <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{compressCoachCopy(currentPlanFocus, 130)}</div>
+          </div>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>LAST ACCEPTED</div>
+            <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{acceptedActionHeadline}</div>
+            <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{acceptedActionSummary}</div>
+          </div>
+        </div>
       </div>
 
       <div className="card card-action" style={{ borderColor:C.green+"30" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.32rem" }}>SUGGESTED ACTIONS</div>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.32rem" }}>TAKE ACTION</div>
         <div style={{ display:"grid", gap:"0.38rem" }}>
-          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.46rem 0.5rem" }}>
-            <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.55 }}>{coachDecision.stance}</div>
-            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{coachDecision.watch}</div>
-          </div>
           <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
             {coachDecision.options.slice(0, 2).map((opt, i) => (
               <button key={`${opt.label}_${i}`} className={`btn ${opt.primary ? "btn-primary" : ""}`} onClick={()=>applyDecisionOption(opt)} style={{ fontSize:"0.56rem" }}>
@@ -14028,59 +15030,43 @@ Rules for every response:
               </button>
             ))}
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
-            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LATEST COACH OUTPUT</div>
-              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>{latestAssistantMessage?.text || "Coach update ready."}</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{boundaryLine}</div>
+          <details>
+            <summary style={{ cursor:"pointer", fontSize:"0.53rem", color:"#8fa5c8" }}>Latest output</summary>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem", marginTop:"0.32rem" }}>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>
+                {latestNoteMatchesSummary ? "Latest output already matches the current coach summary." : latestAssistantSummary}
+              </div>
               {latestAssistantMessage?.source && <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.14rem" }}>Source: {formatCoachResponseSource(latestAssistantMessage.source)}</div>}
             </div>
-            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LAST ACCEPTED CHANGE</div>
-              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>
-                {recentAcceptedAction ? `${sanitizeStatusLabel(recentAcceptedAction.type, "accepted")} by ${sanitizeDisplayText(recentAcceptedAction.acceptedBy || "gate")}` : "No accepted coach action yet."}
-              </div>
-              <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                {recentAcceptedAction ? sanitizeDisplayText(recentAcceptedAction.reason || recentAcceptedAction.rationale || "Accepted action saved.") : boundaryLine}
-              </div>
-            </div>
-          </div>
+          </details>
         </div>
       </div>
 
-      <div className="card" style={{ borderColor:C.amber+"26" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.32rem" }}>
+      <details className="card" style={{ borderColor:C.amber+"26" }}>
+        <summary style={{ cursor:"pointer", display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"center", listStyle:"none" }}>
           <div>
-            <div className="sect-title" style={{ color:C.amber, marginBottom:"0.14rem" }}>NUTRITION THIS WEEK</div>
-            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyNutritionPlannedVsActualLine}</div>
+            <div className="sect-title" style={{ color:C.amber, marginBottom:"0.14rem" }}>SUPPORT SIGNALS</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              Nutrition: {supportNutritionLine} · Recovery: {supportRecoveryLine}
+            </div>
           </div>
           <span style={{ fontSize:"0.48rem", color:"#fbbf24", background:"#2b2007", padding:"0.16rem 0.42rem", borderRadius:999 }}>
             {sanitizeStatusLabel(weeklyNutritionReview?.adaptation?.mode, "hold")}
           </span>
+        </summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.42rem" }}>
+          <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{compressCoachCopy(weeklyNutritionCoachLine, 160)}</div>
+          <div style={{ fontSize:"0.51rem", color:"#c7d5ea", lineHeight:1.5 }}>Nutrition move: {supportNutritionLine}</div>
+          <div style={{ fontSize:"0.51rem", color:"#dbe7f6", lineHeight:1.5 }}>Recovery move: {supportRecoveryLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>Supplements: {supportSupplementLine}</div>
         </div>
-        <div style={{ display:"grid", gap:"0.3rem" }}>
-          <div style={{ fontSize:"0.57rem", color:"#dbe7f6", lineHeight:1.55 }}>{weeklyNutritionCoachLine}</div>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyNutritionReview?.adaptation?.support || "Nutrition review stays descriptive until the signal is strong enough to support deterministic change."}</div>
-          <div style={{ fontSize:"0.51rem", color:"#c7d5ea", lineHeight:1.5 }}>Next practical move: {weeklyNutritionActionLine}</div>
-        </div>
-      </div>
-
-      <div className="card" style={{ borderColor:C.blue+"24" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.28rem" }}>RECOVERY + SUPPLEMENTS TODAY</div>
-        <div style={{ display:"grid", gap:"0.24rem" }}>
-          <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{recoveryPrescriptionLine}</div>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{supplementCoachLine}</div>
-          <div style={{ fontSize:"0.48rem", color:"#64748b", lineHeight:1.5 }}>
-            {canonicalCoachRecovery?.actual?.loggedAt
-              ? canonicalCoachRecovery.actual.summary
-              : "Recovery actuals will update after check-in and nutrition logging."}
-          </div>
-        </div>
-      </div>
+      </details>
 
       <div className="card" style={{ marginBottom:"0.05rem" }}>
         <div className="sect-title" style={{ color:C.amber, marginBottom:"0.32rem" }}>COACH INPUT</div>
         <div style={{ display:"grid", gap:"0.38rem" }}>
-          <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Ask for a recommendation or use a quick decision prompt.</div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Ask for a decision, or use a quick prompt.</div>
           <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" }}>
             {quickPrompts.slice(0, 6).map(q => (
               <button key={q} className="btn" onClick={()=>send(q)} style={{ whiteSpace:"nowrap", fontSize:"0.55rem" }}>{q}</button>
@@ -14136,7 +15122,7 @@ Rules for every response:
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:"0.75rem" }}>
-        <details className="card card-subtle" open>
+        <details className="card card-subtle">
           <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.blue }}>MEMORY / SETTINGS</summary>
           <div style={{ paddingTop:"0.55rem", display:"grid", gap:"0.45rem" }}>
             <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>Coach memory and environment presets shape recommendations, but they do not mutate plan state until you accept an action.</div>
@@ -14178,18 +15164,17 @@ Rules for every response:
           </div>
         </details>
 
-        <details className="card card-subtle" open>
-          <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.purple }}>WEEKLY REVIEW / REFLECTION</summary>
+        <details className="card card-subtle">
+          <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.purple }}>WEEKLY CONTEXT</summary>
           <div style={{ paddingTop:"0.55rem", display:"grid", gap:"0.38rem" }}>
             <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.6 }}>
-              {sundayArchive[0]?.paragraph || "This section auto-generates on Sundays and archives each weekly review."}
+              {latestWeeklyReviewLine || "This section auto-generates on Sundays and archives each weekly review."}
             </div>
-            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>{weeklyNotice}</div>
             {sundayArchive.length > 0 && (
               <div style={{ maxHeight:170, overflowY:"auto", border:"1px solid #23344e", borderRadius:9, padding:"0.35rem 0.45rem", display:"grid", gap:"0.28rem", background:"#0f172a" }}>
                 {sundayArchive.map((r, idx) => (
                   <div key={`${r.date}_${idx}`} style={{ fontSize:"0.54rem", color:"#9fb2d2", lineHeight:1.55 }}>
-                    <span className="mono" style={{ color:"#64748b" }}>{r.date}</span> - {r.paragraph}
+                    <span className="mono" style={{ color:"#64748b" }}>{r.date}</span> - {compressCoachCopy(r.paragraph, 180)}
                   </div>
                 ))}
               </div>

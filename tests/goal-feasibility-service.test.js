@@ -7,6 +7,7 @@ const {
 const {
   GOAL_FEASIBILITY_ACTIONS,
   GOAL_REALISM_STATUSES,
+  GOAL_TARGET_VALIDATION_STATUSES,
   applyFeasibilityPriorityOrdering,
   assessGoalFeasibility,
 } = require("../src/services/goal-feasibility-service.js");
@@ -215,6 +216,8 @@ test("impossible marathon target is blocked and given a phased revision", () => 
 
   assert.equal(feasibility.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
   assert.equal(feasibility.realismStatus, GOAL_REALISM_STATUSES.unrealistic);
+  assert.equal(feasibility.goalAssessments[0].targetValidationStatus, GOAL_TARGET_VALIDATION_STATUSES.unrealisticButValid);
+  assert.equal(feasibility.targetValidation.status, GOAL_TARGET_VALIDATION_STATUSES.valid);
   assert.match(feasibility.blockingReasons[0], /marathon time target/i);
   assert.match(feasibility.recommendedRevision.summary, /first block|longer horizon/i);
 });
@@ -248,6 +251,7 @@ test("unrealistic strength target with a compressed horizon is blocked", () => {
 
   assert.equal(feasibility.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
   assert.equal(feasibility.realismStatus, GOAL_REALISM_STATUSES.unrealistic);
+  assert.equal(feasibility.goalAssessments[0].targetValidationStatus, GOAL_TARGET_VALIDATION_STATUSES.unrealisticButValid);
   assert.match(feasibility.recommendedRevision.summary, /135|225/i);
 });
 
@@ -278,6 +282,7 @@ test("impossible bench target is blocked even before a baseline comparison exist
 
   assert.equal(feasibility.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
   assert.equal(feasibility.realismStatus, GOAL_REALISM_STATUSES.unrealistic);
+  assert.equal(feasibility.goalAssessments[0].targetValidationStatus, GOAL_TARGET_VALIDATION_STATUSES.unrealisticButValid);
   assert.match(feasibility.blockingReasons[0], /credible human range|bench press/i);
   assert.match(feasibility.recommendedRevision.summary, /credible bench press milestone|2200/i);
 });
@@ -310,6 +315,8 @@ test("body-comp goals with missing baseline stay blocked as incomplete instead o
 
   assert.equal(feasibility.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
   assert.equal(feasibility.missingConfidence.level, "high");
+  assert.equal(feasibility.targetValidation.status, GOAL_TARGET_VALIDATION_STATUSES.underconstrainedPlausible);
+  assert.equal(feasibility.targetValidation.clarificationRequired, true);
   assert.equal(feasibility.recommendedRevision.kind, "missing_context");
   assert.match(feasibility.recommendedRevision.summary, /current bodyweight|target timeline/i);
 });
@@ -351,6 +358,43 @@ test("acceptable but ambitious race goals warn instead of fully blocking", () =>
 
   assert.equal(feasibility.confirmationAction, GOAL_FEASIBILITY_ACTIONS.warn);
   assert.equal(feasibility.realismStatus, GOAL_REALISM_STATUSES.aggressive);
+  assert.equal(feasibility.goalAssessments[0].targetValidationStatus, GOAL_TARGET_VALIDATION_STATUSES.aggressiveButValid);
   assert.ok(feasibility.warningReasons.length >= 1);
   assert.equal(feasibility.canProceed, true);
+});
+
+test("BMI percentage phrasing blocks for clarification as a malformed metric target", () => {
+  const rawGoalText = "BMI under 10%";
+  const typedIntakePacket = buildIntakePacket({ rawGoalText });
+  const resolution = resolveGoalTranslation({
+    rawUserGoalIntent: rawGoalText,
+    typedIntakePacket,
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  const feasibility = assessGoalFeasibility({
+    resolvedGoals: resolution.resolvedGoals,
+    userBaseline: typedIntakePacket.intake.baselineContext,
+    scheduleReality: typedIntakePacket.intake.scheduleReality,
+    currentExperienceContext: {
+      injuryConstraintContext: typedIntakePacket.intake.injuryConstraintContext,
+      equipmentAccessContext: typedIntakePacket.intake.equipmentAccessContext,
+    },
+    intakeCompleteness: {
+      facts: {},
+      missingRequired: [],
+      missingOptional: [],
+    },
+    now: "2026-04-11",
+  });
+
+  assert.equal(feasibility.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
+  assert.equal(feasibility.realismStatus, GOAL_REALISM_STATUSES.exploratory);
+  assert.equal(feasibility.targetValidation.status, GOAL_TARGET_VALIDATION_STATUSES.malformedMetric);
+  assert.equal(feasibility.targetValidation.clarificationRequired, true);
+  assert.deepEqual(feasibility.targetValidation.issueKeys, ["bmi_percent_mismatch"]);
+  assert.equal(feasibility.goalAssessments[0].targetValidationStatus, GOAL_TARGET_VALIDATION_STATUSES.malformedMetric);
+  assert.equal(feasibility.recommendedRevision.kind, "clarification_required");
+  assert.match(feasibility.recommendedRevision.summary, /body fat under 10%|bmi under/i);
 });

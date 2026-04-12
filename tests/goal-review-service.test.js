@@ -90,7 +90,7 @@ test("goal review recommends refining when the current proxies still need real d
         summary: "Look athletic again",
         status: "needs_data",
         trackingMode: "proxy",
-        whatIsTracked: ["Waist circumference", "Consistency", "Photos"],
+        whatIsTracked: ["Waist circumference", "Consistency", "Bodyweight trend"],
         nextReviewFocus: "Add waist circumference and consistency before the next weekly review.",
       })],
     },

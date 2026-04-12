@@ -185,7 +185,6 @@ test("vague aesthetic goal through provider returns proxy-measurable interpretat
           measurabilityTier: "proxy_measurable",
           proxyMetrics: [
             { key: "waist_circumference", label: "Waist circumference", unit: "in", kind: "proxy" },
-            { key: "progress_photos", label: "Manual photo review (future)", unit: "checkins", kind: "proxy" },
           ],
           confidence: "medium",
           timelineRealism: { status: "aggressive", summary: "Summer is workable if expectations stay visual and proxy-based.", suggestedHorizonWeeks: 16 },
@@ -203,7 +202,7 @@ test("vague aesthetic goal through provider returns proxy-measurable interpretat
     assert.equal(result.interpretation.interpretedGoalType, "appearance");
     assert.equal(result.interpretation.measurabilityTier, "proxy_measurable");
     assert.equal(result.interpretation.primaryMetric, null);
-    assert.equal(result.interpretation.proxyMetrics.length, 2);
+    assert.equal(result.interpretation.proxyMetrics.length, 1);
     assert.equal(result.interpretation.confidence, "medium");
   });
 });

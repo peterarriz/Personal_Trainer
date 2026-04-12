@@ -133,6 +133,8 @@ const resolveResolvedGoalDescriptor = ({ goal = null, resolvedGoal = null, fallb
   const metricKey = String(resolvedGoal?.primaryMetric?.key || "").toLowerCase();
   const summary = sanitizeText(resolvedGoal?.summary || goal?.name || "", 160).toLowerCase();
   const category = String(resolvedGoal?.planningCategory || goal?.category || fallbackCategory || "").toLowerCase();
+  const goalFamily = String(resolvedGoal?.goalFamily || goal?.goalFamily || "").toLowerCase();
+  if (goalFamily === "athletic_power" || /\b(dunk|vertical|jump higher|jumping higher|explosive)\b/.test(summary)) return "athletic power";
   if (/bench|press/.test(metricKey) || /\bbench\b/.test(summary)) return "pressing strength";
   if (/squat/.test(metricKey) || /\bsquat\b/.test(summary)) return "squat strength";
   if (/deadlift/.test(metricKey) || /\bdeadlift\b/.test(summary)) return "pulling strength";
@@ -163,7 +165,7 @@ const resolveEmphasisLabel = ({
   }
   if (architecture === "event_prep_upper_body_maintenance") return "Race prep";
   if (architecture === "race_prep_dominant") return descriptor === "race-specific fitness" ? "Race-specific running" : descriptor === "half-marathon endurance" ? "Half-marathon race prep" : "Run performance";
-  if (architecture === "strength_dominant") return descriptor === "pressing strength" ? "Pressing strength progression" : descriptor === "squat strength" ? "Squat strength progression" : descriptor === "pulling strength" ? "Pulling strength progression" : "Strength progression";
+  if (architecture === "strength_dominant") return descriptor === "athletic power" ? "Athletic-power progression" : descriptor === "pressing strength" ? "Pressing strength progression" : descriptor === "squat strength" ? "Squat strength progression" : descriptor === "pulling strength" ? "Pulling strength progression" : "Strength progression";
   if (architecture === "body_comp_conditioning") return "Fat-loss momentum";
   if (architecture === "maintenance_rebuild") return "Hybrid rebuild";
   if (category === "running") return "Run performance";
@@ -182,7 +184,7 @@ const resolveWeeklyFocusLabel = ({
   const descriptor = resolveResolvedGoalDescriptor({ goal: primaryGoal, resolvedGoal: primaryResolvedGoal, fallbackCategory: dominantCategory });
   if (architecture === "event_prep_upper_body_maintenance") return "Build race-specific fitness while keeping upper-body strength alive";
   if (architecture === "race_prep_dominant") return descriptor === "half-marathon endurance" ? "Build half-marathon pace and endurance" : "Build race-specific endurance and quality";
-  if (architecture === "strength_dominant") return descriptor === "pressing strength" ? "Build pressing strength with repeatable full-body work" : "Build primary strength with repeatable full-body work";
+  if (architecture === "strength_dominant") return descriptor === "athletic power" ? "Build athletic power with repeatable lower-body work" : descriptor === "pressing strength" ? "Build pressing strength with repeatable full-body work" : "Build primary strength with repeatable full-body work";
   if (architecture === "body_comp_conditioning") return "Drive fat-loss momentum while protecting strength";
   if (architecture === "maintenance_rebuild") return "Rebuild repeatable run and strength rhythm";
   if (dominantCategory === "running") return secondaryCategory === "strength" ? "Build run fitness while keeping strength in the week" : "Build run fitness with repeatable support work";

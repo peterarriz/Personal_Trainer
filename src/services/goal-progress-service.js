@@ -887,14 +887,12 @@ const buildBodyCompTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
     dataIndex,
     now,
   });
-  const photoItem = buildPhotoReviewItem({ now, manualProgressInputs });
-  return [bodyweightItem, waistItem, consistencyItem, photoItem];
+  return [bodyweightItem, waistItem, consistencyItem];
 };
 
 const buildAppearanceTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
   const bodyweightItem = buildBodyweightTrendItem({ goal, dataIndex, now });
   const waistItem = buildWaistTrendItem({ now, manualProgressInputs });
-  const photoItem = buildPhotoReviewItem({ now, manualProgressInputs });
   const consistencyItem = buildConsistencyItem({
     key: "checkin_consistency",
     label: "Training consistency",
@@ -906,7 +904,6 @@ const buildAppearanceTrackedItems = ({ goal = {}, dataIndex = {}, manualProgress
     { label: "training consistency logged", hit: consistencyItem.status !== GOAL_PROGRESS_STATUSES.needsData },
     { label: "bodyweight trend updated", hit: bodyweightItem.status !== GOAL_PROGRESS_STATUSES.needsData },
     { label: "waist check logged", hit: waistItem.status !== GOAL_PROGRESS_STATUSES.needsData },
-    { label: "manual photo review completed", hit: photoItem.status !== GOAL_PROGRESS_STATUSES.needsData },
   ];
   const hits = checklistAnchors.filter((item) => item.hit).length;
   const missing = checklistAnchors.filter((item) => !item.hit).map((item) => item.label);
@@ -914,14 +911,14 @@ const buildAppearanceTrackedItems = ({ goal = {}, dataIndex = {}, manualProgress
     key: "appearance_review_checklist",
     label: "Appearance review checklist",
     kind: "review",
-    metricRefs: ["waist_circumference", "bodyweight_trend", "progress_photos", "checkin_consistency"],
+    metricRefs: ["waist_circumference", "bodyweight_trend", "checkin_consistency"],
     status: hits >= 2 ? GOAL_PROGRESS_STATUSES.reviewBased : GOAL_PROGRESS_STATUSES.needsData,
     currentDisplay: `${hits}/${checklistAnchors.length} review anchors updated this cycle`,
     targetDisplay: `${goal?.reviewCadence || "weekly"} review cadence`,
     trendDisplay: missing.length ? `Still missing: ${missing.slice(0, 2).join(", ")}` : "All review anchors are current",
     why: "Appearance goals stay honest through repeatable review anchors and cadence, not a fake exact percentage.",
   });
-  return [checklistItem, waistItem, bodyweightItem, photoItem];
+  return [checklistItem, waistItem, bodyweightItem];
 };
 
 const buildExploratoryTrackedItems = ({ dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => [
