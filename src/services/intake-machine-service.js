@@ -143,6 +143,28 @@ const readStoredField = (answers = {}, fieldKey = "") => {
   return stored && typeof stored === "object" ? stored : null;
 };
 
+const buildAnchorBindingTarget = (anchor = null) => ({
+  anchor_id: sanitizeText(anchor?.anchor_id || "", 120),
+  field_id: sanitizeText(anchor?.field_id || "", 80),
+});
+
+const readEventBindingTarget = (payload = {}) => {
+  const explicitTarget = payload?.binding_target && typeof payload.binding_target === "object"
+    ? payload.binding_target
+    : {};
+  return {
+    anchor_id: sanitizeText(explicitTarget?.anchor_id || payload?.anchor_id || "", 120),
+    field_id: sanitizeText(explicitTarget?.field_id || payload?.field_id || "", 80),
+  };
+};
+
+const matchesBindingTarget = (expected = {}, received = {}) => (
+  sanitizeText(expected?.anchor_id || "", 120)
+  && sanitizeText(expected?.field_id || "", 80)
+  && sanitizeText(expected?.anchor_id || "", 120) === sanitizeText(received?.anchor_id || "", 120)
+  && sanitizeText(expected?.field_id || "", 80) === sanitizeText(received?.field_id || "", 80)
+);
+
 const upsertCompletenessField = (answers = {}, fieldKey = "", fieldRecord = null) => {
   if (!fieldKey || !fieldRecord) return answers;
   return {
@@ -426,35 +448,103 @@ const buildRunningPaceAnchor = ({ requirement = null, question = {}, priority = 
   });
 };
 
-const buildAppearanceProxyAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], answers = {} } = {}) => {
-  const storedBodyweight = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight);
-  const storedWaist = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentWaist);
-  return buildMissingAnchor({
-    field_id: "appearance_proxy_anchor",
+const buildAppearanceProxyChoiceAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], selectedValue = "" } = {}) => (
+  buildMissingAnchor({
+    field_id: "appearance_proxy_anchor_kind",
     requirement,
     question: {
       ...question,
-      prompt: "What's one proxy we can track right now: current bodyweight or waist?",
+      prompt: "For your appearance goal, which proxy is easier to use right now: bodyweight or waist?",
     },
-    label: "Appearance proxy anchor",
-    input_type: "text",
-    expected_value_type: INTAKE_COMPLETENESS_VALUE_TYPES.appearanceProxyAnchor,
-    placeholder: "Example: 198 lb or 35-inch waist",
-    helper_text: "Use one clean proxy. Bodyweight or waist is enough.",
+    label: "Choose your appearance proxy",
+    input_type: "choice_chips",
+    expected_value_type: "appearance_proxy_choice",
+    placeholder: "",
+    helper_text: "Pick the one you can check consistently without friction.",
     validation: {
-      kind: "appearance_proxy_anchor",
-      message: "Add either your current bodyweight or your waist.",
+      kind: "appearance_proxy_choice",
+      message: "Choose the appearance proxy that's easier for you to track right now.",
     },
-    examples: ["198 lb", "35-inch waist"],
+    options: [
+      {
+        value: INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
+        label: "Bodyweight",
+        description: "Use scale weight if that's the easiest thing to check consistently.",
+      },
+      {
+        value: INTAKE_COMPLETENESS_FIELDS.currentWaist,
+        label: "Waist",
+        description: "Use waist if that tracks the visual change better for you.",
+      },
+    ],
     priority,
     applies_to_goal_ids,
-    draftValue: sanitizeText(storedBodyweight?.raw || storedWaist?.raw || "", 160),
-    canonical_field_ids: [
-      INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
-      INTAKE_COMPLETENESS_FIELDS.currentWaist,
-    ],
-    why_it_matters: "We need one simple proxy so this goal stays trackable instead of vague.",
-    coach_voice_line: "Coach note: one clean proxy beats three fuzzy ones.",
+    draftValue: sanitizeText(selectedValue, 80),
+    canonical_field_ids: [],
+    why_it_matters: "We only need one clean proxy so this goal stays trackable instead of fuzzy.",
+    coach_voice_line: "Coach note: pick the one you'll actually measure, not the one that sounds more impressive.",
+  })
+);
+
+const buildAppearanceProxyBodyweightAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], answers = {} } = {}) => {
+  const storedBodyweight = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight);
+  return buildMissingAnchor({
+    field_id: INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
+    requirement,
+    question: {
+      ...question,
+      prompt: "For your appearance goal, what's your current bodyweight or closest recent scale weight?",
+    },
+    label: "Current bodyweight",
+    input_type: "number_with_unit",
+    expected_value_type: "number",
+    placeholder: "198",
+    helper_text: "Closest recent scale weight is fine.",
+    validation: {
+      kind: "current_bodyweight",
+      message: "Enter your current bodyweight.",
+      min: 1,
+      max: 1000,
+    },
+    priority,
+    applies_to_goal_ids,
+    draftValue: Number.isFinite(storedBodyweight?.value) ? String(storedBodyweight.value) : "",
+    canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.currentBodyweight],
+    why_it_matters: "Bodyweight gives us one clean number to track while the appearance goal is still broad.",
+    coach_voice_line: "Coach note: closest recent scale weight is plenty. I don't need a perfect weigh-in.",
+    unit: "lb",
+    unit_options: [{ value: "lb", label: "lb" }],
+  });
+};
+
+const buildAppearanceProxyWaistAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], answers = {} } = {}) => {
+  const storedWaist = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentWaist);
+  return buildMissingAnchor({
+    field_id: INTAKE_COMPLETENESS_FIELDS.currentWaist,
+    requirement,
+    question: {
+      ...question,
+      prompt: "For your appearance goal, what's your current waist measurement?",
+    },
+    label: "Current waist",
+    input_type: "number_with_unit",
+    expected_value_type: "number",
+    placeholder: "35",
+    helper_text: "A rough tape measurement is enough.",
+    validation: {
+      kind: "current_waist",
+      message: "Enter your current waist measurement.",
+      min: 1,
+      max: 100,
+    },
+    priority,
+    applies_to_goal_ids,
+    draftValue: Number.isFinite(storedWaist?.value) ? String(storedWaist.value) : "",
+    canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.currentWaist],
+    why_it_matters: "Waist gives us a simple visual-change proxy when bodyweight is noisy.",
+    coach_voice_line: "Coach note: a rough tape check is fine here. I just want a repeatable starting point.",
+    unit: "in",
+    unit_options: [{ value: "in", label: "in" }],
   });
 };
 
@@ -475,6 +565,12 @@ const expandRequirementToAnchors = ({
   const selectedRunningAnchor = sanitizeText(
     bindingsByFieldId?.running_endurance_anchor_kind?.parsed_value
       || bindingsByFieldId?.running_endurance_anchor_kind?.raw_text
+      || "",
+    80
+  );
+  const selectedAppearanceProxy = sanitizeText(
+    bindingsByFieldId?.appearance_proxy_anchor_kind?.parsed_value
+      || bindingsByFieldId?.appearance_proxy_anchor_kind?.raw_text
       || "",
     80
   );
@@ -678,13 +774,31 @@ const expandRequirementToAnchors = ({
       break;
     case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor:
       if (!facts?.currentBodyweight && !facts?.currentWaist && facts?.progressPhotos !== true) {
-        anchors.push(buildAppearanceProxyAnchor({
-          requirement,
-          question,
-          priority,
-          applies_to_goal_ids: appliesToGoalIds,
-          answers,
-        }));
+        if (!selectedAppearanceProxy) {
+          anchors.push(buildAppearanceProxyChoiceAnchor({
+            requirement,
+            question,
+            priority,
+            applies_to_goal_ids: appliesToGoalIds,
+            selectedValue: selectedAppearanceProxy,
+          }));
+        } else if (selectedAppearanceProxy === INTAKE_COMPLETENESS_FIELDS.currentBodyweight) {
+          anchors.push(buildAppearanceProxyBodyweightAnchor({
+            requirement,
+            question,
+            priority,
+            applies_to_goal_ids: appliesToGoalIds,
+            answers,
+          }));
+        } else if (selectedAppearanceProxy === INTAKE_COMPLETENESS_FIELDS.currentWaist) {
+          anchors.push(buildAppearanceProxyWaistAnchor({
+            requirement,
+            question,
+            priority,
+            applies_to_goal_ids: appliesToGoalIds,
+            answers,
+          }));
+        }
       }
       break;
     default: {
@@ -875,6 +989,35 @@ export const validateMissingAnchorAnswer = ({
         parseErrorCode: "",
       };
     }
+    case "appearance_proxy_anchor_kind": {
+      const chosenValue = sanitizeText(answerObject?.value || cleanRaw, 80);
+      const allowedValues = new Set([
+        INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
+        INTAKE_COMPLETENESS_FIELDS.currentWaist,
+      ]);
+      if (!allowedValues.has(chosenValue)) {
+        return {
+          isValid: false,
+          formError: validationMessage,
+          parsed_value: null,
+          parse_confidence: 0,
+          canonicalWrites: [],
+          summaryText: "",
+          parseErrorCode: "invalid_choice",
+        };
+      }
+      return {
+        isValid: true,
+        formError: "",
+        parsed_value: chosenValue,
+        parse_confidence: 1,
+        canonicalWrites: [],
+        summaryText: chosenValue === INTAKE_COMPLETENESS_FIELDS.currentWaist
+          ? "Waist"
+          : "Bodyweight",
+        parseErrorCode: "",
+      };
+    }
     case INTAKE_COMPLETENESS_FIELDS.currentRunFrequency: {
       const runFrequency = toFiniteNumber(answerObject?.value ?? answer_value ?? cleanRaw, null) ?? parseRunFrequency(cleanRaw);
       if (!Number.isFinite(runFrequency) || runFrequency <= 0) {
@@ -983,7 +1126,24 @@ export const validateMissingAnchorAnswer = ({
       };
     }
     case INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline: {
-      const parsedTopSet = parseStrengthTopSet(cleanRaw);
+      const explicitMode = sanitizeText(answerObject?.mode || "", 40).toLowerCase();
+      const explicitWeight = toFiniteNumber(answerObject?.weight ?? answerObject?.value, null);
+      const explicitReps = toFiniteNumber(answerObject?.reps, null);
+      const parsedTopSet = Number.isFinite(explicitWeight) && explicitWeight > 0
+        ? {
+            raw: explicitMode === "estimated_max"
+              ? `${explicitWeight} estimated max`
+              : Number.isFinite(explicitReps) && explicitReps > 0
+              ? `${explicitWeight}x${Math.round(explicitReps)}`
+              : `${explicitWeight}`,
+            weight: explicitWeight,
+            reps: explicitMode === "estimated_max"
+              ? 1
+              : Number.isFinite(explicitReps) && explicitReps > 0
+              ? Math.round(explicitReps)
+              : null,
+          }
+        : parseStrengthTopSet(cleanRaw);
       if (!Number.isFinite(parsedTopSet.weight) || parsedTopSet.weight <= 0) {
         return {
           isValid: false,
@@ -1015,6 +1175,38 @@ export const validateMissingAnchorAnswer = ({
           }),
         ],
         summaryText: parsedTopSet.raw,
+        parseErrorCode: "",
+      };
+    }
+    case INTAKE_COMPLETENESS_FIELDS.currentWaist: {
+      const waist = toFiniteNumber(answerObject?.value ?? answer_value ?? cleanRaw, null) ?? parseWaistMeasurement(cleanRaw);
+      if (!Number.isFinite(waist) || waist <= 0) {
+        return {
+          isValid: false,
+          formError: validationMessage,
+          parsed_value: null,
+          parse_confidence: 0,
+          canonicalWrites: [],
+          summaryText: "",
+          parseErrorCode: "invalid_waist",
+        };
+      }
+      return {
+        isValid: true,
+        formError: "",
+        parsed_value: waist,
+        parse_confidence: 1,
+        canonicalWrites: [
+          buildBindingWrite({
+            fieldKey: INTAKE_COMPLETENESS_FIELDS.currentWaist,
+            record: {
+              raw: `${waist} in`,
+              value: waist,
+              unit: "in",
+            },
+          }),
+        ],
+        summaryText: `${waist} in`,
         parseErrorCode: "",
       };
     }
@@ -1214,6 +1406,7 @@ export const applyMissingAnchorAnswer = ({
     answers: nextAnswers,
     validation,
     binding: {
+      anchor_id: sanitizeText(anchor?.anchor_id || "", 120),
       field_id: sanitizeText(anchor?.field_id || "", 80),
       raw_text: sanitizeText(raw_text || (answer_value ?? ""), 220),
       parsed_value: clonePlainValue(validation.parsed_value),
@@ -1311,15 +1504,12 @@ const buildDeterministicIntakeDraft = ({
     goalResolution,
     orderedResolvedGoals,
     goalFeasibility,
+    arbitration,
     aiInterpretationProposal,
     answers,
     goalStackConfirmation,
   });
-  const confirmationState = deriveIntakeConfirmationState({
-    reviewModel,
-    askedQuestions: [],
-    maxQuestions: 2,
-  });
+  const confirmationState = deriveIntakeConfirmationState({ reviewModel });
   const activeGoals = toArray(reviewModel?.activeResolvedGoals).length ? reviewModel.activeResolvedGoals : orderedResolvedGoals;
   const missingAnchorsEngine = buildMissingAnchorsEngine({
     resolvedGoals: activeGoals,
@@ -1349,6 +1539,7 @@ const summarizeEvent = (event = {}) => ({
   event_id: sanitizeText(event?.event_id || "", 120),
   type: sanitizeText(event?.type || "", 80),
   timestamp: normalizeTimestamp(event?.timestamp || event?.created_at || null),
+  anchor_id: sanitizeText(event?.payload?.anchor_id || event?.payload?.binding_target?.anchor_id || event?.payload?.anchor?.anchor_id || "", 120),
   field_id: sanitizeText(event?.payload?.field_id || event?.payload?.anchor?.field_id || "", 80),
   goal_intent: sanitizeText(event?.payload?.answers?.goal_intent || event?.payload?.typedIntakePacket?.intake?.rawGoalText || "", 120),
 });
@@ -1358,14 +1549,17 @@ const appendMessages = (state = {}, messages = []) => {
   const outbox = [...toArray(state.outbox)];
   let messageCount = Number(state.messageCount || 0);
   toArray(messages).forEach((message) => {
-    const key = sanitizeText(message?.key || "", 160);
+    const key = sanitizeText(message?.idempotency_key || message?.key || "", 220);
     const text = sanitizeText(message?.text || "", 320);
     if (!key || !text || emitted[key]) return;
     emitted[key] = true;
     messageCount += 1;
     outbox.push({
       message_id: buildCounterId("message", messageCount),
-      key,
+      key: sanitizeText(message?.key || key, 220),
+      idempotency_key: key,
+      anchor_id: sanitizeText(message?.anchor_id || "", 120),
+      message_kind: sanitizeText(message?.message_kind || "", 40).toLowerCase(),
       text,
       created_at: normalizeTimestamp(message?.created_at || null),
     });
@@ -1387,6 +1581,25 @@ const commitTransition = ({
 } = {}) => {
   const transitionCount = Number(state.transitionCount || 0) + 1;
   const transition_id = buildCounterId("transition", transitionCount);
+  const preparedMessages = toArray(messages).map((message, index) => {
+    const anchorId = sanitizeText(message?.anchor_id || "", 120);
+    const messageKind = sanitizeText(message?.message_kind || "", 40).toLowerCase();
+    const anchorQuestionIdempotencyKey = messageKind === "anchor_question" && anchorId
+      ? sanitizeText(`${nextStage}:${anchorId}:${transition_id}`, 220)
+      : "";
+    const fallbackKey = sanitizeText(`${messageKind || "message"}:${transition_id}:${index + 1}`, 220);
+    return {
+      ...clonePlainValue(message),
+      key: sanitizeText(message?.key || anchorQuestionIdempotencyKey || fallbackKey, 220),
+      ...(anchorQuestionIdempotencyKey
+        ? { idempotency_key: sanitizeText(message?.idempotency_key || anchorQuestionIdempotencyKey, 220) }
+        : (sanitizeText(message?.idempotency_key || "", 220)
+          ? { idempotency_key: sanitizeText(message?.idempotency_key || "", 220) }
+          : {})),
+      ...(anchorId ? { anchor_id: anchorId } : {}),
+      ...(messageKind ? { message_kind: messageKind } : {}),
+    };
+  });
   const nextEventLog = [
     ...toArray(state.eventLog),
     {
@@ -1410,7 +1623,7 @@ const commitTransition = ({
       ...(state.ui || {}),
       ...((patch && patch.ui) || {}),
     },
-  }, messages);
+  }, preparedMessages);
   return nextState;
 };
 
@@ -1454,6 +1667,7 @@ export const createIntakeMachineState = ({
   ui: {
     clearReason: "",
     lastParseError: "",
+    currentBindingTarget: null,
   },
   clock: {
     now: now ? normalizeTimestamp(now) : "",
@@ -1539,9 +1753,25 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
         anchorBindingsByFieldId: state.anchorBindingsByFieldId || {},
         now,
       });
-      const nextStage = nextDraft?.missingAnchorsEngine?.currentAnchor
+      const nextAnchor = nextDraft?.missingAnchorsEngine?.currentAnchor || null;
+      const nextStage = nextAnchor
         ? INTAKE_MACHINE_STATES.ANCHOR_COLLECTION
         : INTAKE_MACHINE_STATES.REALISM_GATE;
+      const nextMessages = [];
+      if (nextStage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION && nextAnchor?.question) {
+        nextMessages.push({
+          message_kind: "anchor_question",
+          anchor_id: nextAnchor.anchor_id,
+          text: `One quick thing before I lock this in: ${nextAnchor.question}`,
+        });
+        const assessmentText = sanitizeText(payload?.assessment?.text || "", 320);
+        if (assessmentText) {
+          nextMessages.push({
+            key: `anchor_status:${sanitizeText(nextAnchor.anchor_id || nextAnchor.field_id || "", 120)}:${sanitizeText(assessmentText, 80).toLowerCase()}`,
+            text: assessmentText,
+          });
+        }
+      }
       return commitTransition({
         state,
         event,
@@ -1552,11 +1782,13 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ...(state.ui || {}),
             clearReason: nextDraft?.confirmationState?.reason || "",
             lastParseError: "",
+            currentBindingTarget: nextAnchor ? buildAnchorBindingTarget(nextAnchor) : null,
           },
           clock: {
             now,
           },
         },
+        messages: nextMessages,
       });
     }
     case INTAKE_MACHINE_EVENTS.ANCHOR_PARSE_FAILED: {
@@ -1575,6 +1807,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ...(state.ui || {}),
             lastParseError: sanitizeText(event?.payload?.formError || "", 220),
             clearReason: sanitizeText(event?.payload?.formError || "", 220),
+            currentBindingTarget: buildAnchorBindingTarget(currentDraft?.missingAnchorsEngine?.currentAnchor || null),
           },
           clock: {
             now,
@@ -1583,8 +1816,24 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
       });
     }
     case INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED: {
-      const anchor = event?.payload?.anchor || currentDraft?.missingAnchorsEngine?.currentAnchor || null;
-      if (!anchor?.field_id) {
+      const anchor = currentDraft?.missingAnchorsEngine?.currentAnchor || null;
+      const bindingTarget = readEventBindingTarget(event?.payload || {});
+      if (!bindingTarget?.anchor_id || !bindingTarget?.field_id) {
+        return commitTransition({
+          state,
+          event,
+          nextStage: INTAKE_MACHINE_STATES.ANCHOR_COLLECTION,
+          patch: {
+            ui: {
+              ...(state.ui || {}),
+              lastParseError: "That answer is missing its field binding target.",
+              clearReason: "That answer is missing its field binding target.",
+              currentBindingTarget: buildAnchorBindingTarget(currentDraft?.missingAnchorsEngine?.currentAnchor || null),
+            },
+          },
+        });
+      }
+      if (!anchor?.field_id || !anchor?.anchor_id) {
         return commitTransition({
           state,
           event,
@@ -1593,6 +1842,23 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ui: {
               ...(state.ui || {}),
               lastParseError: "No active intake field is waiting for an answer.",
+              clearReason: "No active intake field is waiting for an answer.",
+              currentBindingTarget: null,
+            },
+          },
+        });
+      }
+      if (!Boolean(event?.payload?.multi_bind_mode) && !matchesBindingTarget(buildAnchorBindingTarget(anchor), bindingTarget)) {
+        return commitTransition({
+          state,
+          event,
+          nextStage: INTAKE_MACHINE_STATES.ANCHOR_COLLECTION,
+          patch: {
+            ui: {
+              ...(state.ui || {}),
+              lastParseError: "That answer was bound to a different intake field than the one currently on screen.",
+              clearReason: "That answer was bound to a different intake field than the one currently on screen.",
+              currentBindingTarget: buildAnchorBindingTarget(anchor),
             },
           },
         });
@@ -1620,6 +1886,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
               ...(state.ui || {}),
               lastParseError: sanitizeText(applied.validation?.formError || "", 220),
               clearReason: sanitizeText(applied.validation?.formError || "", 220),
+              currentBindingTarget: buildAnchorBindingTarget(anchor),
             },
           },
         });
@@ -1646,11 +1913,16 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
         const captureLabel = sanitizeText(event?.payload?.capture_label || "", 220);
         const defaultCaptureText = `Got it. ${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 180)}.`;
         messages.push({
-          key: `anchor_saved:${binding.field_id}:${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 120).toLowerCase()}`,
-          text: nextAnchor
-            ? `${captureLabel || defaultCaptureText} Next: ${nextAnchor.question}`
-            : (captureLabel || defaultCaptureText),
+          key: `anchor_saved:${binding.anchor_id || binding.field_id}:${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 120).toLowerCase()}`,
+          text: captureLabel || defaultCaptureText,
         });
+        if (nextAnchor?.question) {
+          messages.push({
+            message_kind: "anchor_question",
+            anchor_id: nextAnchor.anchor_id,
+            text: `One quick thing before I lock this in: ${nextAnchor.question}`,
+          });
+        }
       }
       return commitTransition({
         state,
@@ -1667,6 +1939,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ...(state.ui || {}),
             lastParseError: "",
             clearReason: nextDraft?.confirmationState?.reason || "",
+            currentBindingTarget: nextAnchor ? buildAnchorBindingTarget(nextAnchor) : null,
           },
           clock: {
             now,
@@ -1688,6 +1961,9 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
               clearReason: hasMissingAnchors
                 ? "A required anchor is still missing."
                 : "The realism gate is not ready yet.",
+              currentBindingTarget: hasMissingAnchors
+                ? buildAnchorBindingTarget(currentDraft?.missingAnchorsEngine?.currentAnchor || null)
+                : null,
             },
           },
         });
@@ -1700,6 +1976,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
           ui: {
             ...(state.ui || {}),
             clearReason: currentDraft?.confirmationState?.reason || "",
+            currentBindingTarget: null,
           },
           clock: {
             now,
@@ -1729,6 +2006,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
           ui: {
             ...(state.ui || {}),
             clearReason: currentDraft?.confirmationState?.reason || "",
+            currentBindingTarget: null,
           },
           clock: {
             now,
@@ -1737,6 +2015,20 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
       });
     }
     case INTAKE_MACHINE_EVENTS.USER_CONFIRMED: {
+      if (currentDraft?.confirmationState?.requiresAcknowledgement && !Boolean(event?.payload?.acknowledged_warning)) {
+        return commitTransition({
+          state,
+          event,
+          nextStage: INTAKE_MACHINE_STATES.REVIEW_CONFIRM,
+          patch: {
+            ui: {
+              ...(state.ui || {}),
+              clearReason: "Please confirm that you understand this timeline is aggressive.",
+              currentBindingTarget: null,
+            },
+          },
+        });
+      }
       if (!currentDraft?.confirmationState?.canConfirm) {
         return commitTransition({
           state,
@@ -1746,6 +2038,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ui: {
               ...(state.ui || {}),
               clearReason: currentDraft?.confirmationState?.reason || "The intake draft is not ready to confirm yet.",
+              currentBindingTarget: null,
             },
           },
         });
@@ -1758,6 +2051,10 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
           draft: {
             ...currentDraft,
             commitRequested: true,
+          },
+          ui: {
+            ...(state.ui || {}),
+            currentBindingTarget: null,
           },
           clock: {
             now,
@@ -1790,6 +2087,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ...(state.ui || {}),
             clearReason: "",
             lastParseError: "",
+            currentBindingTarget: null,
           },
           clock: {
             now,
@@ -1809,6 +2107,12 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
         event,
         nextStage,
         patch: {
+          ui: {
+            ...(state.ui || {}),
+            currentBindingTarget: nextStage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION
+              ? buildAnchorBindingTarget(currentDraft?.missingAnchorsEngine?.currentAnchor || null)
+              : null,
+          },
           clock: {
             now,
           },
@@ -1828,7 +2132,12 @@ export const replayIntakeMachineEvents = ({
 export const buildIntakeMachineDebugView = (state = {}) => ({
   state: sanitizeText(state?.stage || "", 80),
   transition_id: sanitizeText(state?.transition_id || "", 120),
+  current_binding_target: {
+    anchor_id: sanitizeText(state?.ui?.currentBindingTarget?.anchor_id || state?.draft?.missingAnchorsEngine?.currentAnchor?.anchor_id || "", 120),
+    field_id: sanitizeText(state?.ui?.currentBindingTarget?.field_id || state?.draft?.missingAnchorsEngine?.currentAnchor?.field_id || "", 80),
+  },
   missing_anchors: toArray(state?.draft?.missingAnchorsEngine?.missingAnchors).map((anchor) => ({
+    anchor_id: sanitizeText(anchor?.anchor_id || "", 120),
     field_id: sanitizeText(anchor?.field_id || "", 80),
     label: sanitizeText(anchor?.label || "", 160),
     question: sanitizeText(anchor?.question || "", 220),
@@ -1839,6 +2148,7 @@ export const buildIntakeMachineDebugView = (state = {}) => ({
     type: sanitizeText(entry?.type || "", 80),
     stage_before: sanitizeText(entry?.stage_before || "", 80),
     stage_after: sanitizeText(entry?.stage_after || "", 80),
+    anchor_id: sanitizeText(entry?.anchor_id || "", 120),
     field_id: sanitizeText(entry?.field_id || "", 80),
     goal_intent: sanitizeText(entry?.goal_intent || "", 120),
     timestamp: normalizeTimestamp(entry?.timestamp || null),

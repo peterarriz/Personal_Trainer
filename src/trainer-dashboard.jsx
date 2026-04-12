@@ -9,6 +9,14 @@ import { SettingsIcon } from "./icons.js";
 import { assembleCanonicalPlanDay, resolvePlanDayStateInputs, resolvePlanDayTimeOfDay } from "./services/plan-day-service.js";
 import { assemblePlanWeekRuntime, resolveCurrentPlanWeekNumber, resolvePlanWeekNumberForDateKey, resolveProgramDisplayHorizon } from "./services/plan-week-service.js";
 import { buildDayReview, buildDayReviewComparison, classifyDayReviewStatus } from "./services/day-review-service.js";
+import {
+  BRAND_FOUNDATION,
+  BRAND_THEME_MODES,
+  BRAND_THEME_OPTIONS,
+  PRODUCT_BRAND,
+  buildBrandThemeState,
+  normalizeAppearanceSettings,
+} from "./services/brand-theme-service.js";
 import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
 import { deriveCanonicalAthleteState, withLegacyGoalProfileCompatibility } from "./services/canonical-athlete-service.js";
 import { buildPlanningGoalsFromResolvedGoals, applyResolvedGoalsToGoalSlots, buildGoalStateFromResolvedGoals, resolveGoalTranslation } from "./services/goal-resolution-service.js";
@@ -91,7 +99,6 @@ import {
   applyIntakeCompletenessAnswer,
   applyIntakeGoalAdjustment,
   applyIntakeGoalStackConfirmation,
-  buildIntakeClarificationCoachMessages,
   buildIntakeCompletenessPacketContext,
   buildIntakeGoalStackConfirmation,
   buildIntakeGoalStackReviewModel,
@@ -103,7 +110,6 @@ import {
   GOAL_STACK_ROLES,
   readAdditionalGoalEntries,
   SECONDARY_GOAL_RESPONSE_KEYS,
-  getNextIntakeClarifyingQuestion,
   resolveCompatibilityPrimaryGoalKey,
 } from "./services/intake-goal-flow-service.js";
 import {
@@ -2808,8 +2814,8 @@ const DEFAULT_PERSONALIZATION = {
       intensityPreference: "Standard",
     },
     appearance: {
-      theme: "System",
-      palette: "Green",
+      theme: "Atlas",
+      mode: "Dark",
     },
     notifications: {
       allOff: false,
@@ -6449,77 +6455,14 @@ Keep it plain and specific.`;
     TAPER: { accent: "#9aa6ff", accentSoft: "rgba(154,166,255,0.22)", accentGlow: "rgba(154,166,255,0.32)" },
   };
   const phaseTheme = PHASE_THEME[activePhase] || PHASE_THEME.BASE;
-  const PALETTE_THEME = {
-    Green: "#27f59a",
-    Blue: "#00c2ff",
-    Orange: "#ff8a00",
-    Red: "#ff3d81",
-    Purple: "#7c5cff",
-    Neutral: "#94a3b8",
-  };
-  const selectedPalette = personalization?.settings?.appearance?.palette || "Green";
-  const userAccent = PALETTE_THEME[selectedPalette] || phaseTheme.accent;
-  const selectedThemeMode = personalization?.settings?.appearance?.theme || "System";
-  const themeTokens = selectedThemeMode === "Light"
-    ? {
-        "--bg": "#edf3fb",
-        "--panel": "rgba(255,255,255,0.92)",
-        "--panel-2": "rgba(247,250,254,0.98)",
-        "--panel-3": "rgba(239,244,251,0.98)",
-        "--border": "rgba(111,129,160,0.26)",
-        "--muted": "#5d6d86",
-        "--text": "#142033",
-        "--text-strong": "#0d1728",
-        "--text-soft": "#6b7d97",
-        "--card-border": "rgba(111,129,160,0.22)",
-        "--card-shadow": "0 8px 18px rgba(81,99,126,0.08)",
-        "--card-shadow-hover": "0 12px 24px rgba(81,99,126,0.12)",
-        "--card-strong-shadow": "0 10px 22px rgba(81,99,126,0.1)",
-        "--card-soft-border": "rgba(111,129,160,0.24)",
-        "--card-soft-shadow": "0 8px 18px rgba(81,99,126,0.07)",
-        "--shell-overlay": "radial-gradient(120% 90% at 50% -10%, rgba(61,114,181,0.08), transparent 60%)",
-        "--tab-strip-bg": "rgba(255,255,255,0.76)",
-        "--tab-strip-border": "rgba(111,129,160,0.22)",
-        "--tab-text": "#53657f",
-        "--heading-start": "#142033",
-        "--surface-1": "#ffffff",
-        "--surface-2": "#f7fafe",
-        "--surface-3": "#eef3f9",
-        "--shadow-1": "0 6px 14px rgba(81,99,126,0.08)",
-        "--shadow-2": "0 10px 24px rgba(81,99,126,0.12)",
-        "--shadow-3": "0 16px 34px rgba(81,99,126,0.14)",
-      }
-    : {
-        "--bg": "#0f1724",
-        "--panel": "#162131",
-        "--panel-2": "#1a2738",
-        "--panel-3": "#213247",
-        "--border": "rgba(114,138,173,0.26)",
-        "--muted": "#8da0bb",
-        "--text": "#e7edf7",
-        "--text-strong": "#f6f8fc",
-        "--text-soft": "#9aacc4",
-        "--card-border": "rgba(114,138,173,0.22)",
-        "--card-shadow": "0 10px 22px rgba(5,10,18,0.24)",
-        "--card-shadow-hover": "0 14px 28px rgba(5,10,18,0.3)",
-        "--card-strong-shadow": "0 12px 26px rgba(5,10,18,0.28)",
-        "--card-soft-border": "rgba(114,138,173,0.22)",
-        "--card-soft-shadow": "0 10px 20px rgba(5,10,18,0.22)",
-        "--shell-overlay": "radial-gradient(120% 90% at 50% -10%, rgba(61,114,181,0.12), transparent 58%)",
-        "--tab-strip-bg": "rgba(18,29,44,0.92)",
-        "--tab-strip-border": "rgba(114,138,173,0.24)",
-        "--tab-text": "#95a8c2",
-        "--heading-start": "#f2f6fb",
-        "--surface-1": "#162131",
-        "--surface-2": "#1a2738",
-        "--surface-3": "#213247",
-        "--shadow-1": "0 8px 18px rgba(5,10,18,0.22)",
-        "--shadow-2": "0 12px 26px rgba(5,10,18,0.28)",
-        "--shadow-3": "0 18px 36px rgba(5,10,18,0.34)",
-      };
-  const appBackground = selectedThemeMode === "Light"
-    ? "linear-gradient(180deg,#f5f8fc 0%, #ecf2f8 100%)"
-    : "linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)";
+  const brandThemeState = buildBrandThemeState({
+    appearance: personalization?.settings?.appearance || DEFAULT_PERSONALIZATION.settings.appearance,
+    phaseTheme,
+  });
+  const themeTokens = brandThemeState.cssVars;
+  const appBackground = brandThemeState.appBackground;
+  const activeBrandTheme = brandThemeState.theme;
+  const activeAppearanceMode = brandThemeState.resolvedMode;
   const onboardingComplete = personalization?.profile?.onboardingComplete;
   const finishOnboarding = async (answers) => {
     const todayKey = new Date().toISOString().split("T")[0];
@@ -7016,12 +6959,12 @@ Keep it plain and specific.`;
   };
 
   return (
-    <div style={{ "--phase-accent": userAccent, "--phase-accent-soft": phaseTheme.accentSoft, "--phase-accent-glow": phaseTheme.accentGlow, ...themeTokens, fontFamily:"'Inter',sans-serif", background:appBackground, minHeight:"100vh", color:"var(--text)", padding:onboardingComplete ? "1.65rem 1.2rem" : 0 }}>
+    <div style={{ ...themeTokens, fontFamily:"var(--font-body)", background:appBackground, minHeight:"100vh", color:"var(--text)", padding:onboardingComplete ? "1.65rem 1.2rem" : 0 }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
         :root{
-          --accent:var(--phase-accent);
-          --accent-2:#7c5cff;
+          --accent:var(--brand-accent);
+          --accent-2:var(--phase-accent);
           --hot:#ff3d81;
           --signal:#27f59a;
           --space-1:0.25rem;
@@ -7044,33 +6987,33 @@ Keep it plain and specific.`;
         * { box-sizing:border-box; margin:0; padding:0; }
         ::-webkit-scrollbar{width:8px} ::-webkit-scrollbar-track{background:transparent} ::-webkit-scrollbar-thumb{background:rgba(111,129,160,0.38);border-radius:999px}
         .fi{animation:fi 0.22s ease forwards}
-        .hov{transition:background 0.18s ease,border-color 0.18s ease;cursor:pointer} .hov:hover{background:rgba(60,145,230,0.06)!important}
+        .hov{transition:background 0.18s ease,border-color 0.18s ease;cursor:pointer} .hov:hover{background:var(--brand-accent-soft)!important}
         .btn{
           background:var(--surface-2);
           border:1px solid var(--border);
           border-radius:var(--radius-sm);
-          font-family:'Inter',sans-serif;
+          font-family:var(--font-body);
           font-size:var(--type-meta);
           font-weight:600;
-          letter-spacing:0.04em;
+          letter-spacing:0.025em;
           cursor:pointer;
           padding:8px 12px;
           transition:background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
           color:var(--text);
           box-shadow:none;
         }
-        .btn:hover{border-color:rgba(60,145,230,0.34);color:var(--text-strong);background:var(--surface-1);transform:translateY(-1px);box-shadow:var(--shadow-1)}
+        .btn:hover{border-color:var(--border-strong);color:var(--text-strong);background:var(--surface-1);transform:translateY(-1px);box-shadow:var(--shadow-1)}
         .btn:active{transform:translateY(0) scale(0.985)}
         .btn-primary{
-          background:linear-gradient(135deg, rgba(34,84,94,0.92), rgba(27,56,86,0.94))!important;
-          border:1px solid rgba(125,211,252,0.22)!important;
-          color:var(--text-strong)!important;
+          background:var(--cta-bg)!important;
+          border:1px solid var(--cta-border)!important;
+          color:var(--accent-contrast)!important;
           font-weight:700;
-          box-shadow:0 10px 24px rgba(6, 14, 28, 0.34), inset 0 1px 0 rgba(255,255,255,0.04);
+          box-shadow:0 14px 28px rgba(6, 14, 28, 0.24), inset 0 1px 0 rgba(255,255,255,0.08);
         }
-        .btn-primary:hover{filter:none;background:linear-gradient(135deg, rgba(40,95,106,0.95), rgba(32,65,98,0.98))!important;border-color:rgba(147,197,253,0.34)!important;box-shadow:0 14px 28px rgba(8, 18, 34, 0.38)}
-        input,textarea,select{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'Inter',sans-serif;font-size:0.7rem;padding:9px 11px;outline:none;width:100%;transition:border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease}
-        input:focus,textarea:focus,select:focus{border-color:rgba(60,145,230,0.5);box-shadow:0 0 0 3px rgba(60,145,230,0.14);background:var(--surface-1)}
+        .btn-primary:hover{filter:none;background:var(--cta-bg-hover)!important;border-color:var(--border-strong)!important;box-shadow:0 18px 34px rgba(8, 18, 34, 0.24)}
+        input,textarea,select{background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--font-body);font-size:0.7rem;padding:9px 11px;outline:none;width:100%;transition:border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease}
+        input:focus,textarea:focus,select:focus{border-color:var(--border-strong);box-shadow:0 0 0 3px var(--focus-ring);background:var(--input-bg-focus)}
         @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
         @keyframes pulseGlow{0%,100%{box-shadow:0 0 0 0 rgba(124,92,255,0)}50%{box-shadow:0 0 0 10px rgba(124,92,255,0.14)}}
         @keyframes heroShift{
@@ -7091,7 +7034,7 @@ Keep it plain and specific.`;
           from{opacity:0; transform:translateY(6px)}
           to{opacity:1; transform:translateY(0)}
         }
-        .tag{font-size:var(--type-meta);padding:4px 8px;border-radius:999px;letter-spacing:0.02em;white-space:nowrap;background:var(--surface-2);color:var(--text-soft);border:1px solid var(--border)}
+        .tag{font-size:var(--type-meta);padding:4px 8px;border-radius:999px;letter-spacing:0.04em;white-space:nowrap;background:var(--badge-bg);color:var(--badge-text);border:1px solid var(--badge-border)}
         .card{
           position:relative;
           overflow:hidden;
@@ -7106,18 +7049,25 @@ Keep it plain and specific.`;
           content:"";
           position:absolute;
           inset:-1px -1px auto -1px;
-          height:22%;
+          height:28%;
           pointer-events:none;
-          background:linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0));
-          opacity:0.3;
+          background:linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0));
+          opacity:0.38;
         }
         .card::after{
-          content:none;
+          content:"";
+          position:absolute;
+          inset:auto -20% -50% auto;
+          width:180px;
+          height:180px;
+          background:radial-gradient(circle, var(--brand-accent-soft) 0%, rgba(0,0,0,0) 68%);
+          pointer-events:none;
+          opacity:0.55;
         }
-        .card:hover{transform:translateY(-1px); box-shadow:var(--card-shadow-hover); border-color:rgba(60,145,230,0.24)}
+        .card:hover{transform:translateY(-2px); box-shadow:var(--card-shadow-hover); border-color:var(--border-strong)}
         .card-strong{
           background:var(--panel-2);
-          border-color:rgba(60,145,230,0.26);
+          border-color:var(--border-strong);
           box-shadow:var(--card-strong-shadow);
         }
         .card-soft{
@@ -7125,26 +7075,32 @@ Keep it plain and specific.`;
           border-color:var(--card-soft-border);
           box-shadow:var(--card-soft-shadow);
         }
-        .sect-title{font-family:'Space Grotesk',sans-serif;font-size:var(--type-title);font-weight:700;letter-spacing:0.015em;text-transform:none;color:var(--text-strong)}
-        .mono{font-family:'JetBrains Mono',monospace; letter-spacing:0.01em}
-        .coach-copy{font-family:'Inter',sans-serif; color:var(--text); line-height:1.65}
+        .sect-title{font-family:var(--font-display);font-size:var(--type-title);font-weight:700;letter-spacing:0.01em;text-transform:none;color:var(--text-strong)}
+        .mono{font-family:var(--font-mono); letter-spacing:0.01em}
+        .coach-copy{font-family:var(--font-body); color:var(--text); line-height:1.65}
         .completion-pop{animation:completePop 0.35s ease-out}
         .pulse-ring{animation:ringPulse 1.35s ease-in-out infinite; border-radius:999px}
         .coach-fade{animation:coachFadeIn 0.28s ease-out both}
         .card-hero{
-          border-color:rgba(60,145,230,0.34)!important;
+          border-color:var(--border-strong)!important;
           box-shadow:var(--shadow-2);
         }
         .card-hero::after{
-          content:none;
+          opacity:0.8;
         }
         .card-action{
-          border-color:rgba(60,145,230,0.24)!important;
+          border-color:var(--border-strong)!important;
           box-shadow:var(--shadow-2);
         }
         .card-subtle{
           opacity:1;
           box-shadow:var(--shadow-1);
+        }
+        .empty-state{
+          border:1px dashed var(--empty-border);
+          background:var(--empty-bg);
+          border-radius:var(--radius-md);
+          padding:0.9rem;
         }
         details > summary{list-style:none}
         details > summary::-webkit-details-marker{display:none}
@@ -7154,19 +7110,27 @@ Keep it plain and specific.`;
       {!onboardingComplete ? (
         <OnboardingCoach onComplete={finishOnboarding} startingFresh={Boolean(personalization?.planResetUndo?.startedAt)} existingMemory={personalization?.coachMemory?.longTermMemory || []} />
       ) : (
-      <div style={{ maxWidth:900, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
+      <div style={{ maxWidth:980, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
 
         {/* HEADER BAR */}
-        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:"1.25rem", gap:"0.75rem" }}>
-          <div>
-            <h1 style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:"1.84rem", letterSpacing:"0.025em", color:"var(--heading-start)", lineHeight:1.02 }}>
-              PERSONAL TRAINER
-            </h1>
-            <div style={{ fontFamily:"'Inter',sans-serif", fontSize:"0.56rem", color:"var(--muted)", letterSpacing:"0.08em", marginTop:4 }}>
-              {joinDisplayParts([fmtDate(today).toUpperCase(), `WEEK ${currentWeek}`])}
+        <div style={{ display:"flex", alignItems:"stretch", justifyContent:"space-between", marginBottom:"1.25rem", gap:"0.85rem", flexWrap:"wrap" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:"0.9rem" }}>
+            <div style={{ width:52, height:52, borderRadius:18, display:"grid", placeItems:"center", background:"var(--brand-mark-bg)", border:"1px solid var(--brand-mark-border)", boxShadow:"var(--shadow-2)", color:"var(--text-strong)", fontFamily:"var(--font-display)", fontSize:"1.22rem", fontWeight:700, letterSpacing:"0.08em" }}>
+              {PRODUCT_BRAND.mark}
+            </div>
+            <div>
+              <div style={{ display:"flex", alignItems:"center", gap:"0.5rem", flexWrap:"wrap" }}>
+                <h1 style={{ fontFamily:"var(--font-display)", fontWeight:700, fontSize:"1.92rem", letterSpacing:"0.05em", color:"var(--heading-start)", lineHeight:1 }}>
+                  {PRODUCT_BRAND.name}
+                </h1>
+                <span className="tag" style={{ fontSize:"0.46rem" }}>{activeBrandTheme?.label || "Atlas"} • {activeAppearanceMode}</span>
+              </div>
+              <div style={{ fontFamily:"var(--font-body)", fontSize:"0.58rem", color:"var(--text-soft)", letterSpacing:"0.04em", marginTop:6, lineHeight:1.55 }}>
+                {joinDisplayParts([PRODUCT_BRAND.strapline, fmtDate(today).toUpperCase(), `Week ${currentWeek}`])}
+              </div>
             </div>
           </div>
-          <button className="btn" onClick={()=>setTab(5)} aria-label="Open settings" title="Settings" style={{ width:40, height:40, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+          <button className="btn" onClick={()=>setTab(5)} aria-label="Open settings" title="Settings" style={{ width:44, height:44, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, background:"var(--surface-1)" }}>
             <SettingsIcon size={18} />
           </button>
         </div>
@@ -7176,10 +7140,10 @@ Keep it plain and specific.`;
           </div>
         )}
         {/* TABS */}
-        <div style={{ display:"flex", gap:"0.3rem", marginBottom:"1.25rem", background:"var(--tab-strip-bg)", padding:"0.32rem", borderRadius:14, border:"1px solid var(--tab-strip-border)", overflowX:"auto", boxShadow:"var(--shadow-1)" }}>
+        <div style={{ display:"flex", gap:"0.35rem", marginBottom:"1.25rem", background:"var(--tab-strip-bg)", padding:"0.36rem", borderRadius:18, border:"1px solid var(--tab-strip-border)", overflowX:"auto", boxShadow:"var(--shadow-1)", backdropFilter:"blur(10px)" }}>
           {TABS.map((t,i) => (
             <button key={t} className="btn" onClick={()=>setTab(i)}
-              style={{ color:tab===i?"#f8fbff":"var(--tab-text)", background:tab===i?"var(--phase-accent)":"transparent", borderColor:tab===i?"transparent":"var(--border)", fontWeight:tab===i?700:500, flexShrink:0 }}>
+              style={{ color:tab===i?"var(--tab-active-text)":"var(--tab-text)", background:tab===i?"var(--tab-active-bg)":"transparent", borderColor:tab===i?"var(--border-strong)":"transparent", fontWeight:tab===i?700:500, flexShrink:0, minWidth:96 }}>
               {t}
             </button>
           ))}
@@ -7288,11 +7252,11 @@ function RuntimeInspector({ snapshot }) {
   const compactList = (items) => (Array.isArray(items) && items.length ? items.join(" • ") : "none");
   return (
     <details style={{ position:"fixed", right:14, bottom:14, width:"min(420px, calc(100vw - 28px))", zIndex:70 }}>
-      <summary className="btn" style={{ width:"100%", justifyContent:"space-between", background:"rgba(5,10,18,0.92)", borderColor:"rgba(0,194,255,0.35)", color:"var(--text)", fontSize:"0.56rem" }}>
+      <summary className="btn" style={{ width:"100%", justifyContent:"space-between", background:"var(--panel-2)", borderColor:"var(--border-strong)", color:"var(--text)", fontSize:"0.56rem", boxShadow:"var(--shadow-1)" }}>
         Runtime Inspector
         <span style={{ color:"var(--muted)", fontSize:"0.5rem" }}>{snapshot?.storage?.label || "UNKNOWN"}</span>
       </summary>
-      <div className="card card-soft" style={{ marginTop:"0.35rem", background:"rgba(4,9,18,0.96)", borderColor:"rgba(0,194,255,0.2)", backdropFilter:"blur(12px)", maxHeight:"70vh", overflowY:"auto" }}>
+      <div className="card card-soft" style={{ marginTop:"0.35rem", background:"var(--panel-2)", borderColor:"var(--border)", backdropFilter:"blur(12px)", maxHeight:"70vh", overflowY:"auto" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.45rem", gap:"0.45rem" }}>
           <div style={{ fontSize:"0.48rem", color:"var(--muted)" }}>Canonical runtime snapshot</div>
           <button className="btn" onClick={copySnapshot} style={{ fontSize:"0.48rem", padding:"0.24rem 0.5rem", minHeight:0 }}>Copy JSON</button>
@@ -7370,6 +7334,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const nextMessageIdRef = useRef(1);
   const nextIntakeEventIdRef = useRef(1);
   const processedIntakeMessageKeysRef = useRef(new Set());
+  const processedTranscriptIdempotencyKeysRef = useRef(new Set());
   const secondaryGoalAddedMessageKeysRef = useRef(new Set());
   const startedRef = useRef(false);
   const [messages, setMessages] = useState([]);
@@ -7381,7 +7346,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [phase, setPhase] = useState("questions");
   const [assessmentText, setAssessmentText] = useState("");
   const [assessmentBoundary, setAssessmentBoundary] = useState({ typedIntakePacket: null, aiInterpretationProposal: null });
-  const [assessmentPreview, setAssessmentPreview] = useState({ goalResolution: null, goalFeasibility: null, orderedResolvedGoals: [], reviewModel: null });
+  const [assessmentPreview, setAssessmentPreview] = useState({ goalResolution: null, goalFeasibility: null, arbitration: null, orderedResolvedGoals: [], reviewModel: null });
   const [goalStackConfirmation, setGoalStackConfirmation] = useState(null);
   const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState([]);
   const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(null);
@@ -7393,9 +7358,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [naturalAnchorDraft, setNaturalAnchorDraft] = useState("");
   const [naturalAnchorSubmitting, setNaturalAnchorSubmitting] = useState(false);
   const [anchorCapturePreview, setAnchorCapturePreview] = useState(null);
+  const [currentAnchorBindingTarget, setCurrentAnchorBindingTarget] = useState(null);
   const [adjustmentTargetGoal, setAdjustmentTargetGoal] = useState(null);
   const [confirmBuildError, setConfirmBuildError] = useState("");
   const [confirmBuildSubmitting, setConfirmBuildSubmitting] = useState(false);
+  const [confirmWarningAcknowledged, setConfirmWarningAcknowledged] = useState(false);
   const [assessing, setAssessing] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
@@ -7490,10 +7457,47 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   }, [currentPrompt?.key]);
 
   const activeMachineAnchor = intakeMachine?.draft?.missingAnchorsEngine?.currentAnchor || null;
+  const parseStrengthTopSetDraft = (value = "") => {
+    const normalized = String(value || "").trim().replace(/[×]/g, "x");
+    if (!normalized) return { mode: "top_set", weight: "", reps: "" };
+    const topSetMatch = normalized.match(/(\d{2,4}(?:\.\d+)?)\s*x\s*(\d{1,2})\b/i);
+    if (topSetMatch?.[1]) {
+      return {
+        mode: "top_set",
+        weight: String(topSetMatch[1]).trim(),
+        reps: String(topSetMatch[2]).trim(),
+      };
+    }
+    const singleMatch = normalized.match(/(\d{2,4}(?:\.\d+)?)/);
+    if (singleMatch?.[1]) {
+      return {
+        mode: /single|1rm|max/i.test(normalized) ? "estimated_max" : "top_set",
+        weight: String(singleMatch[1]).trim(),
+        reps: "",
+      };
+    }
+    return { mode: "top_set", weight: "", reps: "" };
+  };
+  const applyStrengthStructuredValue = (fieldId, { mode = "top_set", weight = "", reps = "" } = {}) => {
+    setClarificationValues((prev) => ({
+      ...prev,
+      [`${fieldId}__mode`]: String(mode || "top_set"),
+      [`${fieldId}__weight`]: String(weight || "").trim(),
+      [`${fieldId}__reps`]: String(reps || "").trim(),
+    }));
+    setClarificationFieldErrors((prev) => {
+      if (!prev) return prev;
+      const next = { ...(prev || {}) };
+      delete next[fieldId];
+      return next;
+    });
+    if (clarificationFormError) setClarificationFormError("");
+  };
 
   useEffect(() => {
     const isStructuredQuestion = isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion);
     if (phase !== "clarify") {
+      setCurrentAnchorBindingTarget(null);
       setClarificationValues({});
       setClarificationFieldErrors({});
       setClarificationFormError("");
@@ -7502,6 +7506,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       return;
     }
     if (activeMachineAnchor?.field_id) {
+      setCurrentAnchorBindingTarget({
+        anchor_id: String(activeMachineAnchor?.anchor_id || "").trim(),
+        field_id: String(activeMachineAnchor?.field_id || "").trim(),
+      });
       const fieldId = activeMachineAnchor.field_id;
       const nextValues = activeMachineAnchor?.draftValue
         ? { [fieldId]: activeMachineAnchor.draftValue }
@@ -7519,6 +7527,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           : "month";
         nextValues[`${fieldId}__mode`] = storedMode;
       }
+      if (activeMachineAnchor?.input_type === "strength_top_set") {
+        const parsedStrengthDraft = parseStrengthTopSetDraft(activeMachineAnchor?.draftValue || "");
+        nextValues[`${fieldId}__mode`] = parsedStrengthDraft.mode;
+        nextValues[`${fieldId}__weight`] = parsedStrengthDraft.weight;
+        nextValues[`${fieldId}__reps`] = parsedStrengthDraft.reps;
+      }
       setClarificationValues(nextValues);
       setClarificationFieldErrors({});
       setClarificationFormError("");
@@ -7528,6 +7542,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       return;
     }
     if (!isStructuredQuestion) {
+      setCurrentAnchorBindingTarget(null);
       setClarificationValues({});
       setClarificationFieldErrors({});
       setClarificationFormError("");
@@ -7573,12 +7588,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     goalResolution: assessmentPreview?.goalResolution || null,
     orderedResolvedGoals: reviewGoals,
     goalFeasibility: assessmentPreview?.goalFeasibility || null,
+    arbitration: assessmentPreview?.arbitration || null,
     aiInterpretationProposal: assessmentBoundary?.aiInterpretationProposal || null,
     answers,
     goalStackConfirmation,
   }), [
     assessmentPreview?.goalResolution,
     assessmentPreview?.goalFeasibility,
+    assessmentPreview?.arbitration,
     reviewGoalSignature,
     assessmentBoundary?.aiInterpretationProposal,
     answers,
@@ -7586,9 +7603,46 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   ]);
   const confirmationState = useMemo(() => deriveIntakeConfirmationState({
     reviewModel,
-    askedQuestions: askedClarifyingQuestions,
-    maxQuestions: 2,
-  }), [reviewModel, askedClarifyingQuestions]);
+  }), [reviewModel]);
+  const confirmationStatusLabel = confirmationState?.status === "incomplete"
+    ? "Need one more detail"
+    : confirmationState?.status === "block"
+    ? "Needs a safer first step"
+    : confirmationState?.status === "warn"
+    ? "Aggressive but possible"
+    : "Ready to build";
+  const confirmationHeadline = confirmationState?.status === "incomplete"
+    ? "I need one more detail before I build this."
+    : confirmationState?.status === "block"
+    ? "I need to tighten this up before I build."
+    : confirmationState?.status === "warn"
+    ? "This is aggressive, but I can build for it."
+    : "This looks realistic from where you're starting.";
+  const confirmationNeedsList = useMemo(() => {
+    const missingLabels = Array.isArray(reviewModel?.completeness?.missingRequired)
+      ? reviewModel.completeness.missingRequired.map((item) => String(item?.label || "").trim()).filter(Boolean)
+      : [];
+    const requestedData = Array.isArray(reviewModel?.gateSuggestedRevision?.requested_data)
+      ? reviewModel.gateSuggestedRevision.requested_data.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    const arbitrationIssues = Array.isArray(reviewModel?.arbitrationBlockingIssues)
+      ? reviewModel.arbitrationBlockingIssues.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    return Array.from(new Set([
+      ...missingLabels,
+      ...(confirmationState?.status === "block" ? requestedData : []),
+      ...(confirmationState?.status === "block" && missingLabels.length === 0 && requestedData.length === 0 ? arbitrationIssues : []),
+    ]));
+  }, [reviewModel, confirmationState?.status]);
+  const confirmCtaEnabled = Boolean(
+    confirmationState?.canConfirm
+    && (!confirmationState?.requiresAcknowledgement || confirmWarningAcknowledged)
+  );
+  const confirmationTone = confirmationState?.status === "block" || confirmationState?.status === "incomplete"
+    ? C.amber
+    : confirmationState?.status === "warn"
+    ? "#facc15"
+    : "#8fa5c8";
 
   useEffect(() => {
     setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
@@ -7598,12 +7652,31 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }));
   }, [reviewGoalSignature, assessmentPreview?.goalFeasibility]);
 
+  useEffect(() => {
+    setConfirmWarningAcknowledged(false);
+  }, [
+    confirmationState?.status,
+    confirmationState?.reason,
+    confirmationState?.next_required_field,
+    reviewModel?.reviewContract?.lead_goal?.id,
+    Array.isArray(reviewModel?.reviewContract?.maintained_goals) ? reviewModel.reviewContract.maintained_goals.map((goal) => goal?.id || "").join("|") : "",
+  ]);
+
   const appendCoachMessages = (texts) => {
     const queue = queueCoachTranscriptMessages({
-      texts: (Array.isArray(texts) ? texts : [texts]).map((text) => sanitizeIntakeText(text)),
+      texts: (Array.isArray(texts) ? texts : [texts]).map((item) => (
+        item && typeof item === "object" && !Array.isArray(item)
+          ? {
+              ...item,
+              text: sanitizeIntakeText(item?.text || ""),
+            }
+          : sanitizeIntakeText(item)
+      )),
       nextMessageId: nextMessageIdRef.current,
+      seenIdempotencyKeys: [...processedTranscriptIdempotencyKeysRef.current],
     });
     nextMessageIdRef.current = queue.nextMessageId;
+    queue.acceptedIdempotencyKeys.forEach((key) => processedTranscriptIdempotencyKeysRef.current.add(key));
     if (queue.entries.length === 0) return [];
     setMessages((prev) => [...prev, ...queue.entries]);
     setStreamTargetId((prev) => resolveNextCoachStreamTargetId({
@@ -7661,9 +7734,32 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setAssessmentPreview({
       goalResolution: draftState.goalResolution || null,
       goalFeasibility: draftState.goalFeasibility || null,
+      arbitration: draftState.arbitration || null,
       orderedResolvedGoals: draftState.orderedResolvedGoals || [],
       reviewModel: draftState.reviewModel || null,
     });
+  };
+  const refreshReviewMachineState = ({
+    nextAnswers = answers,
+    nextGoalStackConfirmation = goalStackConfirmation,
+  } = {}) => {
+    const typedIntakePacket = intakeMachineRef.current?.draft?.typedIntakePacket || assessmentBoundary?.typedIntakePacket || null;
+    if (!typedIntakePacket) return intakeMachineRef.current;
+    const refreshedState = settleIntakeMachine(dispatchIntakeMachineEvent(
+      INTAKE_MACHINE_EVENTS.INTERPRETATION_READY,
+      {
+        assessment: {
+          typedIntakePacket,
+          aiInterpretationProposal: intakeMachineRef.current?.draft?.aiInterpretationProposal || assessmentBoundary?.aiInterpretationProposal || null,
+          text: assessmentText,
+        },
+        answers: nextAnswers,
+        goalStackConfirmation: nextGoalStackConfirmation,
+        now: new Date().toISOString(),
+      }
+    ));
+    syncMachineDraftToIntakeView(refreshedState);
+    return refreshedState;
   };
   const appendUserMessage = (text) => {
     const clean = String(text || "").trim();
@@ -7676,17 +7772,23 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       .filter((message) => message?.key && !processedIntakeMessageKeysRef.current.has(message.key));
     if (pendingMessages.length === 0) return;
     pendingMessages.forEach((message) => processedIntakeMessageKeysRef.current.add(message.key));
-    appendCoachMessages(pendingMessages.map((message) => message.text));
+    appendCoachMessages(pendingMessages.map((message) => ({
+      text: message.text,
+      key: message.key,
+      idempotency_key: message.idempotency_key || message.key,
+    })));
   }, [intakeMachine?.outbox]);
   const updateClarificationValue = (fieldKey, value) => {
+    const rootFieldKey = String(fieldKey || "").split("__")[0] || String(fieldKey || "");
     setClarificationValues((prev) => ({
       ...prev,
       [fieldKey]: value,
     }));
     setClarificationFieldErrors((prev) => {
-      if (!prev?.[fieldKey]) return prev;
+      if (!prev?.[fieldKey] && !prev?.[rootFieldKey]) return prev;
       const next = { ...(prev || {}) };
       delete next[fieldKey];
+      delete next[rootFieldKey];
       return next;
     });
     if (clarificationFormError) setClarificationFormError("");
@@ -7772,6 +7874,29 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         raw_text: selectedUnit ? `${numericValue} ${selectedUnit}` : numericValue,
       };
     }
+    if (anchor.input_type === "strength_top_set") {
+      const modeKey = `${fieldId}__mode`;
+      const weightKey = `${fieldId}__weight`;
+      const repsKey = `${fieldId}__reps`;
+      const selectedMode = String(clarificationValues?.[modeKey] || "top_set").trim().toLowerCase() || "top_set";
+      const weightValue = String(clarificationValues?.[weightKey] || "").trim();
+      const repsValue = String(clarificationValues?.[repsKey] || "").trim();
+      if (!weightValue) return null;
+      if (selectedMode === "top_set" && !repsValue) return null;
+      const rawText = selectedMode === "estimated_max"
+        ? `${weightValue} estimated max`
+        : `${weightValue}x${repsValue}`;
+      return {
+        answer_value: {
+          mode: selectedMode,
+          weight: weightValue,
+          reps: selectedMode === "top_set" ? repsValue : "",
+          raw: rawText,
+          value: weightValue,
+        },
+        raw_text: rawText,
+      };
+    }
     const cleanValue = String(rawValue || "").trim();
     if (!cleanValue) return null;
     return {
@@ -7805,6 +7930,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       goalResolution: assessment?.goalResolution || null,
       orderedResolvedGoals: assessment?.orderedResolvedGoals || [],
       goalFeasibility: assessment?.goalFeasibility || null,
+      arbitration: interpretedMachineState?.draft?.arbitration || assessmentPreview?.arbitration || null,
       aiInterpretationProposal: assessment?.aiInterpretationProposal || null,
       answers: updatedAnswers,
       goalStackConfirmation,
@@ -7821,10 +7947,6 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setPendingClarifyingQuestion(null);
       setPendingSecondaryGoalPrompt(null);
       setPhase("clarify");
-      appendCoachMessages(buildIntakeClarificationCoachMessages({
-        statusText: cleanTimeline,
-        nextQuestion: { prompt: nextMachineAnchor.question },
-      }));
       return;
     }
     if (nextSecondaryGoalPrompt) {
@@ -7938,6 +8060,16 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.prompt) return;
     setConfirmBuildError("");
     if (activeMachineAnchor?.field_id) {
+      const activeBindingTarget = (
+        currentAnchorBindingTarget?.anchor_id
+        && currentAnchorBindingTarget?.field_id
+      )
+        ? currentAnchorBindingTarget
+        : null;
+      if (!activeBindingTarget) {
+        setClarificationFormError("The current anchor lost its binding target. Please try the active card again.");
+        return;
+      }
       const naturalReply = activeAnchorStrictMode ? "" : String(naturalAnchorDraft || "").trim();
       if (naturalReply) {
         appendUserMessage(naturalReply);
@@ -7957,7 +8089,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
             {
               anchor: activeMachineAnchor,
-              field_id: activeMachineAnchor.field_id,
+              binding_target: activeBindingTarget,
+              anchor_id: activeBindingTarget.anchor_id,
+              field_id: activeBindingTarget.field_id,
               answer_value: extractedCandidate.answer_value,
               raw_text: extractedCandidate.raw_text,
               source: "user",
@@ -8041,7 +8175,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
         {
           anchor: activeMachineAnchor,
-          field_id: activeMachineAnchor.field_id,
+          binding_target: activeBindingTarget,
+          anchor_id: activeBindingTarget.anchor_id,
+          field_id: activeBindingTarget.field_id,
           answer_value: submissionPayload.answer_value,
           raw_text: submissionPayload.raw_text,
           source: "user",
@@ -8281,20 +8417,37 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setAskedClarifyingQuestions([]);
     await runAssessment({ updatedAnswers: outcome.answers, askedQuestions: [] });
   };
+  const jumpToNextRequiredDetail = () => {
+    setConfirmBuildError("");
+    const refreshedState = refreshReviewMachineState();
+    const refreshedConfirmation = refreshedState?.draft?.confirmationState || confirmationState || null;
+    const nextAnchor = refreshedState?.draft?.missingAnchorsEngine?.currentAnchor || null;
+    if (nextAnchor?.field_id) {
+      setPendingClarifyingQuestion(null);
+      setPendingSecondaryGoalPrompt(null);
+      setPhase("clarify");
+      return;
+    }
+    if (refreshedConfirmation?.reason) {
+      setConfirmBuildError(refreshedConfirmation.reason);
+    }
+  };
   const finalizePlan = async () => {
     if (confirmBuildSubmitting) return;
     setConfirmBuildError("");
-    if (!confirmationState?.canConfirm && confirmationState?.nextQuestion?.prompt) {
-      setPendingClarifyingQuestion(confirmationState.nextQuestion);
-      setPhase("clarify");
-      appendCoachMessages(buildIntakeClarificationCoachMessages({
-        statusText: confirmationState.reason || "I still need one critical detail before I can build credibly.",
-        nextQuestion: confirmationState.nextQuestion,
-      }));
+    const refreshedState = refreshReviewMachineState();
+    const latestConfirmationState = refreshedState?.draft?.confirmationState || confirmationState || null;
+    const latestCanConfirm = Boolean(latestConfirmationState?.canConfirm);
+    const latestRequiresAcknowledgement = Boolean(latestConfirmationState?.requiresAcknowledgement);
+    const acknowledgementMissing = latestRequiresAcknowledgement && !confirmWarningAcknowledged;
+    if (!latestCanConfirm && latestConfirmationState?.next_required_field) {
+      jumpToNextRequiredDetail();
       return;
     }
-    if (!confirmationState?.canConfirm) {
-      const blockedReason = confirmationState?.reason || "I still need a little more grounded context before I can build your plan.";
+    if (!latestCanConfirm || acknowledgementMissing) {
+      const blockedReason = acknowledgementMissing
+        ? "Please confirm that you understand this timeline is aggressive."
+        : latestConfirmationState?.reason || "I still need a little more grounded context before I can build your plan.";
       setConfirmBuildError(blockedReason);
       setPhase("review");
       appendCoachMessage(blockedReason);
@@ -8302,6 +8455,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }
     setConfirmBuildSubmitting(true);
     dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_CONFIRMED, {
+      acknowledged_warning: confirmWarningAcknowledged,
       now: new Date().toISOString(),
     });
     appendUserMessage("Confirm and build my plan");
@@ -8707,18 +8861,65 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     </div>
                                   )}
                                   {anchorCard.input_type === "strength_top_set" && (
-                                    <input
-                                      ref={composerRef}
-                                      type="text"
-                                      value={fieldValue}
-                                      onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
-                                      placeholder={anchorCard.placeholder || "Example: 185x5"}
-                                      style={{
-                                        fontSize:"0.86rem",
-                                        borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
-                                        boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
-                                      }}
-                                    />
+                                    <div style={{ display:"grid", gap:"0.5rem" }}>
+                                      <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+                                        {[
+                                          { value: "top_set", label: "Weight + reps" },
+                                          { value: "estimated_max", label: "Single / estimated max" },
+                                        ].map((option) => {
+                                          const selected = String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === option.value;
+                                          return (
+                                            <button
+                                              key={option.value}
+                                              className="btn"
+                                              onClick={() => updateClarificationValue(`${fieldId}__mode`, option.value)}
+                                              style={{
+                                                minHeight:40,
+                                                fontSize:"0.58rem",
+                                                color:selected ? "#07131f" : "#dbe7f6",
+                                                borderColor:selected ? "rgba(39,245,154,0.45)" : "#324961",
+                                                background:selected ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)",
+                                              }}
+                                            >
+                                              {option.label}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                      <div style={{ display:"grid", gridTemplateColumns:String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === "estimated_max" ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap:"0.5rem" }}>
+                                        <input
+                                          ref={composerRef}
+                                          type="number"
+                                          inputMode="decimal"
+                                          min="1"
+                                          step="any"
+                                          value={clarificationValues?.[`${fieldId}__weight`] || ""}
+                                          onChange={(e) => updateClarificationValue(`${fieldId}__weight`, e.target.value)}
+                                          placeholder="Weight"
+                                          style={{
+                                            fontSize:"0.86rem",
+                                            borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
+                                            boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                          }}
+                                        />
+                                        {String(clarificationValues?.[`${fieldId}__mode`] || "top_set") !== "estimated_max" && (
+                                          <input
+                                            type="number"
+                                            inputMode="numeric"
+                                            min="1"
+                                            step="1"
+                                            value={clarificationValues?.[`${fieldId}__reps`] || ""}
+                                            onChange={(e) => updateClarificationValue(`${fieldId}__reps`, e.target.value)}
+                                            placeholder="Reps"
+                                            style={{
+                                              fontSize:"0.86rem",
+                                              borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
+                                              boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                            }}
+                                          />
+                                        )}
+                                      </div>
+                                    </div>
                                   )}
                                   {anchorCard.input_type !== "choice_chips" && anchorCard.input_type !== "date_or_month" && anchorCard.input_type !== "number_with_unit" && anchorCard.input_type !== "strength_top_set" && (
                                     <input
@@ -8751,6 +8952,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                           className="btn"
                                           onClick={() => {
                                             if (anchorCard.input_type === "choice_chips") return;
+                                            if (anchorCard.input_type === "strength_top_set") {
+                                              applyStrengthStructuredValue(fieldId, parseStrengthTopSetDraft(example));
+                                              return;
+                                            }
                                             updateClarificationValue(fieldId, example);
                                           }}
                                           style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
@@ -8778,7 +8983,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       )}
                                     </div>
                                   )}
-                                  {activeAnchorStrictMode ? (
+                                  {anchorCard.input_type === "strength_top_set" ? (
+                                    <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.62rem", background:"rgba(15,23,42,0.5)", display:"grid", gap:"0.18rem" }}>
+                                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.1em" }}>STRUCTURED CAPTURE</div>
+                                      <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                                        Use the fields above so I save one clean strength baseline for this lift and nothing else.
+                                      </div>
+                                    </div>
+                                  ) : activeAnchorStrictMode ? (
                                     <div style={{ border:"1px solid rgba(255,138,0,0.22)", borderRadius:14, padding:"0.62rem", background:"rgba(38,24,7,0.38)", display:"grid", gap:"0.18rem" }}>
                                       <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.1em" }}>STRICT MODE</div>
                                       <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
@@ -8975,8 +9187,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
                           How this looks: {reviewModel.realismLabel}
                         </div>
-                        <div style={{ fontSize:"0.5rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Plan status: {confirmationState?.statusLabel || "Review pending"}
+                        <div style={{ fontSize:"0.5rem", color:confirmationTone, marginTop:"0.14rem", lineHeight:1.5 }}>
+                          Plan status: {confirmationStatusLabel}
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
@@ -8989,7 +9201,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
                         <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>REALISM GATE</div>
-                        <div style={{ fontSize:"0.54rem", color:reviewModel.gateExplanationText ? (confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8") : "#8fa5c8", lineHeight:1.55 }}>
+                        <div style={{ fontSize:"0.54rem", color:reviewModel.gateExplanationText ? confirmationTone : "#8fa5c8", lineHeight:1.55 }}>
                           {reviewModel.gateExplanationText || "Nothing critical. I have enough to build from here."}
                         </div>
                         {(reviewModel.gateSuggestedRevision?.requested_data || []).length > 0 && (
@@ -9103,30 +9315,60 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
                       Before you confirm, use the lane cards above to change priority, edit a goal, or drop a goal.
                     </div>
-                    {confirmationState?.headline && (
-                      <div style={{ fontSize:"0.56rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", lineHeight:1.55 }}>
-                        {confirmationState.headline}
+                    {confirmationHeadline && (
+                      <div style={{ fontSize:"0.56rem", color:confirmationTone, lineHeight:1.55 }}>
+                        {confirmationHeadline}
                       </div>
                     )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={finalizePlan} disabled={!confirmationState?.ctaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting}>
-                        {goalReviewContract?.actions?.confirm?.label || confirmationState?.ctaLabel || "Confirm and build my plan"}
+                      <button className="btn btn-primary" onClick={finalizePlan} disabled={!confirmCtaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting}>
+                        {goalReviewContract?.actions?.confirm?.label || "Confirm and build my plan"}
                       </button>
                       <button className="btn" onClick={() => requestAdjustment()} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
                         {goalReviewContract?.actions?.editGoal?.label || "Edit a goal"}
                       </button>
                     </div>
-                    {(confirmationState?.state === "blocked" || confirmationState?.state === "incomplete") && (
-                      <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
-                        {confirmBuildError || confirmationState?.reason || "I still need one or two details before I can build this well."}
+                    {confirmationState?.status === "warn" && (
+                      <label style={{ display:"flex", gap:"0.45rem", alignItems:"flex-start", fontSize:"0.54rem", color:"#facc15", lineHeight:1.5 }}>
+                        <input
+                          type="checkbox"
+                          checked={confirmWarningAcknowledged}
+                          onChange={(e) => setConfirmWarningAcknowledged(Boolean(e.target.checked))}
+                          style={{ marginTop:2 }}
+                        />
+                        <span>I understand this is aggressive.</span>
+                      </label>
+                    )}
+                    {(confirmationState?.status === "block" || confirmationState?.status === "incomplete") && (
+                      <div style={{ display:"grid", gap:"0.45rem" }}>
+                        <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
+                          {confirmBuildError || confirmationState?.reason || "I still need one or two details before I can build this well."}
+                        </div>
+                        {confirmationNeedsList.length > 0 && (
+                          <div style={{ display:"grid", gap:"0.24rem" }}>
+                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>WHAT I STILL NEED</div>
+                            {confirmationNeedsList.map((item) => (
+                              <div key={item} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                                • {item}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {confirmationState?.next_required_field && (
+                          <div>
+                            <button className="btn" onClick={jumpToNextRequiredDetail} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
+                              Go to the next detail
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
-                    {confirmationState?.state === "warn" && confirmationState?.reason && (
+                    {confirmationState?.status === "warn" && confirmationState?.reason && (
                       <div style={{ fontSize:"0.56rem", color:"#facc15", lineHeight:1.55 }}>
                         {confirmationState.reason}
                       </div>
                     )}
-                    {confirmationState?.state === "ready" && confirmBuildError && (
+                    {confirmationState?.status === "proceed" && confirmBuildError && (
                       <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
                         {confirmBuildError}
                       </div>
@@ -9161,6 +9403,122 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
+  const normalizedAppearance = normalizeAppearanceSettings(appearance);
+  const handleThemeChange = (themeId) => {
+    if (typeof onPatchAppearance !== "function") return;
+    onPatchAppearance({
+      ...appearance,
+      theme: themeId,
+      mode: normalizedAppearance.mode,
+    });
+  };
+  const handleModeChange = (mode) => {
+    if (typeof onPatchAppearance !== "function") return;
+    onPatchAppearance({
+      ...appearance,
+      theme: normalizedAppearance.theme,
+      mode,
+    });
+  };
+
+  return (
+    <div style={{ display:"grid", gap:"0.55rem" }}>
+      <div style={{ fontSize:"0.54rem", color:"var(--text-soft)", lineHeight:1.6 }}>
+        {PRODUCT_BRAND.name} uses three curated identities instead of a loose accent picker. Pick the overall brand tone first, then choose the surface mode that feels best on your eyes.
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
+        {BRAND_THEME_OPTIONS.map((themeOption) => {
+          const selected = normalizedAppearance.theme === themeOption.id;
+          return (
+            <button
+              key={themeOption.id}
+              className="btn"
+              onClick={() => handleThemeChange(themeOption.id)}
+              style={{
+                padding:"0.7rem",
+                textAlign:"left",
+                display:"grid",
+                gap:"0.38rem",
+                background:selected ? "var(--surface-1)" : "var(--surface-2)",
+                borderColor:selected ? "var(--border-strong)" : "var(--border)",
+                boxShadow:selected ? "var(--shadow-1)" : "none",
+              }}
+            >
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.45rem" }}>
+                <div>
+                  <div style={{ fontFamily:"var(--font-display)", fontSize:"0.72rem", color:"var(--text-strong)" }}>{themeOption.label}</div>
+                  <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", marginTop:"0.08rem" }}>{themeOption.mood}</div>
+                </div>
+                {selected && <span className="tag" style={{ fontSize:"0.42rem" }}>Selected</span>}
+              </div>
+              <div style={{ display:"flex", gap:"0.22rem" }}>
+                {themeOption.preview.map((swatch, index) => (
+                  <div key={`${themeOption.id}_${index}`} style={{ height:12, flex:1, borderRadius:999, background:swatch, border:"1px solid var(--border)" }} />
+                ))}
+              </div>
+              <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>{themeOption.description}</div>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem" }}>
+        {BRAND_THEME_MODES.map((mode) => {
+          const selected = normalizedAppearance.mode === mode;
+          return (
+            <button
+              key={mode}
+              className="btn"
+              onClick={() => handleModeChange(mode)}
+              style={{
+                fontSize:"0.52rem",
+                color:selected ? "var(--tab-active-text)" : "var(--text-soft)",
+                borderColor:selected ? "var(--border-strong)" : "var(--border)",
+                background:selected ? "var(--tab-active-bg)" : "var(--surface-2)",
+              }}
+            >
+              {mode}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
+        <div className="empty-state" style={{ padding:"0.72rem" }}>
+          <div style={{ fontFamily:"var(--font-display)", fontSize:"0.62rem", color:"var(--text-strong)" }}>Brand direction</div>
+          <div style={{ fontSize:"0.52rem", color:"var(--text-soft)", lineHeight:1.6, marginTop:"0.16rem" }}>
+            {BRAND_FOUNDATION.recommendedProductName} is a premium fitness operating system: dark-first, editorial, and broadly athletic without falling into bro-gym or generic SaaS styling.
+          </div>
+          <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.55, marginTop:"0.28rem" }}>
+            {PRODUCT_BRAND.logoDirection}
+          </div>
+        </div>
+        <div className="empty-state" style={{ padding:"0.72rem" }}>
+          <div style={{ fontFamily:"var(--font-display)", fontSize:"0.62rem", color:"var(--text-strong)" }}>Typography</div>
+          <div style={{ display:"grid", gap:"0.24rem", marginTop:"0.18rem" }}>
+            {BRAND_FOUNDATION.typographyHierarchy.map((item) => (
+              <div key={item.label}>
+                <div style={{ fontSize:"0.49rem", color:"var(--text-strong)" }}>{item.label} · {item.usage}</div>
+                <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>{item.direction}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="empty-state" style={{ padding:"0.72rem" }}>
+          <div style={{ fontFamily:"var(--font-display)", fontSize:"0.62rem", color:"var(--text-strong)" }}>Tokens and patterns</div>
+          <div style={{ display:"grid", gap:"0.28rem", marginTop:"0.18rem" }}>
+            {[...BRAND_FOUNDATION.baseDesignTokens, ...BRAND_FOUNDATION.patterns].map((item) => (
+              <div key={item.label}>
+                <div style={{ fontSize:"0.49rem", color:"var(--text-strong)" }}>{item.label}</div>
+                <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>{item.detail}</div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -9874,18 +10232,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>APPEARANCE</div>
-          <div style={{ display:"grid", gap:"0.3rem" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.25rem" }}>
-              {["System","Light","Dark"].map((t) => (
-                <button key={t} className="btn" onClick={()=>patchSettings({ appearance: { ...appearance, theme: t } })} style={{ fontSize:"0.52rem", color:appearance?.theme===t?C.green:"#9fb2d2", borderColor:appearance?.theme===t?C.green+"35":"#324961" }}>{t}</button>
-              ))}
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:"0.28rem" }}>
-              {[["Green","#27f59a"],["Blue","#00c2ff"],["Orange","#ff8a00"],["Red","#ff3d81"],["Purple","#7c5cff"],["Neutral","#94a3b8"]].map(([name,color]) => (
-                <button key={name} onClick={()=>patchSettings({ appearance: { ...appearance, palette: name } })} style={{ height:24, borderRadius:7, border:appearance?.palette===name?`2px solid ${color}`:"1px solid #324961", background:color, cursor:"pointer" }} title={name} />
-              ))}
-            </div>
-          </div>
+          <AppearanceThemeSection appearance={appearance} onPatchAppearance={(nextAppearance) => patchSettings({ appearance: nextAppearance })} />
         </div>
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
@@ -10225,18 +10572,7 @@ function OnboardingCoachLegacy({ onComplete }) {
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>APPEARANCE</div>
-          <div style={{ display:"grid", gap:"0.3rem" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.25rem" }}>
-              {["System","Light","Dark"].map((t) => (
-                <button key={t} className="btn" onClick={()=>patchSettings({ appearance: { ...appearance, theme: t } })} style={{ fontSize:"0.52rem", color:appearance?.theme===t?C.green:"#9fb2d2", borderColor:appearance?.theme===t?C.green+"35":"#324961" }}>{t}</button>
-              ))}
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:"0.28rem" }}>
-              {[["Green","#27f59a"],["Blue","#00c2ff"],["Orange","#ff8a00"],["Red","#ff3d81"],["Purple","#7c5cff"],["Neutral","#94a3b8"]].map(([name,color]) => (
-                <button key={name} onClick={()=>patchSettings({ appearance: { ...appearance, palette: name } })} style={{ height:24, borderRadius:7, border:appearance?.palette===name?`2px solid ${color}`:"1px solid #324961", background:color, cursor:"pointer" }} title={name} />
-              ))}
-            </div>
-          </div>
+          <AppearanceThemeSection appearance={appearance} onPatchAppearance={(nextAppearance) => patchSettings({ appearance: nextAppearance })} />
         </div>
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>

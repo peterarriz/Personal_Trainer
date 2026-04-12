@@ -58,6 +58,24 @@ const buildInterpretationEvent = ({ event_id, answers = {}, rawGoalText = "" }) 
   },
 });
 
+const buildAnchorAnsweredPayload = ({
+  anchor = null,
+  raw_text = "",
+  answer_value = null,
+} = {}) => ({
+  anchor,
+  binding_target: {
+    anchor_id: anchor?.anchor_id || "",
+    field_id: anchor?.field_id || "",
+  },
+  anchor_id: anchor?.anchor_id || "",
+  field_id: anchor?.field_id || "",
+  raw_text,
+  answer_value,
+  source: "user",
+  now: TEST_NOW,
+});
+
 test("anchor collection view model shows a short stack of field cards after interpretation", () => {
   let state = createIntakeMachineState();
   state = intakeReducer(state, {
@@ -119,14 +137,11 @@ test("anchor collection view model advances from runs per week to anchor choice 
     event_id: "evt_timeline_answered",
     type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
     timestamp: TEST_NOW,
-    payload: {
+    payload: buildAnchorAnsweredPayload({
       anchor: state.draft.missingAnchorsEngine.currentAnchor,
-      field_id: state.draft.missingAnchorsEngine.currentAnchor.field_id,
       raw_text: "October 12",
       answer_value: "October 12",
-      source: "user",
-      now: TEST_NOW,
-    },
+    }),
   });
 
   let viewModel = buildAnchorCollectionViewModel({
@@ -143,14 +158,11 @@ test("anchor collection view model advances from runs per week to anchor choice 
     event_id: "evt_frequency_answered",
     type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
     timestamp: TEST_NOW,
-    payload: {
+    payload: buildAnchorAnsweredPayload({
       anchor: state.draft.missingAnchorsEngine.currentAnchor,
-      field_id: state.draft.missingAnchorsEngine.currentAnchor.field_id,
       raw_text: "3",
       answer_value: "3",
-      source: "user",
-      now: TEST_NOW,
-    },
+    }),
   });
   viewModel = buildAnchorCollectionViewModel({
     machineState: state,
@@ -166,17 +178,14 @@ test("anchor collection view model advances from runs per week to anchor choice 
     event_id: "evt_anchor_choice_answered",
     type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
     timestamp: TEST_NOW,
-    payload: {
+    payload: buildAnchorAnsweredPayload({
       anchor: state.draft.missingAnchorsEngine.currentAnchor,
-      field_id: state.draft.missingAnchorsEngine.currentAnchor.field_id,
       raw_text: "Longest recent run",
       answer_value: {
         value: "longest_recent_run",
         raw: "Longest recent run",
       },
-      source: "user",
-      now: TEST_NOW,
-    },
+    }),
   });
   viewModel = buildAnchorCollectionViewModel({
     machineState: state,

@@ -77,3 +77,36 @@ test("late goal edit follow-up messages keep insertion order stable across multi
     queuedEntries: adjustmentQueue.entries,
   }), 31);
 });
+
+test("anchor question idempotency keys prevent duplicate transcript messages for the same anchor", () => {
+  const anchorQuestionKey = "ANCHOR_COLLECTION:running_timing:target_timeline:transition_000002";
+  const firstQueue = queueCoachTranscriptMessages({
+    texts: [
+      {
+        text: "One quick thing before I lock this in: What's the race date or target month?",
+        idempotency_key: anchorQuestionKey,
+      },
+      {
+        text: "One quick thing before I lock this in: What's the race date or target month?",
+        idempotency_key: anchorQuestionKey,
+      },
+    ],
+    nextMessageId: 41,
+  });
+
+  assert.equal(firstQueue.entries.length, 1);
+  assert.equal(firstQueue.entries[0].idempotency_key, anchorQuestionKey);
+
+  const secondQueue = queueCoachTranscriptMessages({
+    texts: [
+      {
+        text: "One quick thing before I lock this in: What's the race date or target month?",
+        idempotency_key: anchorQuestionKey,
+      },
+    ],
+    nextMessageId: firstQueue.nextMessageId,
+    seenIdempotencyKeys: firstQueue.acceptedIdempotencyKeys,
+  });
+
+  assert.equal(secondQueue.entries.length, 0);
+});
