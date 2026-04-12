@@ -1,4 +1,5 @@
 import { GOAL_MEASURABILITY_TIERS, resolveGoalTranslation } from "./goal-resolution-service.js";
+import { buildGoalArbitrationStack } from "./goal-arbitration-service.js";
 import {
   applyIntakeCompletenessAnswer as applyStructuredIntakeCompletenessAnswer,
   buildIntakeCompletenessContext,
@@ -41,11 +42,14 @@ export const GOAL_STACK_ROLES = {
   primary: "primary",
   maintained: "maintained",
   background: "background",
+  deferred: "deferred",
 };
 
 export const SECONDARY_GOAL_RESPONSE_KEYS = {
-  keepInferred: "keep_inferred",
   primaryOnly: "primary_only",
+  addGoal: "add_goal",
+  done: "done",
+  keepInferred: "keep_inferred",
   custom: "custom",
 };
 
@@ -99,7 +103,8 @@ const REVIEW_GATE_LABELS = {
 const ROLE_LABELS = {
   [GOAL_STACK_ROLES.primary]: "Primary",
   [GOAL_STACK_ROLES.maintained]: "Maintained",
-  [GOAL_STACK_ROLES.background]: "Background",
+  [GOAL_STACK_ROLES.background]: "Background support",
+  [GOAL_STACK_ROLES.deferred]: "Later",
 };
 
 const SECONDARY_GOAL_COMMON_OPTIONS_BY_CATEGORY = {
@@ -229,6 +234,30 @@ const buildMaintainedGoalLabelFromGoal = (goal = {}) => {
   return maintainedValue.charAt(0).toUpperCase() + maintainedValue.slice(1);
 };
 
+const normalizeAdditionalGoalText = (value = "") => sanitizeText(value, 180);
+
+export const readAdditionalGoalEntries = ({ answers = {} } = {}) => {
+  const listedGoals = toArray(answers?.additional_goals_list)
+    .map((item) => normalizeAdditionalGoalText(item))
+    .filter(Boolean);
+  if (listedGoals.length > 0) return dedupeStrings(listedGoals);
+  const legacyOtherGoals = normalizeAdditionalGoalText(answers?.other_goals || "");
+  return legacyOtherGoals ? [legacyOtherGoals] : [];
+};
+
+const writeAdditionalGoalEntries = ({ answers = {}, entries = [] } = {}) => {
+  const normalizedEntries = dedupeStrings(
+    toArray(entries)
+      .map((item) => normalizeAdditionalGoalText(item))
+      .filter(Boolean)
+  );
+  return {
+    ...answers,
+    additional_goals_list: normalizedEntries,
+    other_goals: normalizedEntries.join(". "),
+  };
+};
+
 const buildPlainGoalTypeLabel = (goal = null, fallbackFamily = "") => {
   const planningCategory = sanitizeText(goal?.planningCategory || "", 40).toLowerCase();
   const goalFamily = sanitizeText(goal?.goalFamily || fallbackFamily || "", 40).toLowerCase();
@@ -247,8 +276,29 @@ export const buildIntakeGoalStackConfirmation = ({
 } = {}) => {
   const orderedGoals = sortGoalsByPriority(resolvedGoals);
   const availableIds = new Set(orderedGoals.map((goal) => sanitizeText(goal?.id || "", 120)).filter(Boolean));
-  const removedGoalIds = dedupeStrings(toArray(goalStackConfirmation?.removedGoalIds || []))
-    .filter((id) => availableIds.has(id));
+  const defaultRolesByGoalId = {};
+  orderedGoals.forEach((goal, index) => {
+    if (!goal?.id) return;
+    const defaultRole = sanitizeText(goal?.goalArbitrationRole || (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained), 40).toLowerCase();
+    defaultRolesByGoalId[goal.id] = Object.values(GOAL_STACK_ROLES).includes(defaultRole)
+      ? defaultRole
+      : (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained);
+  });
+  const explicitRolesByGoalId = Object.fromEntries(
+    Object.entries(goalStackConfirmation?.rolesByGoalId || {})
+      .map(([goalId, role]) => [sanitizeText(goalId, 120), sanitizeText(role, 40).toLowerCase()])
+      .filter(([goalId, role]) => goalId && availableIds.has(goalId) && Object.values(GOAL_STACK_ROLES).includes(role))
+  );
+  const requestedRolesByGoalId = {
+    ...defaultRolesByGoalId,
+    ...explicitRolesByGoalId,
+  };
+  const removedGoalIds = dedupeStrings([
+    ...toArray(goalStackConfirmation?.removedGoalIds || []),
+    ...Object.entries(requestedRolesByGoalId)
+      .filter(([, role]) => role === GOAL_STACK_ROLES.deferred)
+      .map(([goalId]) => goalId),
+  ]).filter((id) => availableIds.has(id));
   const activeGoals = orderedGoals.filter((goal) => !removedGoalIds.includes(goal.id));
   const fallbackPrimaryId = sanitizeText(activeGoals[0]?.id || orderedGoals[0]?.id || "", 120);
   const explicitPrimaryId = sanitizeText(goalStackConfirmation?.primaryGoalId || "", 120);
@@ -257,12 +307,20 @@ export const buildIntakeGoalStackConfirmation = ({
     : fallbackPrimaryId;
   const rolesByGoalId = {};
   orderedGoals.forEach((goal, index) => {
-    if (!goal?.id || removedGoalIds.includes(goal.id)) return;
-    const requestedRole = sanitizeText(goalStackConfirmation?.rolesByGoalId?.[goal.id] || "", 40).toLowerCase();
+    if (!goal?.id) return;
+    if (removedGoalIds.includes(goal.id)) {
+      rolesByGoalId[goal.id] = GOAL_STACK_ROLES.deferred;
+      return;
+    }
+    const requestedRole = requestedRolesByGoalId[goal.id] || defaultRolesByGoalId[goal.id] || GOAL_STACK_ROLES.maintained;
     const isPrimary = goal.id === primaryGoalId || (!primaryGoalId && index === 0);
     rolesByGoalId[goal.id] = isPrimary
       ? GOAL_STACK_ROLES.primary
-      : (requestedRole === GOAL_STACK_ROLES.background ? GOAL_STACK_ROLES.background : GOAL_STACK_ROLES.maintained);
+      : requestedRole === GOAL_STACK_ROLES.background
+      ? GOAL_STACK_ROLES.background
+      : requestedRole === GOAL_STACK_ROLES.deferred
+      ? GOAL_STACK_ROLES.deferred
+      : GOAL_STACK_ROLES.maintained;
   });
   const relevantBackgroundPriority = isResiliencePriorityRelevant({ resolvedGoals: orderedGoals, goalFeasibility });
 
@@ -288,7 +346,12 @@ export const applyIntakeGoalStackConfirmation = ({
     goalFeasibility,
   });
   const primaryGoal = orderedGoals.find((goal) => goal?.id === confirmation.primaryGoalId) || null;
-  const secondaryGoals = orderedGoals.filter((goal) => goal?.id && goal.id !== confirmation.primaryGoalId && !confirmation.removedGoalIds.includes(goal.id));
+  const secondaryGoals = orderedGoals.filter((goal) => (
+    goal?.id
+    && goal.id !== confirmation.primaryGoalId
+    && !confirmation.removedGoalIds.includes(goal.id)
+    && confirmation.rolesByGoalId?.[goal.id] === GOAL_STACK_ROLES.maintained
+  ));
   const nextOrderedGoals = [primaryGoal, ...secondaryGoals].filter(Boolean);
 
   return nextOrderedGoals.map((goal, index) => ({
@@ -311,13 +374,19 @@ export const buildIntakeGoalStackReviewModel = ({
     goalStackConfirmation,
     goalFeasibility,
   });
-  const confirmedGoals = applyIntakeGoalStackConfirmation({
-    resolvedGoals,
-    goalStackConfirmation: confirmation,
-    goalFeasibility,
-  });
   const orderedGoals = sortGoalsByPriority(resolvedGoals);
-  const removedGoals = orderedGoals.filter((goal) => confirmation.removedGoalIds.includes(goal?.id));
+  const roleForGoal = (goal = {}, index = 0) => {
+    if (!goal?.id) return index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained;
+    return confirmation.rolesByGoalId?.[goal.id]
+      || sanitizeText(goal?.goalArbitrationRole || "", 40).toLowerCase()
+      || (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained);
+  };
+  const confirmedGoals = orderedGoals.filter((goal, index) => {
+    const role = roleForGoal(goal, index);
+    return role === GOAL_STACK_ROLES.primary || role === GOAL_STACK_ROLES.maintained;
+  });
+  const backgroundGoals = orderedGoals.filter((goal, index) => roleForGoal(goal, index) === GOAL_STACK_ROLES.background);
+  const deferredGoals = orderedGoals.filter((goal, index) => roleForGoal(goal, index) === GOAL_STACK_ROLES.deferred);
   const primaryTradeoff = dedupeStrings([
     ...confirmedGoals.flatMap((goal) => goal?.tradeoffs || []),
     ...(goalResolution?.tradeoffs || []),
@@ -338,18 +407,36 @@ export const buildIntakeGoalStackReviewModel = ({
     activeGoals: confirmedGoals.map((goal, index) => ({
       id: goal.id,
       summary: sanitizeText(goal?.summary || "", 160),
-      role: index === 0 ? GOAL_STACK_ROLES.primary : (goal?.intakeConfirmedRole || GOAL_STACK_ROLES.maintained),
-      roleLabel: ROLE_LABELS[index === 0 ? GOAL_STACK_ROLES.primary : (goal?.intakeConfirmedRole || GOAL_STACK_ROLES.maintained)] || "Goal",
+      role: index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained,
+      roleLabel: ROLE_LABELS[index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained] || "Goal",
       measurabilityLabel: MEASURABILITY_LABELS[goal?.measurabilityTier] || "Planner goal",
       trackingLabels: buildPerGoalTrackingLabels(goal),
       tradeoff: sanitizeText(goal?.tradeoffs?.[0] || "", 180),
+      reason: sanitizeText(goal?.goalArbitrationReason || "", 220),
     })),
-    removedGoals: removedGoals.map((goal) => ({
+    backgroundGoals: backgroundGoals.map((goal) => ({
       id: goal.id,
       summary: sanitizeText(goal?.summary || "", 160),
-      role: "removed",
-      roleLabel: "Removed",
+      role: GOAL_STACK_ROLES.background,
+      roleLabel: ROLE_LABELS[GOAL_STACK_ROLES.background] || "Background support",
       trackingLabels: buildPerGoalTrackingLabels(goal),
+      reason: sanitizeText(goal?.goalArbitrationReason || "", 220),
+    })),
+    deferredGoals: deferredGoals.map((goal) => ({
+      id: goal.id,
+      summary: sanitizeText(goal?.summary || "", 160),
+      role: GOAL_STACK_ROLES.deferred,
+      roleLabel: ROLE_LABELS[GOAL_STACK_ROLES.deferred] || "Later",
+      trackingLabels: buildPerGoalTrackingLabels(goal),
+      reason: sanitizeText(goal?.goalArbitrationReason || "", 220),
+    })),
+    removedGoals: deferredGoals.map((goal) => ({
+      id: goal.id,
+      summary: sanitizeText(goal?.summary || "", 160),
+      role: GOAL_STACK_ROLES.deferred,
+      roleLabel: ROLE_LABELS[GOAL_STACK_ROLES.deferred] || "Later",
+      trackingLabels: buildPerGoalTrackingLabels(goal),
+      reason: sanitizeText(goal?.goalArbitrationReason || "", 220),
     })),
     primaryTradeoff,
     backgroundPriority,
@@ -364,59 +451,18 @@ export const buildIntakeSecondaryGoalPrompt = ({
   if (!reviewModel?.completeness?.isComplete) return null;
   const primaryGoal = toArray(reviewModel?.orderedResolvedGoals)[0] || null;
   if (!primaryGoal) return null;
-  const activeGoals = toArray(reviewModel?.goalStackReview?.activeGoals);
-  const inferredSecondaryGoal = activeGoals[1] || null;
-  const category = sanitizeText(primaryGoal?.planningCategory || "general_fitness", 40).toLowerCase() || "general_fitness";
-
-  if (inferredSecondaryGoal) {
-    return {
-      prompt: `Anything else you want to maintain while chasing this? Right now I have "${inferredSecondaryGoal.summary}" staying in maintenance.`,
-      helperText: "Optional. You can keep it, drop it, or swap it for something else.",
-      placeholder: "Example: keep upper body or maintain conditioning",
-      options: [
-        {
-          key: SECONDARY_GOAL_RESPONSE_KEYS.keepInferred,
-          label: buildMaintainedGoalLabelFromGoal(inferredSecondaryGoal),
-          value: buildMaintainedGoalValueFromGoal(inferredSecondaryGoal),
-        },
-        {
-          key: SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly,
-          label: "No, just this goal",
-          value: "",
-        },
-        {
-          key: SECONDARY_GOAL_RESPONSE_KEYS.custom,
-          label: "Something else",
-          value: "",
-          requiresText: true,
-        },
-      ],
-      inferredSecondaryGoalId: inferredSecondaryGoal.id,
-      inferredSecondarySummary: inferredSecondaryGoal.summary,
-    };
-  }
-
-  const categoryOptions = SECONDARY_GOAL_COMMON_OPTIONS_BY_CATEGORY[category] || SECONDARY_GOAL_COMMON_OPTIONS_BY_CATEGORY.general_fitness;
+  const inferredGoals = toArray(reviewModel?.goalStackReview?.activeGoals)
+    .slice(1)
+    .map((goal) => sanitizeText(goal?.summary || "", 160))
+    .filter(Boolean);
   return {
-    prompt: "Anything else you want to maintain while chasing this?",
-    helperText: "Optional. If not, we can keep this plan focused on the primary goal.",
-    placeholder: "Example: keep upper body or maintain conditioning",
-    options: [
-      ...categoryOptions,
-      {
-        key: SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly,
-        label: "No, just this goal",
-        value: "",
-      },
-      {
-        key: SECONDARY_GOAL_RESPONSE_KEYS.custom,
-        label: "Something else",
-        value: "",
-        requiresText: true,
-      },
-    ],
-    inferredSecondaryGoalId: "",
-    inferredSecondarySummary: "",
+    prompt: "Anything else you want to improve or maintain while chasing this?",
+    helperText: inferredGoals.length
+      ? `Optional. I already picked up ${inferredGoals.join(" and ")} from what you said. Add anything else one at a time, or skip this if the current stack is enough.`
+      : "Optional. Add extra goals one at a time, or skip this if the primary goal stands on its own.",
+    placeholder: "Example: get a six pack, bench 225, or keep upper body",
+    existingGoals: readAdditionalGoalEntries({ answers }),
+    inferredGoals,
   };
 };
 
@@ -429,63 +475,66 @@ export const applyIntakeSecondaryGoalResponse = ({
   goalFeasibility = null,
 } = {}) => {
   const responseKey = sanitizeText(response?.key || "", 80).toLowerCase();
-  const responseValue = sanitizeText(response?.value || customText || "", 180);
-  const secondaryGoalText = sanitizeText(customText || response?.value || "", 180);
-  const primaryGoalId = sanitizeText(toArray(resolvedGoals)[0]?.id || "", 120);
-  const secondaryGoalIds = toArray(resolvedGoals).slice(1).map((goal) => sanitizeText(goal?.id || "", 120)).filter(Boolean);
-  const baseAnswers = {
-    ...answers,
-    secondary_goal_prompt_answered: true,
-  };
+  const nextGoalText = normalizeAdditionalGoalText(customText || response?.value || "");
+  const existingGoals = readAdditionalGoalEntries({ answers });
 
   if (responseKey === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly) {
     return {
-      answers: {
-        ...baseAnswers,
-        other_goals: "",
-      },
-      goalStackConfirmation: buildIntakeGoalStackConfirmation({
-        resolvedGoals,
-        goalFeasibility,
-        goalStackConfirmation: {
-          ...(goalStackConfirmation || {}),
-          primaryGoalId,
-          removedGoalIds: secondaryGoalIds,
-          rolesByGoalId: {},
+      answers: writeAdditionalGoalEntries({
+        answers: {
+          ...answers,
+          secondary_goal_prompt_answered: true,
         },
+        entries: [],
       }),
+      goalStackConfirmation,
       rerunAssessment: false,
+      keepCollecting: false,
     };
   }
 
-  if (responseKey === SECONDARY_GOAL_RESPONSE_KEYS.keepInferred) {
-    const inferredSecondaryId = secondaryGoalIds[0] || "";
+  if (responseKey === SECONDARY_GOAL_RESPONSE_KEYS.addGoal || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.custom) {
+    const updatedEntries = dedupeStrings([...existingGoals, nextGoalText]);
     return {
-      answers: baseAnswers,
-      goalStackConfirmation: buildIntakeGoalStackConfirmation({
-        resolvedGoals,
-        goalFeasibility,
-        goalStackConfirmation: {
-          ...(goalStackConfirmation || {}),
-          primaryGoalId,
-          removedGoalIds: toArray(goalStackConfirmation?.removedGoalIds || []).filter((id) => sanitizeText(id, 120) !== inferredSecondaryId),
-          rolesByGoalId: {
-            ...(goalStackConfirmation?.rolesByGoalId || {}),
-            ...(inferredSecondaryId ? { [inferredSecondaryId]: GOAL_STACK_ROLES.maintained } : {}),
-          },
+      answers: writeAdditionalGoalEntries({
+        answers: {
+          ...answers,
+          secondary_goal_prompt_answered: false,
         },
+        entries: updatedEntries,
       }),
+      goalStackConfirmation,
       rerunAssessment: false,
+      keepCollecting: true,
+    };
+  }
+
+  if (responseKey === SECONDARY_GOAL_RESPONSE_KEYS.done || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.keepInferred) {
+    return {
+      answers: writeAdditionalGoalEntries({
+        answers: {
+          ...answers,
+          secondary_goal_prompt_answered: true,
+        },
+        entries: existingGoals,
+      }),
+      goalStackConfirmation: null,
+      rerunAssessment: existingGoals.length > 0,
+      keepCollecting: false,
     };
   }
 
   return {
-    answers: {
-      ...baseAnswers,
-      other_goals: secondaryGoalText || responseValue,
-    },
-    goalStackConfirmation: null,
-    rerunAssessment: true,
+    answers: writeAdditionalGoalEntries({
+      answers: {
+        ...answers,
+        secondary_goal_prompt_answered: true,
+      },
+      entries: existingGoals,
+    }),
+    goalStackConfirmation,
+    rerunAssessment: false,
+    keepCollecting: false,
   };
 };
 
@@ -504,7 +553,7 @@ export const buildRawGoalIntentFromAnswers = ({ answers = {}, fallbackLabel = ""
   return dedupeStrings([
     sanitizeText(answers?.goal_intent || "", 320),
     sanitizeText(answers?.primary_goal_detail || "", 220),
-    sanitizeText(answers?.other_goals || "", 180),
+    ...readAdditionalGoalEntries({ answers }),
     ...clarificationNotes,
     sanitizeText(answers?.timeline_adjustment || "", 180),
     sanitizeText(answers?.timeline_feedback || "", 180),
@@ -590,6 +639,7 @@ export const applyIntakeGoalAdjustment = ({
       primary_goal: "",
       primary_goal_detail: "",
       other_goals: "",
+      additional_goals_list: [],
       secondary_goal_prompt_answered: false,
       goal_stack_confirmation: null,
       timeline_adjustment: "",
@@ -612,23 +662,27 @@ export const buildIntakeGoalReviewModel = ({
   answers = {},
   goalStackConfirmation = null,
 } = {}) => {
-  const baseResolvedGoals = Array.isArray(orderedResolvedGoals) && orderedResolvedGoals.length
+  const candidateResolvedGoals = Array.isArray(orderedResolvedGoals) && orderedResolvedGoals.length
     ? orderedResolvedGoals
     : (Array.isArray(goalResolution?.resolvedGoals) ? goalResolution.resolvedGoals : []);
-  const resolvedGoals = goalStackConfirmation
+  const activeResolvedGoals = goalStackConfirmation
     ? applyIntakeGoalStackConfirmation({
-        resolvedGoals: baseResolvedGoals,
+        resolvedGoals: candidateResolvedGoals,
         goalStackConfirmation,
         goalFeasibility,
       })
-    : baseResolvedGoals;
-  const primaryGoal = resolvedGoals[0] || null;
+    : candidateResolvedGoals.filter((goal, index) => {
+        const role = sanitizeText(goal?.goalArbitrationRole || (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained), 40).toLowerCase();
+        return role === GOAL_STACK_ROLES.primary || role === GOAL_STACK_ROLES.maintained;
+      });
+  const resolvedGoals = activeResolvedGoals.length ? activeResolvedGoals : candidateResolvedGoals;
+  const primaryGoal = activeResolvedGoals[0] || candidateResolvedGoals[0] || null;
   const completeness = deriveIntakeCompletenessState({
-    resolvedGoals,
+    resolvedGoals: activeResolvedGoals.length ? activeResolvedGoals : resolvedGoals,
     answers,
   });
   const trackingLabels = dedupeStrings(
-    resolvedGoals.flatMap((goal) => [
+    (activeResolvedGoals.length ? activeResolvedGoals : resolvedGoals).flatMap((goal) => [
       goal?.primaryMetric?.label || "",
       ...(Array.isArray(goal?.proxyMetrics) ? goal.proxyMetrics.map((metric) => metric?.label || "") : []),
       !goal?.primaryMetric && (!Array.isArray(goal?.proxyMetrics) || goal.proxyMetrics.length === 0)
@@ -676,7 +730,7 @@ export const buildIntakeGoalReviewModel = ({
   ]);
   const clarifyingQuestions = nextQuestions.map((item) => item.prompt);
   const goalStackReview = buildIntakeGoalStackReviewModel({
-    resolvedGoals,
+    resolvedGoals: candidateResolvedGoals,
     goalResolution,
     goalFeasibility,
     goalStackConfirmation,
@@ -716,7 +770,8 @@ export const buildIntakeGoalReviewModel = ({
     clarifyingQuestions,
     nextQuestions,
     completeness,
-    orderedResolvedGoals: resolvedGoals,
+    orderedResolvedGoals: candidateResolvedGoals,
+    activeResolvedGoals,
     goalStackReview,
     isPlannerReady: Boolean(primaryGoal) && (gateStatus === "ready" || gateStatus === "warn"),
   };
@@ -734,7 +789,7 @@ export const deriveIntakeConfirmationState = ({
   });
   const gateStatus = sanitizeText(reviewModel?.gateStatus || "", 20).toLowerCase();
   const confirmationAction = sanitizeText(reviewModel?.confirmationAction || "", 20).toLowerCase();
-  const primaryGoal = toArray(reviewModel?.orderedResolvedGoals)[0] || null;
+  const primaryGoal = toArray(reviewModel?.activeResolvedGoals)[0] || toArray(reviewModel?.orderedResolvedGoals)[0] || null;
   const unresolvedItems = toArray(reviewModel?.unresolvedItems);
   const missingRequired = toArray(reviewModel?.completeness?.missingRequired);
   const blockingReasons = toArray(reviewModel?.blockingReasons);

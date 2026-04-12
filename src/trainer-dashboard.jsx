@@ -12,6 +12,7 @@ import { buildDayReview, buildDayReviewComparison, classifyDayReviewStatus } fro
 import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
 import { deriveCanonicalAthleteState, withLegacyGoalProfileCompatibility } from "./services/canonical-athlete-service.js";
 import { buildPlanningGoalsFromResolvedGoals, applyResolvedGoalsToGoalSlots, buildGoalStateFromResolvedGoals, resolveGoalTranslation } from "./services/goal-resolution-service.js";
+import { buildGoalArbitrationStack } from "./services/goal-arbitration-service.js";
 import { GOAL_FEASIBILITY_ACTIONS, GOAL_REALISM_STATUSES, applyFeasibilityPriorityOrdering, assessGoalFeasibility } from "./services/goal-feasibility-service.js";
 import {
   GOAL_CHANGE_MODES,
@@ -99,6 +100,7 @@ import {
   deriveIntakeConfirmationState,
   buildRawGoalIntentFromAnswers,
   GOAL_STACK_ROLES,
+  readAdditionalGoalEntries,
   SECONDARY_GOAL_RESPONSE_KEYS,
   getNextIntakeClarifyingQuestion,
   resolveCompatibilityPrimaryGoalKey,
@@ -2428,10 +2430,19 @@ const buildPreviewGoalResolutionBundle = ({
     intakeCompleteness,
     now,
   });
-  const orderedResolvedGoals = applyFeasibilityPriorityOrdering({
+  const feasibleResolvedGoals = applyFeasibilityPriorityOrdering({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     feasibility: goalFeasibility,
   });
+  const arbitration = buildGoalArbitrationStack({
+    resolvedGoals: feasibleResolvedGoals,
+    additionalGoalTexts: readAdditionalGoalEntries({ answers }),
+    goalFeasibility,
+    intakeCompleteness,
+    typedIntakePacket,
+    now,
+  });
+  const orderedResolvedGoals = arbitration?.goals?.length ? arbitration.goals : feasibleResolvedGoals;
 
   return {
     typedIntakePacket,
@@ -6421,13 +6432,22 @@ Keep it plain and specific.`;
       resolvedGoals: goalResolution?.resolvedGoals || [],
       feasibility: goalFeasibility,
     });
-    const goalStackConfirmation = buildIntakeGoalStackConfirmation({
+    const arbitration = buildGoalArbitrationStack({
       resolvedGoals: feasibleResolvedGoals,
+      additionalGoalTexts: readAdditionalGoalEntries({ answers }),
+      goalFeasibility,
+      intakeCompleteness,
+      typedIntakePacket: fallbackTypedIntakePacket,
+      now: todayKey,
+    });
+    const arbitratedResolvedGoals = arbitration?.goals?.length ? arbitration.goals : feasibleResolvedGoals;
+    const goalStackConfirmation = buildIntakeGoalStackConfirmation({
+      resolvedGoals: arbitratedResolvedGoals,
       goalStackConfirmation: answers?.goal_stack_confirmation || null,
       goalFeasibility,
     });
     const orderedResolvedGoals = applyIntakeGoalStackConfirmation({
-      resolvedGoals: feasibleResolvedGoals,
+      resolvedGoals: arbitratedResolvedGoals,
       goalStackConfirmation,
       goalFeasibility,
     });
@@ -6486,6 +6506,12 @@ Keep it plain and specific.`;
       `Primary goal: ${primaryGoalLabel}`,
       orderedResolvedGoals?.length ? `Resolved goals: ${orderedResolvedGoals.map((goal) => goal.summary).join(" / ")}` : null,
       orderedResolvedGoals?.[1] ? `Maintained goal: ${orderedResolvedGoals[1].summary}` : null,
+      arbitration?.goals?.find((goal) => goal?.goalArbitrationRole === GOAL_STACK_ROLES.background)?.summary
+        ? `Background goal: ${arbitration.goals.find((goal) => goal.goalArbitrationRole === GOAL_STACK_ROLES.background)?.summary}`
+        : null,
+      arbitration?.goals?.filter((goal) => goal?.goalArbitrationRole === GOAL_STACK_ROLES.deferred).length
+        ? `Deferred goals: ${arbitration.goals.filter((goal) => goal.goalArbitrationRole === GOAL_STACK_ROLES.deferred).map((goal) => goal.summary).join(" / ")}`
+        : null,
       goalStackConfirmation?.keepResiliencePriority ? "Background priority: resilience and durability stay protected." : null,
       goalFeasibility?.realismStatus ? `Goal realism: ${goalFeasibility.realismStatus}` : null,
       goalFeasibility?.conflictFlags?.[0] ? `Goal conflict: ${goalFeasibility.conflictFlags[0].summary}` : null,
@@ -7210,6 +7236,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(null);
   const [pendingSecondaryGoalPrompt, setPendingSecondaryGoalPrompt] = useState(null);
   const [secondaryGoalMode, setSecondaryGoalMode] = useState("");
+  const [secondaryGoalEntries, setSecondaryGoalEntries] = useState([]);
   const [confirmBuildError, setConfirmBuildError] = useState("");
   const [assessing, setAssessing] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
@@ -7303,6 +7330,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setSecondaryGoalMode("");
     }
   }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "secondary_goal") return;
+    setSecondaryGoalEntries(readAdditionalGoalEntries({ answers }));
+  }, [phase, answers]);
 
   useEffect(() => {
     if (phase !== "building") return undefined;
@@ -7607,17 +7639,22 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const submitSecondaryGoalResponse = async (response = null) => {
     const customText = String(draft || "").trim();
     if (!response?.key) return;
-    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.custom && !customText) return;
+    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal && !customText) return;
     setConfirmBuildError("");
-    if (response.key !== SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly) {
-      appendUserMessage(response.key === SECONDARY_GOAL_RESPONSE_KEYS.custom ? customText : response.label);
-    } else {
-      appendUserMessage(response.label || "No, just this goal");
+    const stagedEntries = response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal
+      ? Array.from(new Set([...secondaryGoalEntries, customText.trim()])).filter(Boolean)
+      : secondaryGoalEntries;
+    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly) {
+      appendUserMessage("No, just this goal");
+    } else if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.done) {
+      appendUserMessage(stagedEntries.length ? `Also: ${stagedEntries.join("; ")}` : "No extra goals");
     }
-    setDraft("");
-    setSecondaryGoalMode("");
     const outcome = applyIntakeSecondaryGoalResponse({
-      answers,
+      answers: {
+        ...answers,
+        additional_goals_list: secondaryGoalEntries,
+        other_goals: secondaryGoalEntries.join(". "),
+      },
       response,
       customText,
       resolvedGoals: reviewGoals,
@@ -7625,6 +7662,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       goalFeasibility: assessmentPreview?.goalFeasibility || null,
     });
     setAnswers(outcome.answers);
+    setSecondaryGoalEntries(readAdditionalGoalEntries({ answers: outcome.answers }));
+    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal && outcome.keepCollecting) {
+      setDraft("");
+      appendCoachMessage("Added. If there's another goal that matters, drop it in. Otherwise continue.");
+      return;
+    }
+    setDraft("");
     setPendingSecondaryGoalPrompt(null);
     setPendingClarifyingQuestion(null);
     if (!outcome.rerunAssessment) {
@@ -7633,7 +7677,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       appendCoachMessage(
         response.key === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly
           ? "Keeping this plan focused on the primary goal."
-          : "Got it. I'll keep that secondary goal in maintenance while the primary goal leads."
+          : stagedEntries.length
+          ? "Got it. I'll fold those extra goals into the review before I build."
+          : "Keeping the review focused on the current goal stack."
       );
       return;
     }
@@ -7875,50 +7921,71 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
                 {phase === "secondary_goal" ? (
                   <div style={{ display:"grid", gap:"0.55rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Maintain while chasing it</div>
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Anything else that matters?</div>
                     <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingSecondaryGoalPrompt?.prompt || ""}</div>
                     {pendingSecondaryGoalPrompt?.helperText && (
                       <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.55 }}>{pendingSecondaryGoalPrompt.helperText}</div>
                     )}
-                    <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
-                      {(pendingSecondaryGoalPrompt?.options || []).map((option) => (
-                        <button
-                          key={option.key}
-                          className="btn"
-                          onClick={() => option.requiresText ? setSecondaryGoalMode(option.key) : submitSecondaryGoalResponse(option)}
-                          style={{
-                            color:secondaryGoalMode === option.key ? C.green : "#dbe7f6",
-                            borderColor:secondaryGoalMode === option.key ? `${C.green}45` : "#324961",
-                          }}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                    {secondaryGoalMode === SECONDARY_GOAL_RESPONSE_KEYS.custom && (
-                      <div style={{ display:"grid", gap:"0.5rem" }}>
-                        <textarea
-                          ref={composerRef}
-                          value={draft}
-                          onChange={(e) => setDraft(e.target.value)}
-                          placeholder={pendingSecondaryGoalPrompt?.placeholder || "Example: keep upper body"}
-                          rows={3}
-                          style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
-                        />
-                        <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                          <button
-                            className="btn btn-primary"
-                            onClick={() => submitSecondaryGoalResponse((pendingSecondaryGoalPrompt?.options || []).find((option) => option.key === SECONDARY_GOAL_RESPONSE_KEYS.custom) || null)}
-                            disabled={!draft.trim()}
-                          >
-                            Add maintained goal
-                          </button>
-                          <button className="btn" onClick={() => setSecondaryGoalMode("")} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
-                            Cancel
-                          </button>
+                    {(pendingSecondaryGoalPrompt?.inferredGoals || []).length > 0 && (
+                      <div style={{ display:"grid", gap:"0.25rem" }}>
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>ALREADY HEARD</div>
+                        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                          {pendingSecondaryGoalPrompt.inferredGoals.map((goal) => (
+                            <div key={goal} style={{ fontSize:"0.52rem", color:"#dbe7f6", border:"1px solid rgba(111,148,198,0.18)", borderRadius:999, padding:"0.28rem 0.52rem", background:"rgba(15,23,42,0.72)" }}>
+                              {goal}
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
+                    {secondaryGoalEntries.length > 0 && (
+                      <div style={{ display:"grid", gap:"0.3rem" }}>
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>ADDED GOALS</div>
+                        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                          {secondaryGoalEntries.map((goal) => (
+                            <button
+                              key={goal}
+                              className="btn"
+                              onClick={() => setSecondaryGoalEntries((prev) => prev.filter((item) => item !== goal))}
+                              style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
+                            >
+                              {goal} x
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <textarea
+                      ref={composerRef}
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      placeholder={pendingSecondaryGoalPrompt?.placeholder || "Example: bench 225"}
+                      rows={3}
+                      style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
+                    />
+                    <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.addGoal })}
+                        disabled={!draft.trim()}
+                      >
+                        Add another goal
+                      </button>
+                      <button
+                        className="btn"
+                        onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.done })}
+                        style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                      >
+                        {secondaryGoalEntries.length ? "Continue with these goals" : "Continue"}
+                      </button>
+                      <button
+                        className="btn"
+                        onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly, label: "No, just this goal" })}
+                        style={{ color:"#9fb4d3", borderColor:"#324961" }}
+                      >
+                        Skip for now
+                      </button>
+                    </div>
                   </div>
                 ) : null}
 
@@ -7974,6 +8041,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     Main tradeoff: {goal.tradeoff}
                                   </div>
                                 )}
+                                {!goal.tradeoff && goal.reason && (
+                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
+                                    {goal.reason}
+                                  </div>
+                                )}
                                 <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.45rem" }}>
                                   {!isPrimary && (
                                     <button className="btn" onClick={() => setLeadingGoal(goal.id)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
@@ -7995,6 +8067,32 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                             );
                           })}
                         </div>
+                        {goalStackReview?.backgroundGoals?.length > 0 && (
+                          <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
+                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>SUPPORT IN THE BACKGROUND</div>
+                            <div style={{ display:"grid", gap:"0.36rem" }}>
+                              {goalStackReview.backgroundGoals.map((goal) => (
+                                <div key={goal.id} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
+                                  <div style={{ fontSize:"0.58rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
+                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
+                                    {goal.reason || "This stays acknowledged, but the block will not optimize it directly."}
+                                  </div>
+                                  <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.45 }}>
+                                    What we'll watch: {(goal.trackingLabels.length ? goal.trackingLabels : ["Weekly check-ins"]).join(" - ")}
+                                  </div>
+                                  <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.38rem" }}>
+                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                      Pull this into the block
+                                    </button>
+                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.deferred)} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
+                                      Move this later
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {goalStackReview.primaryTradeoff && (
                           <div style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
                             <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>MAIN TRADEOFF</div>
@@ -8018,16 +8116,26 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                             </div>
                           </div>
                         )}
-                        {goalStackReview?.removedGoals?.length > 0 && (
+                        {goalStackReview?.deferredGoals?.length > 0 && (
                           <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>NOT PART OF THIS BUILD</div>
+                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>LATER GOALS</div>
                             <div style={{ display:"grid", gap:"0.28rem" }}>
-                              {goalStackReview.removedGoals.map((goal) => (
-                                <div key={goal.id} style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
-                                  <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.5 }}>{goal.summary}</div>
-                                  <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                    Add as maintained goal
-                                  </button>
+                              {goalStackReview.deferredGoals.map((goal) => (
+                                <div key={goal.id} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
+                                  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
+                                    <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.4 }}>{goal.summary}</div>
+                                    <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                                      <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.background)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                        Keep in the background
+                                      </button>
+                                      <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
+                                        Pull into this block
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
+                                    {goal.reason || "This fits better after the current block gets a cleaner focus."}
+                                  </div>
                                 </div>
                               ))}
                             </div>
