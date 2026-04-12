@@ -135,3 +135,33 @@ test("grocery execution support ties recovery baskets to weekly simplification n
   assert.match(support.anchorPrompt, /breakfast anchor/i);
   assert.match(support.weeklyExecutionLine, /convenience friction/i);
 });
+
+test("grocery execution support keeps placeholders generic when location permission is off", () => {
+  const support = deriveGroceryExecutionSupport({
+    nutritionLayer: {
+      dayType: "strength",
+      travelMode: false,
+    },
+    realWorldNutrition: {
+      mealStructure: {
+        breakfast: "Eggs + oats",
+        lunch: "Chicken + potatoes",
+      },
+    },
+    weeklyNutritionReview: null,
+    favorites: {},
+    localFoodContext: {
+      locationPermissionGranted: false,
+    },
+    savedLocation: { status: "denied" },
+    dayType: "strength",
+    travelMode: false,
+    recoveryDay: false,
+    hardDay: false,
+    strengthDay: true,
+  });
+
+  assert.equal(support.city, "your area");
+  assert.equal(support.preferredStore, "your usual grocery stop");
+  assert.match(support.locationContextLine, /placeholders, not live availability/i);
+});

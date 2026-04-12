@@ -10,6 +10,7 @@ const {
   getCurrentPrescribedDayRecord,
   getCurrentPrescribedDayRevision,
 } = require("../src/services/prescribed-day-history-service.js");
+const { buildRecoveryPrescription } = require("../src/services/recovery-supplement-service.js");
 
 const buildProgramBlock = () => ({
   id: "program_block_1",
@@ -193,4 +194,20 @@ test("day review keeps recovery prescription separate from actual recovery loggi
   assert.equal(review.actualRecovery.supplementAdherence.expectedCount, 3);
   assert.equal(review.actualRecovery.supplementAdherence.matchedCount, 2);
   assert.match(review.actualRecovery.note, /mobility/i);
+});
+
+test("recovery prescription calls out when hydration targets are not explicitly stored", () => {
+  const recovery = buildRecoveryPrescription({
+    dateKey: "2026-04-10",
+    training: {
+      type: "strength",
+    },
+    nutritionPrescription: {
+      dayType: "strength",
+      targets: { cal: 2500, p: 195, c: 220, f: 72 },
+    },
+  });
+
+  assert.equal(recovery.hydrationSupport.targetOz, null);
+  assert.match(recovery.hydrationSupport.summary, /no explicit hydration target is stored/i);
 });
