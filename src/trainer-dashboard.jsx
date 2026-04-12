@@ -105,7 +105,12 @@ import {
   getNextIntakeClarifyingQuestion,
   resolveCompatibilityPrimaryGoalKey,
 } from "./services/intake-goal-flow-service.js";
-import { deriveIntakeCompletenessState } from "./services/intake-completeness-service.js";
+import {
+  buildIntakeCompletenessDraft,
+  deriveIntakeCompletenessState,
+  isStructuredIntakeCompletenessQuestion,
+  validateIntakeCompletenessAnswer,
+} from "./services/intake-completeness-service.js";
 import {
   joinDisplayParts,
   sanitizeDisplayCopy,
@@ -126,6 +131,13 @@ import {
   normalizeHomeEquipmentResponse,
   sanitizeIntakeText,
 } from "./services/intake-flow-service.js";
+import {
+  buildIntakeMachineDebugView,
+  createIntakeMachineState,
+  intakeReducer,
+  INTAKE_MACHINE_EVENTS,
+  INTAKE_MACHINE_STATES,
+} from "./services/intake-machine-service.js";
 import {
   queueCoachTranscriptMessages,
   resolveNextCoachStreamTargetId,
@@ -2413,6 +2425,65 @@ const buildGoalFeasibilityContextFromIntake = (intakeContext = {}) => ({
   },
 });
 
+const buildArbitrationIntakePacket = ({ typedIntakePacket = null, rawGoalText = "" } = {}) => {
+  const packet = typedIntakePacket && typeof typedIntakePacket === "object"
+    ? typedIntakePacket
+    : { version: "2026-04-v1", intent: "intake_interpretation" };
+  const intake = packet?.intake || packet?.intakeContext || {};
+  return {
+    ...packet,
+    intake: {
+      ...intake,
+      rawGoalText,
+    },
+  };
+};
+
+const buildConfirmedArbitrationInputs = ({
+  answers = {},
+  typedIntakePacket = null,
+  now = new Date(),
+} = {}) => {
+  const primaryGoalText = sanitizeIntakeText(String(answers?.goal_intent || "").trim()).slice(0, 320);
+  const additionalGoalTexts = readAdditionalGoalEntries({ answers });
+  const confirmedPrimaryGoal = primaryGoalText
+    ? resolveGoalTranslation({
+        rawUserGoalIntent: primaryGoalText,
+        typedIntakePacket: buildArbitrationIntakePacket({
+          typedIntakePacket,
+          rawGoalText: primaryGoalText,
+        }),
+        explicitUserConfirmation: {
+          confirmed: true,
+          acceptedProposal: true,
+          source: "confirmed_primary_goal",
+        },
+        now,
+      })?.resolvedGoals?.[0] || null
+    : null;
+  const confirmedAdditionalGoals = additionalGoalTexts.flatMap((goalText) => {
+    const resolution = resolveGoalTranslation({
+      rawUserGoalIntent: goalText,
+      typedIntakePacket: buildArbitrationIntakePacket({
+        typedIntakePacket,
+        rawGoalText: goalText,
+      }),
+      explicitUserConfirmation: {
+        confirmed: true,
+        acceptedProposal: true,
+        source: "confirmed_additional_goal",
+      },
+      now,
+    });
+    return Array.isArray(resolution?.resolvedGoals) ? resolution.resolvedGoals : [];
+  });
+  return {
+    confirmedPrimaryGoal,
+    confirmedAdditionalGoals,
+    additionalGoalTexts,
+  };
+};
+
 const buildPreviewGoalResolutionBundle = ({
   intakeContext = {},
   aiInterpretationProposal = null,
@@ -2449,9 +2520,16 @@ const buildPreviewGoalResolutionBundle = ({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     feasibility: goalFeasibility,
   });
+  const arbitrationInputs = buildConfirmedArbitrationInputs({
+    answers,
+    typedIntakePacket,
+    now,
+  });
   const arbitration = buildGoalArbitrationStack({
     resolvedGoals: feasibleResolvedGoals,
-    additionalGoalTexts: readAdditionalGoalEntries({ answers }),
+    confirmedPrimaryGoal: arbitrationInputs.confirmedPrimaryGoal,
+    confirmedAdditionalGoals: arbitrationInputs.confirmedAdditionalGoals,
+    additionalGoalTexts: arbitrationInputs.additionalGoalTexts,
     goalFeasibility,
     intakeCompleteness,
     typedIntakePacket,
@@ -4117,6 +4195,8 @@ export default function TrainerDashboard() {
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authInitializing, setAuthInitializing] = useState(true);
+  const [startupLocalResumeAvailable, setStartupLocalResumeAvailable] = useState(false);
+  const [startupLocalResumeAccepted, setStartupLocalResumeAccepted] = useState(false);
   const realtimeClientRef = useRef(null);
   const realtimeChannelRef = useRef(null);
   const realtimeResyncTimerRef = useRef(null);
@@ -4917,6 +4997,29 @@ export default function TrainerDashboard() {
     await authStorage.persistAll({ payload, authSession, setStorageStatus, setAuthSession });
   };
 
+  const hydrateLocalRuntimeCache = ({ statusOverride = null } = {}) => {
+    const cache = localLoad();
+    const hasCache = Boolean(cache && typeof cache === "object");
+    setStartupLocalResumeAvailable(hasCache);
+    if (hasCache) {
+      try {
+        const cachedRuntimeState = buildCanonicalRuntimeStateFromStorage({
+          storedPayload: cache,
+          mergePersonalization,
+          DEFAULT_PERSONALIZATION,
+          normalizeGoals,
+          DEFAULT_MULTI_GOALS,
+        });
+        validateCanonicalRuntimeStateInvariant(cachedRuntimeState, "buildCanonicalRuntimeStateFromStorage.startup");
+        applyCanonicalRuntimeState(cachedRuntimeState);
+      } catch (cacheErr) {
+        logDiag("startup.local_cache.import_failed", cacheErr?.message || "unknown");
+      }
+    }
+    if (statusOverride) setStorageStatus(statusOverride);
+    return hasCache;
+  };
+
   const sbLoad = async () => {
     await authStorage.sbLoad({
       authSession,
@@ -5189,13 +5292,15 @@ export default function TrainerDashboard() {
   useEffect(() => {
     console.log("[supabase] resolved URL:", SB_URL || "(missing)");
     if (SB_CONFIG_ERROR) {
-      setAuthError(`Cloud sync provider unavailable: ${SB_CONFIG_ERROR}`);
-      setStorageStatus(buildStorageStatus({
+      const providerStatus = buildStorageStatus({
         mode: "local",
         label: "PROVIDER ERROR",
         reason: STORAGE_STATUS_REASONS.providerUnavailable,
         detail: "Cloud sync provider is unavailable or misconfigured.",
-      }));
+      });
+      setAuthError(`Cloud sync provider unavailable: ${SB_CONFIG_ERROR}`);
+      hydrateLocalRuntimeCache({ statusOverride: providerStatus });
+      setStartupLocalResumeAccepted(true);
       setAuthInitializing(false);
       setLoading(false);
       return;
@@ -5216,6 +5321,9 @@ export default function TrainerDashboard() {
         } else {
           logDiag("auth.boot.transient_or_unknown", ensured?.status);
         }
+      }
+      if (!restored || !authSessionRef.current?.user?.id) {
+        setStartupLocalResumeAvailable(Boolean(localLoad()));
       }
       setAuthInitializing(false);
       setLoading(false);
@@ -6315,17 +6423,52 @@ Keep it plain and specific.`;
     </div>
   );
 
-  if (!authSession?.user?.id) return (
+  if (!authSession?.user?.id && !startupLocalResumeAccepted) return (
     <div style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#e7edf7", padding:"1rem" }}>
       <div style={{ width:"100%", maxWidth:380, border:"1px solid rgba(114,138,173,0.24)", borderRadius:16, padding:"1rem", background:"#162131", boxShadow:"0 14px 28px rgba(5,10,18,0.28)" }}>
         <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1.08rem", fontWeight:700, letterSpacing:"0.05em", color:"#f6f8fc", marginBottom:"0.5rem" }}>ACCOUNT ACCESS</div>
-        <div style={{ fontSize:"0.58rem", color:"#8da0bb", marginBottom:"0.5rem" }}>Sign in to load your private training state.</div>
+        <div style={{ fontSize:"0.58rem", color:"#8da0bb", marginBottom:"0.5rem" }}>
+          {storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable
+            ? "Cloud sign-in is unavailable right now. You can still keep going locally on this device."
+            : startupLocalResumeAvailable
+            ? "Sign in to sync your private training state, or continue locally with the data already on this device."
+            : "Sign in to load your private training state."}
+        </div>
         <input value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="email" style={{ marginBottom:"0.4rem" }} />
         <input type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="password" style={{ marginBottom:"0.5rem" }} />
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
-          <button className="btn btn-primary" onClick={handleSignIn} style={{ fontSize:"0.56rem" }}>SIGN IN</button>
-          <button className="btn" onClick={handleSignUp} style={{ fontSize:"0.56rem", color:"#94a3b8" }}>SIGN UP</button>
+          <button className="btn btn-primary" onClick={handleSignIn} style={{ fontSize:"0.56rem" }} disabled={storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable}>SIGN IN</button>
+          <button className="btn" onClick={handleSignUp} style={{ fontSize:"0.56rem", color:"#94a3b8" }} disabled={storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable}>SIGN UP</button>
         </div>
+        {(startupLocalResumeAvailable || storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable) && (
+          <button
+            className="btn"
+            onClick={() => {
+              if (startupLocalResumeAvailable) {
+                hydrateLocalRuntimeCache({
+                  statusOverride: buildStorageStatus({
+                    mode: "local",
+                    label: "NOT SIGNED IN",
+                    reason: STORAGE_STATUS_REASONS.notSignedIn,
+                    detail: "You are using local data because no signed-in cloud session is active.",
+                  }),
+                });
+              } else {
+                setStorageStatus(buildStorageStatus({
+                  mode: "local",
+                  label: "LOCAL MODE",
+                  reason: STORAGE_STATUS_REASONS.providerUnavailable,
+                  detail: "Cloud sign-in is unavailable, so the app is continuing with local-only storage.",
+                }));
+              }
+              setAuthError("");
+              setStartupLocalResumeAccepted(true);
+            }}
+            style={{ marginTop:"0.45rem", width:"100%", color:"#dbe7f6", borderColor:"#324961", fontSize:"0.56rem" }}
+          >
+            {startupLocalResumeAvailable ? "Continue with local data" : "Continue in local mode"}
+          </button>
+        )}
         {authError && <div style={{ marginTop:"0.45rem", fontSize:"0.55rem", color:"#f59e0b" }}>{authError}</div>}
       </div>
     </div>
@@ -6481,9 +6624,16 @@ Keep it plain and specific.`;
       resolvedGoals: goalResolution?.resolvedGoals || [],
       feasibility: goalFeasibility,
     });
+    const arbitrationInputs = buildConfirmedArbitrationInputs({
+      answers,
+      typedIntakePacket: fallbackTypedIntakePacket,
+      now: todayKey,
+    });
     const arbitration = buildGoalArbitrationStack({
       resolvedGoals: feasibleResolvedGoals,
-      additionalGoalTexts: readAdditionalGoalEntries({ answers }),
+      confirmedPrimaryGoal: arbitrationInputs.confirmedPrimaryGoal,
+      confirmedAdditionalGoals: arbitrationInputs.confirmedAdditionalGoals,
+      additionalGoalTexts: arbitrationInputs.additionalGoalTexts,
       goalFeasibility,
       intakeCompleteness,
       typedIntakePacket: fallbackTypedIntakePacket,
@@ -7259,6 +7409,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const scrollRef = useRef(null);
   const composerRef = useRef(null);
   const nextMessageIdRef = useRef(1);
+  const nextIntakeEventIdRef = useRef(1);
+  const processedIntakeMessageKeysRef = useRef(new Set());
+  const secondaryGoalAddedMessageKeysRef = useRef(new Set());
   const startedRef = useRef(false);
   const [messages, setMessages] = useState([]);
   const [answers, setAnswers] = useState({});
@@ -7274,12 +7427,17 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState([]);
   const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(null);
   const [pendingSecondaryGoalPrompt, setPendingSecondaryGoalPrompt] = useState(null);
-  const [secondaryGoalMode, setSecondaryGoalMode] = useState("");
   const [secondaryGoalEntries, setSecondaryGoalEntries] = useState([]);
+  const [clarificationValues, setClarificationValues] = useState({});
+  const [clarificationFieldErrors, setClarificationFieldErrors] = useState({});
+  const [clarificationFormError, setClarificationFormError] = useState("");
   const [confirmBuildError, setConfirmBuildError] = useState("");
+  const [confirmBuildSubmitting, setConfirmBuildSubmitting] = useState(false);
   const [assessing, setAssessing] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
+  const [intakeMachine, setIntakeMachine] = useState(() => createIntakeMachineState());
+  const intakeMachineRef = useRef(intakeMachine);
 
   const buildFlow = (currentAnswers = {}) => ([
     {
@@ -7288,8 +7446,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       message: initialPrompt,
       placeholder: "Examples: run a 1:45 half, look athletic again, get abs by summer, lose fat but keep strength",
     },
-    { key: "experience_level", type: "buttons", message: "Got it. How long have you been training consistently?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week — not your best one.", options: ["2", "3", "4", "5", "6+"] },
+    { key: "experience_level", type: "buttons", message: "Got it. What's your training experience level?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
+    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week - not your best one.", options: ["2", "3", "4", "5", "6+"] },
     { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
     ...(["Home", "Both"].includes(currentAnswers.training_location || "") ? [{
@@ -7309,6 +7467,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     messagesRef.current = messages;
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
+
+  useEffect(() => {
+    intakeMachineRef.current = intakeMachine;
+  }, [intakeMachine]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -7364,11 +7526,54 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }
   }, [currentPrompt?.key]);
 
+  const activeMachineAnchor = intakeMachine?.draft?.missingAnchorsEngine?.currentAnchor || null;
+
   useEffect(() => {
-    if (phase !== "secondary_goal") {
-      setSecondaryGoalMode("");
+    const isStructuredQuestion = isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion);
+    if (phase !== "clarify") {
+      setClarificationValues({});
+      setClarificationFieldErrors({});
+      setClarificationFormError("");
+      return;
     }
-  }, [phase]);
+    if (activeMachineAnchor?.field_id) {
+      const fieldId = activeMachineAnchor.field_id;
+      const nextValues = activeMachineAnchor?.draftValue
+        ? { [fieldId]: activeMachineAnchor.draftValue }
+        : {};
+      if (activeMachineAnchor?.input_type === "number_with_unit") {
+        nextValues[`${fieldId}__unit`] = activeMachineAnchor?.unit
+          || activeMachineAnchor?.unit_options?.[0]?.value
+          || "";
+      }
+      if (activeMachineAnchor?.input_type === "date_or_month") {
+        const storedMode = /^\d{4}-\d{2}-\d{2}$/.test(String(activeMachineAnchor?.draftValue || ""))
+          ? "date"
+          : /^\d{4}-\d{2}$/.test(String(activeMachineAnchor?.draftValue || ""))
+          ? "month"
+          : "month";
+        nextValues[`${fieldId}__mode`] = storedMode;
+      }
+      setClarificationValues(nextValues);
+      setClarificationFieldErrors({});
+      setClarificationFormError("");
+      setDraft("");
+      return;
+    }
+    if (!isStructuredQuestion) {
+      setClarificationValues({});
+      setClarificationFieldErrors({});
+      setClarificationFormError("");
+      return;
+    }
+    setClarificationValues(buildIntakeCompletenessDraft({
+      question: pendingClarifyingQuestion,
+      answers,
+    }));
+    setClarificationFieldErrors({});
+    setClarificationFormError("");
+    setDraft("");
+  }, [phase, activeMachineAnchor?.anchor_id, pendingClarifyingQuestion?.key, pendingClarifyingQuestion?.prompt, answers]);
 
   useEffect(() => {
     if (phase !== "secondary_goal") return;
@@ -7437,11 +7642,151 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     return queue.entries.map((entry) => entry.id);
   };
   const appendCoachMessage = (text) => appendCoachMessages([text])[0] || null;
+  const buildIntakeEventId = (prefix = "intake") => `${prefix}_${String(nextIntakeEventIdRef.current++).padStart(6, "0")}`;
+  const dispatchIntakeMachineEvent = (type, payload = {}) => {
+    const nextEvent = {
+      event_id: payload?.event_id || buildIntakeEventId(String(type || "intake").toLowerCase()),
+      type,
+      timestamp: new Date().toISOString(),
+      payload,
+    };
+    let nextState = intakeMachineRef.current;
+    setIntakeMachine((prev) => {
+      nextState = intakeReducer(prev, nextEvent);
+      return nextState;
+    });
+    return nextState;
+  };
+  const settleIntakeMachine = (machineState = null) => {
+    let nextState = machineState || intakeMachineRef.current;
+    let guard = 0;
+    while (nextState && guard < 4) {
+      if (nextState.stage === INTAKE_MACHINE_STATES.REALISM_GATE) {
+        nextState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.REALISM_RESULT, {
+          now: new Date().toISOString(),
+        });
+        guard += 1;
+        continue;
+      }
+      if (nextState.stage === INTAKE_MACHINE_STATES.GOAL_ARBITRATION) {
+        nextState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.ARBITRATION_RESULT, {
+          now: new Date().toISOString(),
+        });
+        guard += 1;
+        continue;
+      }
+      break;
+    }
+    return nextState || machineState || intakeMachineRef.current;
+  };
+  const syncMachineDraftToIntakeView = (machineState = null) => {
+    const draftState = machineState?.draft || null;
+    if (!draftState) return;
+    setAnswers(draftState.answers || {});
+    setAssessmentBoundary({
+      typedIntakePacket: draftState.typedIntakePacket || null,
+      aiInterpretationProposal: draftState.aiInterpretationProposal || null,
+    });
+    setAssessmentPreview({
+      goalResolution: draftState.goalResolution || null,
+      goalFeasibility: draftState.goalFeasibility || null,
+      orderedResolvedGoals: draftState.orderedResolvedGoals || [],
+      reviewModel: draftState.reviewModel || null,
+    });
+  };
   const appendUserMessage = (text) => {
     const clean = String(text || "").trim();
     if (!clean) return;
     const id = nextMessageIdRef.current++;
     setMessages((prev) => [...prev, { id, role: "user", text: clean, displayedText: clean }]);
+  };
+  useEffect(() => {
+    const pendingMessages = (Array.isArray(intakeMachine?.outbox) ? intakeMachine.outbox : [])
+      .filter((message) => message?.key && !processedIntakeMessageKeysRef.current.has(message.key));
+    if (pendingMessages.length === 0) return;
+    pendingMessages.forEach((message) => processedIntakeMessageKeysRef.current.add(message.key));
+    appendCoachMessages(pendingMessages.map((message) => message.text));
+  }, [intakeMachine?.outbox]);
+  const updateClarificationValue = (fieldKey, value) => {
+    setClarificationValues((prev) => ({
+      ...prev,
+      [fieldKey]: value,
+    }));
+    setClarificationFieldErrors((prev) => {
+      if (!prev?.[fieldKey]) return prev;
+      const next = { ...(prev || {}) };
+      delete next[fieldKey];
+      return next;
+    });
+    if (clarificationFormError) setClarificationFormError("");
+  };
+  const formatMonthInputLabel = (value = "") => {
+    const match = String(value || "").match(/^(\d{4})-(\d{2})$/);
+    if (!match) return String(value || "").trim();
+    const [, year, month] = match;
+    const monthIndex = Math.max(0, Math.min(11, Number(month) - 1));
+    const monthLabel = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December",
+    ][monthIndex] || month;
+    return `${monthLabel} ${year}`;
+  };
+  const buildAnchorSubmissionPayload = (anchor = null) => {
+    if (!anchor?.field_id) return null;
+    const fieldId = anchor.field_id;
+    const rawValue = clarificationValues?.[fieldId];
+    if (anchor.input_type === "choice_chips") {
+      const selectedValue = String(rawValue || "").trim();
+      const selectedOption = (Array.isArray(anchor.options) ? anchor.options : []).find((option) => option?.value === selectedValue) || null;
+      if (!selectedValue) return null;
+      return {
+        answer_value: {
+          value: selectedValue,
+          raw: selectedOption?.label || selectedValue,
+        },
+        raw_text: selectedOption?.label || selectedValue,
+      };
+    }
+    if (anchor.input_type === "date_or_month") {
+      const modeKey = `${fieldId}__mode`;
+      const mode = String(clarificationValues?.[modeKey] || "month").trim().toLowerCase() || "month";
+      const selectedValue = String(rawValue || "").trim();
+      if (!selectedValue) return null;
+      const displayValue = mode === "month" ? formatMonthInputLabel(selectedValue) : selectedValue;
+      return {
+        answer_value: {
+          mode,
+          value: selectedValue,
+          raw: displayValue,
+        },
+        raw_text: displayValue,
+      };
+    }
+    if (anchor.input_type === "number_with_unit") {
+      const unitKey = `${fieldId}__unit`;
+      const numericValue = String(rawValue || "").trim();
+      const selectedUnit = String(
+        clarificationValues?.[unitKey]
+        || anchor?.unit
+        || (Array.isArray(anchor?.unit_options) ? anchor.unit_options[0]?.value : "")
+        || ""
+      ).trim();
+      if (!numericValue) return null;
+      return {
+        answer_value: {
+          value: numericValue,
+          unit: selectedUnit,
+          raw: selectedUnit ? `${numericValue} ${selectedUnit}` : numericValue,
+        },
+        raw_text: selectedUnit ? `${numericValue} ${selectedUnit}` : numericValue,
+      };
+    }
+    const cleanValue = String(rawValue || "").trim();
+    if (!cleanValue) return null;
+    return {
+      answer_value: cleanValue,
+      raw_text: cleanValue,
+    };
   };
   const finalizeAssessmentState = ({
     assessment = null,
@@ -7450,7 +7795,17 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   } = {}) => {
     setConfirmBuildError("");
     const cleanTimeline = sanitizeIntakeText(assessment?.text || "");
-    const reviewModelForAssessment = buildIntakeGoalReviewModel({
+    const interpretedMachineState = settleIntakeMachine(dispatchIntakeMachineEvent(
+      INTAKE_MACHINE_EVENTS.INTERPRETATION_READY,
+      {
+        assessment,
+        answers: updatedAnswers,
+        goalStackConfirmation,
+        now: new Date().toISOString(),
+      }
+    ));
+    syncMachineDraftToIntakeView(interpretedMachineState);
+    const reviewModelForAssessment = interpretedMachineState?.draft?.reviewModel || buildIntakeGoalReviewModel({
       goalResolution: assessment?.goalResolution || null,
       orderedResolvedGoals: assessment?.orderedResolvedGoals || [],
       goalFeasibility: assessment?.goalFeasibility || null,
@@ -7458,34 +7813,21 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       answers: updatedAnswers,
       goalStackConfirmation,
     });
-    const nextQuestion = getNextIntakeClarifyingQuestion({
-      reviewModel: reviewModelForAssessment,
-      askedQuestions,
-      maxQuestions: 2,
-    });
-    const nextSecondaryGoalPrompt = buildIntakeSecondaryGoalPrompt({
-      reviewModel: reviewModelForAssessment,
-      answers: updatedAnswers,
-    });
+    const nextMachineAnchor = interpretedMachineState?.draft?.missingAnchorsEngine?.currentAnchor || null;
+    const nextSecondaryGoalPrompt = interpretedMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
+      ? buildIntakeSecondaryGoalPrompt({
+          reviewModel: reviewModelForAssessment,
+          answers: interpretedMachineState?.draft?.answers || updatedAnswers,
+        })
+      : null;
     setAssessmentText(cleanTimeline);
-    setAssessmentBoundary({
-      typedIntakePacket: assessment?.typedIntakePacket || null,
-      aiInterpretationProposal: assessment?.aiInterpretationProposal || null,
-    });
-    setAssessmentPreview({
-      goalResolution: assessment?.goalResolution || null,
-      goalFeasibility: assessment?.goalFeasibility || null,
-      orderedResolvedGoals: assessment?.orderedResolvedGoals || [],
-      reviewModel: reviewModelForAssessment,
-    });
-    setAnswers(updatedAnswers);
-    if (nextQuestion) {
-      setPendingClarifyingQuestion(nextQuestion);
+    if (nextMachineAnchor) {
+      setPendingClarifyingQuestion(null);
       setPendingSecondaryGoalPrompt(null);
       setPhase("clarify");
       appendCoachMessages(buildIntakeClarificationCoachMessages({
         statusText: cleanTimeline,
-        nextQuestion,
+        nextQuestion: { prompt: nextMachineAnchor.question },
       }));
       return;
     }
@@ -7507,6 +7849,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   } = {}) => {
     setAssessing(true);
     setPhase("assessment");
+    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED, {
+      answers: updatedAnswers,
+      askedQuestions,
+      now: new Date().toISOString(),
+    });
     const assessment = await buildTypedIntakeAssessment({ answers: updatedAnswers, existingMemory });
     finalizeAssessmentState({
       assessment,
@@ -7553,7 +7900,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   };
   const requestAdjustment = () => {
     setConfirmBuildError("");
-    appendUserMessage("I want to adjust something");
+    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_EDITED, {
+      answers,
+      now: new Date().toISOString(),
+    });
+    appendUserMessage("Adjust this goal");
     setPhase("adjust");
     setDraft("");
     setAskedClarifyingQuestions([]);
@@ -7581,15 +7932,108 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     await runAssessment({ updatedAnswers, askedQuestions: [] });
   };
   const submitClarification = async () => {
-    const clean = String(draft || "").trim();
-    if (!clean || !pendingClarifyingQuestion?.prompt) return;
+    if (!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.prompt) return;
     setConfirmBuildError("");
-    appendUserMessage(clean);
-    setDraft("");
+    if (activeMachineAnchor?.field_id) {
+      const submissionPayload = buildAnchorSubmissionPayload(activeMachineAnchor);
+      if (!submissionPayload?.raw_text) return;
+      const nextMachineState = settleIntakeMachine(dispatchIntakeMachineEvent(
+        INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+        {
+          anchor: activeMachineAnchor,
+          field_id: activeMachineAnchor.field_id,
+          answer_value: submissionPayload.answer_value,
+          raw_text: submissionPayload.raw_text,
+          source: "user",
+          now: new Date().toISOString(),
+        }
+      ));
+      appendUserMessage(submissionPayload.raw_text);
+      if (nextMachineState?.ui?.lastParseError) {
+        setClarificationFieldErrors({ [activeMachineAnchor.field_id]: nextMachineState.ui.lastParseError });
+        setClarificationFormError(nextMachineState.ui.lastParseError);
+        return;
+      }
+      syncMachineDraftToIntakeView(nextMachineState);
+      setClarificationValues({});
+      setClarificationFieldErrors({});
+      setClarificationFormError("");
+      setPendingClarifyingQuestion(null);
+      const nextSecondaryGoalPrompt = nextMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
+        ? buildIntakeSecondaryGoalPrompt({
+            reviewModel: nextMachineState?.draft?.reviewModel || null,
+            answers: nextMachineState?.draft?.answers || answers,
+          })
+        : null;
+      if (nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
+        setPendingSecondaryGoalPrompt(null);
+        setPhase("clarify");
+        return;
+      }
+      if (nextSecondaryGoalPrompt) {
+        setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
+        setPhase("secondary_goal");
+        return;
+      }
+      setPendingSecondaryGoalPrompt(null);
+      setPhase("review");
+      return;
+    }
     const questionSource = String(pendingClarifyingQuestion?.source || "").trim().toLowerCase();
     const currentResolvedGoals = Array.isArray(assessmentPreview?.orderedResolvedGoals) ? assessmentPreview.orderedResolvedGoals : [];
 
     if (questionSource === "completeness") {
+      if (isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion)) {
+        const validation = validateIntakeCompletenessAnswer({
+          question: pendingClarifyingQuestion,
+          answerValues: clarificationValues,
+        });
+        if (!validation.isValid) {
+          setClarificationFieldErrors(validation.fieldErrors || {});
+          setClarificationFormError(validation.formError || pendingClarifyingQuestion?.validation?.message || "Add the detail I asked for before continuing.");
+          return;
+        }
+        const transcriptSummary = validation.summaryText || pendingClarifyingQuestion.prompt;
+        appendUserMessage(transcriptSummary);
+        const structuredAnswer = applyIntakeCompletenessAnswer({
+          answers,
+          question: pendingClarifyingQuestion,
+          answerValues: clarificationValues,
+        });
+        const timelineFieldStored = structuredAnswer.storedFieldKeys.includes("target_timeline");
+        const updatedAnswers = {
+          ...structuredAnswer.answers,
+          timeline_feedback: pendingClarifyingQuestion?.affectsTimeline && timelineFieldStored
+            ? transcriptSummary
+            : (structuredAnswer.answers.timeline_feedback || ""),
+        };
+        const completenessAfterAnswer = deriveIntakeCompletenessState({
+          resolvedGoals: currentResolvedGoals,
+          answers: updatedAnswers,
+        });
+        const currentQuestionStillMissing = completenessAfterAnswer.missingRequired.some(
+          (item) => item?.key === pendingClarifyingQuestion?.key
+        );
+
+        if (!currentQuestionStillMissing) {
+          const nextAskedQuestions = [...askedClarifyingQuestions, pendingClarifyingQuestion.key || pendingClarifyingQuestion.prompt];
+          setAskedClarifyingQuestions(nextAskedQuestions);
+          setClarificationValues({});
+          setClarificationFieldErrors({});
+          setClarificationFormError("");
+          await runAssessment({ updatedAnswers, askedQuestions: nextAskedQuestions });
+          return;
+        }
+
+        setClarificationFieldErrors({});
+        setClarificationFormError("I still need one more piece of this answer before I can move on.");
+        return;
+      }
+
+      const clean = String(draft || "").trim();
+      if (!clean) return;
+      appendUserMessage(clean);
+      setDraft("");
       const structuredAnswer = applyIntakeCompletenessAnswer({
         answers,
         question: pendingClarifyingQuestion,
@@ -7637,6 +8081,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       return;
     }
 
+    const clean = String(draft || "").trim();
+    if (!clean) return;
+    appendUserMessage(clean);
+    setDraft("");
     const adjustmentOutcome = applyIntakeGoalAdjustment({
       answers,
       adjustmentText: clean,
@@ -7704,7 +8152,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setSecondaryGoalEntries(readAdditionalGoalEntries({ answers: outcome.answers }));
     if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal && outcome.keepCollecting) {
       setDraft("");
-      appendCoachMessage("Added. If there's another goal that matters, drop it in. Otherwise continue.");
+      const goalMessageKey = String(customText || "").trim().toLowerCase();
+      if (goalMessageKey && !secondaryGoalAddedMessageKeysRef.current.has(goalMessageKey)) {
+        secondaryGoalAddedMessageKeysRef.current.add(goalMessageKey);
+        processedIntakeMessageKeysRef.current.add(`goal_added:${goalMessageKey}`);
+        appendCoachMessage(`Added ${customText.trim()}. If there's another goal that matters, drop it in. Otherwise we can keep moving.`);
+      }
       return;
     }
     setDraft("");
@@ -7715,10 +8168,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setPhase("review");
       appendCoachMessage(
         response.key === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly
-          ? "Keeping this plan focused on the primary goal."
+          ? "Perfect. We'll keep the plan focused on the main goal."
           : stagedEntries.length
-          ? "Got it. I'll fold those extra goals into the review before I build."
-          : "Keeping the review focused on the current goal stack."
+          ? "Perfect. I'll fold those extra goals into the review."
+          : "No problem. We'll keep the review centered on the main goal."
       );
       return;
     }
@@ -7727,6 +8180,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     await runAssessment({ updatedAnswers: outcome.answers, askedQuestions: [] });
   };
   const finalizePlan = async () => {
+    if (confirmBuildSubmitting) return;
     setConfirmBuildError("");
     if (!confirmationState?.canConfirm && confirmationState?.nextQuestion?.prompt) {
       setPendingClarifyingQuestion(confirmationState.nextQuestion);
@@ -7744,6 +8198,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       appendCoachMessage(blockedReason);
       return;
     }
+    setConfirmBuildSubmitting(true);
+    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_CONFIRMED, {
+      now: new Date().toISOString(),
+    });
     appendUserMessage("Looks good, build my plan");
     setPhase("building");
     const payload = {
@@ -7764,6 +8222,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           : "I hit a problem while finishing onboarding. Please try again."
       );
       setConfirmBuildError(failureMessage);
+      setConfirmBuildSubmitting(false);
       setPhase("review");
       appendCoachMessage(failureMessage);
     }
@@ -7778,6 +8237,18 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const displayedTrackingLabels = Array.from(new Set(
     (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
   ));
+  const machineDebugView = useMemo(() => buildIntakeMachineDebugView(intakeMachine), [intakeMachine]);
+  const visibleMachineAnchorCards = phase === "clarify" && activeMachineAnchor?.field_id
+    ? (Array.isArray(intakeMachine?.draft?.missingAnchorsEngine?.missingAnchors) ? intakeMachine.draft.missingAnchorsEngine.missingAnchors.slice(0, 3) : [])
+    : [];
+  const isMachineAnchorClarification = phase === "clarify" && Boolean(activeMachineAnchor?.field_id);
+  const isStructuredClarification = isMachineAnchorClarification || (phase === "clarify" && isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion));
+  const activeMachineAnchorSubmission = isMachineAnchorClarification ? buildAnchorSubmissionPayload(activeMachineAnchor) : null;
+  const clarificationInputFields = isMachineAnchorClarification
+    ? []
+    : (Array.isArray(pendingClarifyingQuestion?.inputFields) ? pendingClarifyingQuestion.inputFields : []);
+  const clarificationPromptText = activeMachineAnchor?.question || pendingClarifyingQuestion?.prompt || "";
+  const clarificationValidationMessage = activeMachineAnchor?.validation?.message || pendingClarifyingQuestion?.validation?.message || "";
   const setLeadingGoal = (goalId) => {
     setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
       resolvedGoals: reviewGoals,
@@ -7932,27 +8403,323 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
               <div style={{ display:"grid", gap:"0.65rem" }}>
                 {phase === "clarify" ? (
                   <div style={{ display:"grid", gap:"0.5rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>One targeted clarification</div>
-                    <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingClarifyingQuestion?.prompt || ""}</div>
-                    <textarea
-                      ref={composerRef}
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      placeholder={pendingClarifyingQuestion?.placeholder || "Short answer..."}
-                      rows={3}
-                      style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
-                    />
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>
+                      {isMachineAnchorClarification || isStructuredClarification ? "One required detail" : "One targeted clarification"}
+                    </div>
+                    <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{clarificationPromptText}</div>
+                    {!isMachineAnchorClarification && isStructuredClarification && clarificationValidationMessage && (
+                      <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                        {clarificationValidationMessage}
+                      </div>
+                    )}
+                    {isMachineAnchorClarification ? (
+                      <div style={{ display:"grid", gap:"0.65rem" }}>
+                        {visibleMachineAnchorCards.map((anchorCard, index) => {
+                          const isActiveCard = index === 0;
+                          const fieldId = anchorCard.field_id;
+                          const fieldValue = String(clarificationValues?.[fieldId] || "");
+                          const unitKey = `${fieldId}__unit`;
+                          const modeKey = `${fieldId}__mode`;
+                          const selectedUnit = String(
+                            clarificationValues?.[unitKey]
+                            || anchorCard?.unit
+                            || anchorCard?.unit_options?.[0]?.value
+                            || ""
+                          );
+                          const selectedMode = String(clarificationValues?.[modeKey] || "month");
+                          const selectedChoice = String(clarificationValues?.[fieldId] || "");
+                          return (
+                            <div
+                              key={anchorCard.anchor_id}
+                              style={{
+                                display:"grid",
+                                gap:"0.55rem",
+                                border:isActiveCard ? "1px solid rgba(0,194,255,0.28)" : "1px solid rgba(111,148,198,0.12)",
+                                borderRadius:18,
+                                padding:"0.8rem",
+                                background:isActiveCard ? "rgba(7,18,33,0.92)" : "rgba(10,18,32,0.6)",
+                                opacity:isActiveCard ? 1 : 0.72,
+                              }}
+                            >
+                              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"baseline" }}>
+                                <div style={{ display:"grid", gap:"0.18rem" }}>
+                                  <div style={{ fontSize:"0.46rem", color:isActiveCard ? "#8fa5c8" : "#64748b", letterSpacing:"0.12em" }}>
+                                    {isActiveCard ? "ACTIVE FIELD" : "UP NEXT"}
+                                  </div>
+                                  <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.35 }}>{anchorCard.label}</div>
+                                </div>
+                                <div style={{ fontSize:"0.48rem", color:"#64748b" }}>
+                                  {index + 1} / {Math.max(visibleMachineAnchorCards.length, 1)}
+                                </div>
+                              </div>
+                              {anchorCard.why_it_matters && (
+                                <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>
+                                  {anchorCard.why_it_matters}
+                                </div>
+                              )}
+                              {anchorCard.coach_voice_line && (
+                                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                                  {anchorCard.coach_voice_line}
+                                </div>
+                              )}
+                              {isActiveCard ? (
+                                <div style={{ display:"grid", gap:"0.55rem" }}>
+                                  {anchorCard.input_type === "choice_chips" && (
+                                    <div style={{ display:"grid", gap:"0.5rem" }}>
+                                      <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+                                        {(anchorCard.options || []).map((option) => {
+                                          const selected = selectedChoice === option.value;
+                                          return (
+                                            <button
+                                              key={option.value}
+                                              className="btn"
+                                              onClick={() => updateClarificationValue(fieldId, option.value)}
+                                              style={{
+                                                minHeight:44,
+                                                fontSize:"0.62rem",
+                                                color:selected ? "#07131f" : "#dbe7f6",
+                                                borderColor:selected ? "rgba(39,245,154,0.45)" : "#324961",
+                                                background:selected ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)",
+                                              }}
+                                            >
+                                              {option.label}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                      {(anchorCard.options || []).find((option) => option.value === selectedChoice)?.description && (
+                                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                                          {(anchorCard.options || []).find((option) => option.value === selectedChoice)?.description}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {anchorCard.input_type === "date_or_month" && (
+                                    <div style={{ display:"grid", gap:"0.5rem" }}>
+                                      <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+                                        {[
+                                          { value: "month", label: "Target month" },
+                                          { value: "date", label: "Exact date" },
+                                        ].map((option) => {
+                                          const selected = selectedMode === option.value;
+                                          return (
+                                            <button
+                                              key={option.value}
+                                              className="btn"
+                                              onClick={() => updateClarificationValue(modeKey, option.value)}
+                                              style={{
+                                                minHeight:40,
+                                                fontSize:"0.58rem",
+                                                color:selected ? "#07131f" : "#dbe7f6",
+                                                borderColor:selected ? "rgba(0,194,255,0.45)" : "#324961",
+                                                background:selected ? "linear-gradient(135deg, rgba(0,194,255,0.9), rgba(127,221,255,0.72))" : "rgba(15,23,42,0.72)",
+                                              }}
+                                            >
+                                              {option.label}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                      <input
+                                        ref={composerRef}
+                                        type={selectedMode === "date" ? "date" : "month"}
+                                        value={fieldValue}
+                                        onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+                                        style={{ fontSize:"0.86rem" }}
+                                      />
+                                    </div>
+                                  )}
+                                  {anchorCard.input_type === "number_with_unit" && (
+                                    <div style={{ display:"grid", gap:"0.5rem" }}>
+                                      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
+                                        <input
+                                          ref={composerRef}
+                                          type="number"
+                                          inputMode="decimal"
+                                          min={Number.isFinite(anchorCard?.validation?.min) ? anchorCard.validation.min : undefined}
+                                          max={Number.isFinite(anchorCard?.validation?.max) ? anchorCard.validation.max : undefined}
+                                          step="any"
+                                          value={fieldValue}
+                                          onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+                                          placeholder={anchorCard.placeholder || "Add this detail..."}
+                                          style={{
+                                            fontSize:"0.86rem",
+                                            borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
+                                            boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                          }}
+                                        />
+                                        {(anchorCard.unit_options?.length || 0) > 1 ? (
+                                          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                                            {anchorCard.unit_options.map((option) => {
+                                              const selected = selectedUnit === option.value;
+                                              return (
+                                                <button
+                                                  key={option.value}
+                                                  className="btn"
+                                                  onClick={() => updateClarificationValue(unitKey, option.value)}
+                                                  style={{
+                                                    minHeight:40,
+                                                    fontSize:"0.56rem",
+                                                    color:selected ? "#07131f" : "#dbe7f6",
+                                                    borderColor:selected ? "rgba(39,245,154,0.45)" : "#324961",
+                                                    background:selected ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)",
+                                                  }}
+                                                >
+                                                  {option.label}
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        ) : (
+                                          <div style={{ alignSelf:"center", fontSize:"0.56rem", color:"#8fa5c8", padding:"0 0.3rem" }}>
+                                            {anchorCard.unit || anchorCard.unit_options?.[0]?.label || ""}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {anchorCard.input_type === "strength_top_set" && (
+                                    <input
+                                      ref={composerRef}
+                                      type="text"
+                                      value={fieldValue}
+                                      onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+                                      placeholder={anchorCard.placeholder || "Example: 185x5"}
+                                      style={{
+                                        fontSize:"0.86rem",
+                                        borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
+                                        boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                      }}
+                                    />
+                                  )}
+                                  {anchorCard.input_type !== "choice_chips" && anchorCard.input_type !== "date_or_month" && anchorCard.input_type !== "number_with_unit" && anchorCard.input_type !== "strength_top_set" && (
+                                    <input
+                                      ref={composerRef}
+                                      type={anchorCard.input_type === "number" ? "number" : "text"}
+                                      inputMode={anchorCard.input_type === "number" ? "decimal" : undefined}
+                                      min={Number.isFinite(anchorCard?.validation?.min) ? anchorCard.validation.min : undefined}
+                                      max={Number.isFinite(anchorCard?.validation?.max) ? anchorCard.validation.max : undefined}
+                                      step={anchorCard.input_type === "number" ? "any" : undefined}
+                                      value={fieldValue}
+                                      onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+                                      placeholder={anchorCard.placeholder || "Add this detail..."}
+                                      style={{
+                                        fontSize:"0.86rem",
+                                        borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
+                                        boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                      }}
+                                    />
+                                  )}
+                                  {anchorCard.helper_text && (
+                                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                                      {anchorCard.helper_text}
+                                    </div>
+                                  )}
+                                  {(anchorCard.examples || []).length > 0 && (
+                                    <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                                      {anchorCard.examples.map((example) => (
+                                        <button
+                                          key={example}
+                                          className="btn"
+                                          onClick={() => {
+                                            if (anchorCard.input_type === "choice_chips") return;
+                                            updateClarificationValue(fieldId, example);
+                                          }}
+                                          style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
+                                        >
+                                          {example}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {clarificationFieldErrors?.[fieldId] && (
+                                    <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[fieldId]}</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize:"0.5rem", color:"#64748b", lineHeight:1.5 }}>
+                                  {(anchorCard.examples || []).length > 0
+                                    ? `Examples: ${anchorCard.examples.join(" • ")}`
+                                    : anchorCard.helper_text || "This card will open next."}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {clarificationFormError && (
+                          <div style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
+                            {clarificationFormError}
+                          </div>
+                        )}
+                      </div>
+                    ) : isStructuredClarification ? (
+                      <div style={{ display:"grid", gap:"0.55rem" }}>
+                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.55rem" }}>
+                          {clarificationInputFields.map((field, index) => (
+                            <label key={field.key} style={{ display:"grid", gap:"0.24rem" }}>
+                              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>
+                                {field.label}{field.required ? " *" : ""}
+                              </div>
+                              <input
+                                ref={index === 0 ? composerRef : null}
+                                type={field.inputType === "number" ? "number" : "text"}
+                                inputMode={field.inputType === "number" ? "decimal" : undefined}
+                                min={Number.isFinite(field.min) ? field.min : undefined}
+                                max={Number.isFinite(field.max) ? field.max : undefined}
+                                step={field.inputType === "number" ? "any" : undefined}
+                                value={clarificationValues?.[field.key] || ""}
+                                onChange={(e) => updateClarificationValue(field.key, e.target.value)}
+                                placeholder={field.placeholder || "Add this detail..."}
+                                style={{
+                                  fontSize:"0.86rem",
+                                  borderColor:clarificationFieldErrors?.[field.key] ? "rgba(255,138,0,0.65)" : undefined,
+                                  boxShadow:clarificationFieldErrors?.[field.key] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                }}
+                              />
+                              {field.helperText && (
+                                <div style={{ fontSize:"0.5rem", color:"#64748b", lineHeight:1.45 }}>{field.helperText}</div>
+                              )}
+                              {clarificationFieldErrors?.[field.key] && (
+                                <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[field.key]}</div>
+                              )}
+                            </label>
+                          ))}
+                        </div>
+                        {clarificationFormError && (
+                          <div style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
+                            {clarificationFormError}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <textarea
+                        ref={composerRef}
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        placeholder={pendingClarifyingQuestion?.placeholder || "Short answer..."}
+                        rows={3}
+                        style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
+                      />
+                    )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={submitClarification} disabled={!draft.trim()}>
+                      <button
+                        className="btn btn-primary"
+                        onClick={submitClarification}
+                        disabled={isMachineAnchorClarification
+                          ? !activeMachineAnchorSubmission?.raw_text
+                          : isStructuredClarification
+                          ? clarificationInputFields.every((field) => !String(clarificationValues?.[field.key] || "").trim())
+                          : !draft.trim()}
+                      >
                         Save this detail
                       </button>
-                      {!pendingClarifyingQuestion?.required && (
+                      {!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.required && (
                         <button className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
-                          Use current interpretation
+                          Keep this goal
                         </button>
                       )}
                       <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
-                        I want to adjust something
+                        Adjust this goal
                       </button>
                     </div>
                   </div>
@@ -7960,7 +8727,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
                 {phase === "secondary_goal" ? (
                   <div style={{ display:"grid", gap:"0.55rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Anything else that matters?</div>
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Anything else?</div>
                     <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingSecondaryGoalPrompt?.prompt || ""}</div>
                     {pendingSecondaryGoalPrompt?.helperText && (
                       <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.55 }}>{pendingSecondaryGoalPrompt.helperText}</div>
@@ -7979,7 +8746,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     )}
                     {secondaryGoalEntries.length > 0 && (
                       <div style={{ display:"grid", gap:"0.3rem" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>ADDED GOALS</div>
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>YOUR EXTRA GOALS</div>
                         <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
                           {secondaryGoalEntries.map((goal) => (
                             <button
@@ -8038,10 +8805,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           {reviewModel.goalTypeLabel || "Goal"}
                         </div>
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Reality check: {reviewModel.realismLabel}
+                          How this looks: {reviewModel.realismLabel}
                         </div>
                         <div style={{ fontSize:"0.5rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Review status: {confirmationState?.statusLabel || "Review pending"}
+                          Plan status: {confirmationState?.statusLabel || "Review pending"}
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
@@ -8053,9 +8820,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>STILL NEEDED</div>
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>NEED BEFORE I BUILD</div>
                         <div style={{ display:"grid", gap:"0.18rem" }}>
-                          {(reviewModel.unresolvedItems.length ? reviewModel.unresolvedItems : ["Nothing critical. This is specific enough to plan from."]).map((item) => (
+                          {(reviewModel.unresolvedItems.length ? reviewModel.unresolvedItems : ["Nothing critical. I have enough to build from here."]).map((item) => (
                             <div key={item} style={{ fontSize:"0.54rem", color:reviewModel.unresolvedItems.length ? C.amber : "#8fa5c8", lineHeight:1.5 }}>{item}</div>
                           ))}
                         </div>
@@ -8064,20 +8831,20 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
                     {goalStackReview?.activeGoals?.length > 0 && (
                       <div style={{ display:"grid", gap:"0.55rem" }}>
-                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>PLAN FOCUS</div>
+                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>FOCUS RIGHT NOW</div>
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.55rem" }}>
                           {goalStackReview.activeGoals.map((goal, index) => {
                             const isPrimary = goal.role === GOAL_STACK_ROLES.primary || index === 0;
                             return (
                               <div key={goal.id || goal.summary} style={{ border:`1px solid ${isPrimary ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.14)"}`, borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                                <div style={{ fontSize:"0.46rem", color:isPrimary ? C.green : "#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>{isPrimary ? "Lead goal" : "Maintain while chasing it"}</div>
+                                <div style={{ fontSize:"0.46rem", color:isPrimary ? C.green : "#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>{isPrimary ? "Lead goal" : "Also keep"}</div>
                                 <div style={{ fontSize:"0.62rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
                                 <div style={{ fontSize:"0.51rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>
                                   What we'll measure: {(goal.trackingLabels.length ? goal.trackingLabels : ["First 30-day success definition"]).join(" - ")}
                                 </div>
                                 {goal.tradeoff && (
                                   <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                                    Main tradeoff: {goal.tradeoff}
+                                    What to expect: {goal.tradeoff}
                                   </div>
                                 )}
                                 {!goal.tradeoff && goal.reason && (
@@ -8093,7 +8860,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                   )}
                                   {!isPrimary && (
                                     <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                      Keep as maintained goal
+                                      Keep as an also-keep goal
                                     </button>
                                   )}
                                   {!isPrimary && (
@@ -8108,23 +8875,23 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                         {goalStackReview?.backgroundGoals?.length > 0 && (
                           <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>SUPPORT IN THE BACKGROUND</div>
+                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>NOT THE FOCUS RIGHT NOW</div>
                             <div style={{ display:"grid", gap:"0.36rem" }}>
                               {goalStackReview.backgroundGoals.map((goal) => (
                                 <div key={goal.id} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
                                   <div style={{ fontSize:"0.58rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
                                   <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
-                                    {goal.reason || "This stays acknowledged, but the block will not optimize it directly."}
+                                    {goal.reason || "We’ll keep this in mind, but it won’t drive the plan right now."}
                                   </div>
                                   <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.45 }}>
                                     What we'll watch: {(goal.trackingLabels.length ? goal.trackingLabels : ["Weekly check-ins"]).join(" - ")}
                                   </div>
                                   <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.38rem" }}>
                                     <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                      Pull this into the block
+                                      Also keep this
                                     </button>
                                     <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.deferred)} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
-                                      Move this later
+                                      Not the focus right now
                                     </button>
                                   </div>
                                 </div>
@@ -8134,7 +8901,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         )}
                         {goalStackReview.primaryTradeoff && (
                           <div style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>MAIN TRADEOFF</div>
+                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>WHAT TO EXPECT</div>
                             <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalStackReview.primaryTradeoff}</div>
                           </div>
                         )}
@@ -8142,11 +8909,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)", opacity:goalStackReview.backgroundPriority.enabled ? 1 : 0.72 }}>
                             <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
                               <div>
-                                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>KEEP PROTECTED</div>
+                                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>RECOVERY STAYS PROTECTED</div>
                                 <div style={{ fontSize:"0.58rem", color:"#f8fbff" }}>{goalStackReview.backgroundPriority.label}</div>
                               </div>
                               <button className="btn" onClick={toggleBackgroundPriority} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                {goalStackReview.backgroundPriority.enabled ? "Keep this protected" : "Protect this too"}
+                                {goalStackReview.backgroundPriority.enabled ? "Let recovery flex more" : "Keep recovery protected"}
                               </button>
                             </div>
                             <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>{goalStackReview.backgroundPriority.summary}</div>
@@ -8157,7 +8924,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         )}
                         {goalStackReview?.deferredGoals?.length > 0 && (
                           <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>LATER GOALS</div>
+                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>LATER, NOT NOW</div>
                             <div style={{ display:"grid", gap:"0.28rem" }}>
                               {goalStackReview.deferredGoals.map((goal) => (
                                 <div key={goal.id} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
@@ -8165,15 +8932,15 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.4 }}>{goal.summary}</div>
                                     <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
                                       <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.background)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                        Keep in the background
+                                        Not the focus right now
                                       </button>
                                       <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
-                                        Pull into this block
+                                        Also keep this
                                       </button>
                                     </div>
                                   </div>
                                   <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
-                                    {goal.reason || "This fits better after the current block gets a cleaner focus."}
+                                    {goal.reason || "This makes more sense after the current block has a cleaner focus."}
                                   </div>
                                 </div>
                               ))}
@@ -8187,23 +8954,23 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
                 {phase === "review" ? (
                   <div style={{ display:"grid", gap:"0.55rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>This is the plan direction I'm going to build from.</div>
+                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Here’s the direction I’d build from.</div>
                     {confirmationState?.headline && (
                       <div style={{ fontSize:"0.56rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", lineHeight:1.55 }}>
                         {confirmationState.headline}
                       </div>
                     )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={finalizePlan} disabled={!confirmationState?.ctaEnabled || assessing || isCoachStreaming}>
+                      <button className="btn btn-primary" onClick={finalizePlan} disabled={!confirmationState?.ctaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting}>
                         {confirmationState?.ctaLabel || "Confirm and build my plan"}
                       </button>
                       <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
-                        Adjust the goal
+                        Adjust this goal
                       </button>
                     </div>
                     {(confirmationState?.state === "blocked" || confirmationState?.state === "incomplete") && (
                       <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
-                        {confirmBuildError || confirmationState?.reason || "I still need one or two critical details before I can build the plan credibly."}
+                        {confirmBuildError || confirmationState?.reason || "I still need one or two details before I can build this well."}
                       </div>
                     )}
                     {confirmationState?.state === "warn" && confirmationState?.reason && (
@@ -8232,7 +8999,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                   style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
                 />
                 <button className="btn btn-primary" onClick={submitAdjustment} disabled={!draft.trim()}>
-                  Update the assessment
+                  Update this goal
                 </button>
               </div>
             )}
@@ -9056,8 +9823,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 function OnboardingCoachLegacy({ onComplete }) {
   const SCRIPT = [
     { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
-    { key: "experience_level", text: "How long have you been training consistently?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
+    { key: "experience_level", text: "What's your training experience level?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
+    { key: "training_days", text: "How many days per week can you realistically train? Not your best week - your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
     { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
@@ -9388,8 +10155,8 @@ function OnboardingCoachLegacy({ onComplete }) {
 function OnboardingCoachLegacyFallback({ onComplete }) {
   const SCRIPT = [
     { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
-    { key: "experience_level", text: "How long have you been training consistently?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
+    { key: "experience_level", text: "What's your training experience level?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
+    { key: "training_days", text: "How many days per week can you realistically train? Not your best week - your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
     { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
@@ -11952,6 +12719,27 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                     Tradeoffs to respect: {goalChangePreview.goalFeasibility.conflictFlags.map((item) => item.summary).filter(Boolean).join(" - ")}
                   </div>
                 )}
+
+                <details style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(8,14,25,0.58)" }}>
+                  <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>INTAKE DEBUG</summary>
+                  <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.65rem" }}>
+                    <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.55 }}>
+                      State: {machineDebugView?.state || "pending"}
+                    </div>
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                      Missing anchors: {(machineDebugView?.missing_anchors?.length || 0)
+                        ? machineDebugView.missing_anchors.map((item) => item.field_id).join(", ")
+                        : "none"}
+                    </div>
+                    <div style={{ display:"grid", gap:"0.28rem" }}>
+                      {(machineDebugView?.last_events || []).map((entry) => (
+                        <div key={entry.transition_id} style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.5 }}>
+                          {entry.type} | {entry.stage_before} -> {entry.stage_after}{entry.field_id ? ` | ${entry.field_id}` : ""}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </details>
               </div>
             )}
           </div>

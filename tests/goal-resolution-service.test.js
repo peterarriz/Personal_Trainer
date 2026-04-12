@@ -292,6 +292,23 @@ test("running plus maintained strength stays run-led and event-specific when exp
   assert.doesNotMatch(result.resolvedGoals[0].summary, /hybrid/i);
 });
 
+test("dunk goals map into the athletic-power family without breaking the planning model", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "dunk a basketball",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "dunk a basketball" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "athletic_power");
+  assert.equal(result.resolvedGoals[0].planningCategory, "strength");
+  assert.equal(result.resolvedGoals[0].measurabilityTier, GOAL_MEASURABILITY_TIERS.proxyMeasurable);
+  assert.equal(result.resolvedGoals[0].summary, "Dunk a basketball");
+  assert.match(result.resolvedGoals[0].first30DaySuccessDefinition, /lower-body power sessions/i);
+  assert.equal(result.planningGoals[0].tracking.mode, "progress_tracker");
+});
+
 test("resolved goals populate canonical goal slots so planner-facing normalization reads resolved objects", () => {
   const resolution = resolveGoalTranslation({
     rawUserGoalIntent: "look athletic again",

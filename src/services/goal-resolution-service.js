@@ -15,6 +15,7 @@ export const GOAL_CONFIDENCE_LEVELS = {
 export const GOAL_FAMILIES = {
   performance: "performance",
   strength: "strength",
+  athleticPower: "athletic_power",
   bodyComp: "body_comp",
   appearance: "appearance",
   hybrid: "hybrid",
@@ -31,6 +32,7 @@ export const GOAL_CONFIDENCE_SCORES = {
 const GOAL_FAMILY_TO_PLANNING_CATEGORY = {
   [GOAL_FAMILIES.performance]: "running",
   [GOAL_FAMILIES.strength]: "strength",
+  [GOAL_FAMILIES.athleticPower]: "strength",
   [GOAL_FAMILIES.bodyComp]: "body_comp",
   [GOAL_FAMILIES.appearance]: "body_comp",
   [GOAL_FAMILIES.hybrid]: "running",
@@ -220,9 +222,11 @@ const detectSignals = (text = "") => {
     hasDeadlift: /\bdeadlift\b/i.test(corpus),
     hasFatLoss: /(lose fat|fat loss|cut|lean|leaner|drop weight|lose weight|lose\s+\d{1,3}\s*(?:lb|lbs|pounds?))/i.test(corpus),
     hasAppearance: /(abs|six pack|look athletic|appearance|physique|toned|defined|lean for)/i.test(corpus),
+    hasAthleticPower: /(dunk|vertical jump|vertical|jump higher|jumping higher|increase vertical|explosive power|athletic power|more explosive|jump performance)/i.test(corpus),
     hasHybrid: /\bhybrid athlete\b|\bhybrid\b/i.test(corpus),
     hasKeepStrength: /(keep strength|maintain strength|keep my strength|hold strength)/i.test(corpus),
     hasExplicitRunningStrengthMix: explicitRunningStrengthMixPattern.test(corpus),
+    hasMalformedBmiPercent: /(?:\bbmi\b[\s\S]{0,18}\b\d{1,2}(?:\.\d+)?\s*%)|(?:\b\d{1,2}(?:\.\d+)?\s*%\b[\s\S]{0,18}\bbmi\b)/i.test(corpus),
     hasReEntry: /(back in shape|get back in shape|again|feel like myself again|return to form)/i.test(corpus),
     raw: corpus,
   };
@@ -284,6 +288,20 @@ const extractWeightLossPrimaryMetric = (text = "") => {
   };
 };
 
+const extractAthleticPowerPrimaryMetric = (text = "") => {
+  const normalized = String(text || "").toLowerCase();
+  const verticalMatch = normalized.match(/(?:\b(\d{1,2}(?:\.\d+)?)\s*(?:in|inch|inches)\b[\s\S]{0,16}\bvertical\b)|(?:\bvertical\b[\s\S]{0,16}\b(\d{1,2}(?:\.\d+)?)\s*(?:in|inch|inches)\b)/i);
+  const targetValue = verticalMatch?.[1] || verticalMatch?.[2] || "";
+  if (!targetValue) return null;
+  return {
+    key: "vertical_jump_height",
+    label: "Vertical jump",
+    unit: "in",
+    kind: "primary",
+    targetValue,
+  };
+};
+
 const defaultProxyMetricsForCategory = (planningCategory = "general_fitness") => {
   if (planningCategory === "running") {
     return uniqMetrics([
@@ -312,6 +330,35 @@ const defaultProxyMetricsForCategory = (planningCategory = "general_fitness") =>
   ]);
 };
 
+const defaultProxyMetricsForGoal = ({
+  planningCategory = "general_fitness",
+  goalFamily = GOAL_FAMILIES.generalFitness,
+} = {}) => {
+  if (goalFamily === GOAL_FAMILIES.athleticPower) {
+    return uniqMetrics([
+      { key: "vertical_jump_touchpoint", label: "Jump touch point", unit: "checkins", kind: "proxy" },
+      { key: "lower_body_power_sessions", label: "Lower-body power sessions", unit: "sessions", kind: "proxy" },
+      { key: "approach_jump_quality", label: "Approach jump quality", unit: "checkins", kind: "proxy" },
+    ]);
+  }
+  return defaultProxyMetricsForCategory(planningCategory);
+};
+
+const buildValidationIssues = ({
+  signals = {},
+} = {}) => {
+  const issues = [];
+  if (signals.hasMalformedBmiPercent) {
+    issues.push({
+      key: "bmi_percent_mismatch",
+      severity: "block",
+      summary: "BMI is not a percentage target. Clarify whether you mean body fat under 10% or a BMI under a non-percent number.",
+      prompt: "Did you mean body fat under 10%, or a BMI under a non-percent number like 25?",
+    });
+  }
+  return issues;
+};
+
 const resolveMetricSet = ({
   rawText = "",
   planningCategory = "general_fitness",
@@ -328,13 +375,14 @@ const resolveMetricSet = ({
   let heuristicPrimary = null;
   if (planningCategory === "running") heuristicPrimary = extractRunningPrimaryMetric(rawText);
   if (!heuristicPrimary && planningCategory === "strength") heuristicPrimary = extractStrengthPrimaryMetric(rawText);
+  if (!heuristicPrimary && goalFamily === GOAL_FAMILIES.athleticPower) heuristicPrimary = extractAthleticPowerPrimaryMetric(rawText);
   if (!heuristicPrimary && planningCategory === "body_comp") heuristicPrimary = extractWeightLossPrimaryMetric(rawText);
 
   const primaryMetric = confirmationPrimary || heuristicPrimary || (confirmation?.acceptedProposal !== false ? proposalPrimaryMetric : null) || null;
   const proxyMetrics = uniqMetrics([
     ...confirmationProxy,
     ...(confirmation?.acceptedProposal !== false ? proposalProxy : []),
-    ...defaultProxyMetricsForCategory(planningCategory),
+    ...defaultProxyMetricsForGoal({ planningCategory, goalFamily }),
   ]).filter((metric) => !primaryMetric || metric.key !== primaryMetric.key);
 
   if (goalFamily === GOAL_FAMILIES.hybrid && planningCategory === "running") {
@@ -476,6 +524,7 @@ const inferGoalFamily = ({
     return proposal.interpretedGoalType;
   }
   if (explicitMixedGoal) return GOAL_FAMILIES.hybrid;
+  if (signals.hasAthleticPower) return GOAL_FAMILIES.athleticPower;
   if (signals.hasAppearance) return GOAL_FAMILIES.appearance;
   if (signals.hasFatLoss) return GOAL_FAMILIES.bodyComp;
   if (signals.hasStrength) return GOAL_FAMILIES.strength;
@@ -498,6 +547,8 @@ const inferMeasurabilityTier = ({
   if (confirmation?.acceptedProposal !== false && Object.values(GOAL_MEASURABILITY_TIERS).includes(proposal?.measurabilityTier)) {
     return proposal.measurabilityTier;
   }
+  if (goalFamily === GOAL_FAMILIES.athleticPower && primaryMetric) return GOAL_MEASURABILITY_TIERS.fullyMeasurable;
+  if (goalFamily === GOAL_FAMILIES.athleticPower) return GOAL_MEASURABILITY_TIERS.proxyMeasurable;
   if (primaryMetric && (planningCategory === "running" || planningCategory === "strength")) return GOAL_MEASURABILITY_TIERS.fullyMeasurable;
   if (planningCategory === "body_comp" && extractWeightLossPrimaryMetric(rawText)) return GOAL_MEASURABILITY_TIERS.fullyMeasurable;
   if (goalFamily === GOAL_FAMILIES.appearance || goalFamily === GOAL_FAMILIES.bodyComp) return GOAL_MEASURABILITY_TIERS.proxyMeasurable;
@@ -543,6 +594,11 @@ const buildThirtyDaySuccessDefinition = ({ goalFamily = GOAL_FAMILIES.generalFit
   if (goalFamily === GOAL_FAMILIES.hybrid && variant === "hybrid_strength") {
     return "Log at least 8 strength sessions over the next 30 days while keeping aerobic work in the week.";
   }
+  if (goalFamily === GOAL_FAMILIES.athleticPower) {
+    return measurableTier === GOAL_MEASURABILITY_TIERS.fullyMeasurable
+      ? "Complete 8 lower-body power sessions over the next 30 days and recheck your jump benchmark weekly."
+      : "Complete 8 lower-body power sessions over the next 30 days and log one jump or rim-touch check each week.";
+  }
   if (variant === "strength_maintenance") {
     return "Keep two logged strength sessions each week over the next 30 days while the primary goal leads.";
   }
@@ -586,6 +642,14 @@ const buildSummary = ({
   }
   if (variant === "hybrid_strength") {
     return "Build strength while endurance stays in the week";
+  }
+  if (goalFamily === GOAL_FAMILIES.athleticPower && /\bdunk\b/i.test(rawText)) {
+    return "Dunk a basketball";
+  }
+  if (goalFamily === GOAL_FAMILIES.athleticPower && /(?:\bvertical\b|\bjump higher\b|\bjumping higher\b)/i.test(rawText)) {
+    return primaryMetric?.targetValue
+      ? `Raise your vertical jump to ${primaryMetric.targetValue} ${primaryMetric.unit}`.trim()
+      : "Improve jump power and vertical pop";
   }
   if (variant === "strength_maintenance") return "Keep strength while the primary goal leads";
   if (variant === "body_comp_primary_with_strength_retention") return "Lose fat while keeping strength";
@@ -638,6 +702,9 @@ const buildTradeoffs = ({ goalFamily = GOAL_FAMILIES.generalFitness, variant = "
   if (variant === "body_comp_primary_with_strength_retention" || (signals.hasFatLoss && signals.hasKeepStrength)) {
     heuristicTradeoffs.push("Aggressive fat loss may limit strength progression and recovery quality.");
   }
+  if (goalFamily === GOAL_FAMILIES.athleticPower) {
+    heuristicTradeoffs.push("Jump-performance work competes with heavy lower-body fatigue and aggressive cutting.");
+  }
   if (goalFamily === GOAL_FAMILIES.appearance) {
     heuristicTradeoffs.push("Appearance-focused leanness pushes can reduce training quality if recovery and fueling drift.");
   }
@@ -657,8 +724,12 @@ const buildUnresolvedGaps = ({
   confirmation = {},
   signals = {},
   primaryMetric = null,
+  validationIssues = [],
 } = {}) => {
   const gaps = [];
+  if (validationIssues.length) {
+    gaps.push(...validationIssues.map((issue) => issue.summary));
+  }
   if (!targetWindow?.targetDate && !targetWindow?.targetHorizonWeeks && planningCategory === "running") {
     gaps.push("Need a target race date or horizon to time the block structure precisely.");
   }
@@ -670,6 +741,9 @@ const buildUnresolvedGaps = ({
   }
   if (goalFamily === GOAL_FAMILIES.appearance && !signals.hasFatLoss) {
     gaps.push("Need a clearer appearance marker if physique precision matters.");
+  }
+  if (goalFamily === GOAL_FAMILIES.athleticPower && !primaryMetric) {
+    gaps.push("Need a cleaner jump or dunk benchmark if you want tighter progression than a first 30-day block.");
   }
   if (measurableTier === GOAL_MEASURABILITY_TIERS.exploratoryFuzzy && !primaryMetric) {
     gaps.push("Need stronger metrics if the goal should progress beyond a first 30-day success definition.");
@@ -697,6 +771,13 @@ const buildPlanningTargetText = (resolvedGoal = {}) => {
 
 const buildTrackingFromResolvedGoal = (resolvedGoal = {}) => {
   if (resolvedGoal?.targetDate) return { mode: "deadline" };
+  if (resolvedGoal?.goalFamily === GOAL_FAMILIES.athleticPower) {
+    return {
+      mode: "progress_tracker",
+      unit: resolvedGoal?.primaryMetric?.unit || resolvedGoal?.proxyMetrics?.[0]?.unit || "",
+      metricKey: resolvedGoal?.primaryMetric?.key || resolvedGoal?.proxyMetrics?.[0]?.key || "",
+    };
+  }
   if (resolvedGoal?.planningCategory === "strength") {
     return { mode: "logged_lifts", unit: resolvedGoal?.primaryMetric?.unit || "lb", metricKey: resolvedGoal?.primaryMetric?.key || "" };
   }
@@ -719,6 +800,7 @@ const createResolvedGoal = ({
   signals = {},
 } = {}) => {
   const metricText = rawIntentText || analysisText;
+  const validationIssues = buildValidationIssues({ signals });
   const metricSet = resolveMetricSet({
     rawText: metricText,
     planningCategory,
@@ -743,6 +825,7 @@ const createResolvedGoal = ({
     confirmation,
     signals,
     primaryMetric: metricSet.primaryMetric,
+    validationIssues,
   });
   const confidence = inferConfidenceLevel({
     measurabilityTier: measurableTier,
@@ -777,7 +860,11 @@ const createResolvedGoal = ({
 
   return {
     id: `goal_resolution_${priority}_${slugify(summary, `goal_${priority}`)}`,
-    status: unresolvedGaps.length ? "resolved_with_gaps" : "resolved",
+    status: validationIssues.some((issue) => issue.severity === "block")
+      ? "needs_clarification"
+      : unresolvedGaps.length
+      ? "resolved_with_gaps"
+      : "resolved",
     confirmedByUser: Boolean(confirmation?.confirmed),
     confirmationSource: confirmation?.source || "user_confirmation",
     planningPriority: priority,
@@ -794,6 +881,7 @@ const createResolvedGoal = ({
     targetHorizonWeeks: targetWindow?.targetHorizonWeeks || null,
     confidence,
     unresolvedGaps,
+    validationIssues,
     tradeoffs,
     first30DaySuccessDefinition,
     reviewCadence: REVIEW_CADENCE_BY_TIER[measurableTier] || "weekly",
@@ -814,6 +902,11 @@ const buildGoalBlueprints = ({
     return [
       { goalFamily: GOAL_FAMILIES.bodyComp, planningCategory: "body_comp", priority: 1, variant: "body_comp_primary_with_strength_retention" },
       { goalFamily: GOAL_FAMILIES.strength, planningCategory: "strength", priority: 2, variant: "strength_maintenance" },
+    ];
+  }
+  if (goalFamily === GOAL_FAMILIES.athleticPower) {
+    return [
+      { goalFamily: GOAL_FAMILIES.athleticPower, planningCategory: "strength", priority: 1, variant: "athletic_power_primary" },
     ];
   }
   if (signals.hasRunning && (signals.hasKeepStrength || signals.hasExplicitRunningStrengthMix)) {

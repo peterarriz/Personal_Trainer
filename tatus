@@ -1,0 +1,15 @@
+warning: in the working copy of 'index.html', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/modules-planning.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/goal-arbitration-service.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/goal-feasibility-service.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/goal-resolution-service.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/intake-completeness-service.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/intake-goal-flow-service.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/trainer-dashboard.jsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/goal-arbitration-service.test.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/goal-feasibility-service.test.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/goal-resolution-service.test.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/goals-sync-contract.test.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/intake-completeness-service.test.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/intake-goal-flow-service.test.js', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/program-block-model.test.js', LF will be replaced by CRLF the next time Git touches it
