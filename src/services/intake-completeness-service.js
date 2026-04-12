@@ -695,7 +695,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
       goalRole,
       question: buildQuestion({
         key: INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
-        prompt: "What's one proxy we can track for this right now: current bodyweight or waist?",
+        prompt: "For your appearance goal, what's one proxy we can track right now: current bodyweight or waist?",
         placeholder: "Example: 198 lb or 35-inch waist",
         fieldKeys: [
           INTAKE_COMPLETENESS_FIELDS.currentBodyweight,

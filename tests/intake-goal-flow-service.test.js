@@ -336,12 +336,10 @@ test("ready-to-plan state produces a confirmable intake confirmation state", () 
   });
 
   assert.equal(reviewModel.isPlannerReady, true);
-  assert.equal(confirmationState.state, "ready");
-  assert.equal(confirmationState.statusLabel, "Ready to build");
-  assert.equal(confirmationState.headline, "This looks realistic from where you're starting.");
+  assert.equal(confirmationState.status, "proceed");
   assert.equal(confirmationState.canConfirm, true);
-  assert.equal(confirmationState.ctaEnabled, true);
-  assert.equal(confirmationState.ctaLabel, "Confirm and build my plan");
+  assert.equal(confirmationState.requiresAcknowledgement, false);
+  assert.equal(confirmationState.next_required_field, null);
   assert.equal(confirmationState.reason, "");
 });
 
@@ -390,11 +388,9 @@ test("blocked state produces an explicit non-confirmable reason instead of a sil
   });
 
   assert.equal(reviewModel.isPlannerReady, false);
-  assert.equal(confirmationState.state, "blocked");
-  assert.equal(confirmationState.statusLabel, "Too aggressive for this timeline");
-  assert.match(confirmationState.headline, /too aggressive/i);
+  assert.equal(confirmationState.status, "block");
   assert.equal(confirmationState.canConfirm, false);
-  assert.equal(confirmationState.ctaEnabled, false);
+  assert.equal(confirmationState.requiresAcknowledgement, false);
   assert.match(confirmationState.reason, /135|225|smaller|first block/i);
 });
 
@@ -445,12 +441,10 @@ test("warned-but-allowed state still produces a confirmable intake confirmation 
   });
 
   assert.equal(reviewModel.isPlannerReady, true);
-  assert.equal(confirmationState.state, "warn");
-  assert.equal(confirmationState.statusLabel, "Aggressive but possible");
-  assert.match(confirmationState.headline, /aggressive, but i can build for it/i);
+  assert.equal(confirmationState.status, "warn");
   assert.equal(confirmationState.canConfirm, true);
-  assert.equal(confirmationState.ctaEnabled, true);
-  assert.equal(confirmationState.ctaLabel, "Confirm and build my plan");
+  assert.equal(confirmationState.requiresAcknowledgement, true);
+  assert.equal(confirmationState.next_required_field, null);
   assert.ok(confirmationState.reason.length > 0);
 });
 
@@ -494,13 +488,11 @@ test("incomplete but plausible state stays non-confirmable and surfaces the next
   });
 
   assert.equal(reviewModel.isPlannerReady, false);
-  assert.equal(confirmationState.state, "incomplete");
-  assert.equal(confirmationState.statusLabel, "Need one more detail");
-  assert.match(confirmationState.headline, /one more detail/i);
+  assert.equal(confirmationState.status, "incomplete");
   assert.equal(confirmationState.canConfirm, false);
-  assert.equal(confirmationState.ctaEnabled, false);
-  assert.ok(confirmationState.nextQuestion?.prompt);
-  assert.match(confirmationState.reason, /critical detail|bodyweight|timeline/i);
+  assert.equal(confirmationState.requiresAcknowledgement, false);
+  assert.equal(confirmationState.next_required_field, "current_bodyweight");
+  assert.match(confirmationState.reason, /current bodyweight/i);
 });
 
 test("canonical review state carries the status and CTA fields the live review screen should render from", () => {
@@ -518,12 +510,11 @@ test("canonical review state carries the status and CTA fields the live review s
 
   assert.deepEqual(
     Object.keys(confirmationState).sort(),
-    ["canConfirm", "ctaEnabled", "ctaLabel", "headline", "nextQuestion", "reason", "state", "statusLabel"].sort()
+    ["canConfirm", "next_required_field", "reason", "requiresAcknowledgement", "status"].sort()
   );
-  assert.equal(confirmationState.state, "warn");
-  assert.equal(confirmationState.statusLabel, "Aggressive but possible");
-  assert.equal(confirmationState.ctaLabel, "Confirm and build my plan");
-  assert.equal(confirmationState.ctaEnabled, true);
+  assert.equal(confirmationState.status, "warn");
+  assert.equal(confirmationState.canConfirm, true);
+  assert.equal(confirmationState.requiresAcknowledgement, true);
 });
 
 test("canonical review state follows gate status instead of legacy planner-ready flags", () => {
@@ -534,7 +525,7 @@ test("canonical review state follows gate status instead of legacy planner-ready
       gateStatus: "incomplete",
       confirmationAction: "block",
       completeness: {
-        missingRequired: [{ label: "Current bodyweight" }],
+        missingRequired: [{ label: "Current bodyweight", fieldKeys: ["current_bodyweight"] }],
       },
       unresolvedItems: ["Current bodyweight"],
       nextQuestions: [{
@@ -546,11 +537,41 @@ test("canonical review state follows gate status instead of legacy planner-ready
     askedQuestions: [],
   });
 
-  assert.equal(confirmationState.state, "incomplete");
-  assert.equal(confirmationState.statusLabel, "Need one more detail");
+  assert.equal(confirmationState.status, "incomplete");
   assert.equal(confirmationState.canConfirm, false);
-  assert.equal(confirmationState.ctaEnabled, false);
+  assert.equal(confirmationState.next_required_field, "current_bodyweight");
   assert.match(confirmationState.reason, /current bodyweight/i);
+});
+
+test("compound running completeness points confirmation to the next micro-anchor instead of looping back", () => {
+  const rawGoalText = "run a 1:45 half marathon";
+  const goalResolution = resolveGoalTranslation({
+    rawUserGoalIntent: rawGoalText,
+    typedIntakePacket: buildIntakePacket(rawGoalText),
+    explicitUserConfirmation: { confirmed: false, acceptedProposal: true, source: "intake_preview" },
+    now: "2026-04-11",
+  });
+  const reviewModel = buildIntakeGoalReviewModel({
+    goalResolution,
+    orderedResolvedGoals: goalResolution.resolvedGoals,
+    goalFeasibility: {
+      confirmationAction: GOAL_FEASIBILITY_ACTIONS.proceed,
+    },
+    answers: {
+      intake_completeness: {
+        fields: {
+          target_timeline: { raw: "October", value: "October" },
+          current_run_frequency: { raw: "3 runs/week", value: 3 },
+        },
+      },
+    },
+  });
+
+  const confirmationState = deriveIntakeConfirmationState({ reviewModel });
+
+  assert.equal(confirmationState.status, "incomplete");
+  assert.equal(confirmationState.next_required_field, "running_endurance_anchor_kind");
+  assert.match(confirmationState.reason, /current running baseline/i);
 });
 
 test("secondary-goal question appears after required anchors are satisfied and stays optional", () => {
