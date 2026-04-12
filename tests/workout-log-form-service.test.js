@@ -74,6 +74,8 @@ test("strength day prefills prescribed exercise logging path", () => {
   assert.equal(draft.strength.rows[0].prescribedSets, 4);
   assert.equal(draft.strength.rows[0].prescribedReps, 6);
   assert.equal(draft.strength.rows[0].substitutionAllowed, true);
+  assert.equal(draft.strength.rows[0].substitutionState, "prescribed");
+  assert.equal(draft.strength.rows[0].canResetToPrescribed, false);
   assert.equal(draft.substitutionSupport.allowed, true);
 });
 
@@ -92,6 +94,9 @@ test("exercise substitution path preserves actual exercise change", () => {
 
   draft.feel = "4";
   draft.strength.rows[0].exercise = "Dumbbell Bench Press";
+  draft.strength.rows[0].isSubstituted = true;
+  draft.strength.rows[0].substitutionState = "substituted";
+  draft.strength.rows[0].canResetToPrescribed = true;
   draft.strength.rows[0].actualSets = "4";
   draft.strength.rows[0].actualReps = "8";
   draft.strength.rows[0].actualWeight = "80";
@@ -107,6 +112,35 @@ test("exercise substitution path preserves actual exercise change", () => {
   assert.equal(entry.strengthPerformance[0].actualSets, 4);
   assert.equal(entry.strengthPerformance[0].actualReps, 8);
   assert.equal(entry.strengthPerformance[0].actualWeight, 80);
+});
+
+test("actual records matched to a prescribed row mark the row as substituted", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "strength+prehab",
+      label: "Strength B",
+    }),
+    prescribedExercises: [
+      { ex: "Barbell Bench Press", sets: "4x6" },
+    ],
+    logEntry: {
+      date: "2026-04-11",
+      strengthPerformance: [
+        {
+          exercise: "Dumbbell Bench Press",
+          actualSets: 4,
+          actualReps: 8,
+          actualWeight: 80,
+        },
+      ],
+    },
+  });
+
+  assert.equal(draft.strength.rows[0].exercise, "Dumbbell Bench Press");
+  assert.equal(draft.strength.rows[0].isSubstituted, true);
+  assert.equal(draft.strength.rows[0].substitutionState, "substituted");
+  assert.equal(draft.strength.rows[0].canResetToPrescribed, true);
 });
 
 test("canonical training exercise rows can seed strength logging without extra wiring", () => {

@@ -2,6 +2,7 @@ import { dedupeStrings } from "../utils/collection-utils.js";
 import {
   getExercisePerformanceRecordsForLog,
   getSessionPerformanceRecordsForLog,
+  inferPerformanceLiftKey,
 } from "./performance-record-service.js";
 import { GOAL_MEASURABILITY_TIERS } from "./goal-resolution-service.js";
 
@@ -226,6 +227,81 @@ const getManualMetricSeries = ({ manualProgressInputs = {}, key = "" } = {}) => 
   return normalizeManualSeries(pool);
 };
 
+const parseDurationToMinutes = (value = "") => {
+  const numeric = toFiniteNumber(value, null);
+  if (numeric !== null) return numeric;
+  const seconds = parseDurationTextToSeconds(value);
+  return Number.isFinite(seconds) ? round1(seconds / 60) : null;
+};
+
+const normalizeManualRunBenchmarkSeries = (rows = []) => (Array.isArray(rows) ? rows : [])
+  .map((row) => {
+    const date = sanitizeText(row?.date || row?.dateKey || row?.d || "", 24);
+    const distanceMiles = toFiniteNumber(row?.distanceMiles ?? row?.distance ?? row?.miles, null);
+    const durationMinutes = parseDurationToMinutes(row?.durationMinutes ?? row?.duration ?? row?.runTime ?? "");
+    const paceText = sanitizeText(row?.paceText || row?.pace || "", 24);
+    const paceSeconds = toFiniteNumber(row?.paceSeconds, null) ?? parseDurationTextToSeconds(paceText);
+    const note = sanitizeText(row?.note || "", 160);
+    return {
+      date,
+      distanceMiles,
+      durationMinutes,
+      paceText,
+      paceSeconds,
+      note,
+    };
+  })
+  .filter((row) => row.date && (Number.isFinite(row.distanceMiles) || Number.isFinite(row.durationMinutes) || Number.isFinite(row.paceSeconds) || row.paceText))
+  .sort((a, b) => a.date.localeCompare(b.date));
+
+const getManualRunBenchmarkSeries = ({ manualProgressInputs = {} } = {}) => {
+  const benchmarkPool = manualProgressInputs?.benchmarks || {};
+  return normalizeManualRunBenchmarkSeries([
+    ...toArray(benchmarkPool?.run_results),
+    ...toArray(manualProgressInputs?.run_results),
+    ...toArray(manualProgressInputs?.runBenchmarks),
+  ]);
+};
+
+const normalizeManualLiftBenchmarkSeries = (rows = []) => (Array.isArray(rows) ? rows : [])
+  .map((row) => {
+    const exercise = sanitizeText(row?.exercise || row?.exercise_name || "", 120);
+    const date = sanitizeText(row?.date || row?.dateKey || row?.d || "", 24);
+    const weight = toFiniteNumber(row?.weight ?? row?.actualWeight ?? row?.weightUsed, null);
+    const reps = toFiniteNumber(row?.reps ?? row?.actualReps ?? row?.repsCompleted, null);
+    const sets = toFiniteNumber(row?.sets ?? row?.actualSets, null);
+    const note = sanitizeText(row?.note || "", 160);
+    return {
+      date,
+      exercise,
+      exerciseKey: sanitizeText(exercise, 120).toLowerCase(),
+      liftKey: inferPerformanceLiftKey(exercise),
+      actual: {
+        weight,
+        reps,
+        sets,
+      },
+      prescribed: {
+        weight,
+        reps,
+        sets,
+      },
+      note,
+      source: "manual_lift_benchmark",
+    };
+  })
+  .filter((row) => row.date && row.exercise && Number.isFinite(row.actual.weight))
+  .sort((a, b) => a.date.localeCompare(b.date));
+
+const getManualLiftBenchmarkSeries = ({ manualProgressInputs = {} } = {}) => {
+  const benchmarkPool = manualProgressInputs?.benchmarks || {};
+  return normalizeManualLiftBenchmarkSeries([
+    ...toArray(benchmarkPool?.lift_results),
+    ...toArray(manualProgressInputs?.lift_results),
+    ...toArray(manualProgressInputs?.liftBenchmarks),
+  ]);
+};
+
 const normalizeWeeklyCheckins = (weeklyCheckins = {}) => Object.values(weeklyCheckins || {})
   .map((checkin) => ({
     ts: Number(checkin?.ts || 0) || 0,
@@ -381,12 +457,18 @@ const getLiftKeyFromMetric = (metricKey = "") => {
   return "";
 };
 
-const buildRunTrackedItems = ({ goal = {}, dataIndex = {}, now = new Date() } = {}) => {
+const buildRunTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
   const runSessions = (dataIndex?.sessionRecords || []).filter((record) => record?.sessionFamily === "run");
   const recentRunSessions = runSessions.filter((record) => isWithinAgeWindow({ dateKey: record?.date || "", now, minDays: 0, maxDays: 21 }));
   const priorRunSessions = runSessions.filter((record) => isWithinAgeWindow({ dateKey: record?.date || "", now, minDays: 22, maxDays: 42 }));
+  const recentManualBenchmarks = getManualRunBenchmarkSeries({ manualProgressInputs })
+    .filter((entry) => isWithinAgeWindow({ dateKey: entry?.date || "", now, minDays: 0, maxDays: 21 }));
+  const latestManualBenchmark = recentManualBenchmarks[recentManualBenchmarks.length - 1] || null;
   const recentPaces = recentRunSessions.map((record) => Number(record?.metrics?.paceSeconds || 0)).filter((value) => Number.isFinite(value) && value > 0);
+  const benchmarkPaces = recentManualBenchmarks.map((entry) => Number(entry?.paceSeconds || 0)).filter((value) => Number.isFinite(value) && value > 0);
   const recentAveragePace = average(recentPaces.slice(-5));
+  const benchmarkAveragePace = average(benchmarkPaces.slice(-5));
+  const effectiveRecentPace = recentAveragePace ?? benchmarkAveragePace;
   const targetPaceSeconds = getTargetPaceSeconds(goal?.primaryMetric);
   const recentVolume = buildTrainingWindow({
     logs: dataIndex?.logs,
@@ -423,15 +505,19 @@ const buildRunTrackedItems = ({ goal = {}, dataIndex = {}, now = new Date() } = 
     label: "Goal pace anchor",
     kind: "primary",
     metricRefs: [goal?.primaryMetric?.key || ""],
-    status: !targetPaceSeconds || !recentAveragePace
+    status: !targetPaceSeconds || !effectiveRecentPace
       ? GOAL_PROGRESS_STATUSES.needsData
-      : recentAveragePace <= targetPaceSeconds + 10
+      : effectiveRecentPace <= targetPaceSeconds + 10
       ? GOAL_PROGRESS_STATUSES.onTrack
       : GOAL_PROGRESS_STATUSES.building,
-    currentDisplay: recentAveragePace ? `Recent pace ${formatPace(recentAveragePace)}` : "No paced runs logged yet",
+    currentDisplay: recentAveragePace
+      ? `Recent pace ${formatPace(recentAveragePace)}`
+      : latestManualBenchmark?.paceSeconds
+      ? `Recent benchmark pace ${formatPace(latestManualBenchmark.paceSeconds)} on ${latestManualBenchmark.date}`
+      : "No paced runs logged yet",
     targetDisplay: targetPaceSeconds ? `Goal pace ${formatPace(targetPaceSeconds)}` : "",
-    trendDisplay: (Number.isFinite(recentAveragePace) && Number.isFinite(targetPaceSeconds))
-      ? `${Math.abs(Math.round(recentAveragePace - targetPaceSeconds))} sec/mi ${recentAveragePace > targetPaceSeconds ? "slower" : recentAveragePace < targetPaceSeconds ? "faster" : "from"} than target`
+    trendDisplay: (Number.isFinite(effectiveRecentPace) && Number.isFinite(targetPaceSeconds))
+      ? `${Math.abs(Math.round(effectiveRecentPace - targetPaceSeconds))} sec/mi ${effectiveRecentPace > targetPaceSeconds ? "slower" : effectiveRecentPace < targetPaceSeconds ? "faster" : "from"} than target`
       : "",
     why: "Event goals move first through repeatable training pace, not just race-day guesses.",
   });
@@ -475,14 +561,21 @@ const buildRunTrackedItems = ({ goal = {}, dataIndex = {}, now = new Date() } = 
   return [paceItem, volumeItem, progressionItem];
 };
 
-const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, now = new Date() } = {}) => {
+const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
   const exerciseRecords = dataIndex?.exerciseRecords || [];
+  const manualBenchmarks = getManualLiftBenchmarkSeries({ manualProgressInputs });
   const liftKey = getLiftKeyFromMetric(goal?.primaryMetric?.key || "");
   const primaryLabel = sanitizeText(goal?.primaryMetric?.label || "", 80).toLowerCase();
-  const targetedRecords = exerciseRecords.filter((record) => (
-    (liftKey && record?.liftKey === liftKey)
-    || (primaryLabel && String(record?.exercise || "").toLowerCase().includes(primaryLabel.split(" ")[0]))
-  ));
+  const targetedRecords = [
+    ...exerciseRecords.filter((record) => (
+      (liftKey && record?.liftKey === liftKey)
+      || (primaryLabel && String(record?.exercise || "").toLowerCase().includes(primaryLabel.split(" ")[0]))
+    )),
+    ...manualBenchmarks.filter((record) => (
+      (liftKey && record?.liftKey === liftKey)
+      || (primaryLabel && String(record?.exercise || "").toLowerCase().includes(primaryLabel.split(" ")[0]))
+    )),
+  ].sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
   const recentTargetedRecords = targetedRecords.filter((record) => isWithinAgeWindow({ dateKey: record?.date || "", now, minDays: 0, maxDays: 21 }));
   const firstTargetedRecord = targetedRecords[0] || null;
   const latestTargetedRecord = targetedRecords[targetedRecords.length - 1] || null;
@@ -732,11 +825,17 @@ const buildBaselineImprovementItem = ({ dataIndex = {}, now = new Date() } = {})
   });
 };
 
-const buildBenchmarkAnchorItem = ({ dataIndex = {}, now = new Date() } = {}) => {
+const buildBenchmarkAnchorItem = ({ dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
   const recentSession = [...(dataIndex?.sessionRecords || [])]
     .filter((record) => isWithinAgeWindow({ dateKey: record?.date || "", now, minDays: 0, maxDays: 21 }))
     .slice(-1)[0] || null;
   const recentExercise = [...(dataIndex?.exerciseRecords || [])]
+    .filter((record) => isWithinAgeWindow({ dateKey: record?.date || "", now, minDays: 0, maxDays: 21 }))
+    .slice(-1)[0] || null;
+  const recentManualRun = getManualRunBenchmarkSeries({ manualProgressInputs })
+    .filter((record) => isWithinAgeWindow({ dateKey: record?.date || "", now, minDays: 0, maxDays: 21 }))
+    .slice(-1)[0] || null;
+  const recentManualLift = getManualLiftBenchmarkSeries({ manualProgressInputs })
     .filter((record) => isWithinAgeWindow({ dateKey: record?.date || "", now, minDays: 0, maxDays: 21 }))
     .slice(-1)[0] || null;
 
@@ -748,11 +847,23 @@ const buildBenchmarkAnchorItem = ({ dataIndex = {}, now = new Date() } = {}) => 
       recentSession?.metrics?.paceSeconds ? formatPace(recentSession.metrics.paceSeconds) : "",
     ].filter(Boolean);
     currentDisplay = `Recent benchmark run: ${runBits.join(" / ")} on ${recentSession.date}`;
+  } else if (recentManualRun && (Number(recentManualRun?.distanceMiles || 0) > 0 || Number(recentManualRun?.durationMinutes || 0) > 0 || Number(recentManualRun?.paceSeconds || 0) > 0)) {
+    const runBits = [
+      Number(recentManualRun?.distanceMiles || 0) > 0 ? `${formatNumber(recentManualRun.distanceMiles, 1)} mi` : "",
+      Number(recentManualRun?.durationMinutes || 0) > 0 ? `${recentManualRun.durationMinutes} min` : "",
+      recentManualRun?.paceSeconds ? formatPace(recentManualRun.paceSeconds) : sanitizeText(recentManualRun?.paceText || ""),
+    ].filter(Boolean);
+    currentDisplay = `Recent benchmark run: ${runBits.join(" / ")} on ${recentManualRun.date}`;
   } else if (recentExercise) {
     const load = Number(recentExercise?.actual?.weight ?? recentExercise?.prescribed?.weight ?? 0) || null;
     currentDisplay = load
       ? `Recent benchmark lift: ${recentExercise.exercise} ${load} lb x ${recentExercise?.actual?.reps || recentExercise?.prescribed?.reps || 0}`
       : `Recent benchmark lift: ${recentExercise.exercise}`;
+  } else if (recentManualLift) {
+    const load = Number(recentManualLift?.actual?.weight ?? recentManualLift?.prescribed?.weight ?? 0) || null;
+    currentDisplay = load
+      ? `Recent benchmark lift: ${recentManualLift.exercise} ${load} lb x ${recentManualLift?.actual?.reps || recentManualLift?.prescribed?.reps || 0}`
+      : `Recent benchmark lift: ${recentManualLift.exercise}`;
   }
 
   return createTrackedItem({
@@ -760,7 +871,7 @@ const buildBenchmarkAnchorItem = ({ dataIndex = {}, now = new Date() } = {}) => 
     label: "Benchmark anchor",
     kind: "review",
     metricRefs: ["weekly_training_frequency"],
-    status: recentSession || recentExercise ? GOAL_PROGRESS_STATUSES.building : GOAL_PROGRESS_STATUSES.needsData,
+    status: recentSession || recentExercise || recentManualRun || recentManualLift ? GOAL_PROGRESS_STATUSES.building : GOAL_PROGRESS_STATUSES.needsData,
     currentDisplay,
     why: "A simple benchmark anchor turns vague 'back in shape' goals into something repeatable enough to plan around.",
   });
@@ -813,7 +924,7 @@ const buildAppearanceTrackedItems = ({ goal = {}, dataIndex = {}, manualProgress
   return [checklistItem, waistItem, bodyweightItem, photoItem];
 };
 
-const buildExploratoryTrackedItems = ({ dataIndex = {}, now = new Date() } = {}) => [
+const buildExploratoryTrackedItems = ({ dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => [
   buildConsistencyItem({
     key: "weekly_training_frequency",
     label: "30-day consistency",
@@ -823,7 +934,7 @@ const buildExploratoryTrackedItems = ({ dataIndex = {}, now = new Date() } = {})
   }),
   buildReadinessItem({ dataIndex, now }),
   buildBaselineImprovementItem({ dataIndex, now }),
-  buildBenchmarkAnchorItem({ dataIndex, now }),
+  buildBenchmarkAnchorItem({ dataIndex, manualProgressInputs, now }),
 ];
 
 const buildTrackedItemsForGoal = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
@@ -831,15 +942,15 @@ const buildTrackedItemsForGoal = ({ goal = {}, dataIndex = {}, manualProgressInp
     return buildAppearanceTrackedItems({ goal, dataIndex, manualProgressInputs, now });
   }
   if (goal?.planningCategory === "running") {
-    return buildRunTrackedItems({ goal, dataIndex, now });
+    return buildRunTrackedItems({ goal, dataIndex, manualProgressInputs, now });
   }
   if (goal?.planningCategory === "strength") {
-    return buildStrengthTrackedItems({ goal, dataIndex, now });
+    return buildStrengthTrackedItems({ goal, dataIndex, manualProgressInputs, now });
   }
   if (goal?.planningCategory === "body_comp") {
     return buildBodyCompTrackedItems({ goal, dataIndex, manualProgressInputs, now });
   }
-  return buildExploratoryTrackedItems({ dataIndex, now });
+  return buildExploratoryTrackedItems({ dataIndex, manualProgressInputs, now });
 };
 
 const buildStatusSummary = ({ goal = {}, trackingMode = GOAL_PROGRESS_TRACKING_MODES.proxy } = {}) => {

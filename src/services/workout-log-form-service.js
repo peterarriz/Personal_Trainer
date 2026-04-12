@@ -57,6 +57,18 @@ const normalizeNumericText = (value = "") => {
   return String(value).trim();
 };
 
+const buildStrengthSubstitutionMeta = ({ exercise = "", prescribedExercise = "" } = {}) => {
+  const actualKey = normalizePerformanceExerciseKey(exercise || "");
+  const prescribedKey = normalizePerformanceExerciseKey(prescribedExercise || "");
+  const hasPrescription = Boolean(prescribedKey);
+  const isSubstituted = Boolean(hasPrescription && actualKey && actualKey !== prescribedKey);
+  return {
+    isSubstituted,
+    substitutionState: isSubstituted ? "substituted" : hasPrescription ? "prescribed" : "unplanned",
+    canResetToPrescribed: isSubstituted && hasPrescription,
+  };
+};
+
 const buildFieldDefinition = ({
   id = "",
   label = "",
@@ -149,6 +161,10 @@ const normalizePrescribedExercise = (entry = {}) => {
   const parsedSet = parseSetPrescription(entry?.sets || "");
   const repsText = sanitizeText(entry?.reps || parsedSet.repsText || "");
   const mode = inferPerformanceExerciseMode(exercise, entry?.mode || "");
+  const substitutionMeta = buildStrengthSubstitutionMeta({
+    exercise,
+    prescribedExercise: exercise,
+  });
   return {
     key: normalizePerformanceExerciseKey(exercise),
     prescribedExercise: exercise,
@@ -165,7 +181,9 @@ const normalizePrescribedExercise = (entry = {}) => {
     bodyweightOnly: mode === "bodyweight",
     mode,
     bucket: inferPerformanceExerciseBucket(exercise),
-    isSubstituted: false,
+    isSubstituted: substitutionMeta.isSubstituted,
+    substitutionState: substitutionMeta.substitutionState,
+    canResetToPrescribed: substitutionMeta.canResetToPrescribed,
     substitutionAllowed: true,
   };
 };
@@ -173,6 +191,10 @@ const normalizePrescribedExercise = (entry = {}) => {
 const toStrengthRowFromRecord = (record = {}) => {
   const exercise = sanitizeText(record?.exercise || "Exercise");
   const mode = inferPerformanceExerciseMode(exercise, record?.mode || "");
+  const substitutionMeta = buildStrengthSubstitutionMeta({
+    exercise,
+    prescribedExercise: exercise,
+  });
   return {
     key: normalizePerformanceExerciseKey(exercise),
     prescribedExercise: exercise,
@@ -189,7 +211,9 @@ const toStrengthRowFromRecord = (record = {}) => {
     bodyweightOnly: Boolean(record?.prescribed?.bodyweightOnly ?? record?.bodyweightOnly ?? mode === "bodyweight"),
     mode,
     bucket: record?.bucket || inferPerformanceExerciseBucket(exercise),
-    isSubstituted: false,
+    isSubstituted: substitutionMeta.isSubstituted,
+    substitutionState: substitutionMeta.substitutionState,
+    canResetToPrescribed: substitutionMeta.canResetToPrescribed,
     substitutionAllowed: true,
   };
 };
@@ -216,25 +240,37 @@ const buildStrengthRows = ({ prescribedExercises = [], logEntry = {}, dateKey = 
       if (record?.exercise) usedActualKeys.add(normalizePerformanceExerciseKey(record.exercise));
     }
     if (!record) return row;
+    const nextExercise = sanitizeText(record?.exercise || row.exercise);
+    const substitutionMeta = buildStrengthSubstitutionMeta({
+      exercise: nextExercise,
+      prescribedExercise: row.prescribedExercise,
+    });
     return {
       ...row,
-      exercise: sanitizeText(record?.exercise || row.exercise),
+      exercise: nextExercise,
       actualSets: normalizeNumericText(record?.actual?.sets ?? record?.actualSets ?? ""),
       actualReps: normalizeNumericText(record?.actual?.reps ?? record?.actualReps ?? ""),
       actualWeight: normalizeNumericText(record?.actual?.weight ?? record?.actualWeight ?? ""),
       bandTension: sanitizeText(record?.prescribed?.bandTension || record?.bandTension || row.bandTension || ""),
       bodyweightOnly: Boolean(record?.prescribed?.bodyweightOnly ?? row.bodyweightOnly),
       mode: inferPerformanceExerciseMode(record?.exercise || row.exercise, record?.mode || row.mode),
-      isSubstituted: normalizePerformanceExerciseKey(record?.exercise || "") !== row.key && Boolean(record?.exercise),
+      isSubstituted: substitutionMeta.isSubstituted,
+      substitutionState: substitutionMeta.substitutionState,
+      canResetToPrescribed: substitutionMeta.canResetToPrescribed,
       substitutionAllowed: true,
     };
   });
   const leftoverActualRows = actualRecords
     .filter((record) => !usedActualKeys.has(normalizePerformanceExerciseKey(record?.exercise || "")))
-    .map((record) => ({
-      ...toStrengthRowFromRecord(record),
-      isSubstituted: true,
-    }));
+    .map((record) => {
+      const row = toStrengthRowFromRecord(record);
+      return {
+        ...row,
+        isSubstituted: true,
+        substitutionState: "unplanned",
+        canResetToPrescribed: false,
+      };
+    });
   return {
     rows: [...rows, ...leftoverActualRows],
     hasPrescribedStructure: prescribedRows.length > 0,
