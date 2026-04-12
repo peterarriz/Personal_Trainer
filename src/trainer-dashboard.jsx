@@ -7444,13 +7444,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       message: initialPrompt,
       placeholder: "Examples: run a 1:45 half, look athletic again, get abs by summer, lose fat but keep strength",
     },
-<<<<<<< HEAD
     { key: "experience_level", type: "buttons", message: "Got it. What's your training experience level?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week Ã¢â‚¬â€ not your best one.", options: ["2", "3", "4", "5", "6+"] },
-=======
-    { key: "experience_level", type: "buttons", message: "Got it. How long have you been training consistently?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week — not your best one.", options: ["2", "3", "4", "5", "6+"] },
->>>>>>> origin/main
+    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week - not your best one.", options: ["2", "3", "4", "5", "6+"] },
     { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
     ...(["Home", "Both"].includes(currentAnswers.training_location || "") ? [{
@@ -9815,13 +9810,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 function OnboardingCoachLegacy({ onComplete }) {
   const SCRIPT = [
     { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
-<<<<<<< HEAD
     { key: "experience_level", text: "What's your training experience level?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", text: "How many days per week can you realistically train? Not your best week Ã¢â‚¬â€ your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
-=======
-    { key: "experience_level", text: "How long have you been training consistently?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
->>>>>>> origin/main
+    { key: "training_days", text: "How many days per week can you realistically train? Not your best week - your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
     { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
@@ -10152,13 +10142,8 @@ function OnboardingCoachLegacy({ onComplete }) {
 function OnboardingCoachLegacyFallback({ onComplete }) {
   const SCRIPT = [
     { key: "primary_goal", text: "What's your primary goal?", type: "buttons", options: Object.values(PRIMARY_GOAL_LABELS), valueMap: Object.fromEntries(PRIMARY_GOAL_OPTIONS.map(k => [PRIMARY_GOAL_LABELS[k], k])) },
-<<<<<<< HEAD
     { key: "experience_level", text: "What's your training experience level?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", text: "How many days per week can you realistically train? Not your best week Ã¢â‚¬â€ your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
-=======
-    { key: "experience_level", text: "How long have you been training consistently?", type: "buttons", options: Object.values(EXPERIENCE_LEVEL_LABELS), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", text: "How many days per week can you realistically train? Not your best week — your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
->>>>>>> origin/main
+    { key: "training_days", text: "How many days per week can you realistically train? Not your best week - your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
     { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
     { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
     { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
