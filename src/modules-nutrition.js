@@ -493,7 +493,7 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
 };
 
 export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext, nutritionLayer, momentum, favorites, travelMode, learningLayer, timeOfDay, loggedIntake }) => {
-  const city = (location || "Austin").trim() || "Austin";
+  const city = (location || "").trim() || "your area";
   const key = `${city.toLowerCase()}_${dayType}`;
   const favoriteRestaurants = favorites?.restaurants || [];
   const favoriteSafeMeals = favorites?.safeMeals || [];
