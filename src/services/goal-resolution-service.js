@@ -303,7 +303,6 @@ const defaultProxyMetricsForCategory = (planningCategory = "general_fitness") =>
     return uniqMetrics([
       { key: "waist_circumference", label: "Waist circumference", unit: "in", kind: "proxy" },
       { key: "bodyweight_trend", label: "Bodyweight trend", unit: "lb", kind: "proxy" },
-      { key: "progress_photos", label: "Manual photo review (future)", unit: "checkins", kind: "proxy" },
     ]);
   }
   return uniqMetrics([

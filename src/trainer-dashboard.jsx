@@ -1261,15 +1261,15 @@ const buildTrustSummary = ({
     deviceData ? "device data" : null,
     inferredHeuristics ? "inferred heuristics" : null,
   ].filter(Boolean);
-  let summary = sources.length ? `Using ${joinHumanList(sources)}.` : "Using limited data.";
+  let summary = sources.length ? `Guidance is currently leaning on ${joinHumanList(sources)}.` : "Guidance is currently leaning on limited data.";
   if (!explicitUserInput && !loggedActuals && !deviceData) {
     summary = inferredHeuristics
-      ? "Using inferred heuristics because no explicit input, actual log, or device data is available."
+      ? "Guidance is currently leaning on inferred heuristics because no explicit input, actual log, or device data is available."
       : "No explicit input, actual log, or device data is available yet.";
   } else if (!explicitUserInput && !loggedActuals) {
-    summary = `Using ${joinHumanList(sources)}. No explicit input or actual log is available yet.`;
+    summary = `Guidance is currently leaning on ${joinHumanList(sources)}. No explicit input or actual log is available yet.`;
   } else if (!deviceData && inferredHeuristics) {
-    summary = `Using ${joinHumanList(sources)}. No device data is contributing here.`;
+    summary = `Guidance is currently leaning on ${joinHumanList(sources)}. No device data is contributing here.`;
   }
   if (stale) summary += " Some supporting data is stale.";
   if (limitation) summary += ` ${limitation}`;
@@ -1452,7 +1452,7 @@ const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().spl
   }
   if (isPositiveRecovery(activeCheckin)) {
     progressScore += 3;
-    progressReasons.push("today's recovery input is supportive");
+    progressReasons.push("today's recovery input looks supportive");
   } else if (recentSupportiveCount >= 2) {
     progressScore += 1;
     progressReasons.push("recent recovery inputs have been steady");
@@ -1539,17 +1539,17 @@ const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().spl
     adjustedWorkout.intensityGuidance = "steady with one small progression";
     adjustedWorkout.extendedFinisher = adjustedWorkout?.extendedFinisher || (adjustedWorkout?.run ? "Optional: 4 Ãƒâ€” 20s strides if the session stays smooth." : "Optional: add one final quality set if form stays crisp.");
     appendEnvironmentNote("Progression-ready today: one small progression is available if execution stays controlled.");
-    coachLine = "Progression is available today: keep the plan intact and add only one small progression if it stays smooth.";
+    coachLine = "Current signals may support one small progression today: keep the plan intact and add it only if the session stays smooth.";
     recoveryLine = "Recovery recommendation: normal fueling, normal mobility, and no extra bonus work after the progression.";
-    userVisibleLine = "Your recovery and recent consistency allow a small progression today.";
-    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "supportive recovery and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
+    userVisibleLine = "Current recovery and consistency signals may support a small progression today.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "recovery signals that look supportive and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
   } else {
     adjustedWorkout.recoveryRecommendation = "Normal recovery: finish the session, refuel, and do your usual mobility.";
     adjustedWorkout.intensityGuidance = "planned";
     appendEnvironmentNote("Readiness is steady today: run the planned session with clean control.");
     coachLine = "Readiness is steady today: execute the planned session cleanly and keep the effort controlled.";
     recoveryLine = "Recovery recommendation: follow your normal fueling and mobility routine after the session.";
-    userVisibleLine = "Your recent recovery and training load support the planned session.";
+    userVisibleLine = "Current signals do not suggest changing the planned session.";
     adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness looks steady based on ${reasonText || "recent completion, recovery, and training load"}. Run the planned session as written and keep recovery normal.`;
   }
 
@@ -1719,7 +1719,7 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
   }
   if (strongPositiveCheckin) {
     progressScore += 3;
-    progressReasons.push("the latest recovery check-in is supportive");
+    progressReasons.push("the latest recovery check-in looks supportive");
   } else if (recentSupportiveRows.length >= 2) {
     progressScore += 1;
     progressReasons.push("recent recovery inputs have stayed steady");
@@ -1816,17 +1816,17 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
     adjustedWorkout.intensityGuidance = "planned plus one small progression";
     adjustedWorkout.extendedFinisher = adjustedWorkout?.extendedFinisher || (adjustedWorkout?.run ? "Optional: 4 x 20s strides if the session stays smooth." : "Optional: add one final quality set if form stays crisp.");
     appendEnvironmentNote("Progression-ready today: one small progression is available if execution stays controlled.");
-    coachLine = "Progression is available today: keep the plan intact and add only one small progression if it stays smooth.";
+    coachLine = "Current signals may support one small progression today: keep the plan intact and add it only if the session stays smooth.";
     recoveryLine = "Recovery recommendation: normal fueling, normal mobility, and no extra bonus work after the progression.";
-    userVisibleLine = "Supportive recovery and reliable recent completion allow a small progression today.";
-    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "supportive recovery and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
+    userVisibleLine = "Supportive-looking recovery signals and reliable recent completion may allow a small progression today.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "recovery signals that look supportive and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
   } else {
     adjustedWorkout.recoveryRecommendation = "Normal recovery: finish the session, refuel, and do your usual mobility.";
     adjustedWorkout.intensityGuidance = "planned";
     appendEnvironmentNote("Readiness is steady today: run the planned session with clean control.");
     coachLine = "Readiness is steady today: execute the planned session cleanly and keep the effort controlled.";
     recoveryLine = "Recovery recommendation: follow your normal fueling and mobility routine after the session.";
-    userVisibleLine = "Recent completion, recovery, and load support the planned session.";
+    userVisibleLine = "Current signals do not suggest changing the planned session.";
     adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness looks steady based on ${reasonText || "recent completion, recovery, and training load"}. Run the planned session as written and keep recovery normal.`;
   }
 
@@ -4094,6 +4094,7 @@ export default function TrainerDashboard() {
   const [startFreshConfirmOpen, setStartFreshConfirmOpen] = useState(false);
   const [showAppleHealthFirstLaunch, setShowAppleHealthFirstLaunch] = useState(false);
   const DEBUG_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
+  const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "apple_health_supported", "0") === "1";
   const logDiag = (...args) => { if (DEBUG_MODE) console.log("[trainer-debug]", ...args); };
   const canonicalAthlete = useMemo(
     () => deriveCanonicalAthleteState({ goals, personalization, profileDefaults: PROFILE }),
@@ -4286,7 +4287,7 @@ export default function TrainerDashboard() {
     : garminReadiness?.mode === "reduced_load"
     ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Reduced-load)`, explanation: `Garmin readiness is pointing to partial recovery, so today's session is reduced as a caution move rather than a hard stop.` }
     : deviceSyncAudit?.planMode === "recovery"
-    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data points toward a recovery day.", explanation: `Connected device data is leaning recovery today. The app is using that signal cautiously because device context is supportive, not definitive, on its own.` }
+    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data suggests a recovery day.", explanation: `Connected device data is leaning recovery today. The app is using that signal cautiously because device context is suggestive, not definitive, on its own.` }
     : deviceSyncAudit?.planMode === "reduced_load"
     ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Device-adjusted)`, explanation: `Device signals suggest slightly reducing today's load to stay within productive training ranges.` }
     : todayWorkoutHardenedBase;
@@ -5789,10 +5790,11 @@ Keep it plain and specific.`;
   useEffect(() => {
     if (loading || authInitializing) return;
     if (!personalization?.profile?.onboardingComplete) return;
+    if (!(DEBUG_MODE || APPLE_HEALTH_SUPPORTED_MODE)) return;
     const apple = personalization?.connectedDevices?.appleHealth || {};
     if (apple?.permissionRequestedAt || apple?.skipped) return;
     setShowAppleHealthFirstLaunch(true);
-  }, [loading, authInitializing, personalization?.profile?.onboardingComplete, personalization?.connectedDevices?.appleHealth?.permissionRequestedAt, personalization?.connectedDevices?.appleHealth?.skipped]);
+  }, [loading, authInitializing, personalization?.profile?.onboardingComplete, personalization?.connectedDevices?.appleHealth?.permissionRequestedAt, personalization?.connectedDevices?.appleHealth?.skipped, DEBUG_MODE, APPLE_HEALTH_SUPPORTED_MODE]);
 
   const updateAppleHealthState = async (patch = {}) => {
     const nextPersonalization = mergePersonalization(personalization, {
@@ -8390,9 +8392,9 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     if (appleMode === "live" && appleHealth?.lastSyncStatus === "garmin_detected") {
       return {
         state: "operational",
-        label: "Operational",
-        summary: "Apple Health is live and recent Garmin-origin workouts were verified.",
-        detail: `Last verified check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
+        label: "Recent data found",
+        summary: "Apple Health permission was requested, and recent Garmin-origin workouts were found here.",
+        detail: `Last recorded check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
       };
     }
     if (appleMode === "live") {
@@ -8400,9 +8402,9 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         state: "pending",
         label: "Connected, awaiting verification",
         summary: appleHealth?.lastSyncStatus === "health_only"
-          ? "Apple Health is connected, but Garmin-origin workouts have not been verified yet."
-          : "Apple Health permissions were requested, but a recent live workout verification has not happened yet.",
-        detail: `Last check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
+          ? "Recent Apple Health workouts were found, but Garmin-origin entries were not confirmed here yet."
+          : "Apple Health permission was requested, but recent workout data has not been confirmed here yet.",
+        detail: `Last recorded check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
       };
     }
     if (appleMode === "manual_import") {
@@ -8417,8 +8419,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       return {
         state: "simulated",
         label: "Simulated on web",
-        summary: "Apple Health cannot be authorized in this web environment, so the app is using a simulated placeholder state.",
-        detail: "Use an iPhone-capable environment for a real Apple Health permission flow.",
+        summary: "This web environment is using a simulated Apple Health placeholder, not a real device link.",
+        detail: "A real Apple Health permission flow needs an iPhone-capable environment.",
       };
     }
     if (appleHealth?.skipped) {
@@ -8426,14 +8428,14 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         state: "unavailable",
         label: "Not enabled",
         summary: "Apple Health has been skipped or not enabled yet.",
-        detail: "Connect it when you want live workout/device context.",
+        detail: "No Apple Health data is being used right now.",
       };
     }
     return {
       state: "unavailable",
       label: "Not configured",
       summary: "Apple Health is not connected.",
-      detail: "No live permission flow or manual import is active.",
+      detail: "No Apple Health permission state or manual import is active.",
     };
   })();
   const garminMode = garmin?.connectionMode || (garmin?.status === "manual_import" ? "manual_import" : garmin?.status === "connected" ? "live" : "unavailable");
@@ -8441,8 +8443,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     if (garminMode === "live" && garmin?.lastSyncAt && (garmin?.activities || []).length > 0) {
       return {
         state: "operational",
-        label: "Operational",
-        summary: "Garmin Connect is live and recent activities have synced through the server integration.",
+        label: "Recent sync found",
+        summary: "Garmin authorization exists, and recent activities were pulled through the server-side connection.",
         detail: `Last sync: ${garminLastSyncLabel}.`,
       };
     }
@@ -8458,7 +8460,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       return {
         state: "manual",
         label: "Manual import only",
-        summary: "Garmin activity data exists from a manual import, not from the live server-side integration.",
+        summary: "Garmin activity data came from a manual import, not from the server-side connection.",
         detail: `Imported: ${formatIntegrationTimestamp(garmin?.importedAt)}.`,
       };
     }
@@ -8474,8 +8476,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     if (status === "granted") {
       return {
         state: "operational",
-        label: "Available",
-        summary: "Location access is available for travel context and local nutrition guidance.",
+        label: "Permission granted",
+        summary: "Location permission was granted for travel context and local nutrition suggestions.",
       };
     }
     if (status === "denied") {
@@ -8513,8 +8515,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       const msg = recent.length === 0
         ? "No Apple Health workouts found in last 7 days."
         : hasGarmin
-        ? `Connected: ${recent.length} workouts found, Garmin sessions detected.`
-        : `Apple Health connected: ${recent.length} workouts found, but Garmin source not detected yet.`;
+        ? `Recent Apple Health data found: ${recent.length} workouts, including Garmin-origin sessions.`
+        : `Recent Apple Health data found: ${recent.length} workouts, but Garmin-origin sessions were not detected.`;
       setCheckMsg(msg);
       await persistAppleHealth({ lastConnectionCheck: Date.now(), lastSyncStatus: hasGarmin ? "garmin_detected" : "health_only" });
     } finally {
@@ -8683,7 +8685,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
         {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:C.green, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
         <div style={{ fontSize:"0.56rem", color:"#8ea4c7", lineHeight:1.7, marginBottom:"1rem" }}>
-          Manage profile, devices, preferences, appearance, notifications, and privacy in one place.
+          Review profile, device status, preferences, appearance, notifications, and privacy in one place.
         </div>
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.4rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>PROFILE</div>
@@ -8733,7 +8735,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>INTEGRATIONS</div>
           <div style={{ fontSize:"0.55rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.5rem" }}>
-            Live integrations, manual imports, simulated states, and unavailable services are shown separately so device status is easier to trust.
+            Connection states, manual imports, and simulated placeholders are shown separately so it is clearer what is actually active.
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:"0.4rem", marginBottom:"0.55rem" }}>
             {[
@@ -8754,7 +8756,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             })}
           </div>
           <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5, marginBottom:"0.55rem" }}>
-            Current data use: {(deviceSyncAudit?.utilization || ["No live device utilization signals are available yet."]).slice(0, 3).join(" ")}
+            Current device signals in use: {(deviceSyncAudit?.utilization || ["No device signals are being used yet."]).slice(0, 3).join(" ")}
           </div>
 
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:"0.6rem" }}>
@@ -8766,15 +8768,15 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.55 }}>{appleIntegration.summary}</div>
               <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>{appleIntegration.detail}</div>
               <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.18rem", lineHeight:1.5 }}>
-                Permission requested: {formatIntegrationTimestamp(appleHealth?.permissionRequestedAt)} · Last check: {formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}
+                Permission request recorded: {formatIntegrationTimestamp(appleHealth?.permissionRequestedAt)} · Last check: {formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}
               </div>
-              <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.12rem", lineHeight:1.5 }}>Active data types: {activeAppleTypes}</div>
+              <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.12rem", lineHeight:1.5 }}>Granted categories: {activeAppleTypes}</div>
               <div style={{ marginTop:"0.35rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
                 <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
                   {appleMode === "live" || appleMode === "simulated" ? "Reconnect Apple Health" : "Connect Apple Health"}
                 </button>
                 <button className="btn" onClick={checkConnection} disabled={checking || appleMode === "manual_import"} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
-                  {checking ? "Checking..." : "Verify sync"}
+                  {checking ? "Checking..." : "Check recent data"}
                 </button>
                 <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
                   I enabled permissions
@@ -8824,7 +8826,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               <span style={{ fontSize:"0.46rem", color:integrationStateTone(locationIntegration.state).color, background:integrationStateTone(locationIntegration.state).bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{locationIntegration.label}</span>
             </div>
             <div style={{ fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.6 }}>{locationIntegration.summary}</div>
-            <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Enable location permission</button>
+            <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Request location permission</button>
             <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
               {sanitizeDisplayText("iPhone path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Location Services Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ While Using App.")}
             </div>
@@ -8836,13 +8838,13 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             <div style={{ marginTop:"0.38rem", display:"grid", gap:"0.5rem" }}>
               <div style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
                 <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>Apple Health JSON import</div>
-                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only when you are restoring or testing data without a live Apple Health link.</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only for restore or testing when there is no confirmed Apple Health link.</div>
                 <textarea value={appleImportText} onChange={e=>setAppleImportText(e.target.value)} placeholder='{"workouts":{"2026-04-07":{"distanceMiles":3.2,"avgHr":148}}}' style={{ minHeight:62, fontSize:"0.5rem" }} />
                 <button className="btn" onClick={()=>importDeviceData("apple")} style={{ width:"fit-content", fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"35" }}>Import Apple JSON</button>
               </div>
               <div style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
                 <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>Garmin JSON import</div>
-                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only when you need Garmin activity data without the live server-side connection.</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only for restore or testing when there is no confirmed Garmin server-side connection.</div>
                 <textarea value={garminImportText} onChange={e=>setGarminImportText(e.target.value)} placeholder='{"activities":[{"startTime":"2026-04-07T07:30:00Z","type":"Run","distanceMiles":4.1}]}' style={{ minHeight:62, fontSize:"0.5rem" }} />
                 <button className="btn" onClick={()=>importDeviceData("garmin")} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Import Garmin JSON</button>
               </div>
@@ -8856,7 +8858,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.35rem" }}>
                 {appleMode === "simulated" && (
                   <div style={{ fontSize:"0.5rem", color:"#9fb2d2", lineHeight:1.6 }}>
-                    Apple Health is currently marked `simulated_web`, which is a web-only placeholder and should not be treated like a live connection.
+                    Apple Health is currently marked `simulated_web`, which is a web-only placeholder and should not be read like a real connection.
                   </div>
                 )}
                 <div style={{ fontSize:"0.5rem", color:"#9fb2d2", lineHeight:1.6 }}>
@@ -8977,7 +8979,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
           <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
             <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
-              Personal Trainer can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
+              Personal Trainer may read Apple Health workouts and device context if permission is granted. We never share this data. You can revoke access anytime in iOS Settings.
             </div>
             <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
             <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
@@ -9938,14 +9940,14 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
   );
   const recoveryPrescription = planDayRecovery?.prescription || null;
   const actualRecovery = planDayRecovery?.actual || null;
-  const recoveryPrescriptionLine = recoveryPrescription?.summary || planDayRecovery?.recoveryLine || "Recovery posture follows the current daily decision.";
+  const recoveryPrescriptionLine = recoveryPrescription?.summary || planDayRecovery?.recoveryLine || "Recovery guidance currently follows today's daily decision.";
   const recoveryActualLine = actualRecovery?.loggedAt
     ? actualRecovery.summary
     : "Recovery actuals have not been logged yet.";
   const supplementPlanLine = Array.isArray(planDaySupplements?.plan?.items) && planDaySupplements.plan.items.length
     ? planDaySupplements.plan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
     : "No supplement plan prescribed today.";
-  const supplementActualLine = planDaySupplements?.actual?.summary || "Supplement adherence will appear after nutrition logging.";
+  const supplementActualLine = planDaySupplements?.actual?.summary || "Supplement adherence can appear here after nutrition logging.";
   const tomorrowPreviewText = `${tomorrowWorkout?.label || "Rest"}${tomorrowWorkout?.run ? ` - ${tomorrowWorkout.run.d}` : ""}`;
   const primaryActionSummary = sessionVariant === "short"
     ? "Short version active"
@@ -11143,6 +11145,27 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     currentProgramBlock?.nutritionPosture?.mode ? `nutrition ${String(currentProgramBlock.nutritionPosture.mode).replaceAll("_", " ")}` : null,
     currentWeeklyIntent?.nutritionEmphasis || null,
   ].filter(Boolean);
+  const compressWeekCopy = (text = "", maxLen = 165) => {
+    const normalized = String(text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+    if (normalized.length <= maxLen) return normalized;
+    return `${normalized.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
+  };
+  const currentWeekPurposeLine = compressWeekCopy(currentWeeklyIntent?.focus || currentWeekLabel, 140);
+  const currentWeekMattersLine = compressWeekCopy(weeklyCoachBrief || blockSummaryLine || "Current week plan", 165);
+  const currentWeekChangesLine = compressWeekCopy(
+    badWeekTriage
+      || (Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0
+        ? currentWeekModel.constraints.slice(0, 2).join(" - ")
+        : hierarchyIntentBits.join(" - ")),
+    165
+  ) || "No major week-level change flags are active.";
+  const currentWeekWinLine = compressWeekCopy(weeklyConsistencyAnchor, 165);
+  const currentWeekMetaLine = [
+    `${sessionsCompletedThisWeek}/${Math.max(1, plannedSessionsThisWeek)} sessions done`,
+    nextWeekType,
+    currentWeekModel?.adjusted ? "plan adjusted" : "",
+  ].filter(Boolean).join(" - ");
   const handleGoalChangePreview = async () => {
     const cleanGoalText = sanitizeIntakeText(goalChangeIntent || "");
     if (!cleanGoalText) {
@@ -11597,12 +11620,6 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
               <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>CURRENT WEEK DETAIL</div>
               <div style={{ fontSize:"1rem", color:"#f8fafc", fontWeight:650 }}>{sanitizeDisplayText(currentWeekLabel)}</div>
               <div style={{ fontSize:"0.55rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Current committed plan week. Today can still reflect live PlanDay adjustments.</div>
-              <div style={{ fontSize:"0.5rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>
-                {currentCommittedWeekReview
-                  ? `Durable PlanWeek snapshot saved for ${currentCommittedWeekReview.label}. Future horizon rows remain projected until their week becomes current.`
-                  : "Durable week history will populate as each week becomes current. Older data can still fall back to derived week context where no snapshot exists yet."}
-              </div>
-              <div style={{ fontSize:"0.5rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>{programTrust.summary}</div>
             </div>
             <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
               <div style={{ fontSize:"0.5rem", color:C.green, background:C.green+"14", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>CURRENT</div>
@@ -11611,14 +11628,38 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
           </div>
 
           <div style={{ display:"grid", gridTemplateColumns:"1.1fr 0.9fr", gap:"0.8rem", marginBottom:"0.75rem" }}>
-            <div style={{ display:"grid", gap:"0.45rem" }}>
-              <div style={{ fontSize:"0.6rem", color:"#dbe7f6", lineHeight:1.55 }}>{currentWeeklyIntent?.focus || "Current week plan"}</div>
-              <div style={{ fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 }}>{weeklyCoachBrief}</div>
-              <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>{weeklyConsistencyAnchor}</div>
-              {!!badWeekTriage && <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.55 }}>{badWeekTriage}</div>}
-              {Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0 && (
-                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>Constraints: {currentWeekModel.constraints.slice(0, 4).join(" - ")}</div>
-              )}
+            <div style={{ display:"grid", gap:"0.42rem" }}>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WEEK PURPOSE</div>
+                <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.45 }}>{currentWeekPurposeLine}</div>
+              </div>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WHAT MATTERS MOST</div>
+                <div style={{ fontSize:"0.54rem", color:"#cbd5e1", lineHeight:1.5 }}>{currentWeekMattersLine}</div>
+              </div>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WHAT CHANGES THIS WEEK</div>
+                <div style={{ fontSize:"0.53rem", color:badWeekTriage ? C.amber : "#8fa5c8", lineHeight:1.5 }}>{currentWeekChangesLine}</div>
+              </div>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WIN THE WEEK</div>
+                <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.5 }}>{currentWeekWinLine}</div>
+              </div>
+              {!!currentWeekMetaLine && <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.45 }}>{currentWeekMetaLine}</div>}
+              <details>
+                <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>Week context</summary>
+                <div style={{ marginTop:"0.28rem", display:"grid", gap:"0.2rem" }}>
+                  <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>
+                    {currentCommittedWeekReview
+                      ? `Durable PlanWeek snapshot saved for ${currentCommittedWeekReview.label}. Future horizon rows stay projected until their week becomes current.`
+                      : "Durable week history will populate as each week becomes current. Older data can still fall back to derived week context where no snapshot exists yet."}
+                  </div>
+                  <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>{programTrust.summary}</div>
+                  {Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0 && (
+                    <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>Constraints: {currentWeekModel.constraints.slice(0, 4).join(" - ")}</div>
+                  )}
+                </div>
+              </details>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:"0.45rem" }}>
               <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
@@ -12709,9 +12750,9 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const supplementPrescriptionLine = Array.isArray(supplementPlan?.items) && supplementPlan.items.length
     ? supplementPlan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
     : "No explicit supplement plan stored for today.";
-  const hydrationSupportLine = recoveryPrescription?.hydrationSupport?.summary || "Hydration support follows today's nutrition target.";
+  const hydrationSupportLine = recoveryPrescription?.hydrationSupport?.summary || "Hydration guidance is currently tied to today's nutrition target.";
   const weeklyNutritionHeadline = weeklyNutritionReview?.coaching?.headline || "Weekly nutrition review will populate as actual logs accumulate.";
-  const weeklyPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned-vs-actual nutrition remains separate.";
+  const weeklyPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned nutrition guidance and logged actual intake stay separate.";
   const weeklyAdherenceLine = weeklyNutritionReview?.adherence?.summary || "Adherence trend is still forming.";
   const weeklyHydrationLine = weeklyNutritionReview?.hydration?.summary || "Hydration consistency is still forming.";
   const weeklySupplementLine = weeklyNutritionReview?.supplements?.summary || "Supplement adherence is still forming.";
@@ -12947,7 +12988,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
           <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
             <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>RECOVERY</div>
             <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>
-              {recoveryPrescription?.summary || "Recovery posture is attached to today's PlanDay."}
+              {recoveryPrescription?.summary || "Recovery guidance is currently attached to today's PlanDay."}
             </div>
             <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{hydrationSupportLine}</div>
           </div>
@@ -13505,7 +13546,7 @@ Rules for every response:
       : lowRecoverySignal
       ? `latest recovery check-in is strained (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
       : highRecoverySignal
-      ? `latest recovery check-in is supportive (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
+      ? `latest recovery check-in looked supportive (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
       : `latest session felt ${feelDescriptor}`;
 
     let watching = "";
@@ -13610,12 +13651,36 @@ Rules for every response:
   const boundaryLine = "Coach can recommend and prepare accepted actions, but state only changes when you explicitly apply a recommendation.";
   const recentAcceptedAction = (coachActions || []).find((action) => action?.acceptedBy) || null;
   const weeklyNutritionCoachLine = weeklyNutritionReview?.coaching?.coachLine || "Weekly nutrition signal is still forming.";
-  const weeklyNutritionPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned-vs-actual nutrition remains separate.";
+  const weeklyNutritionPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned nutrition guidance and logged actual intake stay separate.";
   const weeklyNutritionActionLine = weeklyNutritionReview?.adaptation?.actions?.[0] || "Keep logging intake and hydration so future nutrition changes stay deterministic.";
-  const recoveryPrescriptionLine = canonicalCoachRecovery?.prescription?.summary || canonicalCoachRecovery?.recoveryLine || "Recovery posture is attached to today's decision.";
+  const recoveryPrescriptionLine = canonicalCoachRecovery?.prescription?.summary || canonicalCoachRecovery?.recoveryLine || "Recovery guidance is currently attached to today's decision.";
   const supplementCoachLine = Array.isArray(canonicalCoachSupplements?.plan?.items) && canonicalCoachSupplements.plan.items.length
     ? canonicalCoachSupplements.plan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
     : "No explicit supplement plan stored for today.";
+  const compressCoachCopy = (text = "", maxLen = 180) => {
+    const normalized = String(text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+    if (normalized.length <= maxLen) return normalized;
+    return `${normalized.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
+  };
+  const coachRecommendationLine = compressCoachCopy(coachDecision.stance, 140);
+  const coachWhyLine = compressCoachCopy(coachDecision.why, 170);
+  const coachNextLine = compressCoachCopy(coachSnapshot.doToday, 150);
+  const coachWatchLine = compressCoachCopy(coachSnapshot.watch, 135);
+  const latestAssistantSummary = compressCoachCopy(latestAssistantMessage?.text || "Coach update ready.", 180);
+  const acceptedActionHeadline = recentAcceptedAction
+    ? `${sanitizeStatusLabel(recentAcceptedAction.type, "accepted")} by ${sanitizeDisplayText(recentAcceptedAction.acceptedBy || "gate")}`
+    : "No accepted coach action yet.";
+  const acceptedActionSummary = compressCoachCopy(
+    recentAcceptedAction
+      ? sanitizeDisplayText(recentAcceptedAction.reason || recentAcceptedAction.rationale || "Accepted action saved.")
+      : boundaryLine,
+    170
+  );
+  const supportNutritionLine = compressCoachCopy(weeklyNutritionActionLine, 140);
+  const supportRecoveryLine = compressCoachCopy(recoveryPrescriptionLine, 140);
+  const supportSupplementLine = compressCoachCopy(supplementCoachLine, 120);
+  const latestWeeklyReviewLine = compressCoachCopy(sundayArchive[0]?.paragraph || weeklyNotice, 180);
 
   return (
     <div className="fi" style={{ display:"grid", gap:"0.75rem" }}>
@@ -13631,23 +13696,28 @@ Rules for every response:
             <span style={{ fontSize:"0.48rem", color:coachTrustTone.color, background:coachTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachTrust.label}</span>
           </div>
         </div>
-        <div className="coach-copy" style={{ display:"grid", gap:"0.22rem", fontSize:"0.61rem", lineHeight:1.65 }}>
-          <div><span style={{ color:"#94a3b8" }}>Watching:</span> {coachSnapshot.watch}</div>
-          <div><span style={{ color:"#94a3b8" }}>Recommendation:</span> {coachDecision.stance}</div>
-          <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachDecision.why}</div>
-          <div><span style={{ color:"#94a3b8" }}>Next:</span> {coachSnapshot.doToday}</div>
+        <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.45, marginBottom:"0.18rem" }}>{coachRecommendationLine}</div>
+        <div className="coach-copy" style={{ display:"grid", gap:"0.18rem", fontSize:"0.56rem", lineHeight:1.6 }}>
+          <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachWhyLine}</div>
+          <div><span style={{ color:"#94a3b8" }}>Take:</span> {coachNextLine}</div>
         </div>
-        <div style={{ marginTop:"0.22rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{coachTrust.summary}</div>
-        <div style={{ marginTop:"0.38rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{boundaryLine}</div>
+        <div style={{ marginTop:"0.22rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{coachWatchLine}</div>
+        <div style={{ marginTop:"0.22rem", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>LAST ACCEPTED</div>
+            <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{acceptedActionHeadline}</div>
+            <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{acceptedActionSummary}</div>
+          </div>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>BOUNDARY</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.55 }}>{boundaryLine}</div>
+          </div>
+        </div>
       </div>
 
       <div className="card card-action" style={{ borderColor:C.green+"30" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.32rem" }}>SUGGESTED ACTIONS</div>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.32rem" }}>TAKE ACTION</div>
         <div style={{ display:"grid", gap:"0.38rem" }}>
-          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.46rem 0.5rem" }}>
-            <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.55 }}>{coachDecision.stance}</div>
-            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{coachDecision.watch}</div>
-          </div>
           <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
             {coachDecision.options.slice(0, 2).map((opt, i) => (
               <button key={`${opt.label}_${i}`} className={`btn ${opt.primary ? "btn-primary" : ""}`} onClick={()=>applyDecisionOption(opt)} style={{ fontSize:"0.56rem" }}>
@@ -13655,59 +13725,47 @@ Rules for every response:
               </button>
             ))}
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
-            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LATEST COACH OUTPUT</div>
-              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>{latestAssistantMessage?.text || "Coach update ready."}</div>
+          <details>
+            <summary style={{ cursor:"pointer", fontSize:"0.53rem", color:"#8fa5c8" }}>Latest coach note</summary>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem", marginTop:"0.32rem" }}>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>{latestAssistantSummary}</div>
               {latestAssistantMessage?.source && <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.14rem" }}>Source: {formatCoachResponseSource(latestAssistantMessage.source)}</div>}
             </div>
-            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LAST ACCEPTED CHANGE</div>
-              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>
-                {recentAcceptedAction ? `${sanitizeStatusLabel(recentAcceptedAction.type, "accepted")} by ${sanitizeDisplayText(recentAcceptedAction.acceptedBy || "gate")}` : "No accepted coach action yet."}
-              </div>
-              <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                {recentAcceptedAction ? sanitizeDisplayText(recentAcceptedAction.reason || recentAcceptedAction.rationale || "Accepted action saved.") : boundaryLine}
-              </div>
-            </div>
-          </div>
+          </details>
         </div>
       </div>
 
-      <div className="card" style={{ borderColor:C.amber+"26" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.32rem" }}>
+      <details className="card" style={{ borderColor:C.amber+"26" }}>
+        <summary style={{ cursor:"pointer", display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"center", listStyle:"none" }}>
           <div>
-            <div className="sect-title" style={{ color:C.amber, marginBottom:"0.14rem" }}>NUTRITION THIS WEEK</div>
-            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyNutritionPlannedVsActualLine}</div>
+            <div className="sect-title" style={{ color:C.amber, marginBottom:"0.14rem" }}>SUPPORT SIGNALS</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              Nutrition: {supportNutritionLine} · Recovery: {supportRecoveryLine}
+            </div>
           </div>
           <span style={{ fontSize:"0.48rem", color:"#fbbf24", background:"#2b2007", padding:"0.16rem 0.42rem", borderRadius:999 }}>
             {sanitizeStatusLabel(weeklyNutritionReview?.adaptation?.mode, "hold")}
           </span>
-        </div>
-        <div style={{ display:"grid", gap:"0.3rem" }}>
-          <div style={{ fontSize:"0.57rem", color:"#dbe7f6", lineHeight:1.55 }}>{weeklyNutritionCoachLine}</div>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyNutritionReview?.adaptation?.support || "Nutrition review stays descriptive until the signal is strong enough to support deterministic change."}</div>
-          <div style={{ fontSize:"0.51rem", color:"#c7d5ea", lineHeight:1.5 }}>Next practical move: {weeklyNutritionActionLine}</div>
-        </div>
-      </div>
-
-      <div className="card" style={{ borderColor:C.blue+"24" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.28rem" }}>RECOVERY + SUPPLEMENTS TODAY</div>
-        <div style={{ display:"grid", gap:"0.24rem" }}>
-          <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{recoveryPrescriptionLine}</div>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{supplementCoachLine}</div>
+        </summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.42rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyNutritionPlannedVsActualLine}</div>
+          <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{compressCoachCopy(weeklyNutritionCoachLine, 170)}</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{compressCoachCopy(weeklyNutritionReview?.adaptation?.support || "Nutrition review stays descriptive until the signal is strong enough to support deterministic change.", 170)}</div>
+          <div style={{ fontSize:"0.51rem", color:"#c7d5ea", lineHeight:1.5 }}>Next practical move: {supportNutritionLine}</div>
+          <div style={{ fontSize:"0.51rem", color:"#dbe7f6", lineHeight:1.5 }}>Recovery: {supportRecoveryLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>Supplements: {supportSupplementLine}</div>
           <div style={{ fontSize:"0.48rem", color:"#64748b", lineHeight:1.5 }}>
             {canonicalCoachRecovery?.actual?.loggedAt
-              ? canonicalCoachRecovery.actual.summary
+              ? compressCoachCopy(canonicalCoachRecovery.actual.summary, 150)
               : "Recovery actuals will update after check-in and nutrition logging."}
           </div>
         </div>
-      </div>
+      </details>
 
       <div className="card" style={{ marginBottom:"0.05rem" }}>
         <div className="sect-title" style={{ color:C.amber, marginBottom:"0.32rem" }}>COACH INPUT</div>
         <div style={{ display:"grid", gap:"0.38rem" }}>
-          <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Ask for a recommendation or use a quick decision prompt.</div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Ask for a decision, or use a quick prompt.</div>
           <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" }}>
             {quickPrompts.slice(0, 6).map(q => (
               <button key={q} className="btn" onClick={()=>send(q)} style={{ whiteSpace:"nowrap", fontSize:"0.55rem" }}>{q}</button>
@@ -13763,7 +13821,7 @@ Rules for every response:
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:"0.75rem" }}>
-        <details className="card card-subtle" open>
+        <details className="card card-subtle">
           <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.blue }}>MEMORY / SETTINGS</summary>
           <div style={{ paddingTop:"0.55rem", display:"grid", gap:"0.45rem" }}>
             <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>Coach memory and environment presets shape recommendations, but they do not mutate plan state until you accept an action.</div>
@@ -13805,18 +13863,18 @@ Rules for every response:
           </div>
         </details>
 
-        <details className="card card-subtle" open>
+        <details className="card card-subtle">
           <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.purple }}>WEEKLY REVIEW / REFLECTION</summary>
           <div style={{ paddingTop:"0.55rem", display:"grid", gap:"0.38rem" }}>
             <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.6 }}>
-              {sundayArchive[0]?.paragraph || "This section auto-generates on Sundays and archives each weekly review."}
+              {latestWeeklyReviewLine || "This section auto-generates on Sundays and archives each weekly review."}
             </div>
-            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>{weeklyNotice}</div>
+            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>{compressCoachCopy(weeklyNotice, 150)}</div>
             {sundayArchive.length > 0 && (
               <div style={{ maxHeight:170, overflowY:"auto", border:"1px solid #23344e", borderRadius:9, padding:"0.35rem 0.45rem", display:"grid", gap:"0.28rem", background:"#0f172a" }}>
                 {sundayArchive.map((r, idx) => (
                   <div key={`${r.date}_${idx}`} style={{ fontSize:"0.54rem", color:"#9fb2d2", lineHeight:1.55 }}>
-                    <span className="mono" style={{ color:"#64748b" }}>{r.date}</span> - {r.paragraph}
+                    <span className="mono" style={{ color:"#64748b" }}>{r.date}</span> - {compressCoachCopy(r.paragraph, 180)}
                   </div>
                 ))}
               </div>

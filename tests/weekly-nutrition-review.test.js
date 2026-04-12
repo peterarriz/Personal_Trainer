@@ -128,7 +128,7 @@ test("weekly nutrition review keeps planned vs actual separate and surfaces recu
   assert.equal(review.friction.topCauses[0].key, "hunger");
   assert.equal(review.supplements.expectedDays, 5);
   assert.equal(review.adaptation.mode, "protect_key_session_fueling");
-  assert.match(review.coaching.plannedVsActualLine, /stored nutrition prescription/i);
+  assert.match(review.coaching.plannedVsActualLine, /stored or generated nutrition guidance/i);
   assert.match(review.coaching.plannedVsActualLine, /logged actual nutrition/i);
 });
 

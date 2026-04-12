@@ -267,7 +267,7 @@ export const buildRecoveryPrescription = ({
     timing: hardDay ? "Front-load hydration before training and close the day back at target." : "Keep hydration steady across the day.",
     summary: hydrationTargetOz
       ? `Hydration support target: ${Math.round(hydrationTargetOz)} oz.`
-      : "Hydration support is available, but no explicit daily target was stored.",
+      : "Hydration guidance is available, but no explicit daily target is stored.",
   };
   const actions = [
     {
