@@ -26,6 +26,7 @@ const {
   assessGoalFeasibility,
   applyFeasibilityPriorityOrdering,
 } = require("../src/services/goal-feasibility-service.js");
+const { buildGoalArbitrationStack } = require("../src/services/goal-arbitration-service.js");
 
 const buildIntakePacket = (rawGoalText) => ({
   version: "2026-04-v1",
@@ -201,7 +202,7 @@ test("review model stays not-ready when realism blocks confirmation even after c
 
   assert.equal(reviewModel.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
   assert.equal(reviewModel.gateStatus, "blocked");
-  assert.equal(reviewModel.gateLabel, "Needs a more realistic first target");
+  assert.equal(reviewModel.gateLabel, "Too aggressive for this timeline");
   assert.equal(reviewModel.isPlannerReady, false);
   assert.match(reviewModel.recommendedRevisionSummary, /135|225/i);
 });
@@ -242,7 +243,7 @@ test("review model keeps plausible but incomplete goals out of ready-to-plan sta
 
   assert.equal(reviewModel.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
   assert.equal(reviewModel.gateStatus, "incomplete");
-  assert.equal(reviewModel.gateLabel, "Still need one more anchor");
+  assert.equal(reviewModel.gateLabel, "Need one more detail");
   assert.equal(reviewModel.isPlannerReady, false);
 });
 
@@ -289,7 +290,7 @@ test("review model reflects a warning state without promoting it to ready-to-pla
 
   assert.equal(reviewModel.confirmationAction, GOAL_FEASIBILITY_ACTIONS.warn);
   assert.equal(reviewModel.gateStatus, "warn");
-  assert.equal(reviewModel.gateLabel, "Possible, but tight");
+  assert.equal(reviewModel.gateLabel, "Aggressive but possible");
   assert.equal(reviewModel.isPlannerReady, true);
 });
 
@@ -336,8 +337,8 @@ test("ready-to-plan state produces a confirmable intake confirmation state", () 
 
   assert.equal(reviewModel.isPlannerReady, true);
   assert.equal(confirmationState.state, "ready");
-  assert.equal(confirmationState.statusLabel, "Looks buildable");
-  assert.equal(confirmationState.headline, "This looks buildable from where you are now.");
+  assert.equal(confirmationState.statusLabel, "Ready to build");
+  assert.equal(confirmationState.headline, "This looks realistic from where you're starting.");
   assert.equal(confirmationState.canConfirm, true);
   assert.equal(confirmationState.ctaEnabled, true);
   assert.equal(confirmationState.ctaLabel, "Confirm and build my plan");
@@ -390,8 +391,8 @@ test("blocked state produces an explicit non-confirmable reason instead of a sil
 
   assert.equal(reviewModel.isPlannerReady, false);
   assert.equal(confirmationState.state, "blocked");
-  assert.equal(confirmationState.statusLabel, "Needs a more realistic first target");
-  assert.match(confirmationState.headline, /more realistic first step/i);
+  assert.equal(confirmationState.statusLabel, "Too aggressive for this timeline");
+  assert.match(confirmationState.headline, /too aggressive/i);
   assert.equal(confirmationState.canConfirm, false);
   assert.equal(confirmationState.ctaEnabled, false);
   assert.match(confirmationState.reason, /135|225|smaller|first block/i);
@@ -445,11 +446,11 @@ test("warned-but-allowed state still produces a confirmable intake confirmation 
 
   assert.equal(reviewModel.isPlannerReady, true);
   assert.equal(confirmationState.state, "warn");
-  assert.equal(confirmationState.statusLabel, "Possible, but tight");
-  assert.match(confirmationState.headline, /near-term path is tight/i);
+  assert.equal(confirmationState.statusLabel, "Aggressive but possible");
+  assert.match(confirmationState.headline, /aggressive, but i can build for it/i);
   assert.equal(confirmationState.canConfirm, true);
   assert.equal(confirmationState.ctaEnabled, true);
-  assert.equal(confirmationState.ctaLabel, "Build my plan with this warning");
+  assert.equal(confirmationState.ctaLabel, "Build my plan anyway");
   assert.ok(confirmationState.reason.length > 0);
 });
 
@@ -494,8 +495,8 @@ test("incomplete but plausible state stays non-confirmable and surfaces the next
 
   assert.equal(reviewModel.isPlannerReady, false);
   assert.equal(confirmationState.state, "incomplete");
-  assert.equal(confirmationState.statusLabel, "Still need one more anchor");
-  assert.match(confirmationState.headline, /one more anchor/i);
+  assert.equal(confirmationState.statusLabel, "Need one more detail");
+  assert.match(confirmationState.headline, /one more detail/i);
   assert.equal(confirmationState.canConfirm, false);
   assert.equal(confirmationState.ctaEnabled, false);
   assert.ok(confirmationState.nextQuestion?.prompt);
@@ -520,8 +521,8 @@ test("canonical review state carries the status and CTA fields the live review s
     ["canConfirm", "ctaEnabled", "ctaLabel", "headline", "nextQuestion", "reason", "state", "statusLabel"].sort()
   );
   assert.equal(confirmationState.state, "warn");
-  assert.equal(confirmationState.statusLabel, "Possible, but tight");
-  assert.equal(confirmationState.ctaLabel, "Build my plan with this warning");
+  assert.equal(confirmationState.statusLabel, "Aggressive but possible");
+  assert.equal(confirmationState.ctaLabel, "Build my plan anyway");
   assert.equal(confirmationState.ctaEnabled, true);
 });
 
@@ -546,7 +547,7 @@ test("canonical review state follows gate status instead of legacy planner-ready
   });
 
   assert.equal(confirmationState.state, "incomplete");
-  assert.equal(confirmationState.statusLabel, "Still need one more anchor");
+  assert.equal(confirmationState.statusLabel, "Need one more detail");
   assert.equal(confirmationState.canConfirm, false);
   assert.equal(confirmationState.ctaEnabled, false);
   assert.match(confirmationState.reason, /current bodyweight/i);
@@ -917,6 +918,27 @@ test("primary goal only path skips the additional-goal step cleanly", () => {
   assert.equal(outcome.answers.other_goals, "");
 });
 
+test("continue without adding anything skips the additional-goal step cleanly", () => {
+  const outcome = applyIntakeSecondaryGoalResponse({
+    answers: {
+      goal_intent: "run a 1:45 half marathon",
+    },
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.done },
+    resolvedGoals: [],
+    goalStackConfirmation: null,
+    goalFeasibility: null,
+  });
+  const rawGoalText = buildRawGoalIntentFromAnswers({
+    answers: outcome.answers,
+  });
+
+  assert.equal(outcome.keepCollecting, false);
+  assert.equal(outcome.rerunAssessment, false);
+  assert.equal(outcome.answers.secondary_goal_prompt_answered, true);
+  assert.deepEqual(outcome.answers.additional_goals_list, []);
+  assert.equal(rawGoalText, "run a 1:45 half marathon");
+});
+
 test("primary plus one additional typed goal feeds into canonical resolution", () => {
   const outcome = applyIntakeSecondaryGoalResponse({
     answers: {
@@ -997,6 +1019,43 @@ test("primary plus two additional typed goals are collected one at a time", () =
   assert.ok(resolution.resolvedGoals.length >= 1);
 });
 
+test("changing the primary goal after collecting extra goals clears downstream additional-goal interpretation", () => {
+  const collected = applyIntakeSecondaryGoalResponse({
+    answers: {
+      goal_intent: "lose fat",
+    },
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.addGoal },
+    customText: "bench 225",
+    resolvedGoals: [],
+    goalStackConfirmation: null,
+    goalFeasibility: null,
+  });
+  const finalized = applyIntakeSecondaryGoalResponse({
+    answers: collected.answers,
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.done },
+    resolvedGoals: [],
+    goalStackConfirmation: null,
+    goalFeasibility: null,
+  });
+  const adjusted = applyIntakeGoalAdjustment({
+    answers: finalized.answers,
+    adjustmentText: "Actually, I want to run a 1:45 half marathon",
+    currentResolvedGoal: { planningCategory: "body_comp", summary: "Lose fat" },
+    currentPrimaryGoalKey: "fat_loss",
+    now: "2026-04-11",
+  });
+  const rawGoalText = buildRawGoalIntentFromAnswers({
+    answers: adjusted.answers,
+  });
+
+  assert.equal(adjusted.kind, "goal_replacement");
+  assert.deepEqual(adjusted.answers.additional_goals_list, []);
+  assert.equal(adjusted.answers.other_goals, "");
+  assert.equal(adjusted.answers.secondary_goal_prompt_answered, false);
+  assert.doesNotMatch(rawGoalText, /bench 225/i);
+  assert.match(rawGoalText, /1:45 half marathon/i);
+});
+
 test("primary body-comp plus maintained strength stays explicit in the confirmed goal stack", () => {
   const resolution = resolveGoalTranslation({
     rawUserGoalIntent: "lose fat but keep strength",
@@ -1031,8 +1090,8 @@ test("primary body-comp plus maintained strength stays explicit in the confirmed
   assert.equal(confirmedStack[0].intakeConfirmedRole, GOAL_STACK_ROLES.primary);
   assert.equal(confirmedStack[1].planningCategory, "strength");
   assert.equal(confirmedStack[1].intakeConfirmedRole, GOAL_STACK_ROLES.maintained);
-  assert.equal(review.activeGoals[0].roleLabel, "Primary");
-  assert.equal(review.activeGoals[1].roleLabel, "Maintained");
+  assert.equal(review.activeGoals[0].roleLabel, "Lead goal");
+  assert.equal(review.activeGoals[1].roleLabel, "Also keep");
   assert.ok(review.primaryTradeoff.length > 0);
 });
 
@@ -1057,6 +1116,91 @@ test("primary race goal plus maintained strength stays explicit in the confirmed
   assert.equal(confirmedStack[0].planningCategory, "running");
   assert.equal(confirmedStack[1].planningCategory, "strength");
   assert.equal(confirmedStack[1].intakeConfirmedRole, GOAL_STACK_ROLES.maintained);
+});
+
+test("final review keeps running lead, maintained bench goal, and background abs goal in separate sections", () => {
+  const primaryResolution = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 1:45 half marathon",
+    typedIntakePacket: buildIntakePacket("run a 1:45 half marathon"),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+  const combinedPacket = buildIntakePacket("run a 1:45 half marathon. bench 225. get a six pack");
+  const combinedResolution = resolveGoalTranslation({
+    rawUserGoalIntent: combinedPacket.intake.rawGoalText,
+    typedIntakePacket: combinedPacket,
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+  const arbitration = buildGoalArbitrationStack({
+    resolvedGoals: combinedResolution.resolvedGoals,
+    confirmedPrimaryGoal: primaryResolution.resolvedGoals[0],
+    additionalGoalTexts: ["bench 225", "get a six pack"],
+    typedIntakePacket: combinedPacket,
+    now: "2026-04-11",
+  });
+  const reviewModel = buildIntakeGoalReviewModel({
+    goalResolution: primaryResolution,
+    orderedResolvedGoals: arbitration.goals,
+    goalFeasibility: { conflictFlags: [] },
+    answers: {},
+    goalStackConfirmation: null,
+  });
+
+  assert.equal(reviewModel.goalStackReview.primaryGoalId, arbitration.leadGoal?.id);
+  assert.deepEqual(reviewModel.goalStackReview.activeGoalIds, [
+    arbitration.leadGoal?.id,
+    arbitration.maintainedGoals[0]?.id,
+  ]);
+  assert.deepEqual(reviewModel.goalStackReview.backgroundGoalIds, [arbitration.supportGoals[0]?.id]);
+  assert.deepEqual(reviewModel.goalStackReview.deferredGoalIds, []);
+  assert.equal(reviewModel.primarySummary, arbitration.leadGoal?.summary);
+});
+
+test("duplicate goal fingerprints do not render in both lead and later sections", () => {
+  const review = buildIntakeGoalStackReviewModel({
+    resolvedGoals: [
+      {
+        id: "goal_strength_primary",
+        summary: "Bench press 225 lb",
+        planningCategory: "strength",
+        goalFamily: "strength",
+        planningPriority: 1,
+        goalArbitrationRole: GOAL_STACK_ROLES.primary,
+        measurabilityTier: GOAL_MEASURABILITY_TIERS.fullyMeasurable,
+        primaryMetric: { key: "bench_press_1rm", targetValue: "225 lb", label: "Bench 1RM" },
+      },
+      {
+        id: "goal_strength_duplicate",
+        summary: "Bench press 225 lb",
+        planningCategory: "strength",
+        goalFamily: "strength",
+        planningPriority: 3,
+        goalArbitrationRole: GOAL_STACK_ROLES.deferred,
+        measurabilityTier: GOAL_MEASURABILITY_TIERS.fullyMeasurable,
+        primaryMetric: { key: "bench_press_1rm", targetValue: "225 lb", label: "Bench 1RM" },
+      },
+      {
+        id: "goal_abs_background",
+        summary: "Improve midsection definition",
+        planningCategory: "body_comp",
+        goalFamily: "appearance",
+        planningPriority: 2,
+        goalArbitrationRole: GOAL_STACK_ROLES.background,
+        measurabilityTier: GOAL_MEASURABILITY_TIERS.proxyMeasurable,
+        proxyMetrics: [{ label: "Waist trend" }],
+      },
+    ],
+    goalResolution: null,
+    goalFeasibility: null,
+    goalStackConfirmation: null,
+  });
+
+  assert.deepEqual(review.activeGoalIds, ["goal_strength_primary"]);
+  assert.deepEqual(review.backgroundGoalIds, ["goal_abs_background"]);
+  assert.deepEqual(review.deferredGoalIds, []);
+  assert.equal(review.activeGoals[0].role, GOAL_STACK_ROLES.primary);
+  assert.equal(review.backgroundGoals[0].role, GOAL_STACK_ROLES.background);
 });
 
 test("hybrid vague goal resolves into explicit leading and maintained structure", () => {
