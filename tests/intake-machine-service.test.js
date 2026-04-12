@@ -338,3 +338,52 @@ test("machine exposes field-card metadata for timeline and strength baseline par
     reps: 5,
   });
 });
+
+test("current field validation ignores extra facts that do not match the active field schema", () => {
+  let runningState = createIntakeMachineState();
+  runningState = intakeReducer(runningState, {
+    event_id: "evt_run_goal_submit_extra_facts",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "run a 2-hour half marathon",
+      },
+      now: TEST_NOW,
+    },
+  });
+  runningState = intakeReducer(runningState, buildInterpretationEvent({
+    event_id: "evt_run_goal_interpreted_extra_facts",
+    answers: {
+      goal_intent: "run a 2-hour half marathon",
+    },
+    rawGoalText: "run a 2-hour half marathon",
+  }));
+  runningState = intakeReducer(runningState, {
+    event_id: "evt_run_goal_timeline_answered_extra_facts",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: {
+      anchor: runningState.draft.missingAnchorsEngine.currentAnchor,
+      field_id: runningState.draft.missingAnchorsEngine.currentAnchor.field_id,
+      raw_text: "October 12",
+      answer_value: "October 12",
+      source: "user",
+      now: TEST_NOW,
+    },
+  });
+
+  const frequencyValidation = validateMissingAnchorAnswer({
+    anchor: runningState.draft.missingAnchorsEngine.currentAnchor,
+    raw_text: "3 runs a week and my longest run is 8 miles",
+    answer_value: "3 runs a week and my longest run is 8 miles",
+  });
+
+  assert.equal(runningState.draft.missingAnchorsEngine.currentAnchor.field_id, "current_run_frequency");
+  assert.equal(frequencyValidation.isValid, true);
+  assert.equal(frequencyValidation.summaryText, "3 runs/week");
+  assert.deepEqual(
+    frequencyValidation.canonicalWrites.map((item) => item.fieldKey),
+    ["current_run_frequency"]
+  );
+});

@@ -13,7 +13,9 @@ const {
   buildPlanAnalysisRuntimeInput,
   runPlanAnalysisRuntime,
   buildCoachChatRuntimeInput,
+  buildIntakeFieldExtractionRuntimeInput,
   buildIntakeInterpretationRuntimeInput,
+  runIntakeFieldExtractionRuntime,
   runIntakeInterpretationRuntime,
   runCoachChatRuntime,
   coordinateCoachActionCommit,
@@ -436,6 +438,64 @@ test("intake interpretation runtime returns a sanitized proposal-only result wit
     assert.deepEqual(result.interpreted.detectedConflicts, ["Aggressive fat loss could blunt run quality."]);
     assert.deepEqual(result.interpreted.missingClarifyingQuestions, ["Is the 10k more important than appearance?"]);
     assert.match(result.interpreted.coachSummary, /hybrid goal/i);
+    assert.equal(result.provenance.actor, "ai_interpretation");
+  });
+});
+
+test("intake field extraction runtime returns bounded candidate values without canonical mutation", async () => {
+  await withMockedNow("2026-04-09T12:18:00Z", async () => {
+    const runtimeInput = buildIntakeFieldExtractionRuntimeInput({
+      utterance: "185 x 5",
+      missingFields: [
+        {
+          field_id: "current_strength_baseline",
+          label: "Current bench baseline",
+          input_type: "strength_top_set",
+          validation: {
+            message: "Add a recent top set, best single, or estimated max for this lift.",
+          },
+        },
+      ],
+      packetArgs: createIntakePacketArgs(),
+    });
+    const result = await runIntakeFieldExtractionRuntime({
+      safeFetchWithTimeout: createIntakeGatewayResponse({
+        extraction: {
+          candidates: [
+            {
+              field_id: "current_strength_baseline",
+              confidence: 0.96,
+              raw_text: "185 x 5",
+              parsed_value: { weight: 185, reps: 5, raw: "185 x 5" },
+              evidence_spans: [{ start: 0, end: 7, text: "185 x 5" }],
+            },
+          ],
+        },
+        meta: {
+          provider: "anthropic",
+          model: "claude-haiku-4-5",
+          latencyMs: 166,
+        },
+      }),
+      utterance: "185 x 5",
+      missingFields: [
+        {
+          field_id: "current_strength_baseline",
+          label: "Current bench baseline",
+          input_type: "strength_top_set",
+          validation: {
+            message: "Add a recent top set, best single, or estimated max for this lift.",
+          },
+        },
+      ],
+      packetArgs: createIntakePacketArgs(),
+    });
+
+    assert.equal(runtimeInput.statePacket.intent, AI_PACKET_INTENTS.intakeFieldExtraction);
+    assert.equal(result.ok, true);
+    assert.equal(result.status, "proposal_ready");
+    assert.equal(result.extraction.candidates.length, 1);
+    assert.equal(result.extraction.candidates[0].field_id, "current_strength_baseline");
     assert.equal(result.provenance.actor, "ai_interpretation");
   });
 });

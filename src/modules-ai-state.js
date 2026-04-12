@@ -6,6 +6,7 @@ export const AI_PACKET_INTENTS = {
   coachChat: "coach_chat",
   planAnalysis: "plan_analysis",
   intakeInterpretation: "intake_interpretation",
+  intakeFieldExtraction: "intake_field_extraction",
 };
 
 const clonePlainValueAiState = (value) => {
@@ -478,6 +479,40 @@ RULES:
 - confidence should reflect how complete and usable the current goal language is.
 - coachSummary must stay under 120 words and remain interpretation-only.
 - Never claim the goal is impossible. If the timeline is aggressive, say what is realistic first.`;
+
+export const buildIntakeFieldExtractionAiSystemPrompt = ({
+  statePacket = null,
+  extractionRequest = null,
+} = {}) => `You are a bounded intake extraction assistant inside a fitness app. Respond ONLY with valid JSON, no other text.
+Your source of truth is the typed intake packet and extraction request below.
+You may propose candidate values only for the explicitly allowed missing fields.
+You are not the system of record and you may not write canonical goals, plan state, or any field not listed in missingFields.
+AI_STATE_PACKET_JSON:${stringifyPacketForPrompt(statePacket)}
+EXTRACTION_REQUEST_JSON:${stringifyPacketForPrompt(extractionRequest)}
+
+Return JSON in this exact format:
+{
+  "candidates": [
+    {
+      "field_id": "field_id_from_missingFields",
+      "confidence": 0.0,
+      "raw_text": "exact supporting text",
+      "parsed_value": {},
+      "evidence_spans": [
+        { "start": 0, "end": 7, "text": "supporting text" }
+      ]
+    }
+  ]
+}
+
+RULES:
+- Only use field_id values that appear in missingFields.
+- Max 1 candidate per field_id.
+- If the utterance does not clearly support a field, omit it.
+- confidence must be between 0 and 1 and reflect extraction certainty only.
+- evidence_spans must quote exact supporting text from the utterance.
+- parsed_value must stay small and schema-aligned.
+- If nothing is clear, return {"candidates":[]}.`;
 
 export const sanitizeIntakeInterpretationProposal = (proposal = null) => {
   const safeGoalTypes = new Set(["performance", "strength", "body_comp", "appearance", "hybrid", "general_fitness", "re_entry"]);

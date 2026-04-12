@@ -14,6 +14,12 @@ export const GOAL_FEASIBILITY_ACTIONS = {
   block: "block",
 };
 
+export const GOAL_FEASIBILITY_GATE_STATUSES = {
+  ok: "OK",
+  needsRevision: "NEEDS_REVISION",
+  impossible: "IMPOSSIBLE",
+};
+
 export const GOAL_TARGET_VALIDATION_STATUSES = {
   valid: "valid",
   aggressiveButValid: "aggressive_but_valid",
@@ -31,6 +37,115 @@ export const GOAL_CONFLICT_SEVERITIES = {
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
 const hasFiniteNumericValue = (value) => value !== null && value !== "" && Number.isFinite(Number(value));
+
+const formatList = (items = []) => {
+  const values = dedupeStrings(toArray(items).map((item) => sanitizeText(item, 160)).filter(Boolean));
+  if (values.length === 0) return "";
+  if (values.length === 1) return values[0];
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
+};
+
+const buildFeasibilityReason = ({
+  code = "",
+  summary = "",
+  severity = "warning",
+  priority = 50,
+  goalId = "",
+} = {}) => ({
+  code: sanitizeText(code, 80).toLowerCase() || "unspecified_reason",
+  summary: sanitizeText(summary, 220),
+  severity: sanitizeText(severity, 20).toLowerCase() === "block" ? "block" : "warning",
+  priority: Number.isFinite(Number(priority)) ? Number(priority) : 50,
+  goalId: sanitizeText(goalId, 120),
+});
+
+const dedupeFeasibilityReasons = (items = []) => {
+  const seen = new Set();
+  return toArray(items)
+    .filter((item) => item && typeof item === "object")
+    .filter((item) => item.summary)
+    .filter((item) => {
+      const key = `${sanitizeText(item.code, 80).toLowerCase()}::${sanitizeText(item.summary, 220).toLowerCase()}`;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const sortFeasibilityReasons = (items = []) => (
+  dedupeFeasibilityReasons(items).sort((a, b) => {
+    const severityDiff = (a.severity === "block" ? 0 : 1) - (b.severity === "block" ? 0 : 1);
+    if (severityDiff !== 0) return severityDiff;
+    const priorityDiff = Number(a.priority || 50) - Number(b.priority || 50);
+    if (priorityDiff !== 0) return priorityDiff;
+    return String(a.summary || "").localeCompare(String(b.summary || ""));
+  })
+);
+
+const buildSuggestedRevision = ({
+  kind = "",
+  summary = "",
+  firstBlockTarget = "",
+  requestedData = [],
+  suggestedTargetHorizonWeeks = null,
+  goalId = "",
+} = {}) => ({
+  kind: sanitizeText(kind, 80).toLowerCase() || "proceed",
+  summary: sanitizeText(summary, 240),
+  first_block_target: sanitizeText(firstBlockTarget, 260),
+  requested_data: dedupeStrings(toArray(requestedData).map((item) => sanitizeText(item, 180)).filter(Boolean)).slice(0, 4),
+  ...(Number.isFinite(Number(suggestedTargetHorizonWeeks))
+    ? { suggested_target_horizon_weeks: Math.max(1, Math.round(Number(suggestedTargetHorizonWeeks))) }
+    : {}),
+  ...(sanitizeText(goalId, 120) ? { goal_id: sanitizeText(goalId, 120) } : {}),
+});
+
+const buildDefaultFirstBlockTarget = ({ goal = {}, demand = {} } = {}) => {
+  const planningCategory = sanitizeText(goal?.planningCategory || "", 40).toLowerCase();
+  if (planningCategory === "running") {
+    return "Build repeatable weekly running volume and a long run you can recover from before you push the full pace target.";
+  }
+  if (planningCategory === "strength") {
+    return "Use the first block to build repeatable top-set quality before you chase the full number.";
+  }
+  if (planningCategory === "body_comp") {
+    return "Use the first block to land a steady weekly rate you can repeat and track clearly.";
+  }
+  if (sanitizeText(goal?.goalFamily || "", 40).toLowerCase() === "athletic_power") {
+    return "Use the first block to build power output and re-test the jump benchmark before you lock the full target.";
+  }
+  return `Use the first block to chase ${sanitizeText(demand?.realisticByDate || "a realistic first win", 180).toLowerCase()}.`;
+};
+
+const buildGateExplanationText = ({
+  reasons = [],
+  suggestedRevision = null,
+  status = GOAL_FEASIBILITY_GATE_STATUSES.ok,
+} = {}) => {
+  const orderedReasons = sortFeasibilityReasons(reasons);
+  const primaryReason = orderedReasons[0]?.summary || (
+    status === GOAL_FEASIBILITY_GATE_STATUSES.ok
+      ? "The current target fits your baseline and schedule."
+      : "The current target needs a cleaner first step."
+  );
+  const supportingLine = orderedReasons.slice(1, 3).length
+    ? `Supporting reasons: ${orderedReasons.slice(1, 3).map((item) => item.summary).join(" ")}`
+    : "";
+  const revisionLine = suggestedRevision?.first_block_target
+    ? `Realistic first block: ${suggestedRevision.first_block_target}`
+    : suggestedRevision?.summary
+    ? `Revision path: ${suggestedRevision.summary}`
+    : "";
+  const dataLine = toArray(suggestedRevision?.requested_data).length
+    ? `What would change this: ${formatList(suggestedRevision.requested_data)}.`
+    : "";
+  return sanitizeText([primaryReason, supportingLine, revisionLine, dataLine].filter(Boolean).join(" "), 680);
+};
+
+const isImpossibleReasonCode = (code = "") => (
+  ["target_beyond_credible_range"].includes(sanitizeText(code, 80).toLowerCase())
+);
 
 const parseSessionLengthMinutes = (value = "") => {
   const text = String(value || "").trim();
@@ -292,8 +407,8 @@ const buildRunningBaselineSignals = ({
   facts = {},
   targetHorizonWeeks = null,
 } = {}) => {
-  const warnings = [];
-  const blocks = [];
+  const warningItems = [];
+  const blockItems = [];
   const metricKey = sanitizeText(goal?.primaryMetric?.key || "", 60).toLowerCase();
   const isHalfMarathon = metricKey.includes("half_marathon");
   const isMarathon = metricKey.includes("marathon") && !isHalfMarathon;
@@ -311,55 +426,84 @@ const buildRunningBaselineSignals = ({
     ? 3.1
     : null;
   const targetPaceSeconds = targetSeconds && distanceMiles ? targetSeconds / distanceMiles : null;
+  const pushBlock = (code, summary, priority = 20) => {
+    blockItems.push(buildFeasibilityReason({ code, summary, severity: "block", priority }));
+  };
+  const pushWarning = (code, summary, priority = 40) => {
+    warningItems.push(buildFeasibilityReason({ code, summary, severity: "warning", priority }));
+  };
 
   if (isMarathon && targetSeconds && targetSeconds <= 9000) {
-    blocks.push("That marathon time target is beyond a credible planning range here and needs a slower first target.");
+    pushBlock("target_beyond_credible_range", "The marathon time target is beyond a credible deterministic planning range for a first block.", 4);
   }
   if (isHalfMarathon && targetSeconds && targetSeconds <= 4500) {
-    blocks.push("That half-marathon time is too aggressive for a deterministic first plan unless the current baseline is already elite.");
+    pushBlock("target_beyond_credible_range", "The half-marathon time target is beyond a credible first-block target unless the current baseline is already elite.", 5);
   }
   if (metricKey.includes("10k") && targetSeconds && targetSeconds <= 2100) {
-    blocks.push("That 10k time target is too aggressive for a deterministic first plan.");
+    pushBlock("target_beyond_credible_range", "The 10K time target is beyond a credible deterministic first-block target.", 6);
   }
   if (metricKey.includes("5k") && targetSeconds && targetSeconds <= 1020) {
-    blocks.push("That 5k time target is too aggressive for a deterministic first plan.");
+    pushBlock("target_beyond_credible_range", "The 5K time target is beyond a credible deterministic first-block target.", 7);
   }
 
   if (Number.isFinite(runFrequency) && Number.isFinite(targetHorizonWeeks)) {
     if (isHalfMarathon && runFrequency <= 1 && targetHorizonWeeks <= 12) {
-      blocks.push("A half-marathon target on one run per week and this timeline is too compressed.");
+      pushBlock("weekly_run_volume_too_low_for_target_date", "Weekly running volume is too low for a half-marathon target on this date.", 10);
     } else if ((isHalfMarathon || isMarathon) && runFrequency <= 2 && targetHorizonWeeks <= 14) {
-      warnings.push("The current running frequency is light for this race target, so the block needs a gradual ramp.");
+      pushWarning("weekly_run_volume_too_low_for_target_date", "Weekly running volume is light for this race target, so the first block needs to ramp volume before it chases pace.", 28);
     }
   }
 
   if (Number.isFinite(longestRunMiles) && Number.isFinite(targetHorizonWeeks)) {
     if (isHalfMarathon && longestRunMiles < 5 && targetHorizonWeeks <= 10) {
-      blocks.push("The current long-run baseline is too short for this half-marathon target on the current timeline.");
+      pushBlock("long_run_baseline_too_low_for_target_date", "Your current long run is too short for this half-marathon target on the requested date.", 12);
     } else if (isHalfMarathon && longestRunMiles < 8 && targetHorizonWeeks <= 14) {
-      warnings.push("The current long-run baseline suggests the full half-marathon target may need a longer runway.");
+      pushWarning("long_run_baseline_too_low_for_target_date", "Your current long run suggests the full half-marathon target may need a longer runway.", 30);
     }
     if (isMarathon && longestRunMiles < 10 && targetHorizonWeeks <= 16) {
-      blocks.push("The current long-run baseline is too short for a marathon target on the current timeline.");
+      pushBlock("long_run_baseline_too_low_for_target_date", "Your current long run is too short for a marathon target on the requested date.", 11);
     }
   }
 
   if (Number.isFinite(recentPaceSeconds) && Number.isFinite(targetPaceSeconds) && recentPaceSeconds > 0) {
     const improvementRatio = (recentPaceSeconds - targetPaceSeconds) / recentPaceSeconds;
     if (improvementRatio > 0.22) {
-      blocks.push("The target pace is too far ahead of the current running baseline for this first planning block.");
+      pushBlock("pace_gap_too_large_for_first_block", "The goal pace is too far ahead of the current running baseline for this first block.", 13);
     } else if (improvementRatio > 0.12) {
-      warnings.push("The target pace is ambitious relative to the current running baseline.");
+      pushWarning("pace_gap_too_large_for_first_block", "The goal pace is ambitious relative to the current running baseline.", 32);
     }
   }
 
-  const recommendedRevisionSummary = blocks.length
-    ? `Scale the first block toward ${goal?.summary?.toLowerCase() || "this race goal"} by building run frequency and long-run support first, then revisit the full target on a longer horizon.`
-    : warnings.length
-    ? `Keep the race goal, but use the first block to raise run frequency and long-run tolerance before judging the full time target.`
-    : "";
+  const targetRunFrequency = Number.isFinite(runFrequency)
+    ? Math.max(runFrequency + (runFrequency < 3 ? 1 : 0), isMarathon ? 4 : 3)
+    : (isMarathon ? 4 : 3);
+  const targetLongRunMiles = Number.isFinite(longestRunMiles)
+    ? Math.max(Math.round(longestRunMiles + (isMarathon ? 2 : 1)), isMarathon ? 12 : isHalfMarathon ? 8 : 5)
+    : (isMarathon ? 10 : isHalfMarathon ? 7 : 5);
+  const suggestedRevision = buildSuggestedRevision({
+    kind: "build_running_base",
+    summary: blockItems.length
+      ? `Use the first block to build weekly running volume and long-run support before you reassess ${sanitizeText(goal?.summary || "the full race target", 160).toLowerCase()}.`
+      : warningItems.length
+      ? `Keep the race goal, but let the first block raise weekly running volume and long-run support before you judge the full target.`
+      : `Proceed with a first block that keeps building race-specific support toward ${sanitizeText(goal?.summary || "the current target", 160).toLowerCase()}.`,
+    firstBlockTarget: `Build to about ${targetRunFrequency} runs per week with a repeatable long run around ${targetLongRunMiles} miles before you reassess the full pace target.`,
+    requestedData: dedupeStrings([
+      !Number.isFinite(targetHorizonWeeks) ? "A confirmed race date or target month" : "",
+      "Current runs per week",
+      "Either your longest recent run or a recent race or pace result",
+    ]),
+    suggestedTargetHorizonWeeks: Number(minHorizon) || null,
+  });
 
-  return { warnings, blocks, recommendedRevisionSummary };
+  return {
+    warningItems,
+    blockItems,
+    warnings: warningItems.map((item) => item.summary),
+    blocks: blockItems.map((item) => item.summary),
+    suggestedRevision,
+    recommendedRevisionSummary: suggestedRevision.summary,
+  };
 };
 
 const buildStrengthBaselineSignals = ({
@@ -367,28 +511,48 @@ const buildStrengthBaselineSignals = ({
   facts = {},
   targetHorizonWeeks = null,
 } = {}) => {
-  const warnings = [];
-  const blocks = [];
+  const warningItems = [];
+  const blockItems = [];
   const baselineWeight = Number(facts?.currentStrengthBaseline?.weight);
   const targetWeight = Number(goal?.primaryMetric?.targetValue);
   const metricKey = sanitizeText(goal?.primaryMetric?.key || "", 60).toLowerCase();
   const liftLabel = sanitizeText(goal?.primaryMetric?.label || "strength target", 80).toLowerCase();
   const impossibleCeiling = STRENGTH_IMPOSSIBLE_CEILINGS[metricKey] || 1000;
   const extremeWarningCeiling = STRENGTH_EXTREME_WARNING_CEILINGS[metricKey] || 700;
+  const pushBlock = (code, summary, priority = 20) => {
+    blockItems.push(buildFeasibilityReason({ code, summary, severity: "block", priority }));
+  };
+  const pushWarning = (code, summary, priority = 40) => {
+    warningItems.push(buildFeasibilityReason({ code, summary, severity: "warning", priority }));
+  };
 
   if (Number.isFinite(targetWeight) && targetWeight >= impossibleCeiling) {
-    blocks.push(`That ${liftLabel} target is beyond a credible human range for a deterministic plan.`);
+    pushBlock("target_beyond_credible_range", `The ${liftLabel} target is beyond a credible human range for a deterministic plan.`, 4);
   } else if (Number.isFinite(targetWeight) && targetWeight >= extremeWarningCeiling) {
-    warnings.push(`That ${liftLabel} target is exceptionally aggressive and needs a very long runway.`);
+    pushWarning("target_far_beyond_normal_progression", `The ${liftLabel} target is exceptionally aggressive and needs a very long runway.`, 20);
   }
 
   if (!Number.isFinite(baselineWeight) || !Number.isFinite(targetWeight) || baselineWeight <= 0) {
-    const impossibleRevisionSummary = blocks.length
-      ? `Scale the first block toward a credible ${liftLabel} milestone before treating ${Number.isFinite(targetWeight) ? targetWeight : "the full"} lb as real.`
-      : warnings.length
-      ? `Keep the long-term ${liftLabel} goal if it matters, but use a much smaller first-block milestone before reassessing it.`
-      : "";
-    return { warnings, blocks, recommendedRevisionSummary: impossibleRevisionSummary };
+    const suggestedRevision = buildSuggestedRevision({
+      kind: "anchor_strength_baseline",
+      summary: blockItems.length
+        ? `Anchor a current ${liftLabel} baseline and pick a credible milestone before treating ${Number.isFinite(targetWeight) ? targetWeight : "the full target"} as real.`
+        : warningItems.length
+        ? `Keep the long-term ${liftLabel} goal if it matters, but anchor a current baseline and use a smaller first-block milestone before you reassess it.`
+        : "",
+      firstBlockTarget: Number.isFinite(targetWeight)
+        ? `Start with a smaller milestone than ${targetWeight} and lock it to a real current top set before you chase the full number.`
+        : `Anchor a current ${liftLabel} top set before you choose the next block target.`,
+      requestedData: ["A current top set or recent best for the main lift"],
+    });
+    return {
+      warningItems,
+      blockItems,
+      warnings: warningItems.map((item) => item.summary),
+      blocks: blockItems.map((item) => item.summary),
+      suggestedRevision,
+      recommendedRevisionSummary: suggestedRevision.summary,
+    };
   }
 
   const absoluteJump = targetWeight - baselineWeight;
@@ -396,20 +560,35 @@ const buildStrengthBaselineSignals = ({
 
   if (Number.isFinite(targetHorizonWeeks)) {
     if ((targetHorizonWeeks <= 6 && absoluteJump >= 50) || (targetHorizonWeeks <= 8 && improvementRatio >= 1.35)) {
-      blocks.push("That strength jump is too compressed for the current lift baseline.");
+      pushBlock("strength_jump_too_large_for_timeline", "The jump from the current lift baseline to the target is too large for this timeline.", 10);
     } else if ((targetHorizonWeeks <= 10 && absoluteJump >= 35) || (targetHorizonWeeks <= 12 && improvementRatio >= 1.2)) {
-      warnings.push("That strength target is ambitious relative to the current lift baseline.");
+      pushWarning("strength_jump_too_large_for_timeline", "The strength target is ambitious relative to the current lift baseline.", 24);
     }
   }
 
   const suggestedWeight = roundToNearestFive(Math.min(targetWeight, baselineWeight + Math.max(10, Math.min(30, absoluteJump * 0.5))));
-  const recommendedRevisionSummary = blocks.length
-    ? `A more credible first block is moving from about ${baselineWeight} toward ${suggestedWeight} before chasing the full ${targetWeight} target.`
-    : warnings.length
-    ? `Keep the lift target, but treat the first block as a smaller jump from about ${baselineWeight} before reassessing ${targetWeight}.`
-    : "";
+  const suggestedRevision = buildSuggestedRevision({
+    kind: "scaled_strength_block",
+    summary: blockItems.length
+      ? `Use the first block to move from about ${baselineWeight} toward ${suggestedWeight} before you reassess the full ${targetWeight} target.`
+      : warningItems.length
+      ? `Keep the lift target, but treat the first block as a smaller jump from about ${baselineWeight} before you reassess ${targetWeight}.`
+      : `Proceed with the current strength target and use the first block to move the top set upward steadily.`,
+    firstBlockTarget: `Move the main lift from about ${baselineWeight} toward ${suggestedWeight} before you treat ${targetWeight} as the next locked milestone.`,
+    requestedData: dedupeStrings([
+      "A current top set or recent best for the main lift",
+      !Number.isFinite(targetHorizonWeeks) ? "A target date or time horizon" : "",
+    ]),
+  });
 
-  return { warnings, blocks, recommendedRevisionSummary };
+  return {
+    warningItems,
+    blockItems,
+    warnings: warningItems.map((item) => item.summary),
+    blocks: blockItems.map((item) => item.summary),
+    suggestedRevision,
+    recommendedRevisionSummary: suggestedRevision.summary,
+  };
 };
 
 const buildBodyCompBaselineSignals = ({
@@ -417,8 +596,8 @@ const buildBodyCompBaselineSignals = ({
   facts = {},
   targetHorizonWeeks = null,
 } = {}) => {
-  const warnings = [];
-  const blocks = [];
+  const warningItems = [];
+  const blockItems = [];
   const currentBodyweight = Number(facts?.currentBodyweight);
   const targetWeightChange = Number(facts?.targetWeightChange);
   const weeklyChange = Number.isFinite(targetWeightChange) && Number.isFinite(targetHorizonWeeks) && targetHorizonWeeks > 0
@@ -428,33 +607,55 @@ const buildBodyCompBaselineSignals = ({
     ? (weeklyChange / currentBodyweight) * 100
     : null;
   const sixPackGoal = /\bsix pack\b|\babs\b/.test(String(goal?.summary || "").toLowerCase());
+  const pushBlock = (code, summary, priority = 20) => {
+    blockItems.push(buildFeasibilityReason({ code, summary, severity: "block", priority }));
+  };
+  const pushWarning = (code, summary, priority = 40) => {
+    warningItems.push(buildFeasibilityReason({ code, summary, severity: "warning", priority }));
+  };
 
   if (Number.isFinite(weeklyPercent)) {
     if (weeklyPercent > 1.4) {
-      blocks.push("That body-composition rate is too aggressive for a credible first plan.");
+      pushBlock("body_comp_rate_too_aggressive", "The required weekly rate of change is too aggressive for a credible first block.", 10);
     } else if (weeklyPercent > 1.0) {
-      warnings.push("That body-composition timeline is ambitious and will need conservative execution.");
+      pushWarning("body_comp_rate_too_aggressive", "The body-composition timeline is ambitious relative to a repeatable weekly rate.", 24);
     }
   }
 
   if (sixPackGoal && Number.isFinite(targetHorizonWeeks)) {
     if (targetHorizonWeeks < 10) {
-      blocks.push("A six-pack style target on this timeline is too compressed for a deterministic first plan.");
+      pushBlock("appearance_timeline_too_short", "A visible-abs target on this timeline is too compressed for a deterministic first plan.", 12);
     } else if (targetHorizonWeeks < 14) {
-      warnings.push("A visible-abs target on this timeline is ambitious and may need a phased cut.");
+      pushWarning("appearance_timeline_too_short", "A visible-abs target on this timeline is ambitious and may need a phased cut.", 28);
     }
   }
 
   const weeklyPercentSummary = Number.isFinite(currentBodyweight)
     ? "about 0.5-1.0% of bodyweight per week"
     : "a steadier weekly rate";
-  const recommendedRevisionSummary = blocks.length
-    ? `Use a smaller first block with ${weeklyPercentSummary} instead of forcing the full physique target immediately.`
-    : warnings.length
-    ? `Keep the physique goal, but plan for a steadier cut pace and reassess after the first block.`
-    : "";
+  const suggestedRevision = buildSuggestedRevision({
+    kind: "steady_body_comp_block",
+    summary: blockItems.length
+      ? `Use a smaller first block at ${weeklyPercentSummary} instead of forcing the full physique target immediately.`
+      : warningItems.length
+      ? `Keep the physique goal, but plan for a steadier cut pace and reassess after the first block.`
+      : `Proceed with a steady first block and track bodyweight or waist so the physique goal stays grounded.`,
+    firstBlockTarget: `Aim for about ${weeklyPercentSummary} while tracking bodyweight and waist trend each week.`,
+    requestedData: dedupeStrings([
+      !Number.isFinite(currentBodyweight) ? "Current bodyweight" : "",
+      !Number.isFinite(targetHorizonWeeks) ? "Target timeline" : "",
+      "A weekly bodyweight or waist trend after the first block",
+    ]),
+  });
 
-  return { warnings, blocks, recommendedRevisionSummary };
+  return {
+    warningItems,
+    blockItems,
+    warnings: warningItems.map((item) => item.summary),
+    blocks: blockItems.map((item) => item.summary),
+    suggestedRevision,
+    recommendedRevisionSummary: suggestedRevision.summary,
+  };
 };
 
 const classifyTargetValidation = ({
@@ -513,29 +714,47 @@ const buildAthleticPowerBaselineSignals = ({
   goal = {},
   targetHorizonWeeks = null,
 } = {}) => {
-  const warnings = [];
-  const blocks = [];
+  const warningItems = [];
+  const blockItems = [];
   const metricKey = sanitizeText(goal?.primaryMetric?.key || "", 60).toLowerCase();
   const targetValue = Number(goal?.primaryMetric?.targetValue);
+  const pushBlock = (code, summary, priority = 20) => {
+    blockItems.push(buildFeasibilityReason({ code, summary, severity: "block", priority }));
+  };
+  const pushWarning = (code, summary, priority = 40) => {
+    warningItems.push(buildFeasibilityReason({ code, summary, severity: "warning", priority }));
+  };
 
   if (metricKey === "vertical_jump_height" && Number.isFinite(targetValue)) {
     if (targetValue >= 60) {
-      blocks.push("That vertical-jump target is beyond a credible deterministic planning range.");
+      pushBlock("target_beyond_credible_range", "That vertical-jump target is beyond a credible deterministic planning range.", 4);
     } else if (targetValue >= 44) {
-      warnings.push("That vertical-jump target is exceptionally aggressive and needs a long runway.");
+      pushWarning("jump_target_needs_long_runway", "That vertical-jump target is exceptionally aggressive and needs a long runway.", 20);
     }
     if (Number.isFinite(targetHorizonWeeks) && targetHorizonWeeks <= 6 && targetValue >= 36) {
-      warnings.push("That jump-performance target is tight for the current timeline.");
+      pushWarning("jump_target_tight_for_timeline", "That jump-performance target is tight for the current timeline.", 24);
     }
   }
 
-  const recommendedRevisionSummary = blocks.length
-    ? "Use the first block to raise power output and retest your jump benchmark before locking in the full target."
-    : warnings.length
-    ? "Keep the jump-performance goal, but treat the first block as power development before judging the full outcome."
-    : "";
+  const suggestedRevision = buildSuggestedRevision({
+    kind: "power_retest_block",
+    summary: blockItems.length
+      ? "Use the first block to raise power output and retest your jump benchmark before you lock in the full target."
+      : warningItems.length
+      ? "Keep the jump-performance goal, but treat the first block as power development before you judge the full outcome."
+      : "Proceed with a first block that builds power output and retests the jump benchmark on schedule.",
+    firstBlockTarget: "Use the first block to build lower-body power and then retest the jump benchmark before you escalate the goal.",
+    requestedData: ["A fresh jump benchmark after the first block"],
+  });
 
-  return { warnings, blocks, recommendedRevisionSummary };
+  return {
+    warningItems,
+    blockItems,
+    warnings: warningItems.map((item) => item.summary),
+    blocks: blockItems.map((item) => item.summary),
+    suggestedRevision,
+    recommendedRevisionSummary: suggestedRevision.summary,
+  };
 };
 
 const buildBaselineSignals = ({
@@ -557,7 +776,55 @@ const buildBaselineSignals = ({
   if (planningCategory === "body_comp") {
     return buildBodyCompBaselineSignals({ goal, facts, targetHorizonWeeks });
   }
-  return { warnings: [], blocks: [], recommendedRevisionSummary: "" };
+  return {
+    warningItems: [],
+    blockItems: [],
+    warnings: [],
+    blocks: [],
+    suggestedRevision: buildSuggestedRevision({
+      kind: "proceed",
+      summary: "",
+      firstBlockTarget: "",
+      requestedData: [],
+    }),
+    recommendedRevisionSummary: "",
+  };
+};
+
+const buildFallbackGoalSuggestedRevision = ({
+  goal = {},
+  demand = {},
+  goalId = "",
+  targetHorizonWeeks = null,
+  scheduleReality = {},
+  hasConstraintPenalty = false,
+  compressedHorizon = false,
+  severelyCompressedHorizon = false,
+} = {}) => {
+  const minimumDays = Number(demand?.minimumTrainingDays || 0) || 0;
+  const requestedData = dedupeStrings([
+    !Number.isFinite(Number(targetHorizonWeeks)) ? "A confirmed target date or target month" : "",
+    scheduleReality?.trainingDaysPerWeek < minimumDays && minimumDays > 0 ? `More weekly training availability than ${scheduleReality.trainingDaysPerWeek || 0} day${Number(scheduleReality?.trainingDaysPerWeek || 0) === 1 ? "" : "s"} per week` : "",
+    hasConstraintPenalty ? "An updated injury or movement-tolerance check-in" : "",
+    "A fresh baseline after the first block",
+  ]).slice(0, 4);
+  const summary = severelyCompressedHorizon
+    ? `Use the first block to chase ${sanitizeText(demand?.realisticByDate || "the realistic first win", 180).toLowerCase()} and revisit the full target on a longer horizon.`
+    : scheduleReality?.trainingDaysPerWeek < minimumDays && minimumDays > 0
+    ? `Either raise weekly training support or scale the first block to ${sanitizeText(demand?.realisticByDate || "the realistic first win", 180).toLowerCase()}.`
+    : hasConstraintPenalty
+    ? "Use the first block to protect tolerance and movement quality before you push progression."
+    : compressedHorizon
+    ? `Treat the first block as ${sanitizeText(demand?.realisticByDate || "a realistic first win", 180).toLowerCase()} before you judge the full outcome.`
+    : "";
+  return buildSuggestedRevision({
+    kind: "scaled_first_block",
+    summary,
+    firstBlockTarget: buildDefaultFirstBlockTarget({ goal, demand }),
+    requestedData,
+    suggestedTargetHorizonWeeks: Number(demand?.minimumRealisticHorizonWeeks || 0) || null,
+    goalId,
+  });
 };
 
 const assessSingleGoalFeasibility = ({
@@ -583,12 +850,24 @@ const assessSingleGoalFeasibility = ({
     facts: intakeCompleteness?.facts || {},
     targetHorizonWeeks,
   });
-  const validationBlocks = validationIssues
+  const validationBlockItems = validationIssues
     .filter((issue) => issue.severity === "block")
-    .map((issue) => issue.summary);
-  const validationWarnings = validationIssues
+    .map((issue, index) => buildFeasibilityReason({
+      code: issue.key || `validation_block_${index}`,
+      summary: issue.summary,
+      severity: "block",
+      priority: 2 + index,
+      goalId: goal?.id || "",
+    }));
+  const validationWarningItems = validationIssues
     .filter((issue) => issue.severity !== "block")
-    .map((issue) => issue.summary);
+    .map((issue, index) => buildFeasibilityReason({
+      code: issue.key || `validation_warning_${index}`,
+      summary: issue.summary,
+      severity: "warning",
+      priority: 26 + index,
+      goalId: goal?.id || "",
+    }));
   const targetValidation = classifyTargetValidation({
     validationIssues,
     baselineSignalBlocks: baselineSignals.blocks || [],
@@ -596,20 +875,58 @@ const assessSingleGoalFeasibility = ({
     intakeCompleteness,
     goal,
   });
-  const blockingReasons = [
-    ...validationBlocks,
-    ...(baselineSignals.blocks || []),
-    ...(severelyCompressedHorizon ? ["The target timeline is too compressed for the goal demand."] : []),
-    ...(severeScheduleShortfall ? ["The current schedule support is too low for this goal on the stated timeline."] : []),
-  ];
-  const warningReasons = [
-    ...validationWarnings,
-    ...(baselineSignals.warnings || []),
-    ...(compressedHorizon && !severelyCompressedHorizon ? ["The current target window is tight for the full outcome."] : []),
-    ...(scheduleShortfall && !severeScheduleShortfall ? ["The current weekly training frequency is light for the full goal."] : []),
-    ...(shortSessions ? ["Session length is tight for the full goal expression."] : []),
-    ...(hasConstraintPenalty ? ["Current constraints lower the safe ceiling for this goal right now."] : []),
-  ];
+  const blockingItems = sortFeasibilityReasons([
+    ...validationBlockItems,
+    ...(baselineSignals.blockItems || []).map((item) => ({ ...item, goalId: item.goalId || goal?.id || "" })),
+    ...(severelyCompressedHorizon ? [buildFeasibilityReason({
+      code: "timeline_too_compressed_for_goal_demand",
+      summary: "The target date is shorter than the runway this goal usually needs.",
+      severity: "block",
+      priority: 18,
+      goalId: goal?.id || "",
+    })] : []),
+    ...(severeScheduleShortfall ? [buildFeasibilityReason({
+      code: "weekly_schedule_support_too_low",
+      summary: "Weekly training availability is too low for this goal on the requested date.",
+      severity: "block",
+      priority: 16,
+      goalId: goal?.id || "",
+    })] : []),
+  ]);
+  const warningItems = sortFeasibilityReasons([
+    ...validationWarningItems,
+    ...(baselineSignals.warningItems || []).map((item) => ({ ...item, goalId: item.goalId || goal?.id || "" })),
+    ...(compressedHorizon && !severelyCompressedHorizon ? [buildFeasibilityReason({
+      code: "target_window_tight_for_full_outcome",
+      summary: "The current target window is tight for the full outcome.",
+      severity: "warning",
+      priority: 36,
+      goalId: goal?.id || "",
+    })] : []),
+    ...(scheduleShortfall && !severeScheduleShortfall ? [buildFeasibilityReason({
+      code: "weekly_schedule_support_light",
+      summary: "Weekly training availability is light for the full goal.",
+      severity: "warning",
+      priority: 34,
+      goalId: goal?.id || "",
+    })] : []),
+    ...(shortSessions ? [buildFeasibilityReason({
+      code: "session_length_tight_for_goal",
+      summary: "Session length is tight for the work this goal needs.",
+      severity: "warning",
+      priority: 38,
+      goalId: goal?.id || "",
+    })] : []),
+    ...(hasConstraintPenalty ? [buildFeasibilityReason({
+      code: "current_constraints_limit_progression",
+      summary: "Current injury or movement constraints mean the first block has to protect tolerance before it pushes progression.",
+      severity: "warning",
+      priority: 22,
+      goalId: goal?.id || "",
+    })] : []),
+  ]);
+  const blockingReasons = blockingItems.map((item) => item.summary);
+  const warningReasons = warningItems.map((item) => item.summary);
 
   let realismStatus = GOAL_REALISM_STATUSES.realistic;
   if (!hasTargetWindow && goal?.measurabilityTier !== GOAL_MEASURABILITY_TIERS.fullyMeasurable) {
@@ -640,6 +957,44 @@ const assessSingleGoalFeasibility = ({
   if (/\bkeep\b|\bmaintain\b/.test(String(goal?.summary || "").toLowerCase())) priorityScore -= 18;
   if (realismStatus === GOAL_REALISM_STATUSES.unrealistic) priorityScore += 6;
   if (goal?.planningPriority) priorityScore += Math.max(0, 8 - Number(goal.planningPriority));
+  const suggestedRevision = (
+    baselineSignals?.suggestedRevision?.summary
+    || baselineSignals?.suggestedRevision?.first_block_target
+  )
+    ? baselineSignals.suggestedRevision
+    : buildFallbackGoalSuggestedRevision({
+        goal,
+        demand,
+        goalId: goal?.id || "",
+        targetHorizonWeeks,
+        scheduleReality,
+        hasConstraintPenalty,
+        compressedHorizon,
+        severelyCompressedHorizon,
+      });
+  const gateStatus = blockingItems.length || warningItems.length || targetValidation.clarificationRequired
+    ? blockingItems.some((item) => isImpossibleReasonCode(item.code))
+      ? GOAL_FEASIBILITY_GATE_STATUSES.impossible
+      : GOAL_FEASIBILITY_GATE_STATUSES.needsRevision
+    : GOAL_FEASIBILITY_GATE_STATUSES.ok;
+  const gateReasons = sortFeasibilityReasons([
+    ...blockingItems,
+    ...warningItems,
+  ]).slice(0, 3);
+  if (!gateReasons.length) {
+    gateReasons.push(buildFeasibilityReason({
+      code: "aligned_with_current_capacity",
+      summary: "The current target fits the available schedule and baseline cleanly enough to plan from.",
+      severity: "warning",
+      priority: 90,
+      goalId: goal?.id || "",
+    }));
+  }
+  const explanationText = buildGateExplanationText({
+    reasons: gateReasons,
+    suggestedRevision,
+    status: gateStatus,
+  });
 
   return {
     goalId: goal?.id || "",
@@ -657,7 +1012,18 @@ const assessSingleGoalFeasibility = ({
     longerHorizonNeed,
     blockingReasons: dedupeStrings(blockingReasons),
     warningReasons: dedupeStrings(warningReasons),
-    recommendedRevisionSummary: sanitizeText(validationIssues[0]?.prompt || baselineSignals.recommendedRevisionSummary || "", 220),
+    recommendedRevisionSummary: sanitizeText(
+      validationIssues[0]?.prompt
+      || suggestedRevision?.summary
+      || baselineSignals.recommendedRevisionSummary
+      || "",
+      220
+    ),
+    status: gateStatus,
+    primaryReasonCode: sanitizeText(gateReasons[0]?.code || "", 80).toLowerCase(),
+    reasons: gateReasons,
+    suggested_revision: suggestedRevision,
+    explanation_text: explanationText,
     priorityScore,
   };
 };
@@ -717,7 +1083,7 @@ const buildConflictFlags = ({ resolvedGoals = [], goalAssessments = [], schedule
       key: "constraint_ceiling",
       severity: GOAL_CONFLICT_SEVERITIES.medium,
       goalIds: (resolvedGoals || []).map((goal) => goal.id),
-      summary: "Current constraints lower the safe ceiling, so progression needs to stay conservative.",
+      summary: "Current injury or movement constraints mean the first block has to protect tolerance before it pushes progression.",
     });
   }
 
@@ -823,46 +1189,202 @@ const buildMissingConfidence = ({ intakeCompleteness = null, goalAssessments = [
   };
 };
 
+const buildMissingContextRevision = ({
+  intakeCompleteness = null,
+  primaryGoal = null,
+  primaryAssessment = null,
+} = {}) => buildSuggestedRevision({
+  kind: "collect_missing_anchors",
+  summary: `Lock ${formatList(toArray(intakeCompleteness?.missingRequired || []).slice(0, 3)).toLowerCase()} before the first block is finalized.`,
+  firstBlockTarget: primaryAssessment?.suggested_revision?.first_block_target
+    || buildDefaultFirstBlockTarget({
+      goal: primaryGoal,
+      demand: {
+        realisticByDate: primaryAssessment?.realisticByTargetDate || "",
+      },
+    }),
+  requestedData: toArray(intakeCompleteness?.missingRequired || []).slice(0, 4),
+  goalId: primaryGoal?.id || primaryAssessment?.goalId || "",
+});
+
+const toLegacyRecommendedRevisionKind = ({
+  gateStatus = GOAL_FEASIBILITY_GATE_STATUSES.ok,
+  suggestedRevision = null,
+  primaryReasonCode = "",
+} = {}) => {
+  const reasonCode = sanitizeText(primaryReasonCode || "", 80).toLowerCase();
+  const kind = sanitizeText(suggestedRevision?.kind || "", 80).toLowerCase();
+  if (reasonCode === "missing_required_context") return "missing_context";
+  if (reasonCode === "clarification_required") return "clarification_required";
+  if (kind === "collect_missing_anchors") return "missing_context";
+  if (kind === "clarification_required") return "clarification_required";
+  if (gateStatus === GOAL_FEASIBILITY_GATE_STATUSES.ok) return "proceed";
+  return kind || "scaled_first_block";
+};
+
+const buildFeasibilityGateResult = ({
+  goalAssessments = [],
+  intakeCompleteness = null,
+  conflictFlags = [],
+  confirmationAction = GOAL_FEASIBILITY_ACTIONS.proceed,
+  recommendedPriorityOrdering = [],
+} = {}) => {
+  const primaryGoalId = sanitizeText(toArray(recommendedPriorityOrdering)[0]?.goalId || goalAssessments[0]?.goalId || "", 120);
+  const primaryAssessment = goalAssessments.find((assessment) => assessment.goalId === primaryGoalId)
+    || goalAssessments.find((assessment) => assessment.realismStatus === GOAL_REALISM_STATUSES.unrealistic)
+    || goalAssessments.find((assessment) => assessment.realismStatus === GOAL_REALISM_STATUSES.aggressive)
+    || goalAssessments[0]
+    || null;
+  const missingRequired = toArray(intakeCompleteness?.missingRequired || []).slice(0, 4);
+
+  if (missingRequired.length) {
+    const reasons = missingRequired.map((item, index) => buildFeasibilityReason({
+      code: index === 0 ? "missing_required_context" : "missing_supporting_context",
+      summary: index === 0
+        ? `${sanitizeText(item, 160)} is still missing, so the gate cannot judge the target cleanly yet.`
+        : `Need ${sanitizeText(item, 160).toLowerCase()} before the recommendation can tighten.`,
+      severity: "block",
+      priority: 1 + index,
+      goalId: primaryAssessment?.goalId || "",
+    }));
+    const suggestedRevision = buildMissingContextRevision({
+      intakeCompleteness,
+      primaryGoal: { id: primaryGoalId, summary: primaryAssessment?.goalSummary || "" },
+      primaryAssessment,
+    });
+    return {
+      status: GOAL_FEASIBILITY_GATE_STATUSES.needsRevision,
+      primary_reason_code: "missing_required_context",
+      primaryReasonCode: "missing_required_context",
+      reasons,
+      suggested_revision: suggestedRevision,
+      explanation_text: buildGateExplanationText({
+        reasons,
+        suggestedRevision,
+        status: GOAL_FEASIBILITY_GATE_STATUSES.needsRevision,
+      }),
+    };
+  }
+
+  const malformedAssessment = goalAssessments.find((assessment) => assessment.targetValidationStatus === GOAL_TARGET_VALIDATION_STATUSES.malformedMetric) || null;
+  if (malformedAssessment) {
+    const reasons = sortFeasibilityReasons(toArray(malformedAssessment.reasons).length ? malformedAssessment.reasons : [buildFeasibilityReason({
+      code: malformedAssessment.primaryReasonCode || "clarification_required",
+      summary: malformedAssessment.targetValidationReason || malformedAssessment.blockingReasons?.[0] || "The target needs clarification before it can be judged cleanly.",
+      severity: "block",
+      priority: 1,
+      goalId: malformedAssessment.goalId || "",
+    })]).slice(0, 3);
+    const suggestedRevision = buildSuggestedRevision({
+      kind: "clarification_required",
+      summary: malformedAssessment.targetValidationReason || malformedAssessment.blockingReasons?.[0] || "Clarify the target phrasing before the gate can proceed.",
+      firstBlockTarget: buildDefaultFirstBlockTarget({
+        goal: { planningCategory: malformedAssessment.planningCategory || "" },
+        demand: { realisticByDate: malformedAssessment.realisticByTargetDate || "" },
+      }),
+      requestedData: ["A clearer version of the target metric"],
+      goalId: malformedAssessment.goalId || "",
+    });
+    return {
+      status: GOAL_FEASIBILITY_GATE_STATUSES.needsRevision,
+      primary_reason_code: sanitizeText(reasons[0]?.code || "clarification_required", 80).toLowerCase(),
+      primaryReasonCode: sanitizeText(reasons[0]?.code || "clarification_required", 80).toLowerCase(),
+      reasons,
+      suggested_revision: suggestedRevision,
+      explanation_text: buildGateExplanationText({
+        reasons,
+        suggestedRevision,
+        status: GOAL_FEASIBILITY_GATE_STATUSES.needsRevision,
+      }),
+    };
+  }
+
+  const selectedAssessment = primaryAssessment || null;
+  const selectedReasons = sortFeasibilityReasons([
+    ...toArray(selectedAssessment?.reasons || []),
+    ...(confirmationAction === GOAL_FEASIBILITY_ACTIONS.warn && conflictFlags[0]?.summary ? [buildFeasibilityReason({
+      code: sanitizeText(conflictFlags[0]?.key || "goal_tradeoff", 80).toLowerCase(),
+      summary: conflictFlags[0].summary,
+      severity: "warning",
+      priority: 60,
+      goalId: primaryGoalId,
+    })] : []),
+  ]).slice(0, 3);
+  const gateStatus = selectedAssessment?.status === GOAL_FEASIBILITY_GATE_STATUSES.impossible
+    ? GOAL_FEASIBILITY_GATE_STATUSES.impossible
+    : confirmationAction === GOAL_FEASIBILITY_ACTIONS.proceed
+    ? GOAL_FEASIBILITY_GATE_STATUSES.ok
+    : GOAL_FEASIBILITY_GATE_STATUSES.needsRevision;
+  const reasons = selectedReasons.length
+    ? selectedReasons
+    : [buildFeasibilityReason({
+        code: "aligned_with_current_capacity",
+        summary: "The current target fits the available schedule and baseline cleanly enough to plan from.",
+        severity: "warning",
+        priority: 90,
+        goalId: primaryGoalId,
+      })];
+  const suggestedRevision = selectedAssessment?.suggested_revision || buildSuggestedRevision({
+    kind: gateStatus === GOAL_FEASIBILITY_GATE_STATUSES.ok ? "proceed" : "scaled_first_block",
+    summary: gateStatus === GOAL_FEASIBILITY_GATE_STATUSES.ok
+      ? `The first block can build directly toward ${sanitizeText(selectedAssessment?.goalSummary || "the current target", 160).toLowerCase()}.`
+      : `Use the first block to chase ${sanitizeText(selectedAssessment?.realisticByTargetDate || "the realistic first win", 180).toLowerCase()}.`,
+    firstBlockTarget: buildDefaultFirstBlockTarget({
+      goal: {
+        planningCategory: selectedAssessment?.planningCategory || "",
+        goalFamily: "",
+      },
+      demand: {
+        realisticByDate: selectedAssessment?.realisticByTargetDate || "",
+      },
+    }),
+    requestedData: ["A fresh baseline after the first block"],
+    suggestedTargetHorizonWeeks: selectedAssessment?.minimumRealisticHorizonWeeks || null,
+    goalId: selectedAssessment?.goalId || "",
+  });
+  return {
+    status: gateStatus,
+    primary_reason_code: sanitizeText(reasons[0]?.code || "aligned_with_current_capacity", 80).toLowerCase(),
+    primaryReasonCode: sanitizeText(reasons[0]?.code || "aligned_with_current_capacity", 80).toLowerCase(),
+    reasons,
+    suggested_revision: suggestedRevision,
+    explanation_text: buildGateExplanationText({
+      reasons,
+      suggestedRevision,
+      status: gateStatus,
+    }),
+  };
+};
+
 const buildRecommendedRevision = ({
   intakeCompleteness = null,
   goalAssessments = [],
   conflictFlags = [],
   realismStatus = GOAL_REALISM_STATUSES.exploratory,
 } = {}) => {
-  if (intakeCompleteness?.missingRequired?.length) {
-    return {
-      kind: "missing_context",
-      summary: `Before planning, confirm ${intakeCompleteness.missingRequired.join(", ").toLowerCase()}.`,
-    };
-  }
-
-  const malformedGoal = goalAssessments.find((assessment) => assessment.targetValidationStatus === GOAL_TARGET_VALIDATION_STATUSES.malformedMetric) || null;
-  if (malformedGoal) {
-    return {
-      kind: "clarification_required",
-      goalId: malformedGoal.goalId,
-      summary: malformedGoal.recommendedRevisionSummary || malformedGoal.targetValidationReason || malformedGoal.blockingReasons?.[0] || "",
-    };
-  }
-
-  const blockedGoal = goalAssessments.find((assessment) => assessment.realismStatus === GOAL_REALISM_STATUSES.unrealistic) || null;
-  if (blockedGoal) {
-    return {
-      kind: "scaled_first_block",
-      goalId: blockedGoal.goalId,
-      summary: blockedGoal.recommendedRevisionSummary || blockedGoal.longerHorizonNeed || blockedGoal.realisticByTargetDate,
-      suggestedTargetHorizonWeeks: blockedGoal.minimumRealisticHorizonWeeks || null,
-    };
-  }
-
-  if (realismStatus === GOAL_REALISM_STATUSES.aggressive && conflictFlags[0]?.summary) {
-    return {
-      kind: "sequencing",
-      summary: conflictFlags[0].summary,
-    };
-  }
-
-  return null;
+  const gate = buildFeasibilityGateResult({
+    goalAssessments,
+    intakeCompleteness,
+    conflictFlags,
+    confirmationAction: buildConfirmationAction({
+      realismStatus,
+      intakeCompleteness,
+      conflictFlags,
+      goalAssessments,
+    }),
+    recommendedPriorityOrdering: [],
+  });
+  if (!gate?.suggested_revision) return null;
+  return {
+    kind: toLegacyRecommendedRevisionKind({
+      gateStatus: gate.status,
+      suggestedRevision: gate.suggested_revision,
+      primaryReasonCode: gate.primary_reason_code || gate.primaryReasonCode,
+    }),
+    goalId: gate.suggested_revision.goal_id || "",
+    summary: gate.suggested_revision.summary,
+    suggestedTargetHorizonWeeks: gate.suggested_revision.suggested_target_horizon_weeks || null,
+  };
 };
 
 const buildConfirmationAction = ({
@@ -928,30 +1450,63 @@ export const assessGoalFeasibility = ({
     intakeCompleteness: normalizedCompleteness,
     goalAssessments,
   });
-  const recommendedRevision = buildRecommendedRevision({
-    intakeCompleteness: normalizedCompleteness,
-    goalAssessments,
-    conflictFlags,
-    realismStatus,
-  });
   const confirmationAction = buildConfirmationAction({
     realismStatus,
     intakeCompleteness: normalizedCompleteness,
     conflictFlags,
     goalAssessments,
   });
-  const blockingReasons = dedupeStrings([
-    ...normalizedCompleteness.missingRequired.map((item) => `Need ${item.toLowerCase()} before the plan can lock.`),
-    ...goalAssessments.flatMap((assessment) => assessment.blockingReasons || []),
-  ]);
-  const warningReasons = dedupeStrings([
-    ...goalAssessments.flatMap((assessment) => assessment.warningReasons || []),
-    ...conflictFlags.filter((flag) => flag.severity === GOAL_CONFLICT_SEVERITIES.high).map((flag) => flag.summary),
-  ]);
+  const gate = buildFeasibilityGateResult({
+    goalAssessments,
+    intakeCompleteness: normalizedCompleteness,
+    conflictFlags,
+    confirmationAction,
+    recommendedPriorityOrdering,
+  });
+  const recommendedRevision = gate?.suggested_revision
+    ? {
+        kind: toLegacyRecommendedRevisionKind({
+          gateStatus: gate.status,
+          suggestedRevision: gate.suggested_revision,
+          primaryReasonCode: gate.primary_reason_code || gate.primaryReasonCode,
+        }),
+        goalId: gate.suggested_revision.goal_id || "",
+        summary: gate.suggested_revision.summary,
+        suggestedTargetHorizonWeeks: gate.suggested_revision.suggested_target_horizon_weeks || null,
+      }
+    : buildRecommendedRevision({
+        intakeCompleteness: normalizedCompleteness,
+        goalAssessments,
+        conflictFlags,
+        realismStatus,
+      });
+  const blockingReasons = confirmationAction === GOAL_FEASIBILITY_ACTIONS.block
+    ? dedupeStrings([
+        ...toArray(gate?.reasons).map((item) => sanitizeText(item?.summary || "", 220)).filter(Boolean),
+        ...goalAssessments.flatMap((assessment) => assessment.blockingReasons || []),
+      ]).slice(0, 4)
+    : [];
+  const warningReasons = confirmationAction === GOAL_FEASIBILITY_ACTIONS.warn
+    ? dedupeStrings([
+        ...toArray(gate?.reasons).map((item) => sanitizeText(item?.summary || "", 220)).filter(Boolean),
+        ...conflictFlags.filter((flag) => flag.severity === GOAL_CONFLICT_SEVERITIES.high).map((flag) => flag.summary),
+      ]).slice(0, 4)
+    : [];
   const tradeoffSummary = dedupeStrings(conflictFlags.map((flag) => flag.summary)).join(" ");
   const malformedGoalAssessment = goalAssessments.find((assessment) => assessment.targetValidationStatus === GOAL_TARGET_VALIDATION_STATUSES.malformedMetric) || null;
 
   return {
+    status: gate?.status || GOAL_FEASIBILITY_GATE_STATUSES.ok,
+    primary_reason_code: sanitizeText(gate?.primary_reason_code || "", 80).toLowerCase(),
+    primaryReasonCode: sanitizeText(gate?.primaryReasonCode || gate?.primary_reason_code || "", 80).toLowerCase(),
+    reasons: toArray(gate?.reasons).map((item) => ({
+      code: sanitizeText(item?.code || "", 80).toLowerCase(),
+      summary: sanitizeText(item?.summary || "", 220),
+      severity: sanitizeText(item?.severity || "warning", 20).toLowerCase(),
+      goalId: sanitizeText(item?.goalId || "", 120),
+    })).filter((item) => item.summary),
+    suggested_revision: gate?.suggested_revision || null,
+    explanation_text: sanitizeText(gate?.explanation_text || "", 680),
     realismStatus,
     confirmationAction,
     canProceed: confirmationAction !== GOAL_FEASIBILITY_ACTIONS.block,

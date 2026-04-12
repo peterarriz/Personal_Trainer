@@ -450,7 +450,7 @@ test("warned-but-allowed state still produces a confirmable intake confirmation 
   assert.match(confirmationState.headline, /aggressive, but i can build for it/i);
   assert.equal(confirmationState.canConfirm, true);
   assert.equal(confirmationState.ctaEnabled, true);
-  assert.equal(confirmationState.ctaLabel, "Build my plan anyway");
+  assert.equal(confirmationState.ctaLabel, "Confirm and build my plan");
   assert.ok(confirmationState.reason.length > 0);
 });
 
@@ -522,7 +522,7 @@ test("canonical review state carries the status and CTA fields the live review s
   );
   assert.equal(confirmationState.state, "warn");
   assert.equal(confirmationState.statusLabel, "Aggressive but possible");
-  assert.equal(confirmationState.ctaLabel, "Build my plan anyway");
+  assert.equal(confirmationState.ctaLabel, "Confirm and build my plan");
   assert.equal(confirmationState.ctaEnabled, true);
 });
 
@@ -1155,6 +1155,18 @@ test("final review keeps running lead, maintained bench goal, and background abs
   assert.deepEqual(reviewModel.goalStackReview.backgroundGoalIds, [arbitration.supportGoals[0]?.id]);
   assert.deepEqual(reviewModel.goalStackReview.deferredGoalIds, []);
   assert.equal(reviewModel.primarySummary, arbitration.leadGoal?.summary);
+  assert.equal(reviewModel.reviewContract.lead_goal?.summary, arbitration.leadGoal?.summary);
+  assert.equal(reviewModel.reviewContract.maintained_goals[0]?.summary, arbitration.maintainedGoals[0]?.summary);
+  assert.equal(reviewModel.reviewContract.support_goals[0]?.summary, arbitration.supportGoals[0]?.summary);
+  assert.deepEqual(
+    reviewModel.reviewContract.lane_sections.map((section) => section.title),
+    ["Leading now", "We will maintain", "We will support in the background", "We are deferring"]
+  );
+  assert.equal(reviewModel.reviewContract.actions.confirm.label, "Confirm and build my plan");
+  assert.equal(reviewModel.reviewContract.actions.changePriority.label, "Change priority");
+  assert.equal(reviewModel.reviewContract.actions.editGoal.label, "Edit a goal");
+  assert.equal(reviewModel.reviewContract.actions.dropGoal.label, "Drop a goal");
+  assert.match(reviewModel.tradeoffStatement, /leads now/i);
 });
 
 test("duplicate goal fingerprints do not render in both lead and later sections", () => {
