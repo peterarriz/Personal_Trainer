@@ -24,7 +24,9 @@ test("strength placeholder sessions expand into concise prescription detail", ()
   assert.equal(summary.sessionType, "Strength");
   assert.match(summary.structure, /40-55 min strength progression/i);
   assert.match(summary.expectedDuration, /40-55 min/i);
-  assert.match(summary.movementNote, /A\/B labels mean alternating lift templates/i);
+  assert.match(summary.movementNote, /second full-body strength template/i);
+  assert.equal(summary.exercisePreview.available, false);
+  assert.match(summary.exercisePreview.note, /not stored/i);
   assert.match(summary.why, /strength lane moving/i);
 });
 
@@ -57,5 +59,46 @@ test("unclear movement names get a short explanation note", () => {
   });
 
   assert.equal(summary.sessionLabel, "Push-Up Complex");
-  assert.match(summary.movementNote, /strings a few movements together/i);
+  assert.match(summary.movementNote, /variation cluster/i);
+});
+
+test("strength sessions surface exercise-level detail when prescribed rows exist", () => {
+  const summary = buildDayPrescriptionDisplay({
+    training: {
+      type: "strength+prehab",
+      label: "Strength B",
+      strSess: "B",
+    },
+    prescribedExercises: [
+      { ex: "Push-Up Complex", sets: "3 rounds", note: "No rest within round." },
+      { ex: "Band Bent-over Row", sets: "4", reps: "15", note: "Row to chest." },
+      { ex: "Hollow Body Hold", sets: "4", reps: "30 sec", note: "Lower back pressed down." },
+    ],
+  });
+
+  assert.equal(summary.exercisePreview.available, true);
+  assert.equal(summary.exercisePreview.rows.length, 3);
+  assert.equal(summary.exercisePreview.rows[0].exercise, "Push-Up Complex");
+  assert.match(summary.exercisePreview.rows[0].movementNote, /variation cluster/i);
+  assert.equal(summary.exercisePreview.rows[1].structure, "4 x 15");
+});
+
+test("exercise preview limits itself to a compact first few rows", () => {
+  const summary = buildDayPrescriptionDisplay({
+    training: {
+      type: "strength",
+      label: "Strength Circuit A",
+    },
+    prescribedExercises: [
+      { ex: "Goblet Squat", sets: "3", reps: "10" },
+      { ex: "Push-Up", sets: "3", reps: "12" },
+      { ex: "DB Row", sets: "3", reps: "10" },
+      { ex: "Split Squat", sets: "3", reps: "8/side" },
+      { ex: "Carry", sets: "3", reps: "40m" },
+    ],
+  });
+
+  assert.equal(summary.exercisePreview.available, true);
+  assert.equal(summary.exercisePreview.rows.length, 4);
+  assert.match(summary.exercisePreview.note, /first few prescribed exercises/i);
 });
