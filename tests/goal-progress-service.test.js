@@ -119,7 +119,7 @@ test("strength goals track working sets, performance records, and projected dist
   assert.equal(result.goalCards[0].status, GOAL_PROGRESS_STATUSES.onTrack);
 });
 
-test("body-composition goals use proxy trends like bodyweight, waist, consistency, and deferred manual photo review", () => {
+test("body-composition goals use live proxy trends like bodyweight, waist, and consistency", () => {
   const result = buildGoalProgressTracking({
     resolvedGoals: [
       buildResolvedGoal({
@@ -130,7 +130,6 @@ test("body-composition goals use proxy trends like bodyweight, waist, consistenc
         proxyMetrics: [
           { key: "waist_circumference", label: "Waist circumference", unit: "in", kind: "proxy" },
           { key: "bodyweight_trend", label: "Bodyweight trend", unit: "lb", kind: "proxy" },
-          { key: "progress_photos", label: "Manual photo review (future)", unit: "checkins", kind: "proxy" },
         ],
       }),
     ],
@@ -149,9 +148,6 @@ test("body-composition goals use proxy trends like bodyweight, waist, consistenc
           { date: "2026-04-09", value: 34.8 },
         ],
       },
-      progress_photos: [
-        { date: "2026-04-07", count: 1 },
-      ],
     },
     now: "2026-04-10",
   });
@@ -159,8 +155,7 @@ test("body-composition goals use proxy trends like bodyweight, waist, consistenc
   const itemsByKey = Object.fromEntries(result.goalCards[0].trackedItems.map((item) => [item.key, item]));
   assert.match(itemsByKey.bodyweight_trend.currentDisplay, /185\.9 lb latest/i);
   assert.match(itemsByKey.waist_circumference.currentDisplay, /34\.8 in latest/i);
-  assert.match(itemsByKey.progress_photos.label, /manual photo review \(future\)/i);
-  assert.match(itemsByKey.progress_photos.currentDisplay, /1 manual photo review/i);
+  assert.equal(itemsByKey.progress_photos, undefined);
   assert.ok(result.goalCards[0].statusSummary.includes("trend measures"));
 });
 
@@ -175,7 +170,6 @@ test("appearance goals stay review-based and avoid fake exact precision", () => 
         proxyMetrics: [
           { key: "waist_circumference", label: "Waist circumference", unit: "in", kind: "proxy" },
           { key: "bodyweight_trend", label: "Bodyweight trend", unit: "lb", kind: "proxy" },
-          { key: "progress_photos", label: "Manual photo review (future)", unit: "checkins", kind: "proxy" },
         ],
       }),
     ],
@@ -192,7 +186,7 @@ test("appearance goals stay review-based and avoid fake exact precision", () => 
   const checklist = card.trackedItems.find((item) => item.key === "appearance_review_checklist");
   assert.equal(card.status, GOAL_PROGRESS_STATUSES.reviewBased);
   assert.ok(checklist);
-  assert.match(checklist.currentDisplay, /\d\/4 review anchors updated this cycle/i);
+  assert.match(checklist.currentDisplay, /\d\/3 review anchors updated this cycle/i);
   assert.match(card.honestyNote, /never get a fake exact completion score/i);
 });
 
