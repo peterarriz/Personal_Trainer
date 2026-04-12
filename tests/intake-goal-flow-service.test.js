@@ -591,10 +591,9 @@ test("secondary-goal question appears after required anchors are satisfied and s
     answers: {},
   });
 
-  assert.match(prompt.prompt, /anything else you want to maintain/i);
-  assert.ok(prompt.options.some((option) => option.label === "No, just this goal"));
-  assert.ok(prompt.options.some((option) => option.label === "Maintain conditioning"));
-  assert.ok(prompt.options.some((option) => option.label === "Avoid slowing down"));
+  assert.match(prompt.prompt, /anything else you want to improve or maintain while chasing this/i);
+  assert.match(prompt.helperText, /add extra goals one at a time/i);
+  assert.equal(prompt.existingGoals.length, 0);
 });
 
 test("pure running review stays event-specific and does not pre-seed a hybrid maintained lane", () => {
@@ -649,7 +648,7 @@ test("pure running review stays event-specific and does not pre-seed a hybrid ma
   assert.doesNotMatch(prompt.prompt, /currently treating/i);
 });
 
-test("secondary-goal prompt uses plain-English maintenance wording when a maintained lane is inferred", () => {
+test("secondary-goal prompt stays lightweight and freeform even when a maintained lane is inferred", () => {
   const resolution = resolveGoalTranslation({
     rawUserGoalIntent: "run a 1:45 half marathon but keep strength",
     typedIntakePacket: buildIntakePacket("run a 1:45 half marathon but keep strength"),
@@ -676,10 +675,10 @@ test("secondary-goal prompt uses plain-English maintenance wording when a mainta
     answers: {},
   });
 
-  assert.match(prompt.prompt, /anything else you want to maintain while chasing this/i);
-  assert.match(prompt.prompt, /staying in maintenance/i);
-  assert.ok(prompt.options.some((option) => option.label === "Keep strength"));
-  assert.ok(prompt.options.some((option) => option.label === "No, just this goal"));
+  assert.match(prompt.prompt, /anything else you want to improve or maintain while chasing this/i);
+  assert.match(prompt.helperText, /add anything else one at a time/i);
+  assert.ok(prompt.inferredGoals.some((goal) => /strength/i.test(goal)));
+  assert.equal(prompt.existingGoals.length, 0);
 });
 
 test("next clarifying question skips ones already asked", () => {
@@ -862,6 +861,8 @@ test("changing goals mid-clarification still clears stale clarification context 
   const adjusted = applyIntakeGoalAdjustment({
     answers: {
       goal_intent: "look athletic again",
+      other_goals: "bench 225. get a six pack",
+      additional_goals_list: ["bench 225", "get a six pack"],
       goal_clarification_notes: [
         {
           question: "What's one proxy we can track for this right now: current bodyweight or waist?",
@@ -888,14 +889,16 @@ test("changing goals mid-clarification still clears stale clarification context 
   assert.equal(adjusted.kind, "goal_replacement");
   assert.deepEqual(adjusted.answers.goal_clarification_notes, []);
   assert.deepEqual(adjusted.answers.intake_completeness.fields, {});
+  assert.deepEqual(adjusted.answers.additional_goals_list, []);
+  assert.equal(adjusted.answers.other_goals, "");
   assert.doesNotMatch(rawGoalText, /191 lbs/i);
   assert.match(rawGoalText, /1:45 half marathon/i);
 });
 
-test("secondary-goal primary-only path keeps the stack single-goal without rerunning interpretation", () => {
+test("primary goal only path skips the additional-goal step cleanly", () => {
   const resolution = resolveGoalTranslation({
-    rawUserGoalIntent: "lose fat but keep strength",
-    typedIntakePacket: buildIntakePacket("lose fat but keep strength"),
+    rawUserGoalIntent: "lose fat",
+    typedIntakePacket: buildIntakePacket("lose fat"),
     explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
     now: "2026-04-11",
   });
@@ -907,29 +910,33 @@ test("secondary-goal primary-only path keeps the stack single-goal without rerun
     goalStackConfirmation: null,
     goalFeasibility: { conflictFlags: [] },
   });
-  const confirmed = applyIntakeGoalStackConfirmation({
-    resolvedGoals: resolution.resolvedGoals,
-    goalStackConfirmation: outcome.goalStackConfirmation,
-  });
 
   assert.equal(outcome.rerunAssessment, false);
   assert.equal(outcome.answers.secondary_goal_prompt_answered, true);
-  assert.equal(confirmed.length, 1);
-  assert.equal(confirmed[0].planningCategory, "body_comp");
+  assert.deepEqual(outcome.answers.additional_goals_list, []);
+  assert.equal(outcome.answers.other_goals, "");
 });
 
-test("secondary-goal maintained path feeds a maintained goal into canonical resolution", () => {
+test("primary plus one additional typed goal feeds into canonical resolution", () => {
   const outcome = applyIntakeSecondaryGoalResponse({
     answers: {
       goal_intent: "run a 1:45 half marathon",
     },
-    response: { key: "keep_strength", label: "Keep strength", value: "keep strength" },
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.addGoal },
+    customText: "keep strength",
+    resolvedGoals: [],
+    goalStackConfirmation: null,
+    goalFeasibility: null,
+  });
+  const finalized = applyIntakeSecondaryGoalResponse({
+    answers: outcome.answers,
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.done },
     resolvedGoals: [],
     goalStackConfirmation: null,
     goalFeasibility: null,
   });
   const rawGoalText = buildRawGoalIntentFromAnswers({
-    answers: outcome.answers,
+    answers: finalized.answers,
   });
   const resolution = resolveGoalTranslation({
     rawUserGoalIntent: rawGoalText,
@@ -938,24 +945,42 @@ test("secondary-goal maintained path feeds a maintained goal into canonical reso
     now: "2026-04-11",
   });
 
-  assert.equal(outcome.rerunAssessment, true);
-  assert.equal(outcome.answers.other_goals, "keep strength");
+  assert.equal(outcome.keepCollecting, true);
+  assert.deepEqual(outcome.answers.additional_goals_list, ["keep strength"]);
+  assert.equal(finalized.rerunAssessment, true);
+  assert.equal(finalized.answers.other_goals, "keep strength");
   assert.equal(resolution.resolvedGoals[0].planningCategory, "running");
   assert.equal(resolution.resolvedGoals[1].planningCategory, "strength");
 });
 
-test("secondary-goal tradeoff path keeps the maintained goal explicit for tradeoff-heavy plans", () => {
-  const outcome = applyIntakeSecondaryGoalResponse({
+test("primary plus two additional typed goals are collected one at a time", () => {
+  const firstAdd = applyIntakeSecondaryGoalResponse({
     answers: {
-      goal_intent: "lose fat",
+      goal_intent: "run a 1:45 half marathon",
     },
-    response: { key: "keep_strength", label: "Keep strength", value: "keep strength" },
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.addGoal },
+    customText: "bench 225",
+    resolvedGoals: [],
+    goalStackConfirmation: null,
+    goalFeasibility: null,
+  });
+  const secondAdd = applyIntakeSecondaryGoalResponse({
+    answers: firstAdd.answers,
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.addGoal },
+    customText: "get a six pack",
+    resolvedGoals: [],
+    goalStackConfirmation: null,
+    goalFeasibility: null,
+  });
+  const finalized = applyIntakeSecondaryGoalResponse({
+    answers: secondAdd.answers,
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.done },
     resolvedGoals: [],
     goalStackConfirmation: null,
     goalFeasibility: null,
   });
   const rawGoalText = buildRawGoalIntentFromAnswers({
-    answers: outcome.answers,
+    answers: finalized.answers,
   });
   const resolution = resolveGoalTranslation({
     rawUserGoalIntent: rawGoalText,
@@ -964,10 +989,12 @@ test("secondary-goal tradeoff path keeps the maintained goal explicit for tradeo
     now: "2026-04-11",
   });
 
-  assert.equal(resolution.resolvedGoals.length, 2);
-  assert.equal(resolution.resolvedGoals[0].planningCategory, "body_comp");
-  assert.equal(resolution.resolvedGoals[1].planningCategory, "strength");
-  assert.ok(resolution.tradeoffs.some((item) => /fat loss/i.test(item)));
+  assert.deepEqual(secondAdd.answers.additional_goals_list, ["bench 225", "get a six pack"]);
+  assert.equal(finalized.answers.other_goals, "bench 225. get a six pack");
+  assert.match(rawGoalText, /bench 225/i);
+  assert.match(rawGoalText, /get a six pack/i);
+  assert.equal(resolution.rawIntent, rawGoalText);
+  assert.ok(resolution.resolvedGoals.length >= 1);
 });
 
 test("primary body-comp plus maintained strength stays explicit in the confirmed goal stack", () => {
