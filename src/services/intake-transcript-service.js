@@ -14,6 +14,7 @@ export const buildTranscriptMessageKey = ({
   intent = "",
   packet_version = "",
   message_kind = "",
+  topic = "",
 } = {}) => {
   const kind = sanitizeText(message_kind, 40).toLowerCase();
   const cleanTransitionId = sanitizeText(transition_id, 120);
@@ -30,7 +31,9 @@ export const buildTranscriptMessageKey = ({
     const cleanPacketVersion = sanitizeText(packet_version || "unknown", 40) || "unknown";
     return sanitizeText(`ai:${cleanIntent}:${cleanPacketVersion}:${cleanTransitionId}`, 220);
   }
-  return sanitizeText(`${sanitizeText(stage || "intake", 80) || "intake"}:system:${cleanTransitionId}`, 220);
+  const cleanTopic = sanitizeText(topic, 80);
+  const baseKey = `${sanitizeText(stage || "intake", 80) || "intake"}:system:${cleanTransitionId}`;
+  return sanitizeText(cleanTopic ? `${baseKey}:${cleanTopic}` : baseKey, 220);
 };
 
 const normalizeTranscriptEntry = (item = null) => {

@@ -374,6 +374,26 @@ test("confirmation copy stays coachy and avoids internal gate language", () => {
   assert.match(confirmationState.reason, /steadier first block|running volume|timeline/i);
 });
 
+test("confirmation copy sanitizes backticks and intake engine tokens", () => {
+  const confirmationState = deriveIntakeConfirmationState({
+    reviewModel: {
+      activeResolvedGoals: [{ id: "goal_1", summary: "Run a faster half marathon" }],
+      completeness: {
+        missingRequired: [
+          { label: "`current_run_frequency`" },
+        ],
+      },
+      arbitrationBlockingIssues: [],
+      confirmationAction: "proceed",
+    },
+  });
+
+  assert.equal(confirmationState.status, "incomplete");
+  assert.equal(confirmationState.reason.includes("`"), false);
+  assert.equal(/current_run_frequency/i.test(confirmationState.reason), false);
+  assert.match(confirmationState.reason, /runs per week/i);
+});
+
 test("ready-to-plan state produces a confirmable intake confirmation state", () => {
   const rawGoalText = "bench 225";
   const goalResolution = resolveGoalTranslation({
@@ -784,8 +804,9 @@ test("secondary-goal question appears after required anchors are satisfied and s
   });
 
   assert.match(prompt.prompt, /anything else you want to improve or maintain while chasing this/i);
-  assert.match(prompt.helperText, /add extra goals one at a time/i);
+  assert.match(prompt.helperText, /quick options below/i);
   assert.equal(prompt.existingGoals.length, 0);
+  assert.deepEqual(prompt.quickOptions.map((option) => option.label), ["Skip", "Maintain strength", "Maintain mobility", "Custom..."]);
 });
 
 test("pure running review stays event-specific and does not pre-seed a hybrid maintained lane", () => {
@@ -866,11 +887,13 @@ test("secondary-goal prompt stays lightweight and freeform even when a maintaine
     reviewModel,
     answers: {},
   });
+  const quickOptionLabels = Array.isArray(prompt.quickOptions) ? prompt.quickOptions.map((option) => option.label) : [];
 
   assert.match(prompt.prompt, /anything else you want to improve or maintain while chasing this/i);
-  assert.match(prompt.helperText, /add anything else one at a time/i);
+  assert.match(prompt.helperText, /quick options below/i);
   assert.ok(prompt.inferredGoals.some((goal) => /strength/i.test(goal)));
   assert.equal(prompt.existingGoals.length, 0);
+  assert.deepEqual(quickOptionLabels, ["Skip", "Maintain strength", "Maintain mobility", "Custom..."]);
 });
 
 test("secondary-goal prompt stays hidden while required anchors are still missing", () => {
@@ -963,6 +986,42 @@ test("secondary-goal prompt appears once after anchors are satisfied and stays g
     reviewModel,
     answers: finalized.answers,
   }), null);
+});
+
+test("skip marks the optional secondary-goal step as answered so it does not reappear", () => {
+  const outcome = applyIntakeSecondaryGoalResponse({
+    answers: {
+      goal_intent: "run a 1:45 half marathon",
+    },
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.skip, label: "Skip" },
+    resolvedGoals: [],
+    goalStackConfirmation: null,
+    goalFeasibility: null,
+  });
+
+  assert.equal(outcome.rerunAssessment, false);
+  assert.equal(outcome.keepCollecting, false);
+  assert.equal(outcome.answers.secondary_goal_prompt_answered, true);
+  assert.deepEqual(outcome.answers.additional_goals_list, []);
+  assert.equal(outcome.answers.other_goals, "");
+});
+
+test("preset secondary-goal buttons add the selected maintenance goal without closing the step", () => {
+  const outcome = applyIntakeSecondaryGoalResponse({
+    answers: {
+      goal_intent: "run a 1:45 half marathon",
+    },
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.maintainStrength, label: "Maintain strength" },
+    resolvedGoals: [],
+    goalStackConfirmation: null,
+    goalFeasibility: null,
+  });
+
+  assert.equal(outcome.keepCollecting, true);
+  assert.equal(outcome.rerunAssessment, false);
+  assert.equal(outcome.answers.secondary_goal_prompt_answered, false);
+  assert.deepEqual(outcome.answers.additional_goals_list, ["maintain strength"]);
+  assert.equal(outcome.answers.other_goals, "maintain strength");
 });
 
 test("next clarifying question skips ones already asked", () => {
@@ -1499,6 +1558,50 @@ test("final review keeps running lead, maintained bench goal, and background abs
   assert.equal(reviewModel.reviewContract.actions.editGoal.label, "Edit a goal");
   assert.equal(reviewModel.reviewContract.actions.dropGoal.label, "Drop a goal");
   assert.match(reviewModel.tradeoffStatement, /leads now/i);
+});
+
+test("goal stack review keeps parsed goals separate and lets one be removed before anchors continue", () => {
+  const resolution = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 1:45 half marathon but keep strength",
+    typedIntakePacket: buildIntakePacket("run a 1:45 half marathon but keep strength"),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  const initialReview = buildIntakeGoalStackReviewModel({
+    resolvedGoals: resolution.resolvedGoals,
+    goalResolution: resolution,
+    goalFeasibility: { conflictFlags: [] },
+    goalStackConfirmation: null,
+  });
+
+  assert.equal(initialReview.activeGoals.length, 2);
+  assert.equal(initialReview.activeGoals[0]?.summary, "Run a half marathon in 1:45:00");
+  assert.equal(initialReview.activeGoals[1]?.summary, "Keep strength while the primary goal leads");
+
+  const withoutSecondary = buildIntakeGoalStackReviewModel({
+    resolvedGoals: resolution.resolvedGoals,
+    goalResolution: resolution,
+    goalFeasibility: { conflictFlags: [] },
+    goalStackConfirmation: {
+      removedGoalIds: [resolution.resolvedGoals[1]?.id],
+    },
+  });
+
+  assert.equal(withoutSecondary.activeGoals.length, 1);
+  assert.equal(withoutSecondary.activeGoals[0]?.summary, "Run a half marathon in 1:45:00");
+
+  const withoutLead = buildIntakeGoalStackReviewModel({
+    resolvedGoals: resolution.resolvedGoals,
+    goalResolution: resolution,
+    goalFeasibility: { conflictFlags: [] },
+    goalStackConfirmation: {
+      removedGoalIds: [resolution.resolvedGoals[0]?.id],
+    },
+  });
+
+  assert.equal(withoutLead.activeGoals.length, 1);
+  assert.equal(withoutLead.activeGoals[0]?.summary, "Keep strength while the primary goal leads");
 });
 
 test("duplicate goal fingerprints do not render in both lead and later sections", () => {

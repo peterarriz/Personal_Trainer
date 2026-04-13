@@ -8,9 +8,14 @@ import {
   INTAKE_COMPLETENESS_QUESTION_KEYS,
   isCompletenessClarificationNote,
 } from "./intake-completeness-service.js";
+import { sanitizeDisplayCopy } from "./text-format-service.js";
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
+const sanitizeDisplayLine = (value = "", maxLength = 240) => sanitizeDisplayCopy(sanitizeText(value, maxLength));
+const sanitizeDisplayList = (items = [], maxLength = 220) => (
+  toArray(items).map((item) => sanitizeDisplayLine(item, maxLength)).filter(Boolean)
+);
 
 const dedupeStrings = (items = []) => {
   const seen = new Set();
@@ -61,11 +66,19 @@ const ANCHOR_PROMPT_PREFIX_BY_FIELD_ID = {
 };
 
 export const SECONDARY_GOAL_RESPONSE_KEYS = {
+  skip: "skip",
+  maintainStrength: "maintain_strength",
+  maintainMobility: "maintain_mobility",
   primaryOnly: "primary_only",
   addGoal: "add_goal",
   done: "done",
   keepInferred: "keep_inferred",
   custom: "custom",
+};
+
+const SECONDARY_GOAL_PRESET_TEXT = {
+  [SECONDARY_GOAL_RESPONSE_KEYS.maintainStrength]: "maintain strength",
+  [SECONDARY_GOAL_RESPONSE_KEYS.maintainMobility]: "maintain mobility",
 };
 
 const GOAL_SIGNAL_PATTERN = /(run|race|marathon|half marathon|10k|5k|bench|squat|deadlift|strength|lift|fat loss|lose fat|lean|athletic|abs|physique|toned|hybrid|performance|muscle|back in shape|get in shape)/i;
@@ -317,7 +330,7 @@ export const buildDeterministicAnchorPromptText = ({
   const normalizedFieldId = sanitizeText(fieldId, 80);
   if (!cleanPrompt) return "";
   const leadIn = ANCHOR_PROMPT_PREFIX_BY_FIELD_ID[normalizedFieldId] || "Quick baseline check";
-  return `${leadIn}: ${cleanPrompt}`;
+  return sanitizeDisplayLine(`${leadIn}: ${cleanPrompt}`, 240);
 };
 
 const buildGoalConfirmationReadiness = ({
@@ -381,7 +394,7 @@ const resolveNextRequiredFieldId = ({
 
 const buildShortConfirmationReason = (items = []) => (
   dedupeStrings(items)
-    .map((item) => sanitizeText(item, 180))
+    .map((item) => sanitizeDisplayLine(item, 180))
     .find(Boolean)
     || ""
 );
@@ -390,8 +403,8 @@ const buildPlainNeedItem = ({
   label = "",
   question = "",
 } = {}) => {
-  const cleanLabel = sanitizeText(label, 160);
-  const cleanQuestion = sanitizeText(question, 220);
+  const cleanLabel = sanitizeDisplayLine(label, 160);
+  const cleanQuestion = sanitizeDisplayLine(question, 220);
   return cleanLabel || cleanQuestion;
 };
 
@@ -408,19 +421,19 @@ const buildGoalReviewEntry = ({ goal = {}, role = GOAL_STACK_ROLES.deferred } = 
     : "This is intentionally parked for a later block so the current plan can stay coherent.";
   return {
     id: goal?.id,
-    summary: sanitizeText(goal?.summary || "", 160),
+    summary: sanitizeDisplayLine(goal?.summary || "", 160),
     role,
-    roleLabel: GOAL_STACK_ROLE_LABELS[role] || "Goal",
+    roleLabel: sanitizeDisplayLine(GOAL_STACK_ROLE_LABELS[role] || "Goal", 80),
     planningPriority: Number(goal?.planningPriority || 0) || null,
     targetDate: sanitizeText(goal?.targetDate || "", 24),
     targetHorizonWeeks: Number.isFinite(Number(goal?.targetHorizonWeeks)) ? Number(goal.targetHorizonWeeks) : null,
     primaryMetric: goal?.primaryMetric || null,
     arbitrationConfirmedPrimary: Boolean(goal?.arbitrationConfirmedPrimary),
-    measurabilityLabel: MEASURABILITY_LABELS[goal?.measurabilityTier] || "Goal",
-    trackingLabels,
-    tradeoff,
-    reason,
-    rationale: reason || tradeoff || fallbackRationale,
+    measurabilityLabel: sanitizeDisplayLine(MEASURABILITY_LABELS[goal?.measurabilityTier] || "Goal", 80),
+    trackingLabels: sanitizeDisplayList(trackingLabels, 160),
+    tradeoff: sanitizeDisplayLine(tradeoff, 180),
+    reason: sanitizeDisplayLine(reason, 220),
+    rationale: sanitizeDisplayLine(reason || tradeoff || fallbackRationale, 220),
     actions: {
       canChangePriority: role !== GOAL_STACK_ROLES.primary,
       canEdit: true,
@@ -472,12 +485,12 @@ const buildReviewTradeoffStatement = ({
   if (supportSummary) clauses.push(`${supportSummary} ${supportGoals.length === 1 ? "stays" : "stay"} in the background`);
   if (deferredSummary) clauses.push(`${deferredSummary} ${deferredGoals.length === 1 ? "is" : "are"} deferred until a later block`);
   if (clauses.length > 0) {
-    return `${firstSentence} ${sentenceCase(clauses.join(", "))} so the plan does not try to push every lane at once.`;
+    return sanitizeDisplayLine(`${firstSentence} ${sentenceCase(clauses.join(", "))} so the plan does not try to push every lane at once.`, 320);
   }
   if (primaryTradeoff) {
-    return `${firstSentence} ${sentenceCase(primaryTradeoff).replace(/[.]+$/g, "")}.`;
+    return sanitizeDisplayLine(`${firstSentence} ${sentenceCase(primaryTradeoff).replace(/[.]+$/g, "")}.`, 320);
   }
-  return firstSentence;
+  return sanitizeDisplayLine(firstSentence, 320);
 };
 
 const buildGoalReviewContract = ({
@@ -615,7 +628,7 @@ export const buildIntakeGoalStackConfirmation = ({
       .map(([goalId]) => goalId),
   ]).filter((id) => availableIds.has(id));
   const activeGoals = orderedGoals.filter((goal) => !removedGoalIds.includes(goal.id));
-  const rolePrimaryId = orderedGoals.find((goal) => requestedRolesByGoalId[goal?.id] === GOAL_STACK_ROLES.primary)?.id;
+  const rolePrimaryId = activeGoals.find((goal) => requestedRolesByGoalId[goal?.id] === GOAL_STACK_ROLES.primary)?.id;
   const fallbackPrimaryId = sanitizeText(rolePrimaryId || activeGoals[0]?.id || orderedGoals[0]?.id || "", 120);
   const explicitPrimaryId = sanitizeText(goalStackConfirmation?.primaryGoalId || "", 120);
   const primaryGoalId = activeGoals.some((goal) => goal.id === explicitPrimaryId)
@@ -835,14 +848,20 @@ export const buildIntakeSecondaryGoalPrompt = ({
   if (!canAskSecondaryGoal({ reviewModel, answers })) return null;
   const inferredGoals = toArray(reviewModel?.goalStackReview?.activeGoals)
     .slice(1)
-    .map((goal) => sanitizeText(goal?.summary || "", 160))
+    .map((goal) => sanitizeDisplayLine(goal?.summary || "", 160))
     .filter(Boolean);
   return {
-    prompt: "Anything else you want to improve or maintain while chasing this?",
-    helperText: inferredGoals.length
-      ? `Optional. I already picked up ${inferredGoals.join(" and ")} from what you said. Add anything else one at a time in your own words, or skip this if the current stack is enough.`
-      : "Optional. Add extra goals one at a time in your own words, or skip this if the primary goal stands on its own.",
-    placeholder: "Example: get a six pack, bench 225, or keep upper body",
+    prompt: sanitizeDisplayLine("Anything else you want to improve or maintain while chasing this?", 180),
+    helperText: sanitizeDisplayLine(inferredGoals.length
+      ? `Optional. I already picked up ${inferredGoals.join(" and ")} from what you said. Pick one of the quick options below, or add your own if needed.`
+      : "Optional. Pick one of the quick options below, or add your own if you want the plan to hold something else in the background.", 320),
+    placeholder: sanitizeDisplayLine("Example: get a six pack, bench 225, or keep upper body", 120),
+    quickOptions: [
+      { key: SECONDARY_GOAL_RESPONSE_KEYS.skip, label: "Skip" },
+      { key: SECONDARY_GOAL_RESPONSE_KEYS.maintainStrength, label: "Maintain strength", value: SECONDARY_GOAL_PRESET_TEXT[SECONDARY_GOAL_RESPONSE_KEYS.maintainStrength] },
+      { key: SECONDARY_GOAL_RESPONSE_KEYS.maintainMobility, label: "Maintain mobility", value: SECONDARY_GOAL_PRESET_TEXT[SECONDARY_GOAL_RESPONSE_KEYS.maintainMobility] },
+      { key: SECONDARY_GOAL_RESPONSE_KEYS.custom, label: "Custom..." },
+    ],
     existingGoals: readAdditionalGoalEntries({ answers }),
     inferredGoals,
   };
@@ -857,10 +876,11 @@ export const applyIntakeSecondaryGoalResponse = ({
   goalFeasibility = null,
 } = {}) => {
   const responseKey = sanitizeText(response?.key || "", 80).toLowerCase();
-  const nextGoalText = normalizeAdditionalGoalText(customText || response?.value || "");
+  const presetGoalText = SECONDARY_GOAL_PRESET_TEXT[responseKey] || "";
+  const nextGoalText = normalizeAdditionalGoalText(customText || response?.value || presetGoalText || "");
   const existingGoals = readAdditionalGoalEntries({ answers });
 
-  if (responseKey === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly) {
+  if (responseKey === SECONDARY_GOAL_RESPONSE_KEYS.skip || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly) {
     return {
       answers: finalizeAdditionalGoalAnswers({
         answers,
@@ -869,6 +889,32 @@ export const applyIntakeSecondaryGoalResponse = ({
       goalStackConfirmation,
       rerunAssessment: false,
       keepCollecting: false,
+    };
+  }
+
+  if (responseKey === SECONDARY_GOAL_RESPONSE_KEYS.maintainStrength || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.maintainMobility) {
+    if (!nextGoalText) {
+      return {
+        answers: finalizeAdditionalGoalAnswers({
+          answers,
+          entries: existingGoals,
+          answered: false,
+        }),
+        goalStackConfirmation,
+        rerunAssessment: false,
+        keepCollecting: true,
+      };
+    }
+    const updatedEntries = dedupeStrings([...existingGoals, nextGoalText]);
+    return {
+      answers: finalizeAdditionalGoalAnswers({
+        answers,
+        entries: updatedEntries,
+        answered: false,
+      }),
+      goalStackConfirmation,
+      rerunAssessment: false,
+      keepCollecting: true,
     };
   }
 
@@ -1037,6 +1083,120 @@ export const applyIntakeGoalAdjustment = ({
   };
 };
 
+const sanitizeIntakeReviewModelDisplayCopy = (reviewModel = null) => {
+  if (!reviewModel || typeof reviewModel !== "object") return reviewModel;
+  const sanitizeQuestionObject = (item = null) => (
+    item && typeof item === "object"
+      ? {
+          ...item,
+          prompt: sanitizeDisplayLine(item?.prompt || "", 220),
+          label: sanitizeDisplayLine(item?.label || "", 160),
+        }
+      : item
+  );
+  const sanitizeReviewEntry = (item = null) => (
+    item && typeof item === "object"
+      ? {
+          ...item,
+          summary: sanitizeDisplayLine(item?.summary || "", 160),
+          roleLabel: sanitizeDisplayLine(item?.roleLabel || "", 80),
+          measurabilityLabel: sanitizeDisplayLine(item?.measurabilityLabel || "", 80),
+          trackingLabels: sanitizeDisplayList(item?.trackingLabels, 160),
+          tradeoff: sanitizeDisplayLine(item?.tradeoff || "", 180),
+          reason: sanitizeDisplayLine(item?.reason || "", 220),
+          rationale: sanitizeDisplayLine(item?.rationale || "", 220),
+        }
+      : item
+  );
+  const sanitizeLaneSection = (item = null) => (
+    item && typeof item === "object"
+      ? {
+          ...item,
+          title: sanitizeDisplayLine(item?.title || "", 120),
+          empty_state: sanitizeDisplayLine(item?.empty_state || "", 180),
+          goals: toArray(item?.goals).map(sanitizeReviewEntry),
+        }
+      : item
+  );
+  const sanitizeReviewContract = (reviewContract = null) => (
+    reviewContract && typeof reviewContract === "object"
+      ? {
+          ...reviewContract,
+          lead_goal: sanitizeReviewEntry(reviewContract?.lead_goal),
+          maintained_goals: toArray(reviewContract?.maintained_goals).map(sanitizeReviewEntry),
+          support_goals: toArray(reviewContract?.support_goals).map(sanitizeReviewEntry),
+          deferred_goals: toArray(reviewContract?.deferred_goals).map(sanitizeReviewEntry),
+          tradeoff_statement: sanitizeDisplayLine(reviewContract?.tradeoff_statement || "", 320),
+          lane_sections: toArray(reviewContract?.lane_sections).map(sanitizeLaneSection),
+        }
+      : reviewContract
+  );
+
+  return {
+    ...reviewModel,
+    primarySummary: sanitizeDisplayLine(reviewModel?.primarySummary || "", 160),
+    goalFamilyLabel: sanitizeDisplayLine(reviewModel?.goalFamilyLabel || "", 80),
+    goalTypeLabel: sanitizeDisplayLine(reviewModel?.goalTypeLabel || "", 80),
+    measurabilityLabel: sanitizeDisplayLine(reviewModel?.measurabilityLabel || "", 80),
+    realismLabel: sanitizeDisplayLine(reviewModel?.realismLabel || "", 80),
+    confirmationLabel: sanitizeDisplayLine(reviewModel?.confirmationLabel || "", 80),
+    gateLabel: sanitizeDisplayLine(reviewModel?.gateLabel || "", 80),
+    missingConfidenceReasons: sanitizeDisplayList(reviewModel?.missingConfidenceReasons, 160),
+    gateReasons: toArray(reviewModel?.gateReasons).map((item) => ({
+      ...item,
+      summary: sanitizeDisplayLine(item?.summary || "", 220),
+    })).filter((item) => item.summary),
+    gateSuggestedRevision: reviewModel?.gateSuggestedRevision
+      ? {
+          ...(reviewModel.gateSuggestedRevision || {}),
+          summary: sanitizeDisplayLine(reviewModel?.gateSuggestedRevision?.summary || "", 220),
+          first_block_target: sanitizeDisplayLine(reviewModel?.gateSuggestedRevision?.first_block_target || "", 220),
+          requested_data: sanitizeDisplayList(reviewModel?.gateSuggestedRevision?.requested_data, 160),
+        }
+      : null,
+    gateFirstBlockAlternatives: toArray(reviewModel?.gateFirstBlockAlternatives).map((item) => ({
+      ...item,
+      label: sanitizeDisplayLine(item?.label || "", 60),
+      summary: sanitizeDisplayLine(item?.summary || "", 320),
+    })).filter((item) => item.summary),
+    gateExplanationText: sanitizeDisplayLine(reviewModel?.gateExplanationText || "", 680),
+    recommendedRevisionSummary: sanitizeDisplayLine(reviewModel?.recommendedRevisionSummary || "", 220),
+    tradeoffSummary: sanitizeDisplayLine(reviewModel?.tradeoffSummary || "", 220),
+    blockingReasons: sanitizeDisplayList(reviewModel?.blockingReasons, 180),
+    warningReasons: sanitizeDisplayList(reviewModel?.warningReasons, 180),
+    arbitrationBlockingIssues: sanitizeDisplayList(reviewModel?.arbitrationBlockingIssues, 180),
+    trackingLabels: sanitizeDisplayList(reviewModel?.trackingLabels, 160),
+    unresolvedItems: sanitizeDisplayList(reviewModel?.unresolvedItems, 180),
+    clarifyingQuestions: sanitizeDisplayList(reviewModel?.clarifyingQuestions, 220),
+    nextQuestions: toArray(reviewModel?.nextQuestions).map(sanitizeQuestionObject),
+    tradeoffStatement: sanitizeDisplayLine(reviewModel?.tradeoffStatement || "", 320),
+    goalStackReview: reviewModel?.goalStackReview
+      ? {
+          ...(reviewModel.goalStackReview || {}),
+          activeGoals: toArray(reviewModel?.goalStackReview?.activeGoals).map(sanitizeReviewEntry),
+          leadGoal: sanitizeReviewEntry(reviewModel?.goalStackReview?.leadGoal),
+          maintainedGoals: toArray(reviewModel?.goalStackReview?.maintainedGoals).map(sanitizeReviewEntry),
+          supportGoals: toArray(reviewModel?.goalStackReview?.supportGoals).map(sanitizeReviewEntry),
+          backgroundGoals: toArray(reviewModel?.goalStackReview?.backgroundGoals).map(sanitizeReviewEntry),
+          deferredGoals: toArray(reviewModel?.goalStackReview?.deferredGoals).map(sanitizeReviewEntry),
+          removedGoals: toArray(reviewModel?.goalStackReview?.removedGoals).map(sanitizeReviewEntry),
+          primaryTradeoff: sanitizeDisplayLine(reviewModel?.goalStackReview?.primaryTradeoff || "", 220),
+          tradeoffStatement: sanitizeDisplayLine(reviewModel?.goalStackReview?.tradeoffStatement || "", 320),
+          backgroundPriority: reviewModel?.goalStackReview?.backgroundPriority
+            ? {
+                ...(reviewModel.goalStackReview.backgroundPriority || {}),
+                label: sanitizeDisplayLine(reviewModel?.goalStackReview?.backgroundPriority?.label || "", 120),
+                summary: sanitizeDisplayLine(reviewModel?.goalStackReview?.backgroundPriority?.summary || "", 220),
+                trackingLabels: sanitizeDisplayList(reviewModel?.goalStackReview?.backgroundPriority?.trackingLabels, 120),
+              }
+            : reviewModel?.goalStackReview?.backgroundPriority,
+          reviewContract: sanitizeReviewContract(reviewModel?.goalStackReview?.reviewContract),
+        }
+      : reviewModel?.goalStackReview,
+    reviewContract: sanitizeReviewContract(reviewModel?.reviewContract),
+  };
+};
+
 export const buildIntakeGoalReviewModel = ({
   goalResolution = null,
   orderedResolvedGoals = [],
@@ -1149,7 +1309,7 @@ export const buildIntakeGoalReviewModel = ({
     ? "warn"
     : "ready";
 
-  return {
+  return sanitizeIntakeReviewModelDisplayCopy({
     primarySummary: sanitizeText(primaryGoal?.summary || "", 160),
     goalFamily: sanitizeText(primaryGoal?.goalFamily || aiInterpretationProposal?.interpretedGoalType || "", 40).toLowerCase(),
     goalFamilyLabel: sanitizeText(primaryGoal?.goalFamily || aiInterpretationProposal?.interpretedGoalType || "", 40).replaceAll("_", " "),
@@ -1206,7 +1366,7 @@ export const buildIntakeGoalReviewModel = ({
     reviewContract: goalStackReview?.reviewContract || null,
     tradeoffStatement: sanitizeText(goalStackReview?.tradeoffStatement || goalStackReview?.reviewContract?.tradeoff_statement || "", 320),
     isPlannerReady: Boolean(primaryGoal) && (gateStatus === "ready" || gateStatus === "warn"),
-  };
+  });
 };
 
 export const deriveIntakeConfirmationState = ({
@@ -1239,7 +1399,7 @@ export const deriveIntakeConfirmationState = ({
   if (!primaryGoal) {
     return {
       status: INTAKE_CONFIRMATION_STATUSES.block,
-      reason: "Pick the goal that should lead right now.",
+      reason: sanitizeDisplayLine("Pick the goal that should lead right now.", 140),
       next_required_field: null,
       canConfirm: false,
       requiresAcknowledgement: false,
@@ -1250,7 +1410,7 @@ export const deriveIntakeConfirmationState = ({
     const incompleteReason = sanitizeText(missingRequired[0]?.label || "", 140);
     return {
       status: INTAKE_CONFIRMATION_STATUSES.incomplete,
-      reason: incompleteReason ? `I still need ${incompleteReason.toLowerCase()}.` : "I still need one more detail before I build this.",
+      reason: sanitizeDisplayLine(incompleteReason ? `I still need ${incompleteReason.toLowerCase()}.` : "I still need one more detail before I build this.", 180),
       next_required_field: nextRequiredFieldId,
       canConfirm: false,
       requiresAcknowledgement: false,
@@ -1260,7 +1420,7 @@ export const deriveIntakeConfirmationState = ({
   if (arbitrationBlockingIssues.length > 0) {
     return {
       status: INTAKE_CONFIRMATION_STATUSES.block,
-      reason: buildShortConfirmationReason(arbitrationBlockingIssues) || "I need to clean up the goal order before I build this.",
+      reason: sanitizeDisplayLine(buildShortConfirmationReason(arbitrationBlockingIssues) || "I need to clean up the goal order before I build this.", 180),
       next_required_field: nextRequiredFieldId,
       canConfirm: false,
       requiresAcknowledgement: false,
@@ -1270,12 +1430,12 @@ export const deriveIntakeConfirmationState = ({
   if (confirmationAction === "block") {
     return {
       status: INTAKE_CONFIRMATION_STATUSES.block,
-      reason: buildShortConfirmationReason([
+      reason: sanitizeDisplayLine(buildShortConfirmationReason([
         gateSuggestedRevisionSummary,
         recommendedRevisionSummary,
         gateReasons[0],
         gateExplanationText,
-      ]) || "This goal needs a safer first step before I build it.",
+      ]) || "This goal needs a safer first step before I build it.", 220),
       next_required_field: nextRequiredFieldId,
       canConfirm: false,
       requiresAcknowledgement: false,
@@ -1285,13 +1445,13 @@ export const deriveIntakeConfirmationState = ({
   if (confirmationAction === "warn") {
     return {
       status: INTAKE_CONFIRMATION_STATUSES.warn,
-      reason: buildShortConfirmationReason([
+      reason: sanitizeDisplayLine(buildShortConfirmationReason([
         warningReasons[0],
         gateReasons[0],
         gateExplanationText,
         tradeoffSummary,
         reviewModel?.gateLabel,
-      ]) || "This is aggressive for the timeline you picked.",
+      ]) || "This is aggressive for the timeline you picked.", 220),
       next_required_field: null,
       canConfirm: true,
       requiresAcknowledgement: true,
@@ -1349,10 +1509,10 @@ export const buildIntakeConfirmationNeedsList = ({
     })),
   ]);
 
-  return dedupeStrings([
+  return sanitizeDisplayList(dedupeStrings([
     ...anchorNeeds,
     ...fallbackNeeds,
-  ]).slice(0, boundedMaxItems);
+  ]), 180).slice(0, boundedMaxItems);
 };
 
 export const getNextIntakeClarifyingQuestion = ({
@@ -1400,7 +1560,7 @@ export const buildIntakeClarificationCoachMessages = ({
   );
   const cleanStatus = sanitizeText(statusText || "", 320);
   if (prompt) messages.push(buildDeterministicAnchorPromptText({ fieldId, prompt }));
-  if (cleanStatus) messages.push(cleanStatus);
+  if (cleanStatus) messages.push(sanitizeDisplayLine(cleanStatus, 320));
   return messages;
 };
 

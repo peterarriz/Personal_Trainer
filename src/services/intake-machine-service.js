@@ -19,9 +19,11 @@ import {
   TRANSCRIPT_MESSAGE_KINDS,
 } from "./intake-transcript-service.js";
 import { resolveGoalTranslation } from "./goal-resolution-service.js";
+import { sanitizeDisplayCopy } from "./text-format-service.js";
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
+const sanitizeDisplayLine = (value = "", maxLength = 240) => sanitizeDisplayCopy(sanitizeText(value, maxLength));
 const toFiniteNumber = (value, fallback = null) => {
   if (value === "" || value === null || value === undefined) return fallback;
   const parsed = Number(value);
@@ -352,25 +354,25 @@ const buildMissingAnchor = ({
     anchor_id: `${sanitizeText(requirement?.key || question?.key || "anchor", 80)}:${sanitizeText(field_id, 80)}`,
     requirement_key: sanitizeText(requirement?.key || question?.key || "", 80),
     field_id: sanitizeText(field_id, 80),
-    question: normalizedQuestion,
-    label: normalizedLabel,
+    question: sanitizeDisplayLine(normalizedQuestion, 220),
+    label: sanitizeDisplayLine(normalizedLabel, 160),
     input_type: normalizedInputType,
     expected_value_type: sanitizeText(expected_value_type, 80) || "text",
-    placeholder: sanitizeText(placeholder, 120),
-    helper_text: sanitizeText(helper_text, 180),
+    placeholder: sanitizeDisplayLine(placeholder, 120),
+    helper_text: sanitizeDisplayLine(helper_text, 180),
     validation: {
       kind: sanitizeText(validation?.kind || "", 80),
-      message: sanitizeText(validation?.message || "", 220),
+      message: sanitizeDisplayLine(validation?.message || "", 220),
       ...(Number.isFinite(validation?.min) ? { min: validation.min } : {}),
       ...(Number.isFinite(validation?.max) ? { max: validation.max } : {}),
       ...(validation?.direction ? { direction: sanitizeText(validation.direction, 20).toLowerCase() } : {}),
     },
-    examples: extractExamples(placeholder, examples),
+    examples: extractExamples(placeholder, examples).map((item) => sanitizeDisplayLine(item, 120)).filter(Boolean),
     priority: Math.max(1, Number(priority) || 1),
     applies_to_goal_ids: toArray(applies_to_goal_ids).map((item) => sanitizeText(item, 120)).filter(Boolean),
     draftValue: sanitizeText(draftValue, 160),
     canonical_field_ids: toArray(canonical_field_ids).map((item) => sanitizeText(item, 80)).filter(Boolean),
-    why_it_matters: sanitizeText(
+    why_it_matters: sanitizeDisplayLine(
       why_it_matters || buildDefaultAnchorWhyItMatters({
         label: normalizedLabel,
         question: normalizedQuestion,
@@ -378,7 +380,7 @@ const buildMissingAnchor = ({
       }),
       220
     ),
-    coach_voice_line: sanitizeText(
+    coach_voice_line: sanitizeDisplayLine(
       coach_voice_line || buildDefaultAnchorCoachVoiceLine({
         inputType: normalizedInputType,
         label: normalizedLabel,
@@ -389,18 +391,45 @@ const buildMissingAnchor = ({
     unit_options: toArray(unit_options)
       .map((item) => ({
         value: sanitizeText(item?.value || item, 40),
-        label: sanitizeText(item?.label || item, 60),
+        label: sanitizeDisplayLine(item?.label || item, 60),
       }))
       .filter((item) => item.value),
     options: toArray(options)
       .map((item) => ({
         value: sanitizeText(item?.value || "", 80),
-        label: sanitizeText(item?.label || item?.value || "", 120),
-        description: sanitizeText(item?.description || "", 180),
+        label: sanitizeDisplayLine(item?.label || item?.value || "", 120),
+        description: sanitizeDisplayLine(item?.description || "", 180),
       }))
       .filter((item) => item.value && item.label),
   };
 };
+
+const removeCompletenessField = (answers = {}, fieldKey = "") => {
+  if (!fieldKey) return answers;
+  const existingFields = answers?.intake_completeness?.fields || {};
+  if (!hasOwn(existingFields, fieldKey)) return answers;
+  const nextFields = { ...existingFields };
+  delete nextFields[fieldKey];
+  return {
+    ...answers,
+    intake_completeness: {
+      version: "2026-04-v1",
+      ...(answers?.intake_completeness || {}),
+      fields: nextFields,
+    },
+  };
+};
+
+const rebuildBindingsByFieldIdFromLog = (anchorBindingLog = []) => (
+  toArray(anchorBindingLog).reduce((nextBindings, binding) => {
+    const fieldId = sanitizeText(binding?.field_id || "", 80);
+    if (!fieldId) return nextBindings;
+    return {
+      ...nextBindings,
+      [fieldId]: clonePlainValue(binding),
+    };
+  }, {})
+);
 
 const buildRunningEnduranceChoiceAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], selectedValue = "" } = {}) => (
   buildMissingAnchor({
@@ -2511,6 +2540,69 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
       });
     }
     case INTAKE_MACHINE_EVENTS.USER_BACK: {
+      if (Boolean(event?.payload?.edit_last_anchor)) {
+        const anchorBindingLog = toArray(state.anchorBindingLog);
+        const lastBinding = anchorBindingLog[anchorBindingLog.length - 1] || null;
+        if (!lastBinding?.field_id) {
+          return commitTransition({
+            state,
+            event,
+            nextStage: state.stage || INTAKE_MACHINE_STATES.FREEFORM_GOALS,
+            patch: {
+              ui: {
+                ...(state.ui || {}),
+                currentBindingTarget: buildAnchorBindingTarget(currentDraft?.missingAnchorsEngine?.currentAnchor || null),
+              },
+              clock: {
+                now,
+              },
+            },
+          });
+        }
+        const nextAnchorBindingLog = anchorBindingLog.slice(0, -1);
+        const nextBindingsByFieldId = rebuildBindingsByFieldIdFromLog(nextAnchorBindingLog);
+        const nextAnswers = removeCompletenessField(currentDraft.answers || {}, lastBinding.field_id);
+        const nextDraft = buildDeterministicIntakeDraft({
+          answers: nextAnswers,
+          typedIntakePacket: currentDraft.typedIntakePacket,
+          aiInterpretationProposal: currentDraft.aiInterpretationProposal,
+          goalStackConfirmation: currentDraft.goalStackConfirmation || null,
+          anchorBindingsByFieldId: nextBindingsByFieldId,
+          now,
+        });
+        const nextAnchor = nextDraft?.missingAnchorsEngine?.currentAnchor || null;
+        return commitTransition({
+          state,
+          event,
+          nextStage: nextAnchor ? INTAKE_MACHINE_STATES.ANCHOR_COLLECTION : INTAKE_MACHINE_STATES.REVIEW_CONFIRM,
+          patch: {
+            draft: nextDraft,
+            anchorBindingsByFieldId: nextBindingsByFieldId,
+            anchorBindingLog: nextAnchorBindingLog,
+            anchorFailureCounts: {
+              ...(state.anchorFailureCounts || {}),
+              ...(lastBinding.field_id ? { [lastBinding.field_id]: 0 } : {}),
+            },
+            ui: {
+              ...(state.ui || {}),
+              lastParseError: "",
+              clearReason: nextDraft?.confirmationState?.reason || "",
+              currentBindingTarget: nextAnchor ? buildAnchorBindingTarget(nextAnchor) : null,
+            },
+            clock: {
+              now,
+            },
+          },
+          messages: nextAnchor?.question ? [{
+            message_kind: TRANSCRIPT_MESSAGE_KINDS.anchorQuestion,
+            anchor_id: nextAnchor.anchor_id,
+            text: buildDeterministicAnchorPromptText({
+              fieldId: nextAnchor.field_id,
+              prompt: nextAnchor.question,
+            }),
+          }] : [],
+        });
+      }
       const explicitTarget = sanitizeText(event?.payload?.target_stage || "", 80);
       const stageHistory = toArray(state.stageHistory);
       const fallbackStage = stageHistory.length > 1 ? stageHistory[stageHistory.length - 2] : INTAKE_MACHINE_STATES.FREEFORM_GOALS;
