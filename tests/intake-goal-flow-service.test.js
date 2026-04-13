@@ -1560,6 +1560,85 @@ test("final review keeps running lead, maintained bench goal, and background abs
   assert.match(reviewModel.tradeoffStatement, /leads now/i);
 });
 
+test("promoting a background appearance goal to lead immediately reopens its missing anchors", () => {
+  const primaryResolution = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 1:45 half marathon",
+    typedIntakePacket: buildIntakePacket("run a 1:45 half marathon"),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+  const combinedPacket = buildIntakePacket("run a 1:45 half marathon. bench 225. get a six pack");
+  const combinedResolution = resolveGoalTranslation({
+    rawUserGoalIntent: combinedPacket.intake.rawGoalText,
+    typedIntakePacket: combinedPacket,
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+  const arbitration = buildGoalArbitrationStack({
+    resolvedGoals: combinedResolution.resolvedGoals,
+    confirmedPrimaryGoal: primaryResolution.resolvedGoals[0],
+    additionalGoalTexts: ["bench 225", "get a six pack"],
+    typedIntakePacket: combinedPacket,
+    now: "2026-04-11",
+  });
+  const backgroundGoal = arbitration.supportGoals[0];
+  const answers = {
+    intake_completeness: {
+      fields: {
+        target_timeline: { raw: "October", value: "2026-10", mode: "month" },
+        current_run_frequency: { raw: "3 runs/week", value: 3 },
+        running_endurance_anchor_kind: { raw: "Longest recent run", value: "longest_recent_run" },
+        longest_recent_run: { raw: "7 miles", value: 7, unit: "miles", miles: 7 },
+        current_strength_baseline: { raw: "185x5", weight: 185, reps: 5, mode: "top_set", value: "185" },
+      },
+    },
+  };
+
+  const defaultReviewModel = buildIntakeGoalReviewModel({
+    goalResolution: primaryResolution,
+    orderedResolvedGoals: arbitration.goals,
+    goalFeasibility: {
+      conflictFlags: [],
+      confirmationAction: GOAL_FEASIBILITY_ACTIONS.proceed,
+    },
+    answers,
+    goalStackConfirmation: null,
+  });
+  const defaultConfirmationState = deriveIntakeConfirmationState({
+    reviewModel: defaultReviewModel,
+  });
+
+  assert.equal(defaultReviewModel.goalStackReview.backgroundGoalIds[0], backgroundGoal?.id);
+  assert.equal(defaultConfirmationState.status, "proceed");
+
+  const promotedReviewModel = buildIntakeGoalReviewModel({
+    goalResolution: primaryResolution,
+    orderedResolvedGoals: arbitration.goals,
+    goalFeasibility: {
+      conflictFlags: [],
+      confirmationAction: GOAL_FEASIBILITY_ACTIONS.proceed,
+    },
+    answers,
+    goalStackConfirmation: {
+      primaryGoalId: backgroundGoal?.id,
+      rolesByGoalId: {
+        [arbitration.leadGoal?.id]: GOAL_STACK_ROLES.maintained,
+        [arbitration.maintainedGoals[0]?.id]: GOAL_STACK_ROLES.maintained,
+        [backgroundGoal?.id]: GOAL_STACK_ROLES.primary,
+      },
+      removedGoalIds: [],
+    },
+  });
+  const promotedConfirmationState = deriveIntakeConfirmationState({
+    reviewModel: promotedReviewModel,
+  });
+
+  assert.equal(promotedReviewModel.goalStackReview.activeGoalIds.includes(backgroundGoal?.id), true);
+  assert.equal(promotedConfirmationState.status, "incomplete");
+  assert.equal(promotedConfirmationState.canConfirm, false);
+  assert.equal(promotedConfirmationState.next_required_field, "appearance_proxy_anchor_kind");
+});
+
 test("goal stack review keeps parsed goals separate and lets one be removed before anchors continue", () => {
   const resolution = resolveGoalTranslation({
     rawUserGoalIntent: "run a 1:45 half marathon but keep strength",

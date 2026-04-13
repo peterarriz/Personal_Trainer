@@ -48,7 +48,7 @@ const buildTypedIntakePacket = ({ rawGoalText = "" } = {}) => ({
   },
 });
 
-const buildInterpretationEvent = ({ event_id, answers = {}, rawGoalText = "" }) => ({
+const buildInterpretationEvent = ({ event_id, answers = {}, rawGoalText = "", suppressTranscript = false }) => ({
   event_id,
   type: INTAKE_MACHINE_EVENTS.INTERPRETATION_READY,
   timestamp: TEST_NOW,
@@ -58,6 +58,7 @@ const buildInterpretationEvent = ({ event_id, answers = {}, rawGoalText = "" }) 
       aiInterpretationProposal: null,
     },
     answers,
+    suppress_transcript: suppressTranscript,
     now: TEST_NOW,
   },
 });
@@ -910,6 +911,22 @@ test("replayed intake never enables confirmation while required details are stil
   assert.equal(finalState.draft.confirmationState.status, "incomplete");
   assert.equal(finalState.draft.confirmationState.canConfirm, false);
   assert.equal(finalState.draft.confirmationState.next_required_field, "target_timeline");
+});
+
+test("silent review refreshes recompute intake state without enqueueing duplicate ai summaries or anchor prompts", () => {
+  const runningState = buildRunningAnchorState();
+  const priorOutboxLength = runningState.outbox.length;
+
+  const refreshedState = intakeReducer(runningState, buildInterpretationEvent({
+    event_id: "evt_running_goal_silent_refresh",
+    answers: runningState.draft.answers,
+    rawGoalText: "run a 2-hour half marathon",
+    suppressTranscript: true,
+  }));
+
+  assert.equal(refreshedState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+  assert.equal(refreshedState.draft.missingAnchorsEngine.currentAnchor.field_id, "target_timeline");
+  assert.equal(refreshedState.outbox.length, priorOutboxLength);
 });
 
 test("replayed intake keeps confirmation disabled when feasibility blocks the goal", () => {

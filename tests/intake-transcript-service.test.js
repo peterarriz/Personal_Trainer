@@ -411,3 +411,30 @@ test("system-note topics keep review notes distinct while deduping repeated bloc
   assert.equal(queue.entries[0].message_key, secondaryPromptKey);
   assert.equal(queue.entries[1].message_key, blockedConfirmKey);
 });
+
+test("stable review-note keys dedupe repeated blocked notes even when review recomputes advance the transition id", () => {
+  const blockedConfirmKey = "review_note:confirm_blocked_current_strength_baseline";
+  const queue = queueCoachTranscriptMessages({
+    texts: [
+      {
+        text: "I still need your current bench baseline before I build this.",
+        message_key: blockedConfirmKey,
+        transition_id: "transition_000401",
+        stage: "REVIEW_CONFIRM",
+        message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+      },
+      {
+        text: "I still need your current bench baseline before I build this.",
+        message_key: blockedConfirmKey,
+        transition_id: "transition_000402",
+        stage: "REVIEW_CONFIRM",
+        message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+      },
+    ],
+    nextMessageId: 201,
+    activeTransitionId: "transition_000402",
+  });
+
+  assert.equal(queue.entries.length, 1);
+  assert.equal(queue.entries[0].message_key, blockedConfirmKey);
+});
