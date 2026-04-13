@@ -13,8 +13,10 @@ const {
   buildPlanAnalysisRuntimeInput,
   runPlanAnalysisRuntime,
   buildCoachChatRuntimeInput,
+  buildIntakeCoachVoiceRuntimeInput,
   buildIntakeFieldExtractionRuntimeInput,
   buildIntakeInterpretationRuntimeInput,
+  runIntakeCoachVoiceRuntime,
   runIntakeFieldExtractionRuntime,
   runIntakeInterpretationRuntime,
   runCoachChatRuntime,
@@ -400,6 +402,18 @@ test("intake interpretation runtime returns a sanitized proposal-only result wit
             { key: "waist", label: "Waist circumference", unit: "in", kind: "proxy" },
             { key: "", label: "", unit: "", kind: "proxy" },
           ],
+          scheduleReality: {
+            trainingDaysPerWeek: 6,
+            sessionLength: "90 min",
+            trainingLocation: "Gym",
+          },
+          equipmentAccessContext: {
+            equipment: ["Barbell", "Rack"],
+          },
+          injuryConstraintContext: {
+            injuryText: "No injuries",
+            constraints: ["No injuries"],
+          },
           confidence: "medium",
           timelineRealism: {
             status: "aggressive",
@@ -438,7 +452,16 @@ test("intake interpretation runtime returns a sanitized proposal-only result wit
     assert.deepEqual(result.interpreted.detectedConflicts, ["Aggressive fat loss could blunt run quality."]);
     assert.deepEqual(result.interpreted.missingClarifyingQuestions, ["Is the 10k more important than appearance?"]);
     assert.match(result.interpreted.coachSummary, /hybrid goal/i);
+    assert.deepEqual(result.interpreted.boundaryDrops.sort(), [
+      "equipmentAccessContext",
+      "injuryConstraintContext",
+      "scheduleReality",
+    ]);
+    assert.equal("scheduleReality" in result.interpreted, false);
+    assert.equal("equipmentAccessContext" in result.interpreted, false);
+    assert.equal("injuryConstraintContext" in result.interpreted, false);
     assert.equal(result.provenance.actor, "ai_interpretation");
+    assert.equal(result.provenance.details.boundaryDropCount, 3);
   });
 });
 
@@ -500,6 +523,90 @@ test("intake field extraction runtime returns bounded candidate values without c
   });
 });
 
+test("coach-voice runtime keeps the same deterministic anchor while allowing wording-only upgrades", async () => {
+  await withMockedNow("2026-04-09T12:19:00Z", async () => {
+    const anchor = {
+      anchor_id: "running_baseline:current_run_frequency",
+      field_id: "current_run_frequency",
+      label: "Runs per week",
+      question: "How many times are you running in a normal week?",
+      why_it_matters: "This tells me how much running fits your life right now.",
+      examples: ["3", "4 runs/week"],
+    };
+    const runtimeInput = buildIntakeCoachVoiceRuntimeInput({
+      anchor,
+      briefContext: "Primary goal: half marathon. Two details left.",
+    });
+    let capturedRequest = null;
+    const result = await runIntakeCoachVoiceRuntime({
+      safeFetchWithTimeout: async (_url, request = {}) => {
+        capturedRequest = JSON.parse(request?.body || "{}");
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            phrasing: {
+              questionText: "On a normal week, how many runs are you getting in?",
+              helperText: "This helps me size the running load around your real week.",
+              reassuranceLine: "Coach note: your normal week is exactly what I want here.",
+            },
+            meta: {
+              provider: "anthropic",
+              model: "claude-haiku-4-5",
+              latencyMs: 112,
+            },
+          }),
+        };
+      },
+      anchor,
+      briefContext: "Primary goal: half marathon. Two details left.",
+    });
+
+    assert.equal(runtimeInput.statePacket.intent, AI_PACKET_INTENTS.intakeCoachVoice);
+    assert.equal(runtimeInput.coachVoiceRequest.field_id, "current_run_frequency");
+    assert.equal(runtimeInput.coachVoiceRequest.question_template, "How many times are you running in a normal week?");
+    assert.equal(capturedRequest.requestType, "clarifying_question_generation");
+    assert.equal(capturedRequest.coachVoiceRequest.field_id, "current_run_frequency");
+    assert.equal(result.ok, true);
+    assert.equal(result.phrasing.questionText, "On a normal week, how many runs are you getting in?");
+    assert.equal(anchor.anchor_id, "running_baseline:current_run_frequency");
+    assert.equal(anchor.field_id, "current_run_frequency");
+  });
+});
+
+test("coach-voice runtime rejects phrasing that tries to expand scope beyond the selected field", async () => {
+  await withMockedNow("2026-04-09T12:19:30Z", async () => {
+    const result = await runIntakeCoachVoiceRuntime({
+      safeFetchWithTimeout: createIntakeGatewayResponse({
+        phrasing: {
+          questionText: "How many runs are you getting in each week and what's your longest run?",
+          helperText: "This guarantees I can build the perfect plan.",
+          reassuranceLine: "Coach note: I definitely know exactly what you need.",
+          targetTimeline: "October",
+        },
+        meta: {
+          provider: "anthropic",
+          model: "claude-haiku-4-5",
+          latencyMs: 140,
+        },
+      }),
+      anchor: {
+        anchor_id: "running_baseline:current_run_frequency",
+        field_id: "current_run_frequency",
+        label: "Runs per week",
+        question: "How many times are you running in a normal week?",
+        why_it_matters: "This tells me how much running fits your life right now.",
+        examples: ["3", "4 runs/week"],
+      },
+      briefContext: "Primary goal: half marathon. Two details left.",
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "invalid_coach_voice_payload");
+    assert.equal(result.phrasing, null);
+  });
+});
+
 test("coach-chat runtime treats streamed AI text as interpretation-only and ignores malformed chunks", async () => {
   await withMockedNow("2026-04-09T12:20:00Z", async () => {
     const observed = [];
@@ -545,6 +652,42 @@ test("sanitizeIntakeInterpretationProposal falls back safely on malformed propos
   assert.equal(sanitized.timelineRealism.status, "unclear");
   assert.equal(sanitized.timelineRealism.summary, "unclear");
   assert.equal(sanitized.timelineRealism.suggestedHorizonWeeks, null);
+  assert.deepEqual(sanitized.boundaryDrops, []);
+});
+
+test("sanitizeIntakeInterpretationProposal drops explicit context overrides from AI packets", () => {
+  const statePacket = buildAiStatePacket({
+    intent: AI_PACKET_INTENTS.intakeInterpretation,
+    ...createIntakePacketArgs(),
+  });
+  const sanitized = sanitizeIntakeInterpretationProposal({
+    interpretedGoalType: "hybrid",
+    measurabilityTier: "proxy_measurable",
+    scheduleReality: {
+      trainingDaysPerWeek: 6,
+      sessionLength: "90 min",
+      trainingLocation: "Gym",
+    },
+    equipmentAccessContext: {
+      equipment: ["Barbell", "Rack"],
+    },
+    injuryConstraintContext: {
+      injuryText: "No injuries",
+      constraints: ["No injuries"],
+    },
+    coachSummary: "Hybrid goal.",
+  }, { statePacket });
+
+  assert.equal(sanitized.interpretedGoalType, "hybrid");
+  assert.equal(sanitized.coachSummary, "Hybrid goal.");
+  assert.deepEqual(sanitized.boundaryDrops.sort(), [
+    "equipmentAccessContext",
+    "injuryConstraintContext",
+    "scheduleReality",
+  ]);
+  assert.equal("scheduleReality" in sanitized, false);
+  assert.equal("equipmentAccessContext" in sanitized, false);
+  assert.equal("injuryConstraintContext" in sanitized, false);
 });
 
 test("coach action proposals require deterministic acceptance and reject malformed or disallowed actions", async () => {

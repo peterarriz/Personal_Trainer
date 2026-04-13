@@ -89,10 +89,10 @@ const html = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Personal Trainer</title>
+  <title>FORMA</title>
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Trainer" />
+  <meta name="apple-mobile-web-app-title" content="FORMA" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#0a0a0f" />
   <style>

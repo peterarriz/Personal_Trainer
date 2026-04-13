@@ -10,6 +10,7 @@ import {
   sanitizeIntakeInterpretationProposal,
 } from "../modules-ai-state.js";
 import { acceptCoachActionProposal, applyCoachActionMutation } from "../modules-coach-engine.js";
+import { buildCoachVoicePrompt, sanitizeCoachVoiceVariant } from "./intake-coach-voice-service.js";
 import { buildProvenanceEvent, PROVENANCE_ACTORS } from "./provenance-service.js";
 
 const DEFAULT_MODEL = "claude-3-5-haiku-latest";
@@ -314,6 +315,7 @@ export const buildIntakeInterpretationRuntimeInput = ({
 
 const sanitizeExtractionText = (value = "", maxLength = 600) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
+const sanitizeCoachVoiceText = (value = "", maxLength = 220) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 
 const sanitizeExtractionField = (field = {}) => ({
   field_id: sanitizeExtractionText(field?.field_id || "", 80),
@@ -343,6 +345,16 @@ const sanitizeExtractionField = (field = {}) => ({
     }))
     .filter((item) => item.value && item.label)
     .slice(0, 4),
+});
+
+const sanitizeCoachVoiceRequest = (request = {}) => ({
+  field_id: sanitizeCoachVoiceText(request?.field_id || "", 80),
+  label: sanitizeCoachVoiceText(request?.label || "", 140),
+  question_template: sanitizeCoachVoiceText(request?.question_template || request?.questionText || "", 220),
+  why_it_matters: sanitizeCoachVoiceText(request?.why_it_matters || "", 220),
+  examples: toArray(request?.examples).map((item) => sanitizeCoachVoiceText(item, 120)).filter(Boolean).slice(0, 4),
+  tone: sanitizeCoachVoiceText(request?.tone || "supportive_trainer", 60) || "supportive_trainer",
+  context: sanitizeCoachVoiceText(request?.context || "", 180),
 });
 
 export const buildIntakeFieldExtractionRuntimeInput = ({
@@ -481,7 +493,7 @@ export const runIntakeInterpretationRuntime = async ({
   }
 
   const proposal = data?.interpretation || null;
-  const interpreted = sanitizeIntakeInterpretationProposal(proposal);
+  const interpreted = sanitizeIntakeInterpretationProposal(proposal, { statePacket: runtimeInput.statePacket });
 
   return {
     ok: true,
@@ -506,6 +518,7 @@ export const runIntakeInterpretationRuntime = async ({
         latencyMs: Number(data?.meta?.latencyMs || 0) || 0,
         metricCount: interpreted?.suggestedMetrics?.length || 0,
         questionCount: interpreted?.missingClarifyingQuestions?.length || 0,
+        boundaryDropCount: interpreted?.boundaryDrops?.length || 0,
       },
     }),
     ui: {
@@ -653,6 +666,214 @@ export const runIntakeFieldExtractionRuntime = async ({
     }),
     ui: {
       message: "AI intake field extraction returned bounded candidate values only.",
+    },
+  };
+};
+
+export const buildIntakeCoachVoiceRuntimeInput = ({
+  anchor = null,
+  tone = "supportive_trainer",
+  briefContext = "",
+  statePacket = null,
+  packetArgs = {},
+} = {}) => {
+  const coachVoiceRequest = sanitizeCoachVoiceRequest({
+    field_id: anchor?.field_id || "",
+    label: anchor?.label || "",
+    question_template: anchor?.question || "",
+    why_it_matters: anchor?.why_it_matters || "",
+    examples: anchor?.examples || [],
+    tone,
+    context: briefContext,
+  });
+  const resolvedStatePacket = statePacket && typeof statePacket === "object"
+    ? statePacket
+    : buildAiStatePacket({
+        intent: AI_PACKET_INTENTS.intakeCoachVoice,
+        input: "Rewrite one known intake question without changing the field or requested detail.",
+        ...packetArgs,
+      });
+  const systemPrompt = buildCoachVoicePrompt(coachVoiceRequest);
+  return {
+    statePacket: resolvedStatePacket,
+    systemPrompt,
+    coachVoiceRequest,
+  };
+};
+
+export const runIntakeCoachVoiceRuntime = async ({
+  safeFetchWithTimeout,
+  anchor = null,
+  tone = "supportive_trainer",
+  briefContext = "",
+  statePacket = null,
+  packetArgs = {},
+  model = DEFAULT_MODEL,
+} = {}) => {
+  const runtimeInput = buildIntakeCoachVoiceRuntimeInput({
+    anchor,
+    tone,
+    briefContext,
+    statePacket,
+    packetArgs,
+  });
+  const requestedAt = Date.now();
+  if (!runtimeInput.coachVoiceRequest.field_id || !runtimeInput.coachVoiceRequest.question_template) {
+    return {
+      ok: false,
+      status: "invalid_request",
+      statePacket: runtimeInput.statePacket,
+      systemPrompt: runtimeInput.systemPrompt,
+      coachVoiceRequest: runtimeInput.coachVoiceRequest,
+      phrasing: null,
+      rawText: "",
+      error: "invalid_coach_voice_request",
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.fallback,
+        trigger: "intake_coach_voice_runtime",
+        mutationType: "ai_runtime_failure",
+        revisionReason: "Coach-voice phrasing request was missing the deterministic anchor payload.",
+        sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeCoachVoice],
+        confidence: "low",
+        timestamp: requestedAt,
+        details: {
+          error: "invalid_coach_voice_request",
+        },
+      }),
+      ui: {
+        message: "Coach-voice phrasing request was missing the deterministic anchor payload.",
+      },
+    };
+  }
+  if (typeof safeFetchWithTimeout !== "function") {
+    return {
+      ok: false,
+      status: "no_response",
+      statePacket: runtimeInput.statePacket,
+      systemPrompt: runtimeInput.systemPrompt,
+      coachVoiceRequest: runtimeInput.coachVoiceRequest,
+      phrasing: null,
+      rawText: "",
+      error: "missing_fetcher",
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.fallback,
+        trigger: "intake_coach_voice_runtime",
+        mutationType: "ai_runtime_failure",
+        revisionReason: "AI coach-voice phrasing returned no response.",
+        sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeCoachVoice],
+        confidence: "low",
+        timestamp: requestedAt,
+        details: {
+          error: "missing_fetcher",
+        },
+      }),
+      ui: {
+        message: "No AI coach-voice phrasing response was returned.",
+      },
+    };
+  }
+
+  let res;
+  try {
+    res = await safeFetchWithTimeout(INTAKE_GATEWAY_PATH, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        requestType: "clarifying_question_generation",
+        model,
+        statePacket: runtimeInput.statePacket,
+        coachVoiceRequest: runtimeInput.coachVoiceRequest,
+      }),
+    }, 7000);
+  } catch (error) {
+    return {
+      ok: false,
+      status: "no_response",
+      statePacket: runtimeInput.statePacket,
+      systemPrompt: runtimeInput.systemPrompt,
+      coachVoiceRequest: runtimeInput.coachVoiceRequest,
+      phrasing: null,
+      rawText: "",
+      error: error?.message || "request_failed",
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.fallback,
+        trigger: "intake_coach_voice_runtime",
+        mutationType: "ai_runtime_failure",
+        revisionReason: "AI coach-voice phrasing returned no response.",
+        sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeCoachVoice],
+        confidence: "low",
+        timestamp: requestedAt,
+        details: {
+          error: error?.message || "request_failed",
+        },
+      }),
+      ui: {
+        message: "No AI coach-voice phrasing response was returned.",
+      },
+    };
+  }
+
+  const data = await res.json().catch(() => null);
+  const phrasing = sanitizeCoachVoiceVariant({
+    phrasing: data?.phrasing || null,
+  });
+  if (!res?.ok || !phrasing) {
+    const failureReason = data?.code || `http_${res?.status || 0}` || "provider_gateway_failed";
+    return {
+      ok: false,
+      status: "no_response",
+      statePacket: runtimeInput.statePacket,
+      systemPrompt: runtimeInput.systemPrompt,
+      coachVoiceRequest: runtimeInput.coachVoiceRequest,
+      phrasing: null,
+      rawText: "",
+      error: phrasing ? failureReason : "invalid_coach_voice_payload",
+      provenance: buildProvenanceEvent({
+        actor: PROVENANCE_ACTORS.fallback,
+        trigger: "intake_coach_voice_runtime",
+        mutationType: "ai_runtime_failure",
+        revisionReason: "AI coach-voice phrasing returned no usable phrasing.",
+        sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeCoachVoice],
+        confidence: "low",
+        timestamp: requestedAt,
+        details: {
+          error: phrasing ? failureReason : "invalid_coach_voice_payload",
+        },
+      }),
+      ui: {
+        message: data?.message || "No AI coach-voice phrasing response was returned.",
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    status: "proposal_ready",
+    statePacket: runtimeInput.statePacket,
+    systemPrompt: runtimeInput.systemPrompt,
+    coachVoiceRequest: runtimeInput.coachVoiceRequest,
+    phrasing,
+    rawText: "",
+    error: "",
+    provenance: buildProvenanceEvent({
+      actor: PROVENANCE_ACTORS.aiInterpretation,
+      trigger: "intake_coach_voice_runtime",
+      mutationType: "ai_runtime_result",
+      revisionReason: "AI coach-voice phrasing returned wording only for the already-selected intake field.",
+      sourceInputs: ["typed_ai_state_packet", runtimeInput.statePacket?.intent || AI_PACKET_INTENTS.intakeCoachVoice],
+      confidence: "medium",
+      timestamp: requestedAt,
+      details: {
+        provider: data?.meta?.provider || "",
+        model: data?.meta?.model || model,
+        latencyMs: Number(data?.meta?.latencyMs || 0) || 0,
+        fieldId: runtimeInput.coachVoiceRequest.field_id,
+      },
+    }),
+    ui: {
+      message: "AI coach-voice phrasing returned wording only for the already-selected intake field.",
     },
   };
 };

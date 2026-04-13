@@ -17,7 +17,7 @@ import {
   buildBrandThemeState,
   normalizeAppearanceSettings,
 } from "./services/brand-theme-service.js";
-import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
+import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeCoachVoiceRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
 import { deriveCanonicalAthleteState, withLegacyGoalProfileCompatibility } from "./services/canonical-athlete-service.js";
 import { buildPlanningGoalsFromResolvedGoals, applyResolvedGoalsToGoalSlots, buildGoalStateFromResolvedGoals, resolveGoalTranslation } from "./services/goal-resolution-service.js";
 import { buildGoalArbitrationStack } from "./services/goal-arbitration-service.js";
@@ -100,6 +100,8 @@ import {
   applyIntakeGoalAdjustment,
   applyIntakeGoalStackConfirmation,
   buildIntakeCompletenessPacketContext,
+  buildIntakeConfirmationNeedsList,
+  canAskSecondaryGoal,
   buildIntakeGoalStackConfirmation,
   buildIntakeGoalStackReviewModel,
   buildIntakeGoalReviewModel,
@@ -130,9 +132,46 @@ import {
   upsertGoalAnchorQuickEntry,
 } from "./services/goal-anchor-quick-entry-service.js";
 import {
+  buildActiveBasisSnapshot,
+  buildProgramCatalogViewModel,
+  buildProgramSelectionHistoryEntry,
+  createDefaultProgramSelectionState,
+  createProgramInstance,
+  createStyleSelection,
+  getProgramDefinitionById,
+  getStyleDefinitionById,
+  listProgramDefinitions,
+  listStyleDefinitions,
+  normalizeProgramsSelectionState,
+  PROGRAM_FIDELITY_MODES,
+  PROGRAM_SELECTION_MODES,
+  PROGRAM_SOURCE_BASIS_LABELS,
+  SOURCE_CONFIDENCE_LABELS,
+} from "./services/program-catalog-service.ts";
+import {
+  assessProgramCompatibility,
+  assessStyleCompatibility,
+  buildCompatibilityHeadline,
+  COMPATIBILITY_OUTCOMES,
+} from "./services/program-compatibility-service.ts";
+import {
+  buildActivationConfirmationCopy,
+  buildCompatibilityWarningCopy,
+  buildPlanBasisExplanation,
+  buildProgramCardExplanation,
+  buildProgramWeekExplanation,
+  buildStyleCardExplanation,
+} from "./services/program-explanation-service.ts";
+import {
+  buildStyleOverlayPreview,
+  STYLE_INFLUENCE_LEVELS,
+} from "./services/style-overlay-service.ts";
+import {
   WORKOUT_LOG_FAMILIES,
+  buildWorkoutQuickCaptureModel,
   buildWorkoutLogDraft,
   buildWorkoutLogEntryFromDraft,
+  hasWorkoutQuickCaptureValues,
 } from "./services/workout-log-form-service.js";
 import {
   normalizeHomeEquipmentResponse,
@@ -140,16 +179,21 @@ import {
 } from "./services/intake-flow-service.js";
 import {
   buildIntakeMachineDebugView,
+  buildIntakeParseDebugView,
   createIntakeMachineState,
   intakeReducer,
   INTAKE_MACHINE_EVENTS,
   INTAKE_MACHINE_STATES,
+  validateIntakeCommitRequest,
 } from "./services/intake-machine-service.js";
 import { buildAnchorCollectionViewModel } from "./services/intake-anchor-collection-service.js";
 import { aiExtractForMissingFields } from "./services/intake-ai-extraction-service.js";
+import { resolveCoachVoiceDisplayCopy } from "./services/intake-coach-voice-service.js";
 import {
+  buildTranscriptMessageKey,
   queueCoachTranscriptMessages,
   resolveNextCoachStreamTargetId,
+  TRANSCRIPT_MESSAGE_KINDS,
 } from "./services/intake-transcript-service.js";
 import {
   buildLegacyHistoryDisplayLabel,
@@ -1077,6 +1121,10 @@ const getPlannedTrainingForLogDraft = (plannedDayRecord = null) => (
 );
 
 const buildStrengthPrescriptionEntriesForLogging = (training = null) => {
+  const prescribedExercises = Array.isArray(training?.prescribedExercises)
+    ? training.prescribedExercises.map(sanitizeWorkoutEntry).filter((item) => item?.ex)
+    : [];
+  if (prescribedExercises.length) return prescribedExercises;
   const strengthTrack = String(training?.strengthTrack || "").trim();
   const strengthSession = String(training?.strSess || "").trim();
   const mainExercises = (STRENGTH[strengthSession]?.[strengthTrack] || []).map(sanitizeWorkoutEntry);
@@ -2824,6 +2872,7 @@ const DEFAULT_PERSONALIZATION = {
       proactiveNudgeOn: true,
     },
   },
+  programs: createDefaultProgramSelectionState(),
   planArchives: [],
   goalChangeHistory: [],
   goalReviewHistory: [],
@@ -2889,6 +2938,11 @@ const mergePersonalization = (base, patch) => ({
     },
   },
   coachMemory: { ...base.coachMemory, ...(patch?.coachMemory || {}), wins: patch?.coachMemory?.wins || base.coachMemory.wins, constraints: patch?.coachMemory?.constraints || base.coachMemory.constraints },
+  programs: {
+    ...(base.programs || createDefaultProgramSelectionState()),
+    ...(patch?.programs || {}),
+    selectionHistory: patch?.programs?.selectionHistory || (base.programs || createDefaultProgramSelectionState()).selectionHistory,
+  },
 });
 
 const derivePersonalization = (logs, bodyweights, previous) => {
@@ -4208,7 +4262,19 @@ export default function TrainerDashboard() {
   const learningLayer = deriveLearningLayer({ dailyCheckins, logs, weeklyCheckins, momentum, personalization, validationLayer, optimizationLayer });
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
-  const planComposer = composeGoalNativePlan({ goals: goalsModel, personalization, momentum, learningLayer, currentWeek, baseWeek, weekTemplates: WEEKS });
+  const planComposer = composeGoalNativePlan({
+    goals: goalsModel,
+    personalization,
+    momentum,
+    learningLayer,
+    currentWeek,
+    baseWeek,
+    weekTemplates: WEEKS,
+    athleteProfile: canonicalAthlete,
+    logs,
+    plannedDayRecords,
+    planWeekRecords,
+  });
   const planWeekRuntime = useMemo(() => {
     const runtime = assemblePlanWeekRuntime({
       todayKey,
@@ -4307,6 +4373,7 @@ export default function TrainerDashboard() {
       weeklyIntent: currentPlanWeek?.weeklyIntent || null,
       planWeek: currentPlanWeek,
       plannedSession: currentPlanSession,
+      planningBasis: planComposer?.planningBasis || currentPlanWeek?.planningBasis || null,
     }
   );
   const rollingHorizon = planWeekRuntime.rollingHorizon;
@@ -5580,6 +5647,22 @@ export default function TrainerDashboard() {
     } catch(e) { logDiag("saveManualProgressInputs fallback", e.message); setStorageStatus(classifyStorageError(e)); }
   };
 
+  const saveProgramSelection = async (update) => {
+    const currentPrograms = normalizeProgramsSelectionState(personalization?.programs || createDefaultProgramSelectionState());
+    const nextPrograms = normalizeProgramsSelectionState(
+      typeof update === "function" ? update(currentPrograms) : (update || currentPrograms)
+    );
+    const nextPersonalization = mergePersonalization(personalization, { programs: nextPrograms });
+    setPersonalization(nextPersonalization);
+    try {
+      await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
+      setLastSaved(new Date().toLocaleTimeString());
+    } catch (e) {
+      logDiag("saveProgramSelection fallback", e.message);
+      setStorageStatus(classifyStorageError(e));
+    }
+  };
+
   const savePlanState = async (newOvr, newNotes, newAlerts) => {
     try { await persistAll(logs, bodyweights, newOvr, newNotes, newAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs); } catch(e) {}
   };
@@ -6495,35 +6578,48 @@ Keep it plain and specific.`;
       || answers?.typedIntakePacket?.intakeContext?.rawGoalText
       || ""
     ).trim());
+    const canonicalCommitValidation = validateIntakeCommitRequest(answers?.intake_commit || null);
+    const canonicalCommit = canonicalCommitValidation.ok ? canonicalCommitValidation.commitRequest : null;
     const canReuseAssessmentBoundary = Boolean(expectedRawGoalText && providedPacketRawGoalText && expectedRawGoalText === providedPacketRawGoalText);
-    const fallbackTypedIntakePacket = canReuseAssessmentBoundary ? answers?.typedIntakePacket : {
+    const fallbackTypedIntakePacket = canonicalCommit?.typedIntakePacket || (canReuseAssessmentBoundary ? answers?.typedIntakePacket : {
       version: "2026-04-v1",
       intent: "intake_interpretation",
       intake: freshPacketArgs.intakeContext,
-    };
-    const goalResolution = resolveGoalTranslation({
-      rawUserGoalIntent: expectedRawGoalText || fallbackTypedIntakePacket?.intake?.rawGoalText || buildRawGoalIntentFromAnswers({ answers, fallbackLabel: "General Fitness" }) || "General Fitness",
-      typedIntakePacket: fallbackTypedIntakePacket,
-      aiInterpretationProposal: canReuseAssessmentBoundary ? (answers?.aiInterpretationProposal || null) : null,
-      explicitUserConfirmation: {
-        confirmed: true,
-        acceptedProposal: true,
-        source: "onboarding_complete",
-      },
-      now: todayKey,
     });
+    const goalResolution = canonicalCommit
+      ? {
+          resolvedGoals: canonicalCommit.confirmedResolvedGoals,
+          confidenceLevel: canonicalCommit.confirmedResolvedGoals?.[0]?.confidence || "",
+          unresolvedGaps: canonicalCommit.confirmedResolvedGoals.flatMap((goal) => goal?.unresolvedGaps || []),
+        }
+      : resolveGoalTranslation({
+          rawUserGoalIntent: expectedRawGoalText || fallbackTypedIntakePacket?.intake?.rawGoalText || buildRawGoalIntentFromAnswers({ answers, fallbackLabel: "General Fitness" }) || "General Fitness",
+          typedIntakePacket: fallbackTypedIntakePacket,
+          aiInterpretationProposal: canReuseAssessmentBoundary ? (answers?.aiInterpretationProposal || null) : null,
+          explicitUserConfirmation: {
+            confirmed: true,
+            acceptedProposal: true,
+            source: "onboarding_complete",
+          },
+          now: todayKey,
+        });
+    const baseResolvedGoals = canonicalCommit?.confirmedResolvedGoals?.length
+      ? canonicalCommit.confirmedResolvedGoals
+      : (goalResolution?.resolvedGoals || []);
     const intakeCompleteness = deriveIntakeCompletenessState({
-      resolvedGoals: goalResolution?.resolvedGoals || [],
+      resolvedGoals: baseResolvedGoals,
       answers,
     });
-    const goalFeasibility = assessGoalFeasibility({
-      resolvedGoals: goalResolution?.resolvedGoals || [],
+    const goalFeasibility = canonicalCommit?.goalFeasibility || assessGoalFeasibility({
+      resolvedGoals: baseResolvedGoals,
       ...buildGoalFeasibilityContextFromIntake(fallbackTypedIntakePacket?.intake || {}),
       intakeCompleteness,
       now: todayKey,
     });
-    const feasibleResolvedGoals = applyFeasibilityPriorityOrdering({
-      resolvedGoals: goalResolution?.resolvedGoals || [],
+    const feasibleResolvedGoals = canonicalCommit?.confirmedResolvedGoals?.length
+      ? canonicalCommit.confirmedResolvedGoals
+      : applyFeasibilityPriorityOrdering({
+      resolvedGoals: baseResolvedGoals,
       feasibility: goalFeasibility,
     });
     const arbitrationInputs = buildConfirmedArbitrationInputs({
@@ -6531,7 +6627,7 @@ Keep it plain and specific.`;
       typedIntakePacket: fallbackTypedIntakePacket,
       now: todayKey,
     });
-    const arbitration = buildGoalArbitrationStack({
+    const arbitration = canonicalCommit?.arbitration || buildGoalArbitrationStack({
       resolvedGoals: feasibleResolvedGoals,
       confirmedPrimaryGoal: arbitrationInputs.confirmedPrimaryGoal,
       confirmedAdditionalGoals: arbitrationInputs.confirmedAdditionalGoals,
@@ -6541,17 +6637,21 @@ Keep it plain and specific.`;
       typedIntakePacket: fallbackTypedIntakePacket,
       now: todayKey,
     });
-    const arbitratedResolvedGoals = arbitration?.goals?.length ? arbitration.goals : feasibleResolvedGoals;
-    const goalStackConfirmation = buildIntakeGoalStackConfirmation({
+    const arbitratedResolvedGoals = canonicalCommit?.confirmedResolvedGoals?.length
+      ? canonicalCommit.confirmedResolvedGoals
+      : (arbitration?.goals?.length ? arbitration.goals : feasibleResolvedGoals);
+    const goalStackConfirmation = canonicalCommit?.goalStackConfirmation || buildIntakeGoalStackConfirmation({
       resolvedGoals: arbitratedResolvedGoals,
       goalStackConfirmation: answers?.goal_stack_confirmation || null,
       goalFeasibility,
     });
-    const orderedResolvedGoals = applyIntakeGoalStackConfirmation({
-      resolvedGoals: arbitratedResolvedGoals,
-      goalStackConfirmation,
-      goalFeasibility,
-    });
+    const orderedResolvedGoals = canonicalCommit?.confirmedResolvedGoals?.length
+      ? canonicalCommit.confirmedResolvedGoals
+      : applyIntakeGoalStackConfirmation({
+          resolvedGoals: arbitratedResolvedGoals,
+          goalStackConfirmation,
+          goalFeasibility,
+        });
     const orderedPlanningGoals = buildPlanningGoalsFromResolvedGoals({
       resolvedGoals: orderedResolvedGoals,
     });
@@ -7155,7 +7255,7 @@ Keep it plain and specific.`;
         {/* PROGRAM */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} todayWorkout={planDay?.resolved?.training} />
+            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} saveProgramSelection={saveProgramSelection} todayWorkout={planDay?.resolved?.training} />
           </ProgramTabErrorBoundary>
         )}
 
@@ -7207,7 +7307,7 @@ Keep it plain and specific.`;
           <div style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:56, padding:"1rem" }}>
             <div className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"var(--border)", background:"var(--panel)", padding:"0.9rem" }}>
               <div style={{ fontSize:"0.62rem", color:"var(--text)", lineHeight:1.7, marginBottom:"0.6rem" }}>
-                Personal Trainer can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
+                {PRODUCT_BRAND.name} can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
               </div>
               <button className="btn btn-primary" onClick={requestAppleHealthPermissions} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
               <button className="btn" onClick={async ()=>{ await updateAppleHealthState({ skipped: true }); setShowAppleHealthFirstLaunch(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"var(--muted)", borderColor:"var(--border)" }}>
@@ -7322,6 +7422,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const initialPrompt = startingFresh
     ? "Starting fresh. I still remember everything from before — I'm just building a new plan from today. What do you want from this next plan? Exact or vague is fine."
     : "Hey. I'm going to ask you a few questions before I build your plan. Start with what you want from this plan — exact or vague both work.";
+  const intakeDebugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
   const BUILD_STAGES = [
     "Mapping your training blocks...",
     "Calibrating intensity to your baseline...",
@@ -7333,6 +7434,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const composerRef = useRef(null);
   const nextMessageIdRef = useRef(1);
   const nextIntakeEventIdRef = useRef(1);
+  const latestAssessmentRequestIdRef = useRef(0);
+  const confirmBuildLockRef = useRef(false);
+  const activeCommitSnapshotIdRef = useRef("");
+  const committedCommitSnapshotIdsRef = useRef(new Set());
   const processedIntakeMessageKeysRef = useRef(new Set());
   const processedTranscriptIdempotencyKeysRef = useRef(new Set());
   const secondaryGoalAddedMessageKeysRef = useRef(new Set());
@@ -7345,7 +7450,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [equipmentOther, setEquipmentOther] = useState("");
   const [phase, setPhase] = useState("questions");
   const [assessmentText, setAssessmentText] = useState("");
-  const [assessmentBoundary, setAssessmentBoundary] = useState({ typedIntakePacket: null, aiInterpretationProposal: null });
+  const [assessmentBoundary, setAssessmentBoundary] = useState({ typedIntakePacket: null, aiInterpretationProposal: null, transition_id: "" });
   const [assessmentPreview, setAssessmentPreview] = useState({ goalResolution: null, goalFeasibility: null, arbitration: null, orderedResolvedGoals: [], reviewModel: null });
   const [goalStackConfirmation, setGoalStackConfirmation] = useState(null);
   const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState([]);
@@ -7358,6 +7463,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [naturalAnchorDraft, setNaturalAnchorDraft] = useState("");
   const [naturalAnchorSubmitting, setNaturalAnchorSubmitting] = useState(false);
   const [anchorCapturePreview, setAnchorCapturePreview] = useState(null);
+  const [coachVoicePhrasingByAnchorKey, setCoachVoicePhrasingByAnchorKey] = useState({});
   const [currentAnchorBindingTarget, setCurrentAnchorBindingTarget] = useState(null);
   const [adjustmentTargetGoal, setAdjustmentTargetGoal] = useState(null);
   const [confirmBuildError, setConfirmBuildError] = useState("");
@@ -7367,7 +7473,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
   const [intakeMachine, setIntakeMachine] = useState(() => createIntakeMachineState());
+  const [showParseDebug, setShowParseDebug] = useState(false);
   const intakeMachineRef = useRef(intakeMachine);
+  const coachVoiceRequestKeysRef = useRef(new Set());
 
   const buildFlow = (currentAnswers = {}) => ([
     {
@@ -7457,6 +7565,28 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   }, [currentPrompt?.key]);
 
   const activeMachineAnchor = intakeMachine?.draft?.missingAnchorsEngine?.currentAnchor || null;
+  const activeAnchorCoachVoiceKey = [
+    String(intakeMachine?.transition_id || "").trim(),
+    String(activeMachineAnchor?.anchor_id || "").trim(),
+    String(activeMachineAnchor?.field_id || "").trim(),
+  ].filter(Boolean).join(":");
+  const activeAnchorCoachVoicePhrasing = activeAnchorCoachVoiceKey
+    ? coachVoicePhrasingByAnchorKey?.[activeAnchorCoachVoiceKey]?.phrasing || null
+    : null;
+  const activeAnchorDisplayCopy = useMemo(() => resolveCoachVoiceDisplayCopy({
+    anchor: activeMachineAnchor,
+    phrasing: activeAnchorCoachVoicePhrasing,
+  }), [activeMachineAnchor, activeAnchorCoachVoicePhrasing]);
+  const buildCoachVoiceContext = () => {
+    const goalSummary = String(intakeMachine?.draft?.reviewModel?.primarySummary || "").trim();
+    const remainingCount = Array.isArray(intakeMachine?.draft?.missingAnchorsEngine?.missingAnchors)
+      ? intakeMachine.draft.missingAnchorsEngine.missingAnchors.length
+      : 0;
+    return [
+      goalSummary ? `Goal: ${goalSummary}` : "",
+      remainingCount > 0 ? `${remainingCount} required ${remainingCount === 1 ? "detail" : "details"} left.` : "",
+    ].filter(Boolean).join(" ");
+  };
   const parseStrengthTopSetDraft = (value = "") => {
     const normalized = String(value || "").trim().replace(/[×]/g, "x");
     if (!normalized) return { mode: "top_set", weight: "", reps: "" };
@@ -7493,6 +7623,48 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     });
     if (clarificationFormError) setClarificationFormError("");
   };
+
+  useEffect(() => {
+    if (phase !== "clarify" || !activeMachineAnchor?.field_id || !activeMachineAnchor?.anchor_id || !activeAnchorCoachVoiceKey) return;
+    if (coachVoiceRequestKeysRef.current.has(activeAnchorCoachVoiceKey)) return;
+    if (coachVoicePhrasingByAnchorKey?.[activeAnchorCoachVoiceKey]) return;
+    coachVoiceRequestKeysRef.current.add(activeAnchorCoachVoiceKey);
+    let cancelled = false;
+    setCoachVoicePhrasingByAnchorKey((prev) => ({
+      ...(prev || {}),
+      [activeAnchorCoachVoiceKey]: {
+        status: "loading",
+        phrasing: null,
+      },
+    }));
+    (async () => {
+      const runtime = await runIntakeCoachVoiceRuntime({
+        safeFetchWithTimeout,
+        anchor: activeMachineAnchor,
+        statePacket: intakeMachine?.draft?.typedIntakePacket || assessmentBoundary?.typedIntakePacket || null,
+        briefContext: buildCoachVoiceContext(),
+        tone: "supportive_trainer",
+      });
+      if (cancelled) return;
+      setCoachVoicePhrasingByAnchorKey((prev) => ({
+        ...(prev || {}),
+        [activeAnchorCoachVoiceKey]: {
+          status: runtime?.ok ? "ready" : "failed",
+          phrasing: runtime?.ok ? runtime.phrasing : null,
+        },
+      }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    phase,
+    activeMachineAnchor,
+    activeAnchorCoachVoiceKey,
+    coachVoicePhrasingByAnchorKey,
+    intakeMachine?.draft?.typedIntakePacket,
+    assessmentBoundary?.typedIntakePacket,
+  ]);
 
   useEffect(() => {
     const isStructuredQuestion = isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion);
@@ -7604,12 +7776,26 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const confirmationState = useMemo(() => deriveIntakeConfirmationState({
     reviewModel,
   }), [reviewModel]);
+  const secondaryGoalEligible = useMemo(() => canAskSecondaryGoal({
+    stage: intakeMachine?.stage || "",
+    reviewModel: intakeMachine?.draft?.reviewModel || reviewModel,
+    confirmationState: intakeMachine?.draft?.confirmationState || confirmationState,
+    answers: intakeMachine?.draft?.answers || answers,
+  }), [
+    intakeMachine?.stage,
+    intakeMachine?.draft?.reviewModel,
+    intakeMachine?.draft?.confirmationState,
+    intakeMachine?.draft?.answers,
+    reviewModel,
+    confirmationState,
+    answers,
+  ]);
   const confirmationStatusLabel = confirmationState?.status === "incomplete"
     ? "Need one more detail"
     : confirmationState?.status === "block"
     ? "Needs a safer first step"
     : confirmationState?.status === "warn"
-    ? "Aggressive but possible"
+    ? "Ambitious but workable"
     : "Ready to build";
   const confirmationHeadline = confirmationState?.status === "incomplete"
     ? "I need one more detail before I build this."
@@ -7619,23 +7805,17 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     ? "This is aggressive, but I can build for it."
     : "This looks realistic from where you're starting.";
   const confirmationNeedsList = useMemo(() => {
-    const missingLabels = Array.isArray(reviewModel?.completeness?.missingRequired)
-      ? reviewModel.completeness.missingRequired.map((item) => String(item?.label || "").trim()).filter(Boolean)
-      : [];
-    const requestedData = Array.isArray(reviewModel?.gateSuggestedRevision?.requested_data)
-      ? reviewModel.gateSuggestedRevision.requested_data.map((item) => String(item || "").trim()).filter(Boolean)
-      : [];
-    const arbitrationIssues = Array.isArray(reviewModel?.arbitrationBlockingIssues)
-      ? reviewModel.arbitrationBlockingIssues.map((item) => String(item || "").trim()).filter(Boolean)
-      : [];
-    return Array.from(new Set([
-      ...missingLabels,
-      ...(confirmationState?.status === "block" ? requestedData : []),
-      ...(confirmationState?.status === "block" && missingLabels.length === 0 && requestedData.length === 0 ? arbitrationIssues : []),
-    ]));
-  }, [reviewModel, confirmationState?.status]);
+    return buildIntakeConfirmationNeedsList({
+      reviewModel,
+      machineState: intakeMachine,
+      confirmationState,
+      maxItems: 3,
+    });
+  }, [reviewModel, intakeMachine, confirmationState]);
+  const confirmationAllowsProceed = confirmationState?.status === "proceed" || confirmationState?.status === "warn";
   const confirmCtaEnabled = Boolean(
-    confirmationState?.canConfirm
+    confirmationAllowsProceed
+    && confirmationState?.canConfirm
     && (!confirmationState?.requiresAcknowledgement || confirmWarningAcknowledged)
   );
   const confirmationTone = confirmationState?.status === "block" || confirmationState?.status === "incomplete"
@@ -7662,6 +7842,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     Array.isArray(reviewModel?.reviewContract?.maintained_goals) ? reviewModel.reviewContract.maintained_goals.map((goal) => goal?.id || "").join("|") : "",
   ]);
 
+  useEffect(() => {
+    if (phase !== "secondary_goal" || secondaryGoalEligible) return;
+    setPendingSecondaryGoalPrompt(null);
+    setPhase("review");
+  }, [phase, secondaryGoalEligible]);
+
   const appendCoachMessages = (texts) => {
     const queue = queueCoachTranscriptMessages({
       texts: (Array.isArray(texts) ? texts : [texts]).map((item) => (
@@ -7673,10 +7859,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           : sanitizeIntakeText(item)
       )),
       nextMessageId: nextMessageIdRef.current,
+      seenMessageKeys: [...processedTranscriptIdempotencyKeysRef.current],
       seenIdempotencyKeys: [...processedTranscriptIdempotencyKeysRef.current],
+      activeTransitionId: intakeMachineRef.current?.transition_id || "",
     });
     nextMessageIdRef.current = queue.nextMessageId;
-    queue.acceptedIdempotencyKeys.forEach((key) => processedTranscriptIdempotencyKeysRef.current.add(key));
+    queue.acceptedMessageKeys.forEach((key) => processedTranscriptIdempotencyKeysRef.current.add(key));
     if (queue.entries.length === 0) return [];
     setMessages((prev) => [...prev, ...queue.entries]);
     setStreamTargetId((prev) => resolveNextCoachStreamTargetId({
@@ -7730,6 +7918,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setAssessmentBoundary({
       typedIntakePacket: draftState.typedIntakePacket || null,
       aiInterpretationProposal: draftState.aiInterpretationProposal || null,
+      transition_id: machineState?.transition_id || "",
     });
     setAssessmentPreview({
       goalResolution: draftState.goalResolution || null,
@@ -7737,6 +7926,27 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       arbitration: draftState.arbitration || null,
       orderedResolvedGoals: draftState.orderedResolvedGoals || [],
       reviewModel: draftState.reviewModel || null,
+    });
+  };
+  const resolveSecondaryGoalPrompt = ({
+    machineState = null,
+    reviewModelOverride = null,
+    answersOverride = null,
+  } = {}) => {
+    const resolvedMachineState = machineState || intakeMachineRef.current || null;
+    const resolvedReviewModel = reviewModelOverride || resolvedMachineState?.draft?.reviewModel || null;
+    const resolvedAnswers = answersOverride || resolvedMachineState?.draft?.answers || answers;
+    if (!canAskSecondaryGoal({
+      stage: resolvedMachineState?.stage || "",
+      reviewModel: resolvedReviewModel,
+      confirmationState: resolvedMachineState?.draft?.confirmationState || null,
+      answers: resolvedAnswers,
+    })) {
+      return null;
+    }
+    return buildIntakeSecondaryGoalPrompt({
+      reviewModel: resolvedReviewModel,
+      answers: resolvedAnswers,
     });
   };
   const refreshReviewMachineState = ({
@@ -7761,6 +7971,26 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     syncMachineDraftToIntakeView(refreshedState);
     return refreshedState;
   };
+  const resetIntakeForGoalEdit = (nextAnswers = answers) => {
+    const editedState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_EDITED, {
+      answers: nextAnswers,
+      now: new Date().toISOString(),
+    });
+    syncMachineDraftToIntakeView(editedState);
+    coachVoiceRequestKeysRef.current = new Set();
+    setCoachVoicePhrasingByAnchorKey({});
+    setAssessmentText("");
+    setGoalStackConfirmation(null);
+    setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
+    setAskedClarifyingQuestions([]);
+    setClarificationValues({});
+    setClarificationFieldErrors({});
+    setClarificationFormError("");
+    setNaturalAnchorDraft("");
+    setAnchorCapturePreview(null);
+    return editedState;
+  };
   const appendUserMessage = (text) => {
     const clean = String(text || "").trim();
     if (!clean) return;
@@ -7769,13 +7999,26 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   };
   useEffect(() => {
     const pendingMessages = (Array.isArray(intakeMachine?.outbox) ? intakeMachine.outbox : [])
-      .filter((message) => message?.key && !processedIntakeMessageKeysRef.current.has(message.key));
+      .filter((message) => {
+        const messageKey = message?.message_key || message?.idempotency_key || message?.key;
+        return messageKey && !processedIntakeMessageKeysRef.current.has(messageKey);
+      });
     if (pendingMessages.length === 0) return;
-    pendingMessages.forEach((message) => processedIntakeMessageKeysRef.current.add(message.key));
+    pendingMessages.forEach((message) => {
+      const messageKey = message?.message_key || message?.idempotency_key || message?.key;
+      if (messageKey) processedIntakeMessageKeysRef.current.add(messageKey);
+    });
     appendCoachMessages(pendingMessages.map((message) => ({
       text: message.text,
-      key: message.key,
-      idempotency_key: message.idempotency_key || message.key,
+      message_key: message.message_key || message.idempotency_key || message.key,
+      key: message.message_key || message.idempotency_key || message.key,
+      idempotency_key: message.message_key || message.idempotency_key || message.key,
+      transition_id: message.transition_id,
+      stage: message.stage,
+      anchor_id: message.anchor_id,
+      message_kind: message.message_kind,
+      intent: message.intent,
+      packet_version: message.packet_version,
     })));
   }, [intakeMachine?.outbox]);
   const updateClarificationValue = (fieldKey, value) => {
@@ -7936,12 +8179,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       goalStackConfirmation,
     });
     const nextMachineAnchor = interpretedMachineState?.draft?.missingAnchorsEngine?.currentAnchor || null;
-    const nextSecondaryGoalPrompt = interpretedMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
-      ? buildIntakeSecondaryGoalPrompt({
-          reviewModel: reviewModelForAssessment,
-          answers: interpretedMachineState?.draft?.answers || updatedAnswers,
-        })
-      : null;
+    const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
+      machineState: interpretedMachineState,
+      reviewModelOverride: reviewModelForAssessment,
+      answersOverride: interpretedMachineState?.draft?.answers || updatedAnswers,
+    });
+    const currentTransitionId = interpretedMachineState?.transition_id || intakeMachineRef.current?.transition_id || "";
+    const currentStage = interpretedMachineState?.stage || intakeMachineRef.current?.stage || INTAKE_MACHINE_STATES.GOAL_INTERPRETATION;
     setAssessmentText(cleanTimeline);
     if (nextMachineAnchor) {
       setPendingClarifyingQuestion(null);
@@ -7953,10 +8197,19 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setPendingClarifyingQuestion(null);
       setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
       setPhase("secondary_goal");
-      appendCoachMessage(nextSecondaryGoalPrompt.prompt);
+      appendCoachMessages([{
+        text: nextSecondaryGoalPrompt.prompt,
+        message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+        transition_id: currentTransitionId,
+        stage: currentStage,
+        message_key: buildTranscriptMessageKey({
+          stage: currentStage,
+          transition_id: currentTransitionId,
+          message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+        }),
+      }]);
       return;
     }
-    appendCoachMessage(cleanTimeline);
     setPendingClarifyingQuestion(null);
     setPendingSecondaryGoalPrompt(null);
     setPhase("review");
@@ -7967,18 +8220,29 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   } = {}) => {
     setAssessing(true);
     setPhase("assessment");
-    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED, {
+    const requestId = latestAssessmentRequestIdRef.current + 1;
+    latestAssessmentRequestIdRef.current = requestId;
+    const goalSubmitState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED, {
       answers: updatedAnswers,
       askedQuestions,
       now: new Date().toISOString(),
     });
-    const assessment = await buildTypedIntakeAssessment({ answers: updatedAnswers, existingMemory });
-    finalizeAssessmentState({
-      assessment,
-      updatedAnswers,
-      askedQuestions,
-    });
-    setAssessing(false);
+    const requestedTransitionId = goalSubmitState?.transition_id || intakeMachineRef.current?.transition_id || "";
+    try {
+      const assessment = await buildTypedIntakeAssessment({ answers: updatedAnswers, existingMemory });
+      const activeTransitionId = intakeMachineRef.current?.transition_id || "";
+      if (latestAssessmentRequestIdRef.current !== requestId) return;
+      if (requestedTransitionId && activeTransitionId && requestedTransitionId !== activeTransitionId) return;
+      finalizeAssessmentState({
+        assessment,
+        updatedAnswers,
+        askedQuestions,
+      });
+    } finally {
+      if (latestAssessmentRequestIdRef.current === requestId) {
+        setAssessing(false);
+      }
+    }
   };
   const advanceConversation = async (updatedAnswers) => {
     const nextIndex = stepIndex + 1;
@@ -8020,16 +8284,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     const cleanGoalSummary = sanitizeIntakeText(goalSummary || "");
     setConfirmBuildError("");
     setAdjustmentTargetGoal(cleanGoalSummary ? { id: goalId || "", summary: cleanGoalSummary } : null);
-    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_EDITED, {
-      answers,
-      now: new Date().toISOString(),
-    });
+    resetIntakeForGoalEdit(answers);
     appendUserMessage(cleanGoalSummary ? `Edit a goal: ${cleanGoalSummary}` : "Edit a goal");
     setPhase("adjust");
     setDraft("");
-    setAskedClarifyingQuestions([]);
-    setPendingClarifyingQuestion(null);
-    setPendingSecondaryGoalPrompt(null);
     appendCoachMessage(
       cleanGoalSummary
         ? `Tell me what you want to change about "${cleanGoalSummary}" and I'll recalibrate it before I build.`
@@ -8117,12 +8375,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           setNaturalAnchorDraft("");
           setAnchorCapturePreview(null);
           setPendingClarifyingQuestion(null);
-          const nextSecondaryGoalPrompt = nextMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
-            ? buildIntakeSecondaryGoalPrompt({
-                reviewModel: nextMachineState?.draft?.reviewModel || null,
-                answers: nextMachineState?.draft?.answers || answers,
-              })
-            : null;
+          const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
+            machineState: nextMachineState,
+            answersOverride: nextMachineState?.draft?.answers || answers,
+          });
           if (nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
             setPendingSecondaryGoalPrompt(null);
             setPhase("clarify");
@@ -8197,12 +8453,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setNaturalAnchorDraft("");
       setAnchorCapturePreview(null);
       setPendingClarifyingQuestion(null);
-      const nextSecondaryGoalPrompt = nextMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
-        ? buildIntakeSecondaryGoalPrompt({
-            reviewModel: nextMachineState?.draft?.reviewModel || null,
-            answers: nextMachineState?.draft?.answers || answers,
-          })
-        : null;
+      const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
+        machineState: nextMachineState,
+        answersOverride: nextMachineState?.draft?.answers || answers,
+      });
       if (nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
         setPendingSecondaryGoalPrompt(null);
         setPhase("clarify");
@@ -8308,9 +8562,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         allowImplicitGoalReplacement: false,
       });
       if (adjustmentOutcome.kind === "goal_replacement") {
-        setAskedClarifyingQuestions([]);
-        setPendingClarifyingQuestion(null);
-        setPendingSecondaryGoalPrompt(null);
+        resetIntakeForGoalEdit(adjustmentOutcome.answers);
         await runAssessment({ updatedAnswers: adjustmentOutcome.answers, askedQuestions: [] });
         return;
       }
@@ -8332,9 +8584,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       allowImplicitGoalReplacement: true,
     });
     if (adjustmentOutcome.kind === "goal_replacement") {
-      setAskedClarifyingQuestions([]);
-      setPendingClarifyingQuestion(null);
-      setPendingSecondaryGoalPrompt(null);
+      resetIntakeForGoalEdit(adjustmentOutcome.answers);
       await runAssessment({ updatedAnswers: adjustmentOutcome.answers, askedQuestions: [] });
       return;
     }
@@ -8433,18 +8683,19 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }
   };
   const finalizePlan = async () => {
-    if (confirmBuildSubmitting) return;
+    if (confirmBuildSubmitting || confirmBuildLockRef.current) return;
     setConfirmBuildError("");
     const refreshedState = refreshReviewMachineState();
     const latestConfirmationState = refreshedState?.draft?.confirmationState || confirmationState || null;
+    const latestAllowsProceed = latestConfirmationState?.status === "proceed" || latestConfirmationState?.status === "warn";
     const latestCanConfirm = Boolean(latestConfirmationState?.canConfirm);
     const latestRequiresAcknowledgement = Boolean(latestConfirmationState?.requiresAcknowledgement);
     const acknowledgementMissing = latestRequiresAcknowledgement && !confirmWarningAcknowledged;
-    if (!latestCanConfirm && latestConfirmationState?.next_required_field) {
+    if ((!latestAllowsProceed || !latestCanConfirm) && latestConfirmationState?.next_required_field) {
       jumpToNextRequiredDetail();
       return;
     }
-    if (!latestCanConfirm || acknowledgementMissing) {
+    if (!latestAllowsProceed || !latestCanConfirm || acknowledgementMissing) {
       const blockedReason = acknowledgementMissing
         ? "Please confirm that you understand this timeline is aggressive."
         : latestConfirmationState?.reason || "I still need a little more grounded context before I can build your plan.";
@@ -8453,36 +8704,93 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       appendCoachMessage(blockedReason);
       return;
     }
+    confirmBuildLockRef.current = true;
     setConfirmBuildSubmitting(true);
-    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_CONFIRMED, {
+    const confirmedState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_CONFIRMED, {
       acknowledged_warning: confirmWarningAcknowledged,
       now: new Date().toISOString(),
     });
     appendUserMessage("Confirm and build my plan");
-    setPhase("building");
-    const payload = {
-      ...answers,
-      goal_stack_confirmation: goalStackConfirmation,
-      timeline_assessment: assessmentText,
-      typedIntakePacket: assessmentBoundary?.typedIntakePacket || null,
-      aiInterpretationProposal: assessmentBoundary?.aiInterpretationProposal || null,
-      starting_fresh: startingFresh,
-    };
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 3200));
-      await onComplete(payload);
-    } catch (error) {
-      const failureMessage = sanitizeIntakeText(
-        error?.message
-          ? `I hit a problem while finishing onboarding: ${error.message}`
-          : "I hit a problem while finishing onboarding. Please try again."
-      );
-      setConfirmBuildError(failureMessage);
+    if (confirmedState?.draft?.commitRequested) {
+      setPhase("building");
+      return;
+    }
+    confirmBuildLockRef.current = false;
+    setConfirmBuildSubmitting(false);
+    setPhase("review");
+    setConfirmBuildError(confirmedState?.ui?.clearReason || "I couldn't lock the confirmed goal stack yet.");
+  };
+  useEffect(() => {
+    const commitValidation = validateIntakeCommitRequest(intakeMachine?.draft?.commitRequest || null);
+    if (!Boolean(intakeMachine?.draft?.commitRequested)) return;
+    if (!commitValidation.ok || !commitValidation.commitRequest) {
+      confirmBuildLockRef.current = false;
       setConfirmBuildSubmitting(false);
       setPhase("review");
-      appendCoachMessage(failureMessage);
+      if (commitValidation.reason) setConfirmBuildError(commitValidation.reason);
+      return;
     }
-  };
+    const snapshotId = commitValidation.confirmation_snapshot_id;
+    if (!snapshotId) return;
+    if (committedCommitSnapshotIdsRef.current.has(snapshotId)) return;
+    if (activeCommitSnapshotIdRef.current === snapshotId) return;
+    activeCommitSnapshotIdRef.current = snapshotId;
+
+    const runCommit = async () => {
+      const payload = {
+        ...answers,
+        intake_commit: commitValidation.commitRequest,
+        goal_stack_confirmation: commitValidation.commitRequest?.goalStackConfirmation || goalStackConfirmation,
+        typedIntakePacket: commitValidation.commitRequest?.typedIntakePacket || assessmentBoundary?.typedIntakePacket || null,
+        aiInterpretationProposal: commitValidation.commitRequest?.aiInterpretationProposal || null,
+        timeline_assessment: assessmentText,
+        confirmation_snapshot_id: snapshotId,
+        starting_fresh: startingFresh,
+      };
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 3200));
+        await onComplete(payload);
+        committedCommitSnapshotIdsRef.current.add(snapshotId);
+        dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.COMMIT_COMPLETED, {
+          confirmation_snapshot_id: snapshotId,
+          now: new Date().toISOString(),
+        });
+        confirmBuildLockRef.current = false;
+        setConfirmBuildSubmitting(false);
+      } catch (error) {
+        const failureMessage = sanitizeIntakeText(
+          error?.message
+            ? `I hit a problem while finishing onboarding: ${error.message}`
+            : "I hit a problem while finishing onboarding. Please try again."
+        );
+        dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.COMMIT_FAILED, {
+          confirmation_snapshot_id: snapshotId,
+          error: failureMessage,
+          now: new Date().toISOString(),
+        });
+        confirmBuildLockRef.current = false;
+        setConfirmBuildError(failureMessage);
+        setConfirmBuildSubmitting(false);
+        setPhase("review");
+        appendCoachMessage(failureMessage);
+      } finally {
+        if (activeCommitSnapshotIdRef.current === snapshotId) {
+          activeCommitSnapshotIdRef.current = "";
+        }
+      }
+    };
+
+    runCommit();
+  }, [
+    answers,
+    assessmentBoundary?.typedIntakePacket,
+    assessmentText,
+    goalStackConfirmation,
+    intakeMachine?.draft?.commitRequest,
+    intakeMachine?.draft?.commitRequested,
+    onComplete,
+    startingFresh,
+  ]);
   const goalStackReview = buildIntakeGoalStackReviewModel({
     resolvedGoals: reviewGoals,
     goalResolution: assessmentPreview?.goalResolution || null,
@@ -8499,6 +8807,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     maxVisibleCards: 3,
   }), [intakeMachine]);
   const machineDebugView = useMemo(() => buildIntakeMachineDebugView(intakeMachine), [intakeMachine]);
+  const parseDebugView = useMemo(() => buildIntakeParseDebugView({
+    state: intakeMachine,
+    debugMode: intakeDebugMode,
+    toggleEnabled: showParseDebug,
+  }), [intakeMachine, intakeDebugMode, showParseDebug]);
   const visibleMachineAnchorCards = phase === "clarify" && anchorCollectionViewModel?.isVisible
     ? (Array.isArray(anchorCollectionViewModel?.visibleCards) ? anchorCollectionViewModel.visibleCards : [])
     : [];
@@ -8512,8 +8825,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const clarificationInputFields = isMachineAnchorClarification
     ? []
     : (Array.isArray(pendingClarifyingQuestion?.inputFields) ? pendingClarifyingQuestion.inputFields : []);
-  const clarificationPromptText = activeMachineAnchor?.question || pendingClarifyingQuestion?.prompt || "";
+  const clarificationPromptText = activeMachineAnchor?.field_id
+    ? (activeAnchorDisplayCopy?.questionText || activeMachineAnchor?.question || "")
+    : (pendingClarifyingQuestion?.prompt || "");
   const clarificationValidationMessage = activeMachineAnchor?.validation?.message || pendingClarifyingQuestion?.validation?.message || "";
+  useEffect(() => {
+    if (!intakeDebugMode && showParseDebug) setShowParseDebug(false);
+  }, [intakeDebugMode, showParseDebug]);
   const setLeadingGoal = (goalId) => {
     setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
       resolvedGoals: reviewGoals,
@@ -8680,9 +8998,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     {isMachineAnchorClarification ? (
                       <div style={{ display:"grid", gap:"0.65rem" }}>
                         <div style={{ border:"1px solid rgba(0,194,255,0.18)", borderRadius:18, padding:"0.78rem 0.84rem", background:"linear-gradient(180deg, rgba(0,194,255,0.08), rgba(15,23,42,0.72))" }}>
-                          <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>FIELD CARDS</div>
+                          <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>REQUIRED DETAILS</div>
                           <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.4 }}>
-                            {anchorCollectionViewModel?.heading || "A few quick anchors before I lock this in."}
+                            {anchorCollectionViewModel?.heading || "A few quick details before I lock this in."}
                           </div>
                           {anchorCollectionViewModel?.goalSummary && (
                             <div style={{ fontSize:"0.52rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.5 }}>
@@ -8698,6 +9016,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                         {visibleMachineAnchorCards.map((anchorCard, index) => {
                           const isActiveCard = index === 0;
+                          const displayedAnchorCopy = isActiveCard
+                            ? activeAnchorDisplayCopy
+                            : resolveCoachVoiceDisplayCopy({ anchor: anchorCard, phrasing: null });
                           const fieldId = anchorCard.field_id;
                           const fieldValue = String(clarificationValues?.[fieldId] || "");
                           const unitKey = `${fieldId}__unit`;
@@ -8726,7 +9047,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                               <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"baseline" }}>
                                 <div style={{ display:"grid", gap:"0.18rem" }}>
                                   <div style={{ fontSize:"0.46rem", color:isActiveCard ? "#8fa5c8" : "#64748b", letterSpacing:"0.12em" }}>
-                                    {anchorCard.status_label || (isActiveCard ? "ACTIVE FIELD" : "UP NEXT")}
+                                    {anchorCard.status_label || (isActiveCard ? "NOW" : "NEXT")}
                                   </div>
                                   <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.35 }}>{anchorCard.label}</div>
                                 </div>
@@ -8734,14 +9055,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                   {anchorCard.stack_position || index + 1} / {Math.max(anchorCollectionViewModel?.totalRemaining || visibleMachineAnchorCards.length, 1)}
                                 </div>
                               </div>
-                              {anchorCard.why_it_matters && (
+                              {displayedAnchorCopy?.helperText && (
                                 <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>
-                                  {anchorCard.why_it_matters}
+                                  {displayedAnchorCopy.helperText}
                                 </div>
                               )}
-                              {anchorCard.coach_voice_line && (
+                              {displayedAnchorCopy?.reassuranceLine && (
                                 <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                                  {anchorCard.coach_voice_line}
+                                  {displayedAnchorCopy.reassuranceLine}
                                 </div>
                               )}
                               {isActiveCard ? (
@@ -9188,7 +9509,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           How this looks: {reviewModel.realismLabel}
                         </div>
                         <div style={{ fontSize:"0.5rem", color:confirmationTone, marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Plan status: {confirmationStatusLabel}
+                          Where this stands: {confirmationStatusLabel}
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
@@ -9200,10 +9521,22 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>REALISM GATE</div>
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>COACH CHECK</div>
                         <div style={{ fontSize:"0.54rem", color:reviewModel.gateExplanationText ? confirmationTone : "#8fa5c8", lineHeight:1.55 }}>
                           {reviewModel.gateExplanationText || "Nothing critical. I have enough to build from here."}
                         </div>
+                        {(reviewModel.gateFirstBlockAlternatives || []).length > 0 && (
+                          <div style={{ display:"grid", gap:"0.34rem", marginTop:"0.34rem" }}>
+                            {(reviewModel.gateFirstBlockAlternatives || []).map((option) => (
+                              <div key={option.key || option.label} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:10, background:"rgba(9,14,24,0.58)", padding:"0.5rem 0.55rem" }}>
+                                <div style={{ fontSize:"0.45rem", color:"#8fa5c8", letterSpacing:"0.1em", marginBottom:"0.14rem" }}>
+                                  {String(option.label || "Option").toUpperCase()}
+                                </div>
+                                <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>{option.summary}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         {(reviewModel.gateSuggestedRevision?.requested_data || []).length > 0 && (
                           <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.45 }}>
                             What would change this: {(reviewModel.gateSuggestedRevision?.requested_data || []).join(" - ")}
@@ -9232,7 +9565,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     const trackingLabel = isSupportLane ? "What we'll watch" : "What we'll measure";
                                     return (
                                       <div key={goal.id || goal.summary} style={{ border:`1px solid ${isLeadLane ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.12)"}`, borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
-                                        <div style={{ fontSize:"0.6rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
+                                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap" }}>
+                                          <div style={{ fontSize:"0.6rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35, flex:"1 1 240px" }}>{goal.summary}</div>
+                                          <div style={{ fontSize:"0.46rem", color:isLeadLane ? C.green : isDeferredLane ? C.amber : "#9fb4d3", background:isLeadLane ? `${C.green}14` : isDeferredLane ? `${C.amber}14` : "#162131", border:`1px solid ${isLeadLane ? `${C.green}32` : isDeferredLane ? `${C.amber}32` : "#24344b"}`, padding:"0.16rem 0.4rem", borderRadius:999, letterSpacing:"0.08em", whiteSpace:"nowrap" }}>
+                                            {goal.roleLabel || (isLeadLane ? "Lead" : isMaintainedLane ? "Maintained" : isSupportLane ? "Support (background)" : "Deferred")}
+                                          </div>
+                                        </div>
                                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
                                           {goal.rationale || goal.reason || goal.tradeoff || "We'll keep this lane deliberate and explicit."}
                                         </div>
@@ -10098,7 +10436,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                     </button>
                   </div>
                   <div style={{ marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
-                    {sanitizeDisplayText("iPhone path: Settings Ã¢â€ â€™ Privacy & Security Ã¢â€ â€™ Health Ã¢â€ â€™ Personal Trainer Ã¢â€ â€™ Allow all categories.")}
+                    {sanitizeDisplayText(`iPhone path: Settings → Privacy & Security → Health → ${PRODUCT_BRAND.name} → Allow all categories.`)}
                   </div>
                 </>
               ) : (
@@ -10149,7 +10487,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             <div style={{ fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.6 }}>{locationIntegration.summary}</div>
             <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Request location permission</button>
             <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
-              {sanitizeDisplayText("iPhone path: Settings → Privacy & Security → Location Services → Personal Trainer → While Using App.")}
+              {sanitizeDisplayText(`iPhone path: Settings → Privacy & Security → Location Services → ${PRODUCT_BRAND.name} → While Using App.`)}
             </div>
             {!!locationMsg && <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#cbd5e1" }}>{locationMsg}</div>}
           </div>
@@ -10289,7 +10627,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
           <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
             <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
-              Personal Trainer may read Apple Health workouts and device context if permission is granted. We never share this data. You can revoke access anytime in iOS Settings.
+              {PRODUCT_BRAND.name} may read Apple Health workouts and device context if permission is granted. We never share this data. You can revoke access anytime in iOS Settings.
             </div>
             <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
             <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
@@ -10509,7 +10847,7 @@ function OnboardingCoachLegacy({ onComplete }) {
               : "Not connected yet."}
           </div>
           <div style={{ marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 }}>
-            {sanitizeDisplayText("iPhone permission path: Settings → Privacy & Security → Health → Personal Trainer (or browser app) → Allow all categories.")}
+            {sanitizeDisplayText(`iPhone permission path: Settings → Privacy & Security → Health → ${PRODUCT_BRAND.name} (or browser app) → Allow all categories.`)}
           </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
           {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
@@ -10623,7 +10961,7 @@ function OnboardingCoachLegacy({ onComplete }) {
         <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
           <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
             <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
-              Personal Trainer can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
+              {PRODUCT_BRAND.name} can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
             </div>
             <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
             <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
@@ -11023,10 +11361,17 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
         ? "device recovery signals"
         : null,
     ],
-    limitation: !historicalLogs.length ? "Recent training history is still limited." : "",
+      limitation: !historicalLogs.length ? "Recent training history is still limited." : "",
   });
+  const livePlanningBasis = planDay?.week?.planningBasis || planComposer?.planningBasis || null;
+  const livePlanBasisExplanation = livePlanningBasis?.planBasisExplanation || null;
   const strTrack = displayWorkout?.strengthTrack || todayWorkout?.strengthTrack || (environmentSelection?.neutral ? "" : "home");
   const strSess = displayWorkout?.strSess || todayWorkout?.strSess || "A";
+  const strengthSetupLabel = sanitizeDisplayText(
+    displayWorkout?.strengthTrackLabel
+    || todayWorkout?.strengthTrackLabel
+    || (strTrack === "hotel" ? "Gym" : strTrack === "program" ? "Program" : "Home")
+  );
   const displayRun = sanitizeWorkoutRun(displayWorkout?.run);
   const todayPrescriptionSummary = buildDayPrescriptionDisplay({
     training: displayWorkout,
@@ -11038,7 +11383,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     },
     provenance: planDay?.provenance || null,
   });
-  const strExercises = (STRENGTH[strSess]?.[strTrack] || []).map(sanitizeWorkoutEntry);
+  const strExercises = buildStrengthPrescriptionEntriesForLogging(displayWorkout);
   const prehabExercises = activeIssueContext?.active ? ACHILLES.map(sanitizeWorkoutEntry) : [];
   const hasStrength = displayWorkout?.type === "run+strength" || displayWorkout?.type === "strength+prehab";
   const hasPrehab = displayWorkout?.type === "strength+prehab" && activeIssueContext?.active;
@@ -11233,8 +11578,18 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     todayTrust.level === "grounded" ? "match" : todayTrust.level === "partial" ? "changed" : "recovery"
   , C);
   const rationaleHeadline = normalizeCoachOneLine(primaryAdjustment?.summary || readinessInfluence?.coachLine || conciseFocus);
-  const rationaleSupport = normalizeCoachOneLine(primaryAdjustment?.reason || readinessInfluence?.userVisibleLine || shortProvenance);
+  const rationaleSupport = normalizeCoachOneLine(primaryAdjustment?.reason || livePlanBasisExplanation?.todayLine || readinessInfluence?.userVisibleLine || shortProvenance);
   const successHeadline = normalizeCoachOneLine(displayWorkout?.success || conciseSuccess || "Complete the session and log it.");
+  const planBasisHeadline = normalizeCoachOneLine(livePlanBasisExplanation?.todayLine || livePlanBasisExplanation?.basisSummary || "");
+  const planBasisSupportLine = normalizeCoachOneLine(livePlanBasisExplanation?.personalizationSummary || "");
+  const planBasisCompromiseLine = normalizeCoachOneLine(livePlanBasisExplanation?.compromiseSummary || livePlanningBasis?.compromiseLine || "");
+  const planBasisModeLabel = livePlanBasisExplanation?.effectiveFidelityMode === "strict"
+    ? "Run mostly as written"
+    : livePlanBasisExplanation?.effectiveFidelityMode === "style_only"
+    ? "Style-led"
+    : livePlanBasisExplanation?.effectiveFidelityMode === "adapted"
+    ? "Adapted"
+    : "";
   const readinessBasisLine = (() => {
     if (readinessMetrics?.hasTodayRecoveryInput) return "Using today's check-in first.";
     if (todayUsesDeviceRecovery) return "Using recent device recovery signals.";
@@ -11331,6 +11686,21 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
               {currentProgramBlock.dominantEmphasis.label}
             </span>
           )}
+          {livePlanningBasis?.activeProgramName && (
+            <span style={{ fontSize:"0.48rem", color:"#dbe7f6", background:"#132033", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
+              {livePlanningBasis.activeProgramName}
+            </span>
+          )}
+          {livePlanningBasis?.activeStyleName && (
+            <span style={{ fontSize:"0.48rem", color:"#c7d8ee", background:"#15263f", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
+              {livePlanningBasis.activeStyleName}
+            </span>
+          )}
+          {planBasisModeLabel && (
+            <span style={{ fontSize:"0.48rem", color:"#f8fafc", background:"#23344e", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
+              {planBasisModeLabel}
+            </span>
+          )}
           <span style={{ fontSize:"0.48rem", color:readinessTone, background:readinessTone+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:600, letterSpacing:"0.04em" }}>
             {readinessBadgeLabel}
           </span>
@@ -11381,13 +11751,13 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
             </div>
             <div>
               <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>SETUP</div>
-              <div className="mono" style={{ fontSize:"0.82rem", color:C.blue, fontWeight:600 }}>{strTrack === "hotel" ? "Gym" : "Home"}</div>
+              <div className="mono" style={{ fontSize:"0.82rem", color:C.blue, fontWeight:600 }}>{strengthSetupLabel}</div>
             </div>
           </div>
         )}
         {hasStrength && displayRun && (
           <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.45rem" }}>
-            + Strength {strSess} ({strTrack === "hotel" ? "Gym" : "Home"}) - {displayWorkout?.strengthDuration || "20-30 min"}
+            + Strength {strSess} ({strengthSetupLabel}) - {displayWorkout?.strengthDuration || "20-30 min"}
           </div>
         )}
 
@@ -11415,7 +11785,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
 
             {hasStrength && (
               <div style={{ marginBottom: hasPrehab ? "0.85rem" : 0 }}>
-                <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>STRENGTH {strSess} - {strTrack === "hotel" ? "GYM" : "HOME"}</div>
+                <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>STRENGTH {strSess} - {String(strengthSetupLabel || "Home").toUpperCase()}</div>
                 <div style={{ display:"grid", gap:"0.3rem" }}>
                   {strExercises.map((ex, i) => (
                     <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.5rem", padding:"0.35rem 0", borderBottom: i < strExercises.length - 1 ? "1px solid #1e293b20" : "none" }}>
@@ -11571,6 +11941,9 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           <div style={{ marginTop:"0.55rem", display:"grid", gap:"0.4rem" }}>
             <div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.5 }}>{rationaleHeadline}</div>
             {!!rationaleSupport && <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{rationaleSupport}</div>}
+            {!!planBasisHeadline && <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>Plan basis: {planBasisHeadline}</div>}
+            {!!planBasisSupportLine && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{planBasisSupportLine}</div>}
+            {!!planBasisCompromiseLine && <div style={{ fontSize:"0.49rem", color:C.amber, lineHeight:1.45 }}>Compromise: {planBasisCompromiseLine}</div>}
             <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>Recovery: {recoveryPrescriptionLine}</div>
             {!!programBlockLine && <div style={{ fontSize:"0.49rem", color:"#93c5fd", lineHeight:1.45 }}>Current block: {programBlockLine}</div>}
             <div style={{ fontSize:"0.48rem", color:"#64748b", lineHeight:1.4 }}>
@@ -12311,13 +12684,19 @@ function GoalAnchorQuickEntryPanel({
   );
 }
 
-function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, saveBodyweights = async () => null, saveManualProgressInputs = async () => null, todayWorkout: legacyTodayWorkout }) {
+function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, saveBodyweights = async () => null, saveManualProgressInputs = async () => null, saveProgramSelection = async () => null, todayWorkout: legacyTodayWorkout }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const goalBuckets = athleteProfile?.goalBuckets || {};
   const activeTimeBoundGoal = athleteProfile?.activeTimeBoundGoal || null;
   const goalState = athleteProfile?.goalState || {};
   const manualProgressInputs = personalization?.manualProgressInputs || {};
+  const programsState = useMemo(
+    () => normalizeProgramsSelectionState(personalization?.programs || createDefaultProgramSelectionState()),
+    [personalization?.programs]
+  );
+  const programDefinitions = useMemo(() => listProgramDefinitions(), []);
+  const styleDefinitions = useMemo(() => listStyleDefinitions(), []);
   const planDayWeek = planDay?.week || null;
   const [openWeek, setOpenWeek] = useState(currentWeek);
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
@@ -12336,10 +12715,22 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const [goalReviewNotice, setGoalReviewNotice] = useState("");
   const [goalReviewSaving, setGoalReviewSaving] = useState(false);
   const [selectedProgramSessionKey, setSelectedProgramSessionKey] = useState("");
+  const [catalogMode, setCatalogMode] = useState("programs");
+  const [selectedCatalogProgramId, setSelectedCatalogProgramId] = useState("");
+  const [selectedCatalogStyleId, setSelectedCatalogStyleId] = useState("");
+  const [selectedProgramFidelityMode, setSelectedProgramFidelityMode] = useState(PROGRAM_FIDELITY_MODES.adaptToMe);
+  const [programSelectionNotice, setProgramSelectionNotice] = useState("");
+  const [programSelectionError, setProgramSelectionError] = useState("");
   const scheduleEntries = personalization?.environmentConfig?.schedule || [];
   const weeklyProgress = Math.max(0, Math.min(100, Math.round((((Number(miniWeekly.energy) || 0) + (Number(miniWeekly.confidence) || 0) + (6 - (Number(miniWeekly.stress) || 0))) / 15) * 100)));
   const weeklyGoalHit = (Number(miniWeekly.energy) || 0) >= 4 && (Number(miniWeekly.confidence) || 0) >= 4 && (Number(miniWeekly.stress) || 0) <= 3;
   useEffect(() => { setMiniWeekly(weeklyDraft); }, [currentWeek, weeklyCheckins?.[String(currentWeek)]?.ts]);
+  useEffect(() => {
+    if (!selectedCatalogProgramId && programDefinitions?.[0]?.id) setSelectedCatalogProgramId(programDefinitions[0].id);
+  }, [programDefinitions, selectedCatalogProgramId]);
+  useEffect(() => {
+    if (!selectedCatalogStyleId && styleDefinitions?.[0]?.id) setSelectedCatalogStyleId(styleDefinitions[0].id);
+  }, [styleDefinitions, selectedCatalogStyleId]);
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
   const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon : [];
@@ -12562,6 +12953,98 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     goalReviewHistory: personalization?.goalReviewHistory || [],
     now: new Date(),
   }), [goals, goalProgressTracking, currentProgramBlock, personalization?.goalChangeHistory, personalization?.goalReviewHistory]);
+  const activeBasisSnapshot = useMemo(
+    () => buildActiveBasisSnapshot({ programsState }),
+    [programsState]
+  );
+  const activeProgramDefinition = activeBasisSnapshot?.activeProgramDefinition || null;
+  const activeStyleDefinition = activeBasisSnapshot?.activeStyleDefinition || null;
+  const selectedProgramDefinition = useMemo(
+    () => getProgramDefinitionById(selectedCatalogProgramId || "") || programDefinitions?.[0] || null,
+    [selectedCatalogProgramId, programDefinitions]
+  );
+  const selectedStyleDefinition = useMemo(
+    () => getStyleDefinitionById(selectedCatalogStyleId || "") || styleDefinitions?.[0] || null,
+    [selectedCatalogStyleId, styleDefinitions]
+  );
+  const catalogViewModel = useMemo(
+    () => buildProgramCatalogViewModel({
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+      activeStyleSelection: programsState?.activeStyleSelection || null,
+    }),
+    [programsState?.activeProgramInstance, programsState?.activeStyleSelection]
+  );
+  const selectedProgramCompatibility = useMemo(
+    () => assessProgramCompatibility({
+      programDefinition: selectedProgramDefinition,
+      athleteProfile,
+      personalization,
+      goals,
+      fidelityMode: selectedProgramFidelityMode,
+    }),
+    [selectedProgramDefinition, athleteProfile, personalization, goals, selectedProgramFidelityMode]
+  );
+  const selectedStyleCompatibility = useMemo(
+    () => assessStyleCompatibility({
+      styleDefinition: selectedStyleDefinition,
+      programDefinition: activeProgramDefinition,
+      athleteProfile,
+      goals,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+    }),
+    [selectedStyleDefinition, activeProgramDefinition, athleteProfile, goals, programsState?.activeProgramInstance]
+  );
+  const livePlanBasisExplanation = useMemo(
+    () => planComposer?.planningBasis?.planBasisExplanation || buildPlanBasisExplanation({
+      athleteProfile,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+      activeStyleSelection: programsState?.activeStyleSelection || null,
+      programDefinition: activeProgramDefinition,
+      styleDefinition: activeStyleDefinition,
+      compatibilityAssessment: programsState?.lastCompatibilityAssessment || null,
+    }),
+    [athleteProfile, programsState?.activeProgramInstance, programsState?.activeStyleSelection, programsState?.lastCompatibilityAssessment, activeProgramDefinition, activeStyleDefinition, planComposer]
+  );
+  const liveProgramAdherence = planComposer?.planningBasis?.adherence || null;
+  const selectedProgramCardExplanation = useMemo(
+    () => buildProgramCardExplanation({ programDefinition: selectedProgramDefinition }),
+    [selectedProgramDefinition]
+  );
+  const selectedStyleCardExplanation = useMemo(
+    () => buildStyleCardExplanation({ styleDefinition: selectedStyleDefinition }),
+    [selectedStyleDefinition]
+  );
+  const selectedProgramActivationCopy = useMemo(
+    () => buildActivationConfirmationCopy({
+      programDefinition: selectedProgramDefinition,
+      fidelityMode: selectedProgramFidelityMode,
+      compatibilityAssessment: selectedProgramCompatibility,
+    }),
+    [selectedProgramDefinition, selectedProgramFidelityMode, selectedProgramCompatibility]
+  );
+  const selectedStyleActivationCopy = useMemo(
+    () => buildActivationConfirmationCopy({
+      styleDefinition: selectedStyleDefinition,
+      compatibilityAssessment: selectedStyleCompatibility,
+    }),
+    [selectedStyleDefinition, selectedStyleCompatibility]
+  );
+  const selectedProgramWarningCopy = useMemo(
+    () => buildCompatibilityWarningCopy({ compatibilityAssessment: selectedProgramCompatibility }),
+    [selectedProgramCompatibility]
+  );
+  const selectedStyleWarningCopy = useMemo(
+    () => buildCompatibilityWarningCopy({ compatibilityAssessment: selectedStyleCompatibility }),
+    [selectedStyleCompatibility]
+  );
+  const selectedStyleOverlayPreview = useMemo(
+    () => buildStyleOverlayPreview({
+      styleDefinition: selectedStyleDefinition,
+      influenceLevel: STYLE_INFLUENCE_LEVELS.standard,
+      programDefinition: activeProgramDefinition,
+    }),
+    [selectedStyleDefinition, activeProgramDefinition]
+  );
   const getGoalProgressTone = (status = "") => {
     if (status === GOAL_PROGRESS_STATUSES.onTrack) return { color: C.green, bg: `${C.green}14`, border: `${C.green}36` };
     if (status === GOAL_PROGRESS_STATUSES.reviewBased) return { color: C.blue, bg: `${C.blue}14`, border: `${C.blue}32` };
@@ -12608,6 +13091,10 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const programTrustTone = buildReviewBadgeTone(
     programTrust.level === "grounded" ? "match" : programTrust.level === "partial" ? "changed" : "recovery"
   , C);
+  const programWeekBasisLine = buildProgramWeekExplanation({
+    basisExplanation: livePlanBasisExplanation,
+    currentBlockLabel: currentProgramBlock?.label || currentPhaseMeta?.name || "",
+  });
   const plannedSessionsThisWeek = getProgramWeekSessions(currentWeek, (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek) || null).length;
   const currentWeekStart = new Date();
   currentWeekStart.setHours(0, 0, 0, 0);
@@ -12836,6 +13323,137 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     }
   };
 
+  const commitProgramsState = async (nextProgramsState, notice = "") => {
+    setProgramSelectionError("");
+    setProgramSelectionNotice(notice);
+    await saveProgramSelection(nextProgramsState);
+  };
+
+  const handleActivateProgram = async (fidelityMode = PROGRAM_FIDELITY_MODES.adaptToMe) => {
+    if (!selectedProgramDefinition?.id) return;
+    const compatibilityAssessment = assessProgramCompatibility({
+      programDefinition: selectedProgramDefinition,
+      athleteProfile,
+      personalization,
+      goals,
+      fidelityMode,
+    });
+    if (compatibilityAssessment?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
+      setProgramSelectionNotice("");
+      setProgramSelectionError(compatibilityAssessment?.blockedConstraints?.[0] || compatibilityAssessment?.reasons?.[0] || "This program is not a clean fit right now.");
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const nextProgramInstance = createProgramInstance({
+      programDefinition: selectedProgramDefinition,
+      userId: "local",
+      fidelityMode,
+      compatibilityAssessment,
+      athleteProfile,
+      activationDate: nowIso,
+    });
+    const nextStyleSelection = fidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle
+      ? null
+      : programsState?.activeStyleSelection || null;
+    const nextExplanation = buildPlanBasisExplanation({
+      athleteProfile,
+      activeProgramInstance: nextProgramInstance,
+      activeStyleSelection: nextStyleSelection,
+      programDefinition: selectedProgramDefinition,
+      styleDefinition: fidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle ? null : activeStyleDefinition,
+      compatibilityAssessment,
+    });
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: programsState?.activeProgramInstance ? "replaced_program" : "activated_program",
+      programDefinition: selectedProgramDefinition,
+      fidelityMode,
+      reason: compatibilityAssessment?.reasons?.[0] || buildCompatibilityHeadline(compatibilityAssessment),
+      createdAt: nowIso,
+    });
+    await commitProgramsState({
+      ...programsState,
+      activeProgramInstance: nextProgramInstance,
+      activeStyleSelection: nextStyleSelection,
+      lastCompatibilityAssessment: compatibilityAssessment,
+      planBasisExplanation: nextExplanation,
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    }, `${selectedProgramDefinition.displayName} is now active in ${String(fidelityMode || "").replaceAll("_", " ")} mode.`);
+  };
+
+  const handleActivateStyle = async () => {
+    if (!selectedStyleDefinition?.id) return;
+    const compatibilityAssessment = assessStyleCompatibility({
+      styleDefinition: selectedStyleDefinition,
+      programDefinition: activeProgramDefinition,
+      athleteProfile,
+      goals,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+    });
+    if (compatibilityAssessment?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
+      setProgramSelectionNotice("");
+      setProgramSelectionError(compatibilityAssessment?.blockedConstraints?.[0] || compatibilityAssessment?.reasons?.[0] || "This style does not fit the current program layer.");
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const nextStyleSelection = createStyleSelection({
+      styleDefinition: selectedStyleDefinition,
+      userId: "local",
+      compatibleWithCurrentPlan: compatibilityAssessment?.outcome !== COMPATIBILITY_OUTCOMES.incompatible,
+      influenceLevel: STYLE_INFLUENCE_LEVELS.standard,
+      activationDate: nowIso,
+    });
+    const nextExplanation = buildPlanBasisExplanation({
+      athleteProfile,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+      activeStyleSelection: nextStyleSelection,
+      programDefinition: activeProgramDefinition,
+      styleDefinition: selectedStyleDefinition,
+      compatibilityAssessment,
+    });
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: programsState?.activeStyleSelection ? "replaced_style" : "activated_style",
+      styleDefinition: selectedStyleDefinition,
+      reason: compatibilityAssessment?.reasons?.[0] || buildCompatibilityHeadline(compatibilityAssessment),
+      createdAt: nowIso,
+    });
+    await commitProgramsState({
+      ...programsState,
+      activeStyleSelection: nextStyleSelection,
+      lastCompatibilityAssessment: compatibilityAssessment,
+      planBasisExplanation: nextExplanation,
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    }, `${selectedStyleDefinition.displayName} is now the active style layer.`);
+  };
+
+  const handleClearProgramLayer = async () => {
+    if (!programsState?.activeProgramInstance && !programsState?.activeStyleSelection) return;
+    const nowIso = new Date().toISOString();
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: "cleared_basis",
+      programDefinition: activeProgramDefinition,
+      styleDefinition: activeStyleDefinition,
+      fidelityMode: programsState?.activeProgramInstance?.fidelityMode || "",
+      reason: "Returned to the default goal-driven basis.",
+      createdAt: nowIso,
+    });
+    const nextState = {
+      ...programsState,
+      activeProgramInstance: null,
+      activeStyleSelection: null,
+      lastCompatibilityAssessment: null,
+      planBasisExplanation: buildPlanBasisExplanation({
+        athleteProfile,
+        activeProgramInstance: null,
+        activeStyleSelection: null,
+        programDefinition: null,
+        styleDefinition: null,
+        compatibilityAssessment: null,
+      }),
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    };
+    await commitProgramsState(nextState, "Program and style basis cleared. The plan is back on the default goal-driven logic.");
+  };
+
   return (
     <div className="fi">
       <div style={{ display:"grid", gap:"0.85rem" }}>
@@ -12907,6 +13525,319 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                 ))}
               </div>
             )}
+          </div>
+        </section>
+
+        <section className="card card-subtle" style={{ borderColor:"#2c3f63", background:"linear-gradient(180deg, rgba(12,18,32,0.96) 0%, rgba(9,14,24,0.96) 100%)" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.75rem", flexWrap:"wrap", marginBottom:"0.8rem" }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>PROGRAMS + STYLES</div>
+              <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>Choose a concrete program, add a style bias, or stay fully goal-driven.</div>
+              <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.6, maxWidth:760 }}>
+                This gives the plan a transparent basis. Safety, schedule, equipment, injury context, and your real goal stack still outrank any template.
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", alignItems:"center" }}>
+              <div style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.16rem 0.48rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                {PROGRAM_SOURCE_BASIS_LABELS[activeProgramDefinition?.sourceBasis || activeStyleDefinition?.sourceBasis || "evidence_informed_default"] || "Evidence-informed default"}
+              </div>
+              <div style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.16rem 0.48rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                {SOURCE_CONFIDENCE_LABELS[livePlanBasisExplanation?.sourceConfidence || "high"] || "High confidence"}
+              </div>
+              <button className="btn" onClick={handleClearProgramLayer} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+                Clear active basis
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1.05fr 0.95fr", gap:"0.7rem", marginBottom:"0.75rem" }}>
+            <div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.8rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>CURRENT BASIS</div>
+              <div style={{ fontSize:"0.68rem", color:"#f8fafc", fontWeight:600, lineHeight:1.3 }}>
+                {livePlanBasisExplanation?.basisSummary || "Your plan is following the default goal-driven logic."}
+              </div>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.62 }}>
+                {livePlanBasisExplanation?.personalizationSummary || "No separate program or style layer is active."}
+              </div>
+              {!!programWeekBasisLine && (
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.26rem", lineHeight:1.55 }}>{programWeekBasisLine}</div>
+              )}
+              {!!liveProgramAdherence?.summary && (
+                <div style={{ fontSize:"0.5rem", color:liveProgramAdherence?.state === "off_program" ? C.amber : "#8fa5c8", marginTop:"0.22rem", lineHeight:1.55 }}>
+                  Adherence: {liveProgramAdherence.summary}
+                </div>
+              )}
+              {(livePlanBasisExplanation?.caveats || []).slice(0, 2).map((line, index) => (
+                <div key={`basis_caveat_${index}`} style={{ fontSize:"0.5rem", color:C.amber, marginTop:"0.22rem", lineHeight:1.5 }}>{line}</div>
+              ))}
+            </div>
+
+            <div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.8rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>ACTIVE LAYERS</div>
+              <div style={{ display:"grid", gap:"0.46rem" }}>
+                <div style={{ border:"1px solid #1f2d43", borderRadius:12, background:"#0b1322", padding:"0.62rem" }}>
+                  <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.14rem" }}>PROGRAM</div>
+                  <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>
+                    {activeProgramDefinition?.displayName || "No named program selected"}
+                  </div>
+                  <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                    {activeProgramDefinition
+                      ? `${String(livePlanBasisExplanation?.effectiveFidelityMode || programsState?.activeProgramInstance?.fidelityMode || PROGRAM_FIDELITY_MODES.adaptToMe).replaceAll("_", " ")} • ${PROGRAM_SOURCE_BASIS_LABELS[activeProgramDefinition?.sourceBasis] || "Source-backed"}`
+                      : "The planner is using the default goal-driven basis."}
+                  </div>
+                  {!!liveProgramAdherence?.state && activeProgramDefinition && (
+                    <div style={{ fontSize:"0.48rem", color:liveProgramAdherence?.state === "off_program" ? C.amber : "#94a3b8", marginTop:"0.12rem", lineHeight:1.45 }}>
+                      {liveProgramAdherence.state === "aligned"
+                        ? "Current training is still close to the selected backbone."
+                        : liveProgramAdherence.state === "drifting"
+                        ? "Recent training is drifting from the written backbone."
+                        : liveProgramAdherence.state === "off_program"
+                        ? "Recent training no longer matches the program closely enough to call it literal."
+                        : "Adherence is still forming."}
+                    </div>
+                  )}
+                </div>
+                <div style={{ border:"1px solid #1f2d43", borderRadius:12, background:"#0b1322", padding:"0.62rem" }}>
+                  <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.14rem" }}>STYLE</div>
+                  <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>
+                    {activeStyleDefinition?.displayName || "No extra style layer selected"}
+                  </div>
+                  <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                    {activeStyleDefinition
+                      ? `${activeStyleDefinition.styleBiases?.weeklyFeel || activeStyleDefinition.summary}`
+                      : "Choose a style only if you want the plan to tilt a certain way without changing the goal hierarchy."}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {(programSelectionNotice || programSelectionError) && (
+            <div style={{ fontSize:"0.52rem", color:programSelectionError ? C.amber : C.green, lineHeight:1.5, marginBottom:"0.65rem" }}>
+              {programSelectionError || programSelectionNotice}
+            </div>
+          )}
+
+          <div style={{ display:"flex", gap:"0.4rem", marginBottom:"0.75rem", flexWrap:"wrap" }}>
+            {[
+              { key: "programs", label: "Browse programs" },
+              { key: "styles", label: "Browse styles" },
+            ].map((tabOption) => {
+              const selected = catalogMode === tabOption.key;
+              return (
+                <button
+                  key={tabOption.key}
+                  className="btn"
+                  onClick={() => setCatalogMode(tabOption.key)}
+                  style={{
+                    color:selected ? "#f8fafc" : "#cbd5e1",
+                    borderColor:selected ? `${C.blue}55` : "#2b3d55",
+                    background:selected ? "rgba(59,130,246,0.16)" : "#0f172a",
+                    fontSize:"0.52rem",
+                  }}
+                >
+                  {tabOption.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1.02fr 0.98fr", gap:"0.75rem", alignItems:"start" }}>
+            <div style={{ display:"grid", gap:"0.65rem" }}>
+              {(catalogMode === "programs" ? catalogViewModel.programSections : catalogViewModel.styleSections).map((section) => (
+                <div key={section.key} style={{ display:"grid", gap:"0.45rem" }}>
+                  <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.12em" }}>{section.title}</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.5rem" }}>
+                    {section.items.map((item) => {
+                      const selected = catalogMode === "programs"
+                        ? item.id === (selectedProgramDefinition?.id || "")
+                        : item.id === (selectedStyleDefinition?.id || "");
+                      return (
+                        <button
+                          key={item.id}
+                          className="btn"
+                          onClick={() => {
+                            setProgramSelectionNotice("");
+                            setProgramSelectionError("");
+                            if (catalogMode === "programs") setSelectedCatalogProgramId(item.id);
+                            else setSelectedCatalogStyleId(item.id);
+                          }}
+                          style={{
+                            textAlign:"left",
+                            minHeight:150,
+                            padding:"0.72rem 0.75rem",
+                            borderRadius:14,
+                            borderColor:selected ? `${C.blue}55` : item.isActive ? `${C.green}40` : "#24344b",
+                            background:selected ? "rgba(37, 99, 235, 0.14)" : item.isActive ? "rgba(34,197,94,0.08)" : "#0f172a",
+                            display:"grid",
+                            gap:"0.24rem",
+                          }}
+                        >
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.35rem" }}>
+                            <div style={{ fontSize:"0.62rem", color:"#f8fafc", fontWeight:600, lineHeight:1.3 }}>{item.displayName}</div>
+                            {item.isActive && (
+                              <div style={{ fontSize:"0.42rem", color:C.green, background:"rgba(34,197,94,0.12)", border:`1px solid ${C.green}3d`, padding:"0.14rem 0.35rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                                ACTIVE
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{item.categoryLabel}</div>
+                          <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>{item.summary}</div>
+                          <div style={{ fontSize:"0.48rem", color:"#93c5fd", lineHeight:1.45 }}>
+                            {item.commitmentLine || item.emphasisLine || item.sourceBasisLabel}
+                          </div>
+                          <div style={{ fontSize:"0.46rem", color:"#64748b", lineHeight:1.45 }}>
+                            {item.sourceBasisLabel} • {item.sourceConfidenceLabel}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ border:"1px solid #24344b", borderRadius:16, background:"#0b1322", padding:"0.85rem" }}>
+              {catalogMode === "programs" && selectedProgramDefinition ? (
+                <div style={{ display:"grid", gap:"0.58rem" }}>
+                  <div>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>PROGRAM PREVIEW</div>
+                    <div style={{ fontSize:"0.74rem", color:"#f8fafc", fontWeight:600, lineHeight:1.25 }}>{selectedProgramCardExplanation?.title || selectedProgramDefinition.displayName}</div>
+                    <div style={{ fontSize:"0.56rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.58 }}>{selectedProgramCardExplanation?.summary || selectedProgramDefinition.summary}</div>
+                  </div>
+
+                  <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedProgramCardExplanation?.basisLine}
+                    </div>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedProgramCardExplanation?.confidenceLine}
+                    </div>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedProgramCardExplanation?.commitmentLine}
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                    Target user: <span style={{ color:"#dbe7f6" }}>{selectedProgramDefinition.targetUser}</span>
+                  </div>
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                    Weekly shape: <span style={{ color:"#dbe7f6" }}>{(selectedProgramDefinition.weeklyStructureTemplate || []).map((session) => session.focus).slice(0, 4).join(" • ")}</span>
+                  </div>
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                    Required setup: <span style={{ color:"#dbe7f6" }}>{(selectedProgramDefinition.requiredEquipment || []).join(", ") || "No special setup"}</span>
+                  </div>
+
+                  <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.68rem" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.18rem" }}>COMPATIBILITY</div>
+                    <div style={{ fontSize:"0.6rem", color:selectedProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : selectedProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.caution ? "#93c5fd" : C.green, fontWeight:600, lineHeight:1.35 }}>
+                      {selectedProgramActivationCopy?.headline || buildCompatibilityHeadline(selectedProgramCompatibility)}
+                    </div>
+                    <div style={{ fontSize:"0.53rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.55 }}>
+                      {selectedProgramActivationCopy?.body || selectedProgramWarningCopy?.body || "This is a clean fit right now."}
+                    </div>
+                    {(selectedProgramWarningCopy?.details || []).slice(0, 2).map((line, index) => (
+                      <div key={`program_change_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{line}</div>
+                    ))}
+                  </div>
+
+                  <div style={{ display:"grid", gap:"0.32rem" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>ACTIVATE AS</div>
+                    <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                      {[
+                        { key: PROGRAM_FIDELITY_MODES.runAsWritten, label: "Run mostly as written", enabled: selectedProgramDefinition?.fidelityModeSupport?.run_as_written },
+                        { key: PROGRAM_FIDELITY_MODES.adaptToMe, label: "Adapt to me", enabled: selectedProgramDefinition?.fidelityModeSupport?.adapt_to_me },
+                        { key: PROGRAM_FIDELITY_MODES.useAsStyle, label: "Use as a style", enabled: selectedProgramDefinition?.fidelityModeSupport?.use_as_style },
+                      ].filter((mode) => mode.enabled).map((mode) => {
+                        const selected = selectedProgramFidelityMode === mode.key;
+                        return (
+                          <button
+                            key={mode.key}
+                            className="btn"
+                            onClick={() => setSelectedProgramFidelityMode(mode.key)}
+                            style={{
+                              fontSize:"0.5rem",
+                              color:selected ? "#f8fafc" : "#cbd5e1",
+                              borderColor:selected ? `${C.blue}55` : "#2b3d55",
+                              background:selected ? "rgba(59,130,246,0.14)" : "#0f172a",
+                            }}
+                          >
+                            {mode.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                      {selectedProgramActivationCopy?.detail || selectedProgramDefinition.explanationTemplate?.adaptationSummary}
+                    </div>
+                  </div>
+
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => handleActivateProgram(selectedProgramFidelityMode)}
+                    disabled={selectedProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible}
+                    style={{ width:"100%" }}
+                  >
+                    Activate {selectedProgramDefinition.displayName}
+                  </button>
+                </div>
+              ) : catalogMode === "styles" && selectedStyleDefinition ? (
+                <div style={{ display:"grid", gap:"0.58rem" }}>
+                  <div>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>STYLE PREVIEW</div>
+                    <div style={{ fontSize:"0.74rem", color:"#f8fafc", fontWeight:600, lineHeight:1.25 }}>{selectedStyleCardExplanation?.title || selectedStyleDefinition.displayName}</div>
+                    <div style={{ fontSize:"0.56rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.58 }}>{selectedStyleCardExplanation?.summary || selectedStyleDefinition.summary}</div>
+                  </div>
+
+                  <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedStyleCardExplanation?.basisLine}
+                    </div>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedStyleCardExplanation?.confidenceLine}
+                    </div>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedStyleCardExplanation?.emphasisLine}
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                    What it changes: <span style={{ color:"#dbe7f6" }}>{selectedStyleOverlayPreview?.biasSummary || selectedStyleDefinition.summary}</span>
+                  </div>
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                    Exercise bias: <span style={{ color:"#dbe7f6" }}>{(selectedStyleDefinition.exerciseSelectionBias || []).join(" • ")}</span>
+                  </div>
+
+                  <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.68rem" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.18rem" }}>COMPATIBILITY</div>
+                    <div style={{ fontSize:"0.6rem", color:selectedStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : selectedStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.caution ? "#93c5fd" : C.green, fontWeight:600, lineHeight:1.35 }}>
+                      {selectedStyleActivationCopy?.headline || buildCompatibilityHeadline(selectedStyleCompatibility)}
+                    </div>
+                    <div style={{ fontSize:"0.53rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.55 }}>
+                      {selectedStyleActivationCopy?.body || selectedStyleWarningCopy?.body || "This style can layer onto the current plan."}
+                    </div>
+                    {(selectedStyleWarningCopy?.details || []).slice(0, 2).map((line, index) => (
+                      <div key={`style_change_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{line}</div>
+                    ))}
+                  </div>
+
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                    {selectedStyleActivationCopy?.detail || selectedStyleDefinition.explanationTemplate?.overlaySummary}
+                  </div>
+
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleActivateStyle}
+                    disabled={selectedStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible}
+                    style={{ width:"100%" }}
+                  >
+                    Use {selectedStyleDefinition.displayName}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.55 }}>Choose a program or style to preview it here.</div>
+              )}
+            </div>
           </div>
         </section>
 
@@ -13204,26 +14135,46 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                   </div>
                 )}
 
-                <details style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(8,14,25,0.58)" }}>
-                  <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>INTAKE DEBUG</summary>
-                  <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.65rem" }}>
-                    <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.55 }}>
-                      State: {machineDebugView?.state || "pending"}
-                    </div>
-                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>
-                      Missing anchors: {(machineDebugView?.missing_anchors?.length || 0)
-                        ? machineDebugView.missing_anchors.map((item) => item.field_id).join(", ")
-                        : "none"}
-                    </div>
-                    <div style={{ display:"grid", gap:"0.28rem" }}>
-                      {(machineDebugView?.last_events || []).map((entry) => (
-                        <div key={entry.transition_id} style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.5 }}>
-                          {entry.type} | {entry.stage_before} -> {entry.stage_after}{entry.field_id ? ` | ${entry.field_id}` : ""}
+                {intakeDebugMode && (
+                  <details style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(8,14,25,0.58)" }}>
+                    <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>INTAKE DEBUG</summary>
+                    <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.65rem" }}>
+                      <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.55 }}>
+                        State: {machineDebugView?.state || "pending"}
+                      </div>
+                      <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                        Missing anchors: {(machineDebugView?.missing_anchors?.length || 0)
+                          ? machineDebugView.missing_anchors.map((item) => item.field_id).join(", ")
+                          : "none"}
+                      </div>
+                      <label style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                        <input
+                          type="checkbox"
+                          checked={showParseDebug}
+                          onChange={(e) => setShowParseDebug(e.target.checked)}
+                        />
+                        Show parse debug
+                      </label>
+                      {parseDebugView.visible && (
+                        <div style={{ display:"grid", gap:"0.24rem", border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.55rem" }}>
+                          <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                            field_id: {parseDebugView.field_id || "none"}
+                          </div>
+                          <pre style={{ margin:0, whiteSpace:"pre-wrap", wordBreak:"break-word", fontSize:"0.47rem", lineHeight:1.45, color:"#dbe7f6", fontFamily:"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }}>
+                            {JSON.stringify(parseDebugView.parsed_value, null, 2)}
+                          </pre>
                         </div>
-                      ))}
+                      )}
+                      <div style={{ display:"grid", gap:"0.28rem" }}>
+                        {(machineDebugView?.last_events || []).map((entry) => (
+                          <div key={entry.transition_id} style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.5 }}>
+                            {entry.type} | {entry.stage_before}{" -> "}{entry.stage_after}{entry.field_id ? ` | ${entry.field_id}` : ""}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                </details>
+                  </details>
+                )}
               </div>
             )}
           </div>
@@ -13543,7 +14494,6 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     "5": { title: "Best", tip: "Flag this. Worth knowing when these happen." },
   };
   const today = new Date().toISOString().split("T")[0];
-  const [quick, setQuick] = useState({ status:"", feel:"3", note:"", bodyweight:"" });
   const [detailed, setDetailed] = useState({
     date: today,
     family: WORKOUT_LOG_FAMILIES.generic,
@@ -13560,6 +14510,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   const [saved, setSaved] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
   const [feelTooltip, setFeelTooltip] = useState("");
+  const [quickDetailsOpen, setQuickDetailsOpen] = useState(false);
   const [detailedOpen, setDetailedOpen] = useState(false);
   const [pendingDeleteDate, setPendingDeleteDate] = useState("");
   const [selectedReviewDate, setSelectedReviewDate] = useState(today);
@@ -13594,6 +14545,8 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     manualProgressInputs,
     now: new Date(),
   }), [goals, logs, bodyweights, dailyCheckins, weeklyCheckins, manualProgressInputs]);
+  const quickCapture = useMemo(() => buildWorkoutQuickCaptureModel({ draft: detailed }), [detailed]);
+  const quickCaptureHasValues = useMemo(() => hasWorkoutQuickCaptureValues({ draft: detailed }), [detailed]);
   const archivedPlanAudits = useMemo(
     () => (planArchives || []).map((archive) => buildArchivedPlanAudit({ archive })).filter(Boolean),
     [planArchives]
@@ -13772,6 +14725,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   const openHistoryEntry = (date, log = {}) => {
     setSelectedReviewDate(date);
     setDetailed(buildDetailedDraft(date, log));
+    setQuickDetailsOpen(false);
     setDetailedOpen(true);
     setPendingDeleteDate("");
   };
@@ -13797,11 +14751,12 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     };
     await saveLogs({ ...logs, [today]: entry }, { changedDateKey: today });
     setSaved(true);
-    setSavedMsg("Prescribed workout completed.");
+    setSavedMsg("Workout completed as prescribed.");
+    setQuickDetailsOpen(false);
     setTimeout(()=>setSaved(false), 1800);
   };
 
-  const saveDetailed = async () => {
+  const persistWorkoutLog = async ({ source = "full" } = {}) => {
     if (!detailed.date) return;
     const existing = logs?.[detailed.date] || {};
     const nextEntry = buildWorkoutLogEntryFromDraft({
@@ -13814,9 +14769,21 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     });
     await saveLogs({ ...logs, [detailed.date]: nextEntry }, { changedDateKey: detailed.date });
     setSaved(true);
-    setSavedMsg(detailed.date < today ? "Custom workout saved. Edited." : "Custom workout saved.");
+    if (source === "quick") {
+      setSavedMsg(detailed.date < today ? "Quick workout log saved. Edited." : "Quick workout log saved.");
+      setQuickDetailsOpen(false);
+    } else {
+      setSavedMsg(detailed.date < today ? "Workout details saved. Edited." : "Workout details saved.");
+    }
     setDetailed(buildDetailedDraft(detailed.date, nextEntry));
     setTimeout(()=>setSaved(false), 1800);
+  };
+  const saveDetailed = async () => {
+    await persistWorkoutLog({ source: "full" });
+  };
+  const saveQuickCapture = async () => {
+    if (!quickCaptureHasValues) return;
+    await persistWorkoutLog({ source: "quick" });
   };
 
   const delLog = async (date) => {
@@ -13839,9 +14806,145 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     <div className="fi">
       <div className="card card-action" style={{ marginBottom:"0.8rem", borderColor:C.green+"40", background:"#0d1711" }}>
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>LOG WORKOUT</div>
-        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Pick the fast path, or add details if you need them.</div>
-        <div style={{ display:"grid", gap:"0.4rem" }}>
-          <button className="btn btn-primary" onClick={savePrescribed} style={{ fontSize:"0.55rem" }}>Mark Prescribed Workout Complete</button>
+        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Finish fast with one tap, then add only the actual details you want to keep.</div>
+        <div style={{ display:"grid", gap:"0.45rem" }}>
+          <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+            <button className="btn btn-primary" onClick={savePrescribed} style={{ fontSize:"0.55rem" }}>{quickCapture.completeActionLabel}</button>
+            <button
+              className="btn"
+              onClick={()=>setQuickDetailsOpen((current) => !current)}
+              style={{ fontSize:"0.55rem", borderColor:"#2b4765", color:"#c7d8ee" }}
+            >
+              {quickDetailsOpen ? "Hide quick details" : quickCapture.detailToggleLabel}
+            </button>
+          </div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+            {quickCapture.helperLine} {quickCapture.supportLine}
+          </div>
+          {quickDetailsOpen && (
+            <div style={{ display:"grid", gap:"0.55rem", padding:"0.55rem", border:"1px solid #1e293b", borderRadius:10, background:"#0f172a" }}>
+              {!!quickCapture.run?.enabled && (
+                <div style={{ display:"grid", gap:"0.3rem" }}>
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Quick run details</div>
+                  {!!quickCapture.run?.summary && (
+                    <div style={{ fontSize:"0.48rem", color:"#94a3b8", lineHeight:1.45 }}>{quickCapture.run.summary}</div>
+                  )}
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.35rem" }}>
+                    <input
+                      value={detailed.run?.duration || ""}
+                      onChange={e=>setDetailed({
+                        ...detailed,
+                        run: { ...(detailed.run || {}), enabled: true, duration: e.target.value },
+                      })}
+                      placeholder="Time"
+                    />
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={detailed.run?.distance || ""}
+                      onChange={e=>setDetailed({
+                        ...detailed,
+                        run: { ...(detailed.run || {}), enabled: true, distance: e.target.value },
+                      })}
+                      placeholder="Miles"
+                    />
+                    <input
+                      value={detailed.run?.pace || ""}
+                      onChange={e=>setDetailed({
+                        ...detailed,
+                        run: { ...(detailed.run || {}), enabled: true, pace: e.target.value },
+                      })}
+                      placeholder="Pace"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {!!quickCapture.strength?.enabled && (quickCapture.strength.rows || []).length > 0 && (
+                <div style={{ display:"grid", gap:"0.35rem" }}>
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Quick lift details</div>
+                  {(quickCapture.strength.rows || []).map((row) => (
+                    <div key={`quick_strength_row_${row.rowIndex}`} style={{ display:"grid", gap:"0.24rem", padding:"0.4rem", border:"1px solid #1e293b", borderRadius:8, background:"#101826" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+                        <div style={{ fontSize:"0.52rem", color:"#e2e8f0" }}>{row.exercise}</div>
+                        {!!row.prescribedSummary && (
+                          <div style={{ fontSize:"0.45rem", color:"#8fa5c8" }}>Prescribed: {row.prescribedSummary}</div>
+                        )}
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"minmax(90px,1fr) 90px 90px", gap:"0.35rem" }}>
+                        {row.mode === "band" ? (
+                          <select value={detailed.strength?.rows?.[row.rowIndex]?.bandTension || ""} onChange={e=>updateStrengthRow(row.rowIndex, { bandTension: e.target.value, mode: "band" })}>
+                            <option value="">Band</option>
+                            {BAND_TENSION_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+                          </select>
+                        ) : row.bodyweightOnly ? (
+                          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid #1e293b", borderRadius:8, minHeight:34 }}>BW</div>
+                        ) : (
+                          <input
+                            type="number"
+                            step="2.5"
+                            value={detailed.strength?.rows?.[row.rowIndex]?.actualWeight || ""}
+                            onChange={e=>updateStrengthRow(row.rowIndex, { actualWeight: e.target.value, mode: "weighted" })}
+                            placeholder="Weight"
+                          />
+                        )}
+                        <input
+                          type="number"
+                          value={detailed.strength?.rows?.[row.rowIndex]?.actualSets || ""}
+                          onChange={e=>updateStrengthRow(row.rowIndex, { actualSets: e.target.value })}
+                          placeholder="Sets"
+                        />
+                        <input
+                          type="number"
+                          value={detailed.strength?.rows?.[row.rowIndex]?.actualReps || ""}
+                          onChange={e=>updateStrengthRow(row.rowIndex, { actualReps: e.target.value })}
+                          placeholder="Reps"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  {!!quickCapture.strength?.hiddenRowCount && (
+                    <div style={{ fontSize:"0.47rem", color:"#94a3b8", lineHeight:1.45 }}>
+                      {quickCapture.strength.hiddenRowCount} more exercise{quickCapture.strength.hiddenRowCount > 1 ? "s" : ""} are available in full details.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!!quickCapture.generic?.enabled && (
+                <div style={{ display:"grid", gap:"0.3rem" }}>
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Quick session details</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+                    <input
+                      value={detailed.generic?.reps || ""}
+                      onChange={e=>setDetailed({
+                        ...detailed,
+                        generic: { ...(detailed.generic || {}), visible: true, reps: e.target.value },
+                      })}
+                      placeholder="Reps"
+                    />
+                    <input
+                      value={detailed.generic?.weight || ""}
+                      onChange={e=>setDetailed({
+                        ...detailed,
+                        generic: { ...(detailed.generic || {}), visible: true, weight: e.target.value },
+                      })}
+                      placeholder="Weight"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display:"flex", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+                <button className="btn btn-primary" onClick={saveQuickCapture} disabled={!quickCaptureHasValues} style={{ width:"fit-content", fontSize:"0.53rem", opacity: quickCaptureHasValues ? 1 : 0.6 }}>
+                  {quickCapture.saveActionLabel}
+                </button>
+                {!quickCaptureHasValues && (
+                  <div style={{ fontSize:"0.47rem", color:"#94a3b8" }}>Add time, distance, or actual lift numbers to save a quick log.</div>
+                )}
+              </div>
+            </div>
+          )}
           {saved && <div className="completion-pop" style={{ fontSize:"0.57rem", color:C.green, display:"inline-flex", alignItems:"center", gap:"0.3rem", background:"rgba(39,245,154,0.1)", border:"1px solid rgba(39,245,154,0.38)", borderRadius:999, padding:"0.18rem 0.5rem" }}><span className="mono">OK</span> {savedMsg}</div>}
         </div>
       </div>
@@ -13859,7 +14962,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       </div>
 
       <details className="card" style={{ marginBottom:"0.8rem" }} open={detailedOpen} onToggle={e=>setDetailedOpen(e.currentTarget.open)}>
-        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:C.blue, letterSpacing:"0.08em" }}>Log Workout Details</summary>
+        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:C.blue, letterSpacing:"0.08em" }}>Open Full Detail Capture</summary>
         <div style={{ marginTop:"0.55rem", display:"grid", gap:"0.55rem" }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem" }}>
             <input
@@ -14868,6 +15971,8 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
   const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
   const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
   const planDayWeek = planDay?.week || null;
+  const livePlanningBasis = planDayWeek?.planningBasis || planComposer?.planningBasis || null;
+  const livePlanBasisExplanation = livePlanningBasis?.planBasisExplanation || null;
   const canonicalCoachRecovery = planDay?.resolved?.recovery || null;
   const canonicalCoachSupplements = planDay?.resolved?.supplements || null;
   const todayKey = new Date().toISOString().split("T")[0];
@@ -14890,7 +15995,8 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
     || `${coachPhase} block`
   );
   const currentPlanFocus = sanitizeDisplayText(
-    planDayWeek?.weeklyIntent?.focus
+    livePlanBasisExplanation?.coachLine
+    || planDayWeek?.weeklyIntent?.focus
     || planDayWeek?.successDefinition
     || coachWeekFocus
     || coachWeekSummary
@@ -14900,8 +16006,17 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
   const coachPlanLine = joinDisplayParts([
     currentPrimaryGoal ? `Goal: ${currentPrimaryGoal}` : "",
     currentSupportGoals.length ? `Support: ${currentSupportGoals.join(" / ")}` : "",
+    livePlanningBasis?.activeProgramName ? `Basis: ${livePlanningBasis.activeProgramName}` : "",
+    livePlanningBasis?.activeStyleName ? `Style: ${livePlanningBasis.activeStyleName}` : "",
     currentBlockLabel,
   ]);
+  const liveFidelityLabel = livePlanBasisExplanation?.effectiveFidelityMode === "strict"
+    ? "run mostly as written"
+    : livePlanBasisExplanation?.effectiveFidelityMode === "style_only"
+    ? "style-led"
+    : livePlanBasisExplanation?.effectiveFidelityMode === "adapted"
+    ? "adapted"
+    : "";
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -14992,16 +16107,12 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
 
 Current user state:
 - Goals: ${primaryGoal} | ${secondaryGoals}
-<<<<<<< HEAD
 - Current block: ${currentBlockLabel}
 - Weekly intent: ${currentPlanFocus}
-- Today's prescription: ${todayWorkout?.label || "Session"} Ã‚Â· ${todayDetails}
-=======
-- Phase: ${coachPhase} · Week ${currentWeek}
-- Weekly intent: ${coachWeekFocus || coachWeekSummary || "Current week plan"}
-- Days to race/deadline: ${daysRemaining}
 - Today's prescription: ${todayWorkout?.label || "Session"} · ${todayDetails}
->>>>>>> origin/main
+- Plan basis: ${livePlanBasisExplanation?.basisSummary || "Goal-driven default logic"}
+- Basis detail: ${livePlanBasisExplanation?.personalizationSummary || "No named program or style layer is active."}
+- Fidelity: ${liveFidelityLabel || "goal-driven"}
 - Achilles status: ${injury}
 - Last 5 sessions: ${last5}
 - Consistency last 2 weeks: ${consistency}
@@ -15478,6 +16589,7 @@ Rules for every response:
           <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
             <span style={{ fontSize:"0.48rem", color:decisionTone.color, background:decisionTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachDecisionMode}</span>
             <span style={{ fontSize:"0.48rem", color:"#8fa5c8", background:"#0f172a", padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachReadiness?.state ? sanitizeStatusLabel(coachReadiness.state, "steady") : "steady"}</span>
+            {liveFidelityLabel && <span style={{ fontSize:"0.48rem", color:"#dbe7f6", background:"#15263f", padding:"0.16rem 0.42rem", borderRadius:999 }}>{liveFidelityLabel}</span>}
             <span style={{ fontSize:"0.48rem", color:coachTrustTone.color, background:coachTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachTrust.label}</span>
           </div>
         </div>
@@ -15486,6 +16598,7 @@ Rules for every response:
           <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachWhyLine}</div>
           <div><span style={{ color:"#94a3b8" }}>Take:</span> {coachNextLine}</div>
           <div><span style={{ color:"#94a3b8" }}>Plan:</span> {compressCoachCopy(currentPlanFocus, 150)}</div>
+          {!!livePlanBasisExplanation?.basisSummary && <div><span style={{ color:"#94a3b8" }}>Basis:</span> {compressCoachCopy(livePlanBasisExplanation.basisSummary, 150)}</div>}
         </div>
         <div style={{ marginTop:"0.22rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
           {coachNoticedLine ? `${coachNoticedLine} ` : ""}Watch: {coachWatchLine}
@@ -15495,6 +16608,16 @@ Rules for every response:
             <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT PLAN</div>
             <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{currentBlockLabel}</div>
             <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{compressCoachCopy(currentPlanFocus, 130)}</div>
+            {!!livePlanBasisExplanation?.personalizationSummary && (
+              <div style={{ fontSize:"0.46rem", color:"#94a3b8", marginTop:"0.12rem", lineHeight:1.5 }}>
+                {compressCoachCopy(livePlanBasisExplanation.personalizationSummary, 140)}
+              </div>
+            )}
+            {!!livePlanningBasis?.adherence?.summary && (
+              <div style={{ fontSize:"0.46rem", color:livePlanningBasis?.adherence?.state === "off_program" ? C.amber : "#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
+                {compressCoachCopy(livePlanningBasis.adherence.summary, 140)}
+              </div>
+            )}
           </div>
           <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
             <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>LAST ACCEPTED</div>

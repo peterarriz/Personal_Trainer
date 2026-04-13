@@ -148,7 +148,7 @@ module.exports = async (req, res) => {
       return sendJson(res, 401, {
         code: "auth_required",
         message: "You must be signed in before using coach AI.",
-        fix: "Sign back into Personal Trainer, then retry.",
+        fix: "Sign back into FORMA, then retry.",
       });
     }
 

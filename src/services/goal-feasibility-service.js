@@ -143,6 +143,66 @@ const buildGateExplanationText = ({
   return sanitizeText([primaryReason, supportingLine, revisionLine, dataLine].filter(Boolean).join(" "), 680);
 };
 
+const ensureSentence = (value = "", maxLength = 320) => {
+  const text = sanitizeText(value, maxLength);
+  if (!text) return "";
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+};
+
+const buildDeterministicFirstBlockAlternatives = ({
+  suggestedRevision = null,
+  realismStatus = GOAL_REALISM_STATUSES.realistic,
+  clarificationRequired = false,
+} = {}) => {
+  const firstBlockTarget = ensureSentence(suggestedRevision?.first_block_target || "", 280);
+  const summary = ensureSentence(suggestedRevision?.summary || "", 280);
+  const suggestedTargetHorizonWeeks = Number(suggestedRevision?.suggested_target_horizon_weeks);
+  if (
+    realismStatus !== GOAL_REALISM_STATUSES.unrealistic
+    || clarificationRequired
+    || (!firstBlockTarget && !summary)
+  ) {
+    return [];
+  }
+
+  const conservativeSummary = sanitizeText([
+    firstBlockTarget || summary,
+    "Reassess the bigger target after that block.",
+  ].filter(Boolean).join(" "), 320);
+  const standardSummary = sanitizeText([
+    summary || firstBlockTarget,
+    Number.isFinite(suggestedTargetHorizonWeeks)
+      ? `A better fit for the full target looks closer to ${Math.max(1, Math.round(suggestedTargetHorizonWeeks))} weeks.`
+      : "",
+  ].filter(Boolean).join(" "), 320);
+
+  return [
+    {
+      key: "conservative",
+      label: "Conservative",
+      summary: conservativeSummary,
+      suggested_target_horizon_weeks: null,
+    },
+    {
+      key: "standard",
+      label: "Standard",
+      summary: standardSummary,
+      ...(Number.isFinite(suggestedTargetHorizonWeeks)
+        ? { suggested_target_horizon_weeks: Math.max(1, Math.round(suggestedTargetHorizonWeeks)) }
+        : {}),
+    },
+  ]
+    .filter((item) => item.summary)
+    .map((item) => ({
+      key: sanitizeText(item.key, 40).toLowerCase() || "option",
+      label: sanitizeText(item.label, 40) || "Option",
+      summary: sanitizeText(item.summary, 320),
+      ...(Number.isFinite(Number(item.suggested_target_horizon_weeks))
+        ? { suggested_target_horizon_weeks: Math.max(1, Math.round(Number(item.suggested_target_horizon_weeks))) }
+        : {}),
+    }));
+};
+
 const isImpossibleReasonCode = (code = "") => (
   ["target_beyond_credible_range"].includes(sanitizeText(code, 80).toLowerCase())
 );
@@ -972,6 +1032,17 @@ const assessSingleGoalFeasibility = ({
         compressedHorizon,
         severelyCompressedHorizon,
       });
+  const firstBlockAlternatives = buildDeterministicFirstBlockAlternatives({
+    suggestedRevision,
+    realismStatus,
+    clarificationRequired: Boolean(targetValidation?.clarificationRequired),
+  });
+  const revisionWithAlternatives = firstBlockAlternatives.length
+    ? {
+        ...suggestedRevision,
+        first_block_alternatives: firstBlockAlternatives,
+      }
+    : suggestedRevision;
   const gateStatus = blockingItems.length || warningItems.length || targetValidation.clarificationRequired
     ? blockingItems.some((item) => isImpossibleReasonCode(item.code))
       ? GOAL_FEASIBILITY_GATE_STATUSES.impossible
@@ -992,7 +1063,7 @@ const assessSingleGoalFeasibility = ({
   }
   const explanationText = buildGateExplanationText({
     reasons: gateReasons,
-    suggestedRevision,
+    suggestedRevision: revisionWithAlternatives,
     status: gateStatus,
   });
 
@@ -1022,7 +1093,7 @@ const assessSingleGoalFeasibility = ({
     status: gateStatus,
     primaryReasonCode: sanitizeText(gateReasons[0]?.code || "", 80).toLowerCase(),
     reasons: gateReasons,
-    suggested_revision: suggestedRevision,
+    suggested_revision: revisionWithAlternatives,
     explanation_text: explanationText,
     priorityScore,
   };
@@ -1506,6 +1577,14 @@ export const assessGoalFeasibility = ({
       goalId: sanitizeText(item?.goalId || "", 120),
     })).filter((item) => item.summary),
     suggested_revision: gate?.suggested_revision || null,
+    first_block_alternatives: toArray(gate?.suggested_revision?.first_block_alternatives).map((item) => ({
+      key: sanitizeText(item?.key || "", 40).toLowerCase(),
+      label: sanitizeText(item?.label || "", 40),
+      summary: sanitizeText(item?.summary || "", 320),
+      suggested_target_horizon_weeks: Number.isFinite(Number(item?.suggested_target_horizon_weeks))
+        ? Math.max(1, Math.round(Number(item.suggested_target_horizon_weeks)))
+        : null,
+    })).filter((item) => item.summary),
     explanation_text: sanitizeText(gate?.explanation_text || "", 680),
     realismStatus,
     confirmationAction,

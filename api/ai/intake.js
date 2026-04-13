@@ -37,11 +37,21 @@ module.exports = async (req, res) => {
         });
       }
     }
+    if (requestType === "clarifying_question_generation") {
+      const coachVoiceRequest = body?.coachVoiceRequest || {};
+      if (!String(coachVoiceRequest?.field_id || "").trim() || !String(coachVoiceRequest?.question_template || "").trim()) {
+        return sendJson(res, 400, {
+          code: "missing_coach_voice_request",
+          message: "A deterministic intake field and question template are required for coach-voice phrasing.",
+        });
+      }
+    }
 
     const gatewayResult = await runIntakeProviderGateway({
       statePacket,
       requestType,
       extractionRequest: body?.extractionRequest || null,
+      coachVoiceRequest: body?.coachVoiceRequest || null,
       requestedProvider: body?.provider || "",
       requestedModel: body?.model || "",
       fetchImpl: fetch,
@@ -58,6 +68,11 @@ module.exports = async (req, res) => {
     return sendJson(res, 200, requestType === "missing_field_extraction"
       ? {
           extraction: gatewayResult.extraction,
+          meta: gatewayResult.meta,
+        }
+      : requestType === "clarifying_question_generation"
+      ? {
+          phrasing: gatewayResult.phrasing,
           meta: gatewayResult.meta,
         }
       : {

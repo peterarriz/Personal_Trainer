@@ -4,12 +4,14 @@ const assert = require("node:assert/strict");
 const {
   applyIntakeGoalAdjustment,
   applyIntakeSecondaryGoalResponse,
+  buildIntakeConfirmationNeedsList,
   applyIntakeGoalStackConfirmation,
   buildIntakeClarificationCoachMessages,
   buildIntakeGoalStackReviewModel,
   buildIntakeGoalReviewModel,
   buildIntakeSecondaryGoalPrompt,
   buildRawGoalIntentFromAnswers,
+  canAskSecondaryGoal,
   deriveIntakeConfirmationState,
   GOAL_STACK_ROLES,
   SECONDARY_GOAL_RESPONSE_KEYS,
@@ -202,9 +204,63 @@ test("review model stays not-ready when realism blocks confirmation even after c
 
   assert.equal(reviewModel.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
   assert.equal(reviewModel.gateStatus, "blocked");
-  assert.equal(reviewModel.gateLabel, "Too aggressive for this timeline");
+  assert.equal(reviewModel.gateLabel, "Needs a safer first step");
   assert.equal(reviewModel.isPlannerReady, false);
   assert.match(reviewModel.recommendedRevisionSummary, /135|225/i);
+});
+
+test("unrealistic marathon review surfaces two first-block alternatives without adding new required questions", () => {
+  const rawGoalText = "run a 2:00 marathon";
+  const typedIntakePacket = buildIntakePacket(rawGoalText);
+  const goalResolution = resolveGoalTranslation({
+    rawUserGoalIntent: rawGoalText,
+    typedIntakePacket,
+    explicitUserConfirmation: {
+      confirmed: false,
+      acceptedProposal: true,
+      targetHorizonWeeks: 24,
+      source: "intake_preview",
+    },
+    now: "2026-04-11",
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: goalResolution.resolvedGoals,
+    userBaseline: { experienceLevel: "advanced", currentBaseline: "running consistently" },
+    scheduleReality: { trainingDaysPerWeek: 5, sessionLength: "60 min", trainingLocation: "Both" },
+    currentExperienceContext: { injuryConstraintContext: { constraints: [] } },
+    intakeCompleteness: {
+      facts: {
+        currentRunFrequency: 5,
+        longestRecentRun: { text: "18 miles", miles: 18 },
+        recentPaceBaseline: { text: "7:10 pace", paceText: "7:10" },
+        targetTimelineText: "October",
+      },
+      missingRequired: [],
+      missingOptional: [],
+    },
+    now: "2026-04-11",
+  });
+  const reviewModel = buildIntakeGoalReviewModel({
+    goalResolution,
+    orderedResolvedGoals: goalResolution.resolvedGoals,
+    goalFeasibility,
+    answers: {
+      intake_completeness: {
+        fields: {
+          current_run_frequency: { raw: "5", value: 5 },
+          longest_recent_run: { raw: "18 miles", miles: 18 },
+          recent_pace_baseline: { raw: "7:10 pace", paceText: "7:10" },
+          target_timeline: { raw: "October", value: "October" },
+        },
+      },
+    },
+  });
+
+  assert.equal(reviewModel.gateFirstBlockAlternatives.length, 2);
+  assert.equal(reviewModel.gateFirstBlockAlternatives[0].label, "Conservative");
+  assert.equal(reviewModel.gateFirstBlockAlternatives[1].label, "Standard");
+  assert.equal(reviewModel.nextQuestions.length, 0);
+  assert.equal(reviewModel.completeness.missingRequired.length, 0);
 });
 
 test("review model keeps plausible but incomplete goals out of ready-to-plan state", () => {
@@ -290,8 +346,32 @@ test("review model reflects a warning state without promoting it to ready-to-pla
 
   assert.equal(reviewModel.confirmationAction, GOAL_FEASIBILITY_ACTIONS.warn);
   assert.equal(reviewModel.gateStatus, "warn");
-  assert.equal(reviewModel.gateLabel, "Aggressive but possible");
+  assert.equal(reviewModel.gateLabel, "Ambitious but workable");
   assert.equal(reviewModel.isPlannerReady, true);
+});
+
+test("confirmation copy stays coachy and avoids internal gate language", () => {
+  const confirmationState = deriveIntakeConfirmationState({
+    reviewModel: {
+      activeResolvedGoals: [{ id: "goal_1", summary: "Run a faster half marathon" }],
+      completeness: {
+        missingRequired: [],
+      },
+      arbitrationBlockingIssues: [],
+      confirmationAction: "block",
+      gateSuggestedRevision: {
+        summary: "Let's start with a steadier first block and reassess after four weeks.",
+      },
+      gateReasons: [
+        { summary: "Your current running volume is still a little low for that target date." },
+      ],
+      gateExplanationText: "Right now the timeline is asking for more running volume than you're showing me.",
+    },
+  });
+
+  assert.equal(confirmationState.status, "block");
+  assert.equal(/gate|validation|schema|field/i.test(confirmationState.reason), false);
+  assert.match(confirmationState.reason, /steadier first block|running volume|timeline/i);
 });
 
 test("ready-to-plan state produces a confirmable intake confirmation state", () => {
@@ -493,6 +573,96 @@ test("incomplete but plausible state stays non-confirmable and surfaces the next
   assert.equal(confirmationState.requiresAcknowledgement, false);
   assert.equal(confirmationState.next_required_field, "current_bodyweight");
   assert.match(confirmationState.reason, /current bodyweight/i);
+});
+
+test("confirmation needs list prefers live anchor labels over internal requirement keys", () => {
+  const needsList = buildIntakeConfirmationNeedsList({
+    reviewModel: {
+      completeness: {
+        missingRequired: [
+          { label: "current_run_frequency" },
+          { label: "running_endurance_anchor_kind" },
+        ],
+      },
+      nextQuestions: [
+        { prompt: "How many times are you running in a normal week?" },
+      ],
+    },
+    machineState: {
+      draft: {
+        missingAnchorsEngine: {
+          currentAnchor: {
+            field_id: "current_run_frequency",
+            label: "Runs per week",
+            question: "How many times are you running in a normal week?",
+          },
+          missingAnchors: [
+            {
+              field_id: "current_run_frequency",
+              label: "Runs per week",
+              question: "How many times are you running in a normal week?",
+            },
+            {
+              field_id: "running_endurance_anchor_kind",
+              label: "Choose your running benchmark",
+              question: "Which is easier right now: longest recent run or a recent race/pace?",
+            },
+            {
+              field_id: "longest_recent_run",
+              label: "Longest recent run",
+              question: "What's your longest recent run?",
+            },
+          ],
+        },
+      },
+    },
+    confirmationState: {
+      status: "incomplete",
+    },
+  });
+
+  assert.deepEqual(needsList, [
+    "Runs per week",
+    "Choose your running benchmark",
+    "Longest recent run",
+  ]);
+  assert.equal(needsList.some((item) => /current_run_frequency|running_endurance_anchor_kind/i.test(item)), false);
+});
+
+test("blocked confirmation needs list stays short and plain english", () => {
+  const needsList = buildIntakeConfirmationNeedsList({
+    reviewModel: {
+      gateSuggestedRevision: {
+        requested_data: [
+          "Current weekly run volume",
+          "Recent longest run",
+          "Race date or target month",
+          "Recent pace result",
+        ],
+      },
+      arbitrationBlockingIssues: [
+        "Current weekly run volume",
+      ],
+    },
+    machineState: {
+      draft: {
+        missingAnchorsEngine: {
+          currentAnchor: null,
+          missingAnchors: [],
+        },
+      },
+    },
+    confirmationState: {
+      status: "block",
+    },
+  });
+
+  assert.deepEqual(needsList, [
+    "Current weekly run volume",
+    "Recent longest run",
+    "Race date or target month",
+  ]);
+  assert.ok(needsList.length >= 1 && needsList.length <= 3);
 });
 
 test("canonical review state carries the status and CTA fields the live review screen should render from", () => {
@@ -703,6 +873,98 @@ test("secondary-goal prompt stays lightweight and freeform even when a maintaine
   assert.equal(prompt.existingGoals.length, 0);
 });
 
+test("secondary-goal prompt stays hidden while required anchors are still missing", () => {
+  const resolution = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 1:45 half marathon",
+    typedIntakePacket: buildIntakePacket("run a 1:45 half marathon"),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+  const reviewModel = buildIntakeGoalReviewModel({
+    goalResolution: resolution,
+    orderedResolvedGoals: resolution.resolvedGoals,
+    goalFeasibility: { confirmationAction: "proceed", realismStatus: "realistic" },
+    answers: {},
+  });
+
+  assert.equal(reviewModel.completeness.missingRequired.length > 0, true);
+  assert.equal(canAskSecondaryGoal({
+    stage: "REVIEW_CONFIRM",
+    reviewModel,
+    answers: {},
+  }), false);
+  assert.equal(buildIntakeSecondaryGoalPrompt({
+    reviewModel,
+    answers: {},
+  }), null);
+});
+
+test("secondary-goal prompt appears once after anchors are satisfied and stays gone after the user answers it", () => {
+  const resolution = resolveGoalTranslation({
+    rawUserGoalIntent: "bench 225",
+    typedIntakePacket: buildIntakePacket("bench 225"),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: resolution.resolvedGoals,
+    userBaseline: { experienceLevel: "intermediate", currentBaseline: "lifting consistently" },
+    scheduleReality: { trainingDaysPerWeek: 4, sessionLength: "45 min", trainingLocation: "Gym" },
+    currentExperienceContext: { injuryConstraintContext: { constraints: [] } },
+    intakeCompleteness: {
+      facts: {
+        currentStrengthBaseline: { text: "185 x 3", weight: 185, reps: 3 },
+      },
+      missingRequired: [],
+      missingOptional: [],
+      isComplete: true,
+    },
+    now: "2026-04-11",
+  });
+  const reviewModel = buildIntakeGoalReviewModel({
+    goalResolution: resolution,
+    orderedResolvedGoals: resolution.resolvedGoals,
+    goalFeasibility,
+    answers: {
+      intake_completeness: {
+        fields: {
+          current_strength_baseline: { raw: "185 x 3", value: 185, weight: 185, reps: 3 },
+        },
+      },
+    },
+  });
+  const prompt = buildIntakeSecondaryGoalPrompt({
+    reviewModel,
+    answers: {},
+  });
+  const finalized = applyIntakeSecondaryGoalResponse({
+    answers: {
+      goal_intent: "bench 225",
+    },
+    response: { key: SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly, label: "No, just this goal" },
+    resolvedGoals: resolution.resolvedGoals,
+    goalStackConfirmation: null,
+    goalFeasibility,
+  });
+
+  assert.ok(prompt);
+  assert.equal(canAskSecondaryGoal({
+    stage: "REVIEW_CONFIRM",
+    reviewModel,
+    answers: {},
+  }), true);
+  assert.equal(finalized.answers.secondary_goal_prompt_answered, true);
+  assert.equal(canAskSecondaryGoal({
+    stage: "REVIEW_CONFIRM",
+    reviewModel,
+    answers: finalized.answers,
+  }), false);
+  assert.equal(buildIntakeSecondaryGoalPrompt({
+    reviewModel,
+    answers: finalized.answers,
+  }), null);
+});
+
 test("next clarifying question skips ones already asked", () => {
   const question = getNextIntakeClarifyingQuestion({
     reviewModel: {
@@ -736,10 +998,13 @@ test("required clarifying flow prefers a different missing requirement before re
 test("clarification coach messages lead with the targeted question before the broader status copy", () => {
   const messages = buildIntakeClarificationCoachMessages({
     statusText: "I still need one or two critical anchors before I can build credibly.",
-    nextQuestion: { prompt: "What's your current running baseline?" },
+    nextQuestion: {
+      prompt: "What's your current running baseline?",
+      fieldKeys: ["current_run_frequency", "longest_recent_run", "recent_pace_baseline"],
+    },
   });
 
-  assert.equal(messages[0], "One quick thing before I lock this in: What's your current running baseline?");
+  assert.equal(messages[0], "Quick baseline check: What's your current running baseline?");
   assert.equal(messages[1], "I still need one or two critical anchors before I can build credibly.");
 });
 
@@ -1077,6 +1342,49 @@ test("changing the primary goal after collecting extra goals clears downstream a
   assert.match(rawGoalText, /1:45 half marathon/i);
 });
 
+test("goal replacement preserves only durable context fields while clearing stale intake follow-up answers", () => {
+  const adjusted = applyIntakeGoalAdjustment({
+    answers: {
+      goal_intent: "run a 1:45 half marathon",
+      injury_text: "Right Achilles gets cranky with speed work.",
+      training_days: "4",
+      session_length: "45",
+      home_equipment: ["Bands", "Pull-up bar"],
+      home_equipment_other: "Adjustable bench",
+      other_goals: "keep upper body",
+      additional_goals_list: ["keep upper body"],
+      secondary_goal_prompt_answered: true,
+      timeline_feedback: "October race",
+      goal_clarification_notes: [{ question: "What's your current running baseline?", answer: "3 runs/week" }],
+      intake_completeness: {
+        version: "2026-04-v1",
+        fields: {
+          target_timeline: { raw: "October 12", value: "October 12" },
+          current_run_frequency: { raw: "3 runs/week", value: 3 },
+        },
+      },
+    },
+    adjustmentText: "Actually, I want to bench 225",
+    currentResolvedGoal: { planningCategory: "running", summary: "Run a 1:45 half marathon" },
+    currentPrimaryGoalKey: "endurance",
+    now: "2026-04-11",
+  });
+
+  assert.equal(adjusted.kind, "goal_replacement");
+  assert.equal(adjusted.answers.goal_intent, "bench 225");
+  assert.equal(adjusted.answers.injury_text, "Right Achilles gets cranky with speed work.");
+  assert.equal(adjusted.answers.training_days, "4");
+  assert.equal(adjusted.answers.session_length, "45");
+  assert.deepEqual(adjusted.answers.home_equipment, ["Bands", "Pull-up bar"]);
+  assert.equal(adjusted.answers.home_equipment_other, "Adjustable bench");
+  assert.deepEqual(adjusted.answers.intake_completeness.fields, {});
+  assert.deepEqual(adjusted.answers.goal_clarification_notes, []);
+  assert.equal(adjusted.answers.timeline_feedback, "");
+  assert.deepEqual(adjusted.answers.additional_goals_list, []);
+  assert.equal(adjusted.answers.other_goals, "");
+  assert.equal(adjusted.answers.secondary_goal_prompt_answered, false);
+});
+
 test("primary body-comp plus maintained strength stays explicit in the confirmed goal stack", () => {
   const resolution = resolveGoalTranslation({
     rawUserGoalIntent: "lose fat but keep strength",
@@ -1111,8 +1419,8 @@ test("primary body-comp plus maintained strength stays explicit in the confirmed
   assert.equal(confirmedStack[0].intakeConfirmedRole, GOAL_STACK_ROLES.primary);
   assert.equal(confirmedStack[1].planningCategory, "strength");
   assert.equal(confirmedStack[1].intakeConfirmedRole, GOAL_STACK_ROLES.maintained);
-  assert.equal(review.activeGoals[0].roleLabel, "Lead goal");
-  assert.equal(review.activeGoals[1].roleLabel, "Also keep");
+  assert.equal(review.activeGoals[0].roleLabel, "Lead");
+  assert.equal(review.activeGoals[1].roleLabel, "Maintained");
   assert.ok(review.primaryTradeoff.length > 0);
 });
 
@@ -1179,6 +1487,9 @@ test("final review keeps running lead, maintained bench goal, and background abs
   assert.equal(reviewModel.reviewContract.lead_goal?.summary, arbitration.leadGoal?.summary);
   assert.equal(reviewModel.reviewContract.maintained_goals[0]?.summary, arbitration.maintainedGoals[0]?.summary);
   assert.equal(reviewModel.reviewContract.support_goals[0]?.summary, arbitration.supportGoals[0]?.summary);
+  assert.equal(reviewModel.reviewContract.lead_goal?.roleLabel, "Lead");
+  assert.equal(reviewModel.reviewContract.maintained_goals[0]?.roleLabel, "Maintained");
+  assert.equal(reviewModel.reviewContract.support_goals[0]?.roleLabel, "Support (background)");
   assert.deepEqual(
     reviewModel.reviewContract.lane_sections.map((section) => section.title),
     ["Leading now", "We will maintain", "We will support in the background", "We are deferring"]
@@ -1234,6 +1545,39 @@ test("duplicate goal fingerprints do not render in both lead and later sections"
   assert.deepEqual(review.deferredGoalIds, []);
   assert.equal(review.activeGoals[0].role, GOAL_STACK_ROLES.primary);
   assert.equal(review.backgroundGoals[0].role, GOAL_STACK_ROLES.background);
+});
+
+test("review model labels deferred goals with the intake review vocabulary", () => {
+  const review = buildIntakeGoalStackReviewModel({
+    resolvedGoals: [
+      {
+        id: "goal_race_lead",
+        summary: "Run a half marathon",
+        planningCategory: "running",
+        goalFamily: "performance",
+        planningPriority: 1,
+        goalArbitrationRole: GOAL_STACK_ROLES.primary,
+        measurabilityTier: GOAL_MEASURABILITY_TIERS.fullyMeasurable,
+        primaryMetric: { key: "half_marathon_completion", targetValue: "complete", label: "Half marathon" },
+      },
+      {
+        id: "goal_strength_deferred",
+        summary: "Bench press 225 lb",
+        planningCategory: "strength",
+        goalFamily: "strength",
+        planningPriority: 2,
+        goalArbitrationRole: GOAL_STACK_ROLES.deferred,
+        measurabilityTier: GOAL_MEASURABILITY_TIERS.fullyMeasurable,
+        primaryMetric: { key: "bench_press_1rm", targetValue: "225 lb", label: "Bench 1RM" },
+      },
+    ],
+    goalResolution: null,
+    goalFeasibility: null,
+    goalStackConfirmation: null,
+  });
+
+  assert.equal(review.activeGoals[0].roleLabel, "Lead");
+  assert.equal(review.deferredGoals[0].roleLabel, "Deferred");
 });
 
 test("hybrid vague goal resolves into explicit leading and maintained structure", () => {
