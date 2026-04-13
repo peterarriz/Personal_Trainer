@@ -25,7 +25,7 @@ module.exports = async (req, res) => {
     if (!authToken) {
       return sendJson(res, 401, {
         message: "You must be signed in before syncing Garmin.",
-        fix: "Sign back into Personal Trainer, then tap Sync now again.",
+        fix: "Sign back into FORMA, then tap Sync now again.",
       });
     }
 

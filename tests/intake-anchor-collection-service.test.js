@@ -109,8 +109,14 @@ test("anchor collection view model shows a short stack of field cards after inte
     viewModel.visibleCards.map((card) => card.field_id),
     ["target_timeline", "current_run_frequency", "running_endurance_anchor_kind"]
   );
-  assert.equal(viewModel.visibleCards[0].status_label, "ACTIVE FIELD");
-  assert.equal(viewModel.visibleCards[1].status_label, "UP NEXT");
+  assert.equal(viewModel.heading.includes("anchor"), false);
+  assert.equal(viewModel.progressLabel.includes("anchor"), false);
+  assert.equal(viewModel.visibleCards[0].status_label, "NOW");
+  assert.equal(viewModel.visibleCards[1].status_label, "NEXT");
+  assert.ok(viewModel.visibleCards.every((card) => String(card.why_it_matters || "").trim().length > 0));
+  assert.ok(viewModel.visibleCards.every((card) => String(card.coach_voice_line || "").trim().length > 0));
+  assert.match(viewModel.visibleCards[1].why_it_matters, /run/i);
+  assert.match(viewModel.visibleCards[1].coach_voice_line, /coach note/i);
 });
 
 test("anchor collection view model advances from runs per week to anchor choice and then selected card", () => {
@@ -169,6 +175,7 @@ test("anchor collection view model advances from runs per week to anchor choice 
     maxVisibleCards: 3,
   });
   assert.equal(viewModel.activeFieldId, "running_endurance_anchor_kind");
+  assert.equal(viewModel.visibleCards[0].label, "Choose your running benchmark");
   assert.deepEqual(
     viewModel.visibleCards.map((card) => card.field_id),
     ["running_endurance_anchor_kind"]

@@ -27,6 +27,7 @@ import {
   TRAINING_INTENSITY_VALUES,
   TRAINING_SESSION_DURATION_VALUES,
 } from "./services/training-context-service.js";
+import { deriveLiveProgramPlanningBasis, PROGRAM_RUNTIME_FIDELITY } from "./services/program-live-planning-service.js";
 import { dedupeStrings } from "./utils/collection-utils.js";
 
 export { daysUntil, deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
@@ -979,6 +980,7 @@ export const deriveWeeklyIntent = ({
 } = {}) => {
   const { active } = getGoalBuckets(goals);
   const primaryGoal = active[0] || null;
+  const planningBasis = programContext?.planningBasis || null;
   const normalizedProgramBlock = programBlock
     || buildFallbackProgramBlockFromCompatibilityIntent({
       weekNumber,
@@ -1100,6 +1102,12 @@ export const deriveWeeklyIntent = ({
   const rationale = adjusted
     ? `This week is adjusted inside ${String(normalizedProgramBlock?.label || "the current block").toLowerCase()} around ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture. ${maintainedFocus ? `${maintainedFocus} stays maintained.` : ""} ${minimizedFocus ? `${minimizedFocus} stays minimized.` : ""}`.trim()
     : `This week sits inside ${String(normalizedProgramBlock?.label || "the current block").toLowerCase()} and advances ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture. ${maintainedFocus ? `${maintainedFocus} stays maintained.` : ""} ${minimizedFocus ? `${minimizedFocus} stays minimized.` : ""}`.trim();
+  const basisLead = planningBasis?.activeProgramName
+    ? `${planningBasis.activeProgramName} is leading the live week.`
+    : planningBasis?.activeStyleName
+    ? `${planningBasis.activeStyleName} is shaping the feel of the week.`
+    : "";
+  const rationaleWithBasis = [basisLead, rationale].filter(Boolean).join(" ").trim();
 
   return {
     id: `weekly_intent_${weekNumber}`,
@@ -1128,11 +1136,14 @@ export const deriveWeeklyIntent = ({
       blockIntent?.prioritized || "",
       primaryGoal?.name || "",
       tradeoffFocus,
+      planningBasis?.activeProgramName || "",
+      planningBasis?.activeStyleName || "",
+      planningBasis?.compromiseLine || "",
       volumePct !== 100 ? `volume ${volumePct}%` : "",
       weeklyCheckin?.blocker ? String(weeklyCheckin.blocker).replace(/_/g, " ") : "",
     ]),
     blockTradeoffs: clonePlainValue(normalizedProgramBlock?.tradeoffs || []),
-    rationale,
+    rationale: rationaleWithBasis,
   };
 };
 
@@ -1162,6 +1173,7 @@ export const buildPlanWeek = ({
   constraints = [],
 } = {}) => {
   const hasCanonicalSessionPattern = Boolean(sessionsByDay && Object.keys(sessionsByDay || {}).length);
+  const planningBasis = clonePlainValue(programContext?.planningBasis || null);
   const normalizedSessions = clonePlainValue(
     projectSessionsByDayFromCanonicalPattern({
       template,
@@ -1242,6 +1254,7 @@ export const buildPlanWeek = ({
     performanceBias: weeklyIntent.performanceBias,
     nutritionEmphasis: weeklyIntent.nutritionEmphasis,
     successDefinition: weeklyIntent.successDefinition,
+    planningBasis,
     drivers: clonePlainValue(weeklyIntent.drivers || []),
     rationale: weeklyIntent.rationale,
     sessionsByDay: normalizedSessions,
@@ -1253,6 +1266,7 @@ export const buildPlanWeek = ({
       specificity,
       planningModel: normalizedProgramBlock ? "program_block" : "block_intent_legacy",
       hasCanonicalSessions: hasCanonicalSessionPattern,
+      planningBasisMode: planningBasis?.basisMode || "",
       usesTemplateFallback: sessionSource === "template_fallback",
     },
   };
@@ -1315,6 +1329,7 @@ export const buildCanonicalPlanDay = (args = {}) => {
   const baseTraining = clonePlainValue(basePlannedDay || {});
   const resolvedTraining = clonePlainValue(resolvedDay || basePlannedDay || {});
   const planWeek = clonePlainValue(context?.planWeek || null);
+  const planningBasis = clonePlainValue(context?.planningBasis || planWeek?.planningBasis || null);
   const programBlock = clonePlainValue(context?.programBlock || planWeek?.programBlock || null);
   const compatibilityBlockIntent = clonePlainValue(
     context?.blockIntent
@@ -1493,9 +1508,13 @@ export const buildCanonicalPlanDay = (args = {}) => {
       },
     }) : null,
   ].filter(Boolean);
+  const basisTodayLine = sanitizeText(planningBasis?.todayLine || planningBasis?.planBasisExplanation?.todayLine || "", 200);
+  const basisCompromiseLine = sanitizeText(planningBasis?.compromiseLine || planningBasis?.planBasisExplanation?.compromiseSummary || "", 200);
 
   const keyDrivers = dedupeStrings([
     todayPlan?.reason,
+    basisTodayLine ? `basis ${basisTodayLine}` : "",
+    basisCompromiseLine ? `compromise ${basisCompromiseLine}` : "",
     programBlock?.dominantEmphasis?.label ? `block ${programBlock.dominantEmphasis.label}` : "",
     weeklyIntent?.focus ? `week focus ${weeklyIntent.focus}` : "",
     weeklyIntent?.aggressionLevel ? `week posture ${String(weeklyIntent.aggressionLevel).replace(/_/g, " ")}` : "",
@@ -1528,6 +1547,7 @@ export const buildCanonicalPlanDay = (args = {}) => {
       architecture: context?.architecture || "",
       programBlock,
       blockIntent: compatibilityBlockIntent,
+      planningBasis,
       planWeekId: planWeek?.id || "",
       status: planWeek?.status || weeklyIntent?.status || "planned",
       adjusted: Boolean(planWeek?.adjusted || weeklyIntent?.adjusted),
@@ -1667,7 +1687,19 @@ export const buildCanonicalPlanDay = (args = {}) => {
   };
 };
 
-export const composeGoalNativePlan = ({ goals, personalization, momentum, learningLayer, baseWeek, currentWeek = 1, weekTemplates = [] }) => {
+export const composeGoalNativePlan = ({
+  goals,
+  personalization,
+  momentum,
+  learningLayer,
+  baseWeek,
+  currentWeek = 1,
+  weekTemplates = [],
+  athleteProfile = null,
+  logs = {},
+  plannedDayRecords = {},
+  planWeekRecords = {},
+}) => {
   const { active } = getGoalBuckets(goals);
   const primary = active[0] || null;
   const secondary = active.slice(1, 3);
@@ -1723,7 +1755,7 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     hybrid_performance: { run: 0, strength: 3, conditioning: 2, recovery: 1 },
     maintenance_rebuild: { run: 0, strength: 2, conditioning: 1, recovery: 2 },
   };
-  const split = !hasRunningGoal && noRunGoalSplitOverrides[architecture]
+  const defaultSplit = !hasRunningGoal && noRunGoalSplitOverrides[architecture]
     ? noRunGoalSplitOverrides[architecture]
     : splits[architecture];
 
@@ -1740,6 +1772,32 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     !hasRunningGoal ? "No running goal is active, so conditioning stays non-run by default." : null,
     upperBodyMaintenance ? "Secondary strength work is upper-body biased, so lower-body fatigue can stay subordinate to event prep." : null,
   ].filter(Boolean);
+  const liveProgramPlanning = deriveLiveProgramPlanningBasis({
+    personalization,
+    goals,
+    athleteProfile,
+    defaultArchitecture: architecture,
+    baseWeek,
+    logs,
+    plannedDayRecords,
+    planWeekRecords,
+  });
+  const planningBasis = clonePlainValue(liveProgramPlanning?.planningBasis || null);
+  const effectiveArchitecture = liveProgramPlanning?.architectureOverride || architecture;
+  const effectiveSplit = !hasRunningGoal && noRunGoalSplitOverrides[effectiveArchitecture]
+    ? noRunGoalSplitOverrides[effectiveArchitecture]
+    : (splits[effectiveArchitecture] || defaultSplit);
+  const fidelitySummary = liveProgramPlanning?.runtimeFidelityMode === PROGRAM_RUNTIME_FIDELITY.strict
+    ? "run mostly as written"
+    : liveProgramPlanning?.runtimeFidelityMode === PROGRAM_RUNTIME_FIDELITY.styleOnly
+    ? "used as a style influence"
+    : "adapted to your current reality";
+  if (planningBasis?.activeProgramName) {
+    why.push(`${planningBasis.activeProgramName} is active and ${fidelitySummary}.`);
+  } else if (planningBasis?.activeStyleName) {
+    why.push(`${planningBasis.activeStyleName} is shaping the feel of the week without replacing the main plan logic.`);
+  }
+  if (planningBasis?.compromiseLine) constraints.push(planningBasis.compromiseLine);
 
   const restDay = (label = "Active Recovery") => ({ type: "rest", label, nutri: "rest", isRecoverySlot: true });
 
@@ -1835,9 +1893,17 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     return out;
   };
 
-  const annotatedTemplates = annotateTemplate(dayTemplates[architecture]);
+  let annotatedTemplates = liveProgramPlanning?.usesProgramBackbone && liveProgramPlanning?.dayTemplates
+    ? clonePlainValue(liveProgramPlanning.dayTemplates)
+    : annotateTemplate(dayTemplates[effectiveArchitecture] || dayTemplates[architecture] || {});
+  annotatedTemplates = liveProgramPlanning?.applyToSessions
+    ? liveProgramPlanning.applyToSessions(annotatedTemplates)
+    : annotatedTemplates;
+  annotatedTemplates = Object.fromEntries(
+    Object.entries(annotatedTemplates || {}).map(([day, session]) => [day, session ? normalizeSessionEntryLabel(session) : session])
+  );
   let strengthSessionsPerWeek = Object.values(annotatedTemplates).filter(s => ["run+strength", "strength+prehab"].includes(s?.type)).length;
-  if (strengthGoal && strengthSessionsPerWeek < 1) {
+  if (strengthGoal && strengthSessionsPerWeek < 1 && !liveProgramPlanning?.usesProgramBackbone) {
     annotatedTemplates[3] = { type: "strength+prehab", label: "Minimum Strength Touchpoint", strSess: "A", nutri: "strength", strengthDose: "20-30 min maintenance strength" };
     strengthSessionsPerWeek = 1;
   }
@@ -1885,16 +1951,17 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     bodyCompActive,
     inconsistencyRisk,
     trainingContext,
-    drivers: [primary?.name, ...secondary.map(g => g.name)].filter(Boolean),
+    drivers: dedupeStrings([primary?.name, ...secondary.map(g => g.name), planningBasis?.activeProgramName || "", planningBasis?.activeStyleName || ""].filter(Boolean)),
     unlockMessage: equipmentKnown && !hasGym && strengthGoal ? "When gym access returns, bench-specific progression can move from foundation mode to direct loading." : "",
     goalFeasibility,
+    planningBasis,
   };
   const programBlock = buildProgramBlock({
     weekNumber: currentWeek,
     weekTemplate: baseWeek,
     weekTemplates,
     goals,
-    architecture,
+    architecture: effectiveArchitecture,
     constraints,
     drivers: programContext.drivers,
     unlockMessage: programContext.unlockMessage,
@@ -1908,8 +1975,8 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
   };
 
   return {
-    architecture,
-    split,
+    architecture: effectiveArchitecture,
+    split: effectiveSplit,
     why,
     constraints,
     drivers: [primary?.name, ...secondary.map(g => g.name)].filter(Boolean),
@@ -1918,6 +1985,12 @@ export const composeGoalNativePlan = ({ goals, personalization, momentum, learni
     programContext,
     programBlock,
     blockIntent,
+    planningBasis,
+    activeProgramInstance: liveProgramPlanning?.activeProgramInstance || null,
+    activeStyleSelection: liveProgramPlanning?.activeStyleSelection || null,
+    programDefinition: liveProgramPlanning?.programDefinition || null,
+    styleDefinition: liveProgramPlanning?.styleDefinition || null,
+    runtimeFidelityMode: liveProgramPlanning?.runtimeFidelityMode || "",
     strengthAllocation: {
       sessionsPerWeek: strengthSessionsPerWeek,
       dosing: strengthPriority ? "full" : "maintenance",
@@ -2127,10 +2200,13 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
   const momentum = fatigueSignals.momentum || "stable";
   const injuryLevel = fatigueSignals.injuryLevel || "none";
   const planWeek = planningContext?.planWeek || null;
+  const planningBasis = planningContext?.planningBasis || planWeek?.planningBasis || null;
   const programBlock = planningContext?.programBlock || planWeek?.programBlock || null;
   const weeklyIntent = planningContext?.weeklyIntent || planWeek?.weeklyIntent || null;
   const plannedSession = planningContext?.plannedSession || null;
   const plannedSessionKind = resolvePlannedSessionKind(plannedSession);
+  const planningBasisTodayLine = sanitizeText(planningBasis?.todayLine || planningBasis?.planBasisExplanation?.todayLine || "", 220);
+  const planningBasisCompromise = sanitizeText(planningBasis?.compromiseLine || planningBasis?.planBasisExplanation?.compromiseSummary || "", 220);
 
   // ── 1. Compute recent activity window (last 7 days) ──────────────
   const today = new Date(todayKey + "T12:00:00");
@@ -2187,7 +2263,7 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
       label: injuryLevel === "severe"
         ? "Rest Day"
         : "Active Recovery - Walk + Mobility",
-      reason,
+      reason: [reason, planningBasisTodayLine].filter(Boolean).join(" "),
     };
   }
 
@@ -2198,9 +2274,12 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
       duration: Math.min(duration, 20),
       intensity: "low",
       label: plannedSession?.label || "Active Recovery",
-      reason: weeklyIntent?.focus
-        ? `This week's plan protects ${String(weeklyIntent.focus).toLowerCase()} with a recovery day today.`
-        : "This week's plan calls for recovery today.",
+      reason: [
+        weeklyIntent?.focus
+          ? `This week's plan protects ${String(weeklyIntent.focus).toLowerCase()} with a recovery day today.`
+          : "This week's plan calls for recovery today.",
+        planningBasisTodayLine,
+      ].filter(Boolean).join(" "),
     };
   }
 
@@ -2213,7 +2292,7 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
         duration: Math.min(duration, plannedSessionKind === "strength" ? 30 : 25),
         intensity: "low",
         label: plannedLabel,
-        reason: `${daysSinceLastWorkout} days since last session. Starting with the easiest version of today's planned ${plannedLabel.toLowerCase()} so the current block stays aligned.`,
+        reason: [`${daysSinceLastWorkout} days since last session. Starting with the easiest version of today's planned ${plannedLabel.toLowerCase()} so the current block stays aligned.`, planningBasisCompromise || planningBasisTodayLine].filter(Boolean).join(" "),
       };
     }
     return {
@@ -2289,6 +2368,8 @@ export const generateTodayPlan = (userProfile = {}, recentActivity = {}, fatigue
       : null,
     fatigue >= 4 ? `Fatigue elevated (${fatigue}/10) — intensity adjusted.` : null,
     hasConstraints ? `Active constraints: ${userProfile.constraints.join(", ")}.` : null,
+    planningBasisTodayLine || null,
+    planningBasisCompromise || null,
     weeklyIntent?.focus ? `Week focus: ${weeklyIntent.focus}.` : null,
     weeklyIntent?.aggressionLevel ? `Week posture: ${String(weeklyIntent.aggressionLevel).replace(/_/g, " ")}.` : null,
     !hasConfirmedSessionDuration ? "Typical session duration is still unconfirmed, so the default plan length is being used." : null,

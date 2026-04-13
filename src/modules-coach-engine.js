@@ -71,10 +71,13 @@ export const withConfidenceTone = (message, confidence = "moderate", voiceMode =
   return `${tonePrefix} ${message} ${confidenceTag}`;
 };
 
-const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, nutritionComparison, notices, recommendations, effects, coachMemoryContext }) => {
+const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, nutritionComparison, notices, recommendations, effects, coachMemoryContext, planningBasis = null }) => {
   const chaotic = ["drifting", "falling off"].includes(momentum?.momentumState) || momentum?.inconsistencyRisk === "high";
   const lockedIn = momentum?.momentumState === "building momentum" && momentum?.inconsistencyRisk !== "high";
   const recoveryRisk = notices.some(n => /pain|recovery|fatigue|hardening/i.test(n));
+  const basisSummary = sanitizeText(planningBasis?.planBasisExplanation?.basisSummary || planningBasis?.todayLine || "", 180);
+  const basisDetail = sanitizeText(planningBasis?.planBasisExplanation?.personalizationSummary || planningBasis?.coachLine || "", 180);
+  const adherenceLine = sanitizeText(planningBasis?.adherence?.summary || "", 180);
   const focusLine = recoveryRisk
     ? "Execute the reduced-load version cleanly and protect recovery quality today."
     : chaotic
@@ -88,6 +91,7 @@ const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, nutritionComp
   const whyLines = [
     recommendations?.[0]?.replace(/\s*\[[^\]]+\]\s*$/, "") || "This recommendation reflects your current readiness and consistency pattern.",
     effects?.[0] || "The goal is to maximize useful training while minimizing relapse risk.",
+    basisSummary || null,
     recoveryRisk ? "Reduced load is intentional today because recovery risk is elevated." : null,
     chaotic ? "Consistency beats optimization this week—stack completions first." : null,
   ].filter(Boolean).slice(0, 4);
@@ -105,7 +109,7 @@ const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, nutritionComp
     ? "You’re trending in the right direction—use today to build on that streak."
     : "Stay direct: complete today, log it, and move on.";
 
-  return `TODAY'S FOCUS:\n${focusLine}\n\nWORKOUT:\n${workoutLine}\n\nWHY THIS TODAY:\n- ${whyLines.join("\n- ")}\n\nNUTRITION:\n${nutritionLine}\n${nutritionActualLine}\n\nCOACH NOTE:\n${coachNote}`;
+  return `TODAY'S FOCUS:\n${focusLine}\n\nWORKOUT:\n${workoutLine}\n\nWHY THIS TODAY:\n- ${whyLines.join("\n- ")}${basisDetail ? `\n\nPLAN BASIS:\n${basisDetail}` : ""}${adherenceLine ? `\n\nADHERENCE:\n${adherenceLine}` : ""}\n\nNUTRITION:\n${nutritionLine}\n${nutritionActualLine}\n\nCOACH NOTE:\n${coachNote}`;
 };
 
 export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual = null, nutritionComparison = null, arbitration, expectations, memoryInsights = [], coachMemoryContext = null, realWorldNutrition, recalibration }) => {
@@ -113,12 +117,21 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
   const voiceMode = inferCoachVoiceMode(momentum);
   const painLevel = inferPainLevel(input);
   const area = AFFECTED_AREAS.find(a => input.toLowerCase().includes(a.toLowerCase())) || "Achilles";
+  const planningBasis = planComposer?.planningBasis || null;
 
   const notices = [];
   const recommendations = [];
   const effects = [];
   const actions = [];
   const addRecommendation = (msg, confidence = "moderate") => recommendations.push(withConfidenceTone(msg, confidence, voiceMode));
+
+  if (planningBasis?.activeProgramName) {
+    notices.push(`Active basis: ${planningBasis.activeProgramName}${planningBasis?.activeStyleName ? ` + ${planningBasis.activeStyleName}` : ""}.`);
+    if (planningBasis?.compromiseLine) effects.push(planningBasis.compromiseLine);
+    if (planningBasis?.adherence?.summary) effects.push(planningBasis.adherence.summary);
+  } else if (planningBasis?.activeStyleName) {
+    notices.push(`Style influence active: ${planningBasis.activeStyleName}.`);
+  }
 
   const last7 = Object.entries(logs || {}).filter(([d]) => ((Date.now() - new Date(`${d}T12:00:00`).getTime()) / 86400000) <= 7).length;
   const bwTrend = (bodyweights || []).length >= 2 ? (bodyweights[bodyweights.length - 1].w - bodyweights[0].w) : 0;
@@ -311,6 +324,7 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
       recommendations: recommendations.slice(0, 5),
       effects: effects.slice(0, 5),
       coachMemoryContext,
+      planningBasis,
     }),
     meta: {
       mode: voiceMode,

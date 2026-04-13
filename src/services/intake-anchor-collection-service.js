@@ -26,11 +26,11 @@ export const buildAnchorCollectionViewModel = ({
     isVisible,
     stage,
     heading: totalRemaining > 1
-      ? "A few quick anchors before I lock this in."
-      : "One quick anchor before I lock this in.",
+      ? "A few quick details before I lock this in."
+      : "One quick detail before I lock this in.",
     progressLabel: totalRemaining > 0
-      ? `${totalRemaining} required ${totalRemaining === 1 ? "anchor" : "anchors"} left`
-      : "All required anchors are covered.",
+      ? `${totalRemaining} required ${totalRemaining === 1 ? "detail" : "details"} left`
+      : "All required details are covered.",
     helperText: totalRemaining > 1
       ? "We'll handle these one at a time. Lower cards are only there so you can see what comes next."
       : "This is the last required detail before review.",
@@ -41,7 +41,7 @@ export const buildAnchorCollectionViewModel = ({
       ...anchor,
       stack_position: index + 1,
       is_active: index === 0,
-      status_label: index === 0 ? "ACTIVE FIELD" : "UP NEXT",
+      status_label: index === 0 ? "NOW" : "NEXT",
     })),
   };
 };

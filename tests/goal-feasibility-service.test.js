@@ -225,6 +225,14 @@ test("impossible marathon target is blocked and given a phased revision", () => 
   assert.ok(feasibility.reasons.length >= 1);
   assert.equal(feasibility.suggested_revision.kind, "build_running_base");
   assert.match(feasibility.suggested_revision.first_block_target, /runs per week|long run/i);
+  assert.equal(feasibility.first_block_alternatives.length, 2);
+  assert.equal(feasibility.first_block_alternatives[0].label, "Conservative");
+  assert.equal(feasibility.first_block_alternatives[1].label, "Standard");
+  assert.match(feasibility.first_block_alternatives[0].summary, /reassess the bigger target after that block/i);
+  assert.match(
+    feasibility.first_block_alternatives[1].summary,
+    new RegExp(`${feasibility.first_block_alternatives[1].suggested_target_horizon_weeks} weeks`, "i")
+  );
   assert.match(feasibility.explanation_text, /Realistic first block:/i);
   assert.match(feasibility.explanation_text, /What would change this:/i);
   assert.equal((feasibility.explanation_text.match(/What would change this:/g) || []).length, 1);
