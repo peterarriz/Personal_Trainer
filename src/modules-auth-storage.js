@@ -23,6 +23,7 @@ export const AUTH_DATA_INCOMPATIBLE = "AUTH_DATA_INCOMPATIBLE";
 export const STORAGE_STATUS_REASONS = {
   notSignedIn: "not_signed_in",
   signedOut: "signed_out",
+  accountDeleted: "account_deleted",
   authRequired: "auth_required",
   transient: "sync_temporarily_failed",
   providerUnavailable: "provider_unavailable",
@@ -99,10 +100,29 @@ export const classifyStorageError = (error) => {
   }
   return buildStorageStatus({
     mode: "local",
-    label: "LOCAL MODE",
+    label: "SYNC RETRYING",
     reason: STORAGE_STATUS_REASONS.transient,
-    detail: "Cloud sync failed and the app safely fell back to local data.",
+    detail: "Cloud sync is still retrying in the background. Local changes remain saved on this device.",
   });
+};
+
+const stableSortValue = (value) => {
+  if (Array.isArray(value)) return value.map((item) => stableSortValue(item));
+  if (value && typeof value === "object") {
+    return Object.keys(value).sort().reduce((acc, key) => {
+      acc[key] = stableSortValue(value[key]);
+      return acc;
+    }, {});
+  }
+  return value;
+};
+
+const createStableFingerprint = (value) => {
+  try {
+    return JSON.stringify(stableSortValue(value));
+  } catch {
+    return String(value ?? "");
+  }
 };
 
 export const decodeJwtPayload = (token) => {
@@ -149,6 +169,8 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   const persistenceWarningSink = (message, details = {}) => {
     try { logDiag?.(message, JSON.stringify(details || {})); } catch {}
   };
+  let lastSyncedGoalsFingerprint = "";
+  let lastSyncedCoachMemoryFingerprint = "";
   const SB_CONFIG_ERROR = !SB_URL
     ? "Missing Supabase URL. Set VITE_SUPABASE_URL."
     : !hasValidSupabaseUrl
@@ -171,6 +193,16 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(payload)); } catch {}
   };
 
+  const clearLocalCache = () => {
+    try {
+      if (typeof localStorage?.removeItem === "function") {
+        localStorage.removeItem(LOCAL_CACHE_KEY);
+      } else {
+        localStorage.setItem(LOCAL_CACHE_KEY, "null");
+      }
+    } catch {}
+  };
+
   const loadAuthSession = () => {
     try {
       const raw = localStorage.getItem(AUTH_CACHE_KEY);
@@ -180,6 +212,16 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
 
   const saveAuthSession = (session) => {
     try { localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(session || null)); } catch {}
+  };
+
+  const clearCachedAuthSession = () => {
+    try {
+      if (typeof localStorage?.removeItem === "function") {
+        localStorage.removeItem(AUTH_CACHE_KEY);
+      } else {
+        localStorage.setItem(AUTH_CACHE_KEY, "null");
+      }
+    } catch {}
   };
   const authRequest = async (path, options = {}) => {
     if (SB_CONFIG_ERROR) throw new Error(AUTH_PROVIDER_UNAVAILABLE);
@@ -251,23 +293,44 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     }
   };
 
-  const handleSignUp = async ({ authEmail, authPassword, setAuthError, setAuthSession }) => {
+  const handleSignUp = async ({
+    authEmail,
+    authPassword,
+    authProfile = {},
+    setAuthError,
+    setAuthSession,
+  }) => {
     setAuthError("");
     try {
-      const data = await authRequest("signup", { method: "POST", body: JSON.stringify({ email: authEmail, password: authPassword }) });
+      const profilePayload = {
+        display_name: String(authProfile?.displayName || "").trim(),
+        preferred_units: String(authProfile?.units || "").trim().toLowerCase(),
+        timezone: String(authProfile?.timezone || "").trim(),
+      };
+      const data = await authRequest("signup", {
+        method: "POST",
+        body: JSON.stringify({
+          email: authEmail,
+          password: authPassword,
+          data: Object.fromEntries(Object.entries(profilePayload).filter(([, value]) => value)),
+        }),
+      });
       if (data?.access_token && data?.user) {
         const session = normalizeSession(data);
         setAuthSession(session);
         saveAuthSession(session);
+        return { ok: true, session, needsEmailConfirmation: false };
       } else {
         setAuthError("Account created. Confirm email, then sign in.");
+        return { ok: true, session: null, needsEmailConfirmation: true };
       }
     } catch (e) {
       if (e?.message === AUTH_PROVIDER_UNAVAILABLE) {
         setAuthError("Cloud auth provider is unavailable or misconfigured.");
-        return;
+        return { ok: false, error: AUTH_PROVIDER_UNAVAILABLE };
       }
       setAuthError("Sign up failed.");
+      return { ok: false, error: e?.message || "signup_failed" };
     }
   };
 
@@ -278,6 +341,8 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       }
     } catch {}
     setAuthSession(null);
+    lastSyncedGoalsFingerprint = "";
+    lastSyncedCoachMemoryFingerprint = "";
     saveAuthSession(null);
     setStorageStatus(buildStorageStatus({
       mode: "local",
@@ -285,6 +350,55 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       reason: STORAGE_STATUS_REASONS.signedOut,
       detail: "You are signed out, so cloud sync is paused until you sign back in.",
     }));
+  };
+
+  const handleDeleteAccount = async ({
+    authSession,
+    setAuthSession,
+    setStorageStatus,
+    setAuthError = () => {},
+    clearLocalData = async () => {},
+  }) => {
+    setAuthError("");
+    const { ensured, validSession } = await withFreshSession({
+      authSession,
+      setAuthSession,
+      reason: "delete_account",
+    });
+    if (!validSession?.access_token) {
+      if (ensured?.status === "transient") throw new Error(AUTH_TRANSIENT);
+      throw new Error(AUTH_REQUIRED);
+    }
+
+    const res = await safeFetchWithTimeout("/api/auth/delete-account", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${validSession.access_token}`,
+      },
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(String(data?.message || "Account deletion failed."));
+    }
+
+    try {
+      await clearLocalData();
+    } catch (error) {
+      logDiag("auth.delete.clear_local_failed", error?.message || "unknown");
+    }
+    setAuthSession(null);
+    lastSyncedGoalsFingerprint = "";
+    lastSyncedCoachMemoryFingerprint = "";
+    clearCachedAuthSession();
+    clearLocalCache();
+    applyStorageStatusUpdate(setStorageStatus, buildStorageStatus({
+      mode: "local",
+      label: "ACCOUNT DELETED",
+      reason: STORAGE_STATUS_REASONS.accountDeleted,
+      detail: "Your account and local data were removed from this device.",
+    }));
+    return data || { ok: true };
   };
 
   const withFreshSession = async ({ authSession, setAuthSession, reason }) => {
@@ -555,6 +669,8 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     const rows = await res.json();
     if (rows && rows.length > 0 && rows[0].data) {
       try {
+        lastSyncedGoalsFingerprint = createStableFingerprint(rows[0].data?.goals || []);
+        lastSyncedCoachMemoryFingerprint = createStableFingerprint(rows[0].data?.personalization?.coachMemory || {});
         const runtimeState = buildCanonicalRuntimeStateFromStorage({
           storedPayload: rows[0].data,
           mergePersonalization,
@@ -570,12 +686,14 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         logDiag("cloud.load.data_incompatible", e?.message || "unknown");
         throw new Error(AUTH_DATA_INCOMPATIBLE);
       }
-    } else {
-      const cache = localLoad();
-      if (cache && typeof cache === "object") {
-        const cachedRuntimeState = buildCanonicalRuntimeStateFromStorage({
-          storedPayload: cache,
-          mergePersonalization,
+      } else {
+        const cache = localLoad();
+        if (cache && typeof cache === "object") {
+          lastSyncedGoalsFingerprint = createStableFingerprint(cache?.goals || []);
+          lastSyncedCoachMemoryFingerprint = createStableFingerprint(cache?.personalization?.coachMemory || {});
+          const cachedRuntimeState = buildCanonicalRuntimeStateFromStorage({
+            storedPayload: cache,
+            mergePersonalization,
           DEFAULT_PERSONALIZATION,
           normalizeGoals,
           DEFAULT_MULTI_GOALS,
@@ -624,13 +742,21 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     }
     try {
       await sbSave({ payload, authSession, setAuthSession });
+      const nextGoalsFingerprint = createStableFingerprint(payload?.goals || []);
+      const nextCoachMemoryFingerprint = createStableFingerprint((payload?.personalization || DEFAULT_PERSONALIZATION)?.coachMemory || {});
       try {
-        await syncGoals({ goals: payload?.goals || [], authSession, setAuthSession });
+        if (nextGoalsFingerprint !== lastSyncedGoalsFingerprint) {
+          await syncGoals({ goals: payload?.goals || [], authSession, setAuthSession });
+          lastSyncedGoalsFingerprint = nextGoalsFingerprint;
+        }
       } catch (e) {
         logDiag("goals sync failed", e?.message || "unknown");
       }
       try {
-        await syncCoachMemory({ personalization: payload?.personalization || DEFAULT_PERSONALIZATION, authSession, setAuthSession });
+        if (nextCoachMemoryFingerprint !== lastSyncedCoachMemoryFingerprint) {
+          await syncCoachMemory({ personalization: payload?.personalization || DEFAULT_PERSONALIZATION, authSession, setAuthSession });
+          lastSyncedCoachMemoryFingerprint = nextCoachMemoryFingerprint;
+        }
       } catch (e) {
         logDiag("coach memory sync failed", e?.message || "unknown");
       }
@@ -656,13 +782,16 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     sbH,
     localLoad,
     localSave,
+    clearLocalCache,
     loadAuthSession,
     saveAuthSession,
+    clearCachedAuthSession,
     authRequest,
     ensureValidSession,
     handleSignIn,
     handleSignUp,
     handleSignOut,
+    handleDeleteAccount,
     sbLoad,
     sbSave,
     syncExercisePerformanceForDate,

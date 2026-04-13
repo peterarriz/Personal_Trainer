@@ -40,6 +40,7 @@ test.describe("mobile surface simplification", () => {
 
     await expect(page.getByTestId("today-tab")).toBeVisible();
     await expect(page.getByTestId("today-session-card")).toBeVisible();
+    await expect(page.getByTestId("today-full-workout")).toBeVisible();
     await expect(page.getByTestId("today-quick-log")).toBeVisible();
     await expect(page.getByTestId("today-save-log")).toBeVisible();
 
@@ -72,6 +73,7 @@ test.describe("mobile surface simplification", () => {
 
     await page.getByTestId("app-tab-nutrition").click();
     await expect(page.getByTestId("nutrition-tab")).toBeVisible();
+    await page.getByRole("button", { name: /on track/i }).first().click();
     await page.getByTestId("nutrition-save-quick").click();
     await expect(page.getByTestId("nutrition-save-status")).toContainText("Saved");
   });

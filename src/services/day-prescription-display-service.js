@@ -171,8 +171,7 @@ const buildStrengthExercisePreview = ({ training = {}, prescribedExercises = [] 
         movementNote,
       };
     })
-    .filter(Boolean)
-    .slice(0, 4);
+    .filter(Boolean);
 
   if (!rows.length) {
     return {
@@ -185,7 +184,7 @@ const buildStrengthExercisePreview = ({ training = {}, prescribedExercises = [] 
   return {
     available: true,
     rows,
-    note: rows.length >= 4 ? "Showing the first few prescribed exercises." : "",
+    note: "",
   };
 };
 

@@ -7,12 +7,24 @@ Use this after each architecture wave. Keep it fast: the goal is to catch obviou
 - Open the app from a clean refresh.
 - Confirm the app loads without a blank screen, render crash, or repeated console errors.
 - Confirm the main tabs render and navigation works.
+- If cloud is intentionally degraded, confirm the app settles into a quiet retrying/local state instead of flashing repeated sync failures.
+
+## 1A. Auth And Account Lifecycle
+
+- Sign up with a fresh email.
+- Confirm the product routes through profile setup before dropping you into intake or the main app.
+- Sign out and confirm the auth gate returns cleanly.
+- Sign back in and confirm the prior account still works.
+- Delete the account from Settings.
+- Confirm the auth gate returns and both `trainer_auth_session_v1` and `trainer_local_cache_v4` are cleared.
+- Confirm the same email now needs a new signup flow rather than silently reusing the deleted identity.
 
 ## 2. Today Screen
 
 - Open `Today`.
 - Confirm the primary session card is visible above the fold.
 - Confirm the session shown is plausible for the current phase/week and not obviously empty or contradictory.
+- Confirm the full prescribed workout is available on Today without leaving for Program.
 - Confirm the quick log path is visible without opening secondary sections.
 - Log a quick outcome.
 - Confirm the save succeeds and the visible logged state updates immediately in plain English.
@@ -52,6 +64,7 @@ Use this after each architecture wave. Keep it fast: the goal is to catch obviou
 - Confirm the quick actual logging path is visible before optional support sections.
 - Save or update a nutrition actual for today.
 - Confirm the nutrition actual appears in the current day view and review/history view.
+- Open weekly nutrition planning and confirm grocery/provisioning support is still visible even if today is not the normal shopping day.
 - Refresh the page.
 - Confirm prescription and actual still appear separately and stay in sync after reload.
 
@@ -60,8 +73,16 @@ Use this after each architecture wave. Keep it fast: the goal is to catch obviou
 - Open `Settings`.
 - Confirm Program/Style management lives here.
 - Confirm goal-change or plan-management actions live here rather than on Program.
+- Confirm Metrics / Baselines is reachable from Settings and that editing a metric is clearly allowed.
+- Confirm Logout is visible.
 - Confirm unfinished integrations are hidden or collapsed by default.
 - Confirm Settings does not feel essay-like or overloaded with design/philosophy text.
+
+## 7A. Themes
+
+- Switch between at least three themes.
+- Confirm both accent and background/surface tokens visibly change.
+- Confirm light mode remains comfortable and readable.
 
 ## 8. Coach Actions Safety
 

@@ -26,6 +26,7 @@ For any given day, the athlete should be able to open the app and get:
 - AI may interpret and explain, but it must not silently mutate canonical records.
 - Scope should stay narrow per change. New work should strengthen existing seams instead of creating parallel systems.
 - Mobile-first hierarchy wins. Default views should be concise, scannable, and action-first, with deeper detail behind progressive disclosure.
+- Quiet degraded mode wins over noisy failure UI. Transient cloud problems should preserve local coherency and stay secondary to execution surfaces.
 
 ## Canonical Entities
 
@@ -59,6 +60,8 @@ Derived state should be computed from canonical entities and never treated as in
 - performance trends and progression suggestions
 - coach memory summaries and weekly review summaries
 - trust and provenance labels shown in the UI
+- support-tier labeling for the active planning lane
+- metrics / baseline confidence and planning influence
 
 Rules:
 
@@ -133,6 +136,26 @@ Logging rules:
 - A user can complete a check-in without completing a session.
 - A user can log actuals after the fact without mutating the original prescription.
 - Adaptation logic should compare prescribed vs actual, not assume they are the same.
+
+## Account And Reliability
+
+- Auth identity, local runtime state, and cloud persistence must be treated as separate concerns with explicit handoff points.
+- Signup captures minimal account identity; profile setup completes the minimum athlete identity before intake.
+- Logout pauses cloud sync but does not imply account deletion.
+- Delete account must remove the auth identity and clear local caches on the current device.
+- Transient cloud failures should degrade to local-first `SYNC RETRYING` behavior without UI thrash.
+
+## Metrics And Editability
+
+- Goal-relevant baselines must be inspectable and editable after intake.
+- The product should show whether a metric is user-provided, intake-derived, log-inferred, or placeholder.
+- Editing a baseline may change future planning but must not rewrite historical actuals.
+
+## Support Tiers
+
+- Tier 1: first-class deterministic support with stronger domain rules and clearer metrics.
+- Tier 2: bounded but meaningful support through narrower adapters and more guardrails.
+- Tier 3: exploratory fallback through the nearest safe shared mode with explicit uncertainty.
 
 ## Screen Responsibilities
 

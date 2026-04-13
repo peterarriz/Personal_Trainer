@@ -86,7 +86,7 @@ export const BRAND_FOUNDATION = {
   ],
 };
 
-export const BRAND_THEME_IDS = ["Atlas", "Maison", "Circuit"];
+export const BRAND_THEME_IDS = ["Atlas", "Maison", "Circuit", "Harbor", "Ember", "Solstice", "Fieldhouse", "Slate", "Redwood", "Pulse"];
 export const BRAND_THEME_MODES = ["System", "Dark", "Light"];
 
 export const BRAND_THEME_OPTIONS = [
@@ -110,6 +110,55 @@ export const BRAND_THEME_OPTIONS = [
     mood: "Clean technical",
     description: "Engineered slate, crisp cobalt, and cool structured contrast.",
     preview: ["#091118", "#111c26", "#70c5ff", "#dce8f3"],
+  },
+  {
+    id: "Harbor",
+    label: "Harbor",
+    mood: "Calm premium",
+    description: "Sea-glass accents, inky navy surfaces, and softer endurance energy.",
+    preview: ["#08131c", "#102333", "#47c4bb", "#d8f0ef"],
+  },
+  {
+    id: "Ember",
+    label: "Ember",
+    mood: "Warm performance",
+    description: "Burnished copper, clay undertones, and a confident warm glow.",
+    preview: ["#151012", "#24191b", "#e08c5a", "#f2e1d3"],
+  },
+  {
+    id: "Solstice",
+    label: "Solstice",
+    mood: "Editorial light",
+    description: "Soft stone light mode, dusk blue accents, and lower-ink calm contrast.",
+    preview: ["#f2efe9", "#e6e1d7", "#5b7ca6", "#1e2a34"],
+  },
+  {
+    id: "Fieldhouse",
+    label: "Fieldhouse",
+    mood: "Athletic classic",
+    description: "Deep green structure with brass warmth and old-school training credibility.",
+    preview: ["#0b1411", "#13201b", "#9ecf56", "#edf4dc"],
+  },
+  {
+    id: "Slate",
+    label: "Slate",
+    mood: "Monochrome quiet",
+    description: "Cool graphite with restrained silver highlights and low-drama contrast.",
+    preview: ["#101216", "#181c22", "#97a4b5", "#eef3f7"],
+  },
+  {
+    id: "Redwood",
+    label: "Redwood",
+    mood: "Grounded editorial",
+    description: "Deep cedar, muted rosewood, and a richer natural warmth.",
+    preview: ["#171112", "#25181a", "#c7726c", "#f3ded8"],
+  },
+  {
+    id: "Pulse",
+    label: "Pulse",
+    mood: "Modern intensity",
+    description: "High-contrast graphite, hot coral, and cool cyan energy without neon chaos.",
+    preview: ["#090d13", "#131925", "#ff6f7d", "#dff6ff"],
   },
 ];
 
@@ -442,6 +491,174 @@ const BRAND_THEMES = {
   },
 };
 
+const cloneTheme = (theme = {}) => JSON.parse(JSON.stringify(theme || {}));
+
+const createThemeVariant = ({
+  baseThemeId = "Atlas",
+  fonts = null,
+  dark = {},
+  light = {},
+} = {}) => {
+  const baseTheme = cloneTheme(BRAND_THEMES[baseThemeId] || BRAND_THEMES.Atlas);
+  return {
+    fonts: fonts || baseTheme.fonts,
+    dark: { ...baseTheme.dark, ...(dark || {}) },
+    light: { ...baseTheme.light, ...(light || {}) },
+  };
+};
+
+const EXTENDED_BRAND_THEMES = {
+  Harbor: createThemeVariant({
+    baseThemeId: "Atlas",
+    dark: {
+      appBackground: "radial-gradient(120% 120% at 10% 0%, rgba(71,196,187,0.18), transparent 34%), radial-gradient(120% 140% at 100% 0%, rgba(79,128,184,0.18), transparent 38%), linear-gradient(180deg, #08131c 0%, #0b1824 48%, #10202d 100%)",
+      accent: "#47c4bb",
+      accentHover: "#5ad0c7",
+      accentSoft: "rgba(71, 196, 187, 0.16)",
+      accentGlow: "rgba(71, 196, 187, 0.26)",
+      ctaBg: "linear-gradient(135deg, #47c4bb 0%, #5f8ed7 100%)",
+      ctaBgHover: "linear-gradient(135deg, #58d0c8 0%, #74a0e1 100%)",
+      brandMarkBorder: "rgba(126, 212, 205, 0.22)",
+    },
+    light: {
+      appBackground: "radial-gradient(120% 140% at 12% 0%, rgba(112,220,210,0.18), transparent 32%), radial-gradient(120% 120% at 100% 0%, rgba(129,166,212,0.16), transparent 38%), linear-gradient(180deg, #eef4f4 0%, #e7efee 52%, #dfe8e7 100%)",
+      accent: "#267f7a",
+      accentHover: "#2c8b85",
+      accentSoft: "rgba(38, 127, 122, 0.12)",
+      accentGlow: "rgba(38, 127, 122, 0.2)",
+      ctaBg: "linear-gradient(135deg, #2a8a84 0%, #4f74b6 100%)",
+      ctaBgHover: "linear-gradient(135deg, #30958f 0%, #6085c3 100%)",
+    },
+  }),
+  Ember: createThemeVariant({
+    baseThemeId: "Maison",
+    dark: {
+      accent: "#e08c5a",
+      accentHover: "#ea9b6e",
+      accentSoft: "rgba(224, 140, 90, 0.16)",
+      accentGlow: "rgba(224, 140, 90, 0.24)",
+      ctaBg: "linear-gradient(135deg, #dd8655 0%, #b6534e 100%)",
+      ctaBgHover: "linear-gradient(135deg, #e59767 0%, #c5675e 100%)",
+    },
+    light: {
+      accent: "#b86445",
+      accentHover: "#c56f4f",
+      accentSoft: "rgba(184, 100, 69, 0.12)",
+      accentGlow: "rgba(184, 100, 69, 0.18)",
+      ctaBg: "linear-gradient(135deg, #b86445 0%, #d29d63 100%)",
+      ctaBgHover: "linear-gradient(135deg, #c56f4f 0%, #dfac73 100%)",
+    },
+  }),
+  Solstice: createThemeVariant({
+    baseThemeId: "Atlas",
+    dark: {
+      bg: "#121521",
+      surface1: "#181d2a",
+      surface2: "#1e2431",
+      accent: "#8ab0dd",
+      accentHover: "#9bbce4",
+      ctaBg: "linear-gradient(135deg, #7d9fcc 0%, #caa779 100%)",
+      ctaBgHover: "linear-gradient(135deg, #8daeda 0%, #d7b68c 100%)",
+    },
+    light: {
+      appBackground: "radial-gradient(120% 140% at 12% 0%, rgba(223,208,178,0.18), transparent 32%), radial-gradient(120% 120% at 100% 0%, rgba(137,169,206,0.16), transparent 38%), linear-gradient(180deg, #f3efe9 0%, #ece6dc 50%, #e5ded4 100%)",
+      bg: "#f1ece5",
+      bg2: "#eae4db",
+      surface1: "#fbf8f2",
+      surface2: "#f4efe8",
+      surface3: "#ebe5dc",
+      text: "#28313a",
+      textStrong: "#182028",
+      textSoft: "#677887",
+      accent: "#5b7ca6",
+      accentHover: "#6889b2",
+      ctaBg: "linear-gradient(135deg, #5b7ca6 0%, #c49b66 100%)",
+      ctaBgHover: "linear-gradient(135deg, #6889b2 0%, #d2a978 100%)",
+    },
+  }),
+  Fieldhouse: createThemeVariant({
+    baseThemeId: "Atlas",
+    dark: {
+      appBackground: "radial-gradient(120% 120% at 8% 0%, rgba(158,207,86,0.16), transparent 32%), radial-gradient(120% 140% at 100% 0%, rgba(97,140,110,0.18), transparent 40%), linear-gradient(180deg, #0b1411 0%, #101b17 48%, #13211b 100%)",
+      accent: "#9ecf56",
+      accentHover: "#aedb6d",
+      accentSoft: "rgba(158, 207, 86, 0.16)",
+      accentGlow: "rgba(158, 207, 86, 0.24)",
+      ctaBg: "linear-gradient(135deg, #9ecf56 0%, #5f8c66 100%)",
+      ctaBgHover: "linear-gradient(135deg, #b0db6d 0%, #73a178 100%)",
+    },
+    light: {
+      appBackground: "radial-gradient(120% 140% at 12% 0%, rgba(187,223,131,0.18), transparent 32%), radial-gradient(120% 120% at 100% 0%, rgba(129,170,137,0.14), transparent 40%), linear-gradient(180deg, #eef2ea 0%, #e5eadf 50%, #dde4d6 100%)",
+      accent: "#4e7c3f",
+      accentHover: "#5a8a49",
+      ctaBg: "linear-gradient(135deg, #5b8f48 0%, #b9965f 100%)",
+      ctaBgHover: "linear-gradient(135deg, #6b9f58 0%, #c7a56f 100%)",
+    },
+  }),
+  Slate: createThemeVariant({
+    baseThemeId: "Circuit",
+    dark: {
+      accent: "#97a4b5",
+      accentHover: "#aab6c5",
+      accentSoft: "rgba(151, 164, 181, 0.14)",
+      accentGlow: "rgba(151, 164, 181, 0.22)",
+      ctaBg: "linear-gradient(135deg, #7b8798 0%, #a2afc0 100%)",
+      ctaBgHover: "linear-gradient(135deg, #8c98a9 0%, #b3bfce 100%)",
+    },
+    light: {
+      accent: "#5f6f82",
+      accentHover: "#6d7d90",
+      accentSoft: "rgba(95, 111, 130, 0.12)",
+      accentGlow: "rgba(95, 111, 130, 0.18)",
+      ctaBg: "linear-gradient(135deg, #617184 0%, #93a0b0 100%)",
+      ctaBgHover: "linear-gradient(135deg, #708093 0%, #a2afbe 100%)",
+    },
+  }),
+  Redwood: createThemeVariant({
+    baseThemeId: "Maison",
+    dark: {
+      appBackground: "radial-gradient(120% 120% at 10% 0%, rgba(199,114,108,0.16), transparent 34%), radial-gradient(120% 140% at 100% 0%, rgba(122,74,68,0.18), transparent 38%), linear-gradient(180deg, #171112 0%, #1d1517 48%, #24191b 100%)",
+      accent: "#c7726c",
+      accentHover: "#d5857f",
+      ctaBg: "linear-gradient(135deg, #c7726c 0%, #9a5b55 100%)",
+      ctaBgHover: "linear-gradient(135deg, #d5857f 0%, #ab6c66 100%)",
+    },
+    light: {
+      accent: "#9f5a54",
+      accentHover: "#ad6862",
+      ctaBg: "linear-gradient(135deg, #a25c56 0%, #d8a07c 100%)",
+      ctaBgHover: "linear-gradient(135deg, #b06a63 0%, #e3ad8c 100%)",
+    },
+  }),
+  Pulse: createThemeVariant({
+    baseThemeId: "Circuit",
+    dark: {
+      appBackground: "radial-gradient(120% 120% at 8% 0%, rgba(255,111,125,0.14), transparent 28%), radial-gradient(120% 140% at 100% 0%, rgba(96,223,255,0.12), transparent 34%), linear-gradient(180deg, #090d13 0%, #0d121a 48%, #131925 100%)",
+      accent: "#ff6f7d",
+      accentHover: "#ff8591",
+      accentSoft: "rgba(255, 111, 125, 0.16)",
+      accentGlow: "rgba(255, 111, 125, 0.24)",
+      tabActiveBg: "linear-gradient(135deg, rgba(255,111,125,0.18), rgba(96,223,255,0.2))",
+      ctaBg: "linear-gradient(135deg, #ff6f7d 0%, #57c8e6 100%)",
+      ctaBgHover: "linear-gradient(135deg, #ff8591 0%, #6ad6ef 100%)",
+    },
+    light: {
+      appBackground: "radial-gradient(120% 140% at 12% 0%, rgba(255,145,156,0.16), transparent 32%), radial-gradient(120% 120% at 100% 0%, rgba(122,215,235,0.16), transparent 38%), linear-gradient(180deg, #f4eef1 0%, #eee7eb 52%, #e7dfe4 100%)",
+      accent: "#d45969",
+      accentHover: "#e06676",
+      accentSoft: "rgba(212, 89, 105, 0.12)",
+      accentGlow: "rgba(212, 89, 105, 0.18)",
+      ctaBg: "linear-gradient(135deg, #d45969 0%, #58aeca 100%)",
+      ctaBgHover: "linear-gradient(135deg, #e06676 0%, #68bad3 100%)",
+    },
+  }),
+};
+
+const ALL_BRAND_THEMES = {
+  ...BRAND_THEMES,
+  ...EXTENDED_BRAND_THEMES,
+};
+
 const detectSystemDark = () => (
   typeof window !== "undefined"
   && typeof window.matchMedia === "function"
@@ -478,7 +695,7 @@ export const buildBrandThemeState = ({
   const resolvedMode = modePreference === "System"
     ? (systemPrefersDark ? "Dark" : "Light")
     : modePreference;
-  const themeDefinition = BRAND_THEMES[themeId] || BRAND_THEMES.Atlas;
+  const themeDefinition = ALL_BRAND_THEMES[themeId] || ALL_BRAND_THEMES.Atlas;
   const tokenSet = themeDefinition?.[resolvedMode.toLowerCase()] || themeDefinition.dark;
 
   return {

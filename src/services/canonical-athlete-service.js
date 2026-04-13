@@ -20,6 +20,17 @@ const CATEGORY_TO_PRIMARY_GOAL = {
 
 const DEFAULT_CANONICAL_USER_PROFILE = {
   name: "Athlete",
+  timezone: "",
+  birthYear: "",
+  age: "",
+  height: "",
+  weight: "",
+  units: {
+    weight: "lbs",
+    height: "ft_in",
+    distance: "miles",
+  },
+  trainingAgeYears: 0,
   primaryGoalKey: "general_fitness",
   experienceLevel: "beginner",
   fitnessLevel: "unknown",
@@ -143,6 +154,16 @@ const buildCanonicalUserProfile = ({
   return {
     ...DEFAULT_CANONICAL_USER_PROFILE,
     name: pickFirstNonEmpty(profile?.name, profileDefaults?.name, DEFAULT_CANONICAL_USER_PROFILE.name),
+    timezone: pickFirstNonEmpty(profile?.timezone, DEFAULT_CANONICAL_USER_PROFILE.timezone),
+    birthYear: pickFirstNonEmpty(profile?.birthYear, DEFAULT_CANONICAL_USER_PROFILE.birthYear),
+    age: pickFirstNonEmpty(profile?.age, profileDefaults?.age, DEFAULT_CANONICAL_USER_PROFILE.age),
+    height: pickFirstNonEmpty(profile?.height, profileDefaults?.height, DEFAULT_CANONICAL_USER_PROFILE.height),
+    weight: pickFirstNonEmpty(profile?.weight, profileDefaults?.weight, DEFAULT_CANONICAL_USER_PROFILE.weight),
+    units: {
+      ...DEFAULT_CANONICAL_USER_PROFILE.units,
+      ...(settings?.units || {}),
+    },
+    trainingAgeYears: Math.max(0, Number(profile?.trainingAgeYears || 0) || 0),
     primaryGoalKey: legacyUserProfile?.primary_goal
       || CATEGORY_TO_PRIMARY_GOAL[primaryGoal?.category]
       || DEFAULT_CANONICAL_USER_PROFILE.primaryGoalKey,

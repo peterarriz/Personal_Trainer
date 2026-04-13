@@ -38,6 +38,11 @@ import {
   resolveTrainingPreferencePolicy,
 } from "./services/planning-effect-matrix-service.js";
 import { deriveLiveProgramPlanningBasis, PROGRAM_RUNTIME_FIDELITY } from "./services/program-live-planning-service.js";
+import {
+  applyPlanningBaselineInfluence,
+  buildPlanningBaselineInfluence,
+} from "./services/metrics-baselines-service.js";
+import { buildSupportTierModel } from "./services/support-tier-service.js";
 import { dedupeStrings } from "./utils/collection-utils.js";
 
 export { daysUntil, deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
@@ -1774,6 +1779,7 @@ export const composeGoalNativePlan = ({
   weekTemplates = [],
   athleteProfile = null,
   logs = {},
+  bodyweights = [],
   dailyCheckins = {},
   nutritionActualLogs = {},
   weeklyNutritionReview = null,
@@ -1838,6 +1844,11 @@ export const composeGoalNativePlan = ({
     upperBodyMaintenance,
   });
   const domainAdapter = domainSelection?.adapter || null;
+  const supportTier = buildSupportTierModel({
+    goals: active,
+    domainAdapterId: domainAdapter?.id || "",
+    goalCapabilityStack: domainSelection?.capabilityStack || null,
+  });
   architecture = domainSelection?.architectureOverride || architecture;
 
   const splits = {
@@ -2022,6 +2033,17 @@ export const composeGoalNativePlan = ({
     preferencePolicy: trainingPreferencePolicy,
   });
   annotatedTemplates = preferenceOverlay?.dayTemplates || annotatedTemplates;
+  const baselineInfluence = buildPlanningBaselineInfluence({
+    goals: active,
+    personalization,
+    bodyweights,
+    logs,
+  });
+  const baselineOverlay = applyPlanningBaselineInfluence({
+    dayTemplates: annotatedTemplates,
+    influence: baselineInfluence,
+  });
+  annotatedTemplates = baselineOverlay?.dayTemplates || annotatedTemplates;
   const adaptationState = buildDynamicAdaptationState({
     dayTemplates: annotatedTemplates,
     todayKey: safeTodayKey,
@@ -2047,6 +2069,9 @@ export const composeGoalNativePlan = ({
   }
   if (preferenceOverlay?.changed && preferenceOverlay?.effects?.length) {
     constraints.push(...preferenceOverlay.effects);
+  }
+  if (baselineOverlay?.summaryLines?.length) {
+    why.push(...baselineOverlay.summaryLines);
   }
   if (adaptationState?.weeklyIntentHints?.weeklyConstraints?.length) {
     constraints.push(...adaptationState.weeklyIntentHints.weeklyConstraints);
@@ -2114,6 +2139,8 @@ export const composeGoalNativePlan = ({
     domainAdapter: clonePlainValue(domainAdapter || null),
     trainingPreferencePolicy: clonePlainValue(trainingPreferencePolicy || null),
     adaptationState: clonePlainValue(adaptationState || null),
+    supportTier: clonePlainValue(supportTier || null),
+    baselineInfluence: clonePlainValue(baselineInfluence || null),
   };
   const programBlock = buildProgramBlock({
     weekNumber: currentWeek,
@@ -2147,6 +2174,8 @@ export const composeGoalNativePlan = ({
     planningBasis,
     goalCapabilityStack: clonePlainValue(domainSelection?.capabilityStack || null),
     domainAdapter: clonePlainValue(domainAdapter || null),
+    supportTier: clonePlainValue(supportTier || null),
+    baselineInfluence: clonePlainValue(baselineInfluence || null),
     trainingPreferencePolicy: clonePlainValue(trainingPreferencePolicy || null),
     adaptationState: clonePlainValue(adaptationState || null),
     changeSummary: clonePlainValue(adaptationState?.changeSummary || null),
