@@ -237,7 +237,9 @@ AI is not allowed to:
 
 ## 2026-04-13 Hardening Update
 
-- Settings now separates Account, Plan Management, App Preferences, Appearance, Integrations, and Advanced Coach setup more clearly.
+- Today, Program, and Log now share one live-day session display contract via `buildDayPrescriptionDisplay(...)`, and Log detailed capture is seeded from that same planned session.
+- Settings now separates Account, Profile, Plan Management, Preferences, and Advanced surfaces instead of one long mixed management page.
+- Coach primary rendering now uses a compact deterministic summary (`headline`, `action`, `why`, `watch`) so common prompts diverge without repeating the same blob.
 - Profile editing in Settings is explicit-save to avoid repeated cloud writes during typing.
 - Missing Program metrics now route directly to Settings → Metrics / Baselines.
 - Daily nutrition logging uses one outcome model based on actual deviation plus friction, while weekly planning stays visible as a separate execution layer.

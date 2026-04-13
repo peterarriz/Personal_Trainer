@@ -57,6 +57,107 @@ export const detectCoachSignals = (input) => {
   };
 };
 
+const dedupeCoachLines = (lines = []) => {
+  const seen = new Set();
+  return (lines || []).filter((line) => {
+    const key = sanitizeText(String(line || "").toLowerCase().replace(/\[[^\]]+\]/g, ""), 160);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const inferCoachPromptKind = (input = "", signals = {}) => {
+  if (signals.pain) return "pain";
+  if (signals.travel) return "travel";
+  if (signals.missed) return "missed";
+  if (signals.fatigue) return "fatigue";
+  if (signals.progress) return "progress";
+  if (signals.nutrition) return "nutrition";
+  if (signals.why) return "why";
+  return sanitizeText(input, 80) ? "status" : "status";
+};
+
+const buildCoachPacketSummary = ({
+  promptKind = "status",
+  todayWorkout = null,
+  planningBasis = null,
+  momentum = null,
+  nutritionComparison = null,
+  notices = [],
+  recommendations = [],
+  effects = [],
+} = {}) => {
+  const sessionLabel = sanitizeText(todayWorkout?.label || todayWorkout?.type || "today's session", 120) || "today's session";
+  const basisLabel = sanitizeText(planningBasis?.activeProgramName || planningBasis?.activeStyleName || "", 80);
+  const leadingRecommendation = sanitizeText(String(recommendations?.[0] || "").replace(/^[^:]+:\s*/i, "").replace(/\s*\[[^\]]+\]\s*$/i, ""), 180);
+  const leadingEffect = sanitizeText(effects?.[0] || notices?.[0] || "", 180);
+
+  if (promptKind === "travel") {
+    return {
+      promptKind,
+      headline: `Travel day: keep ${sessionLabel} alive with the lowest-friction version.`,
+      recommendedAction: "Use the travel-ready session and portable meal defaults instead of forcing the normal setup.",
+      whyNow: "Travel changes setup, food access, and timing more than it changes the goal of the day.",
+      watchFor: "Hotel-gym friction and missed meals.",
+    };
+  }
+  if (promptKind === "fatigue") {
+    return {
+      promptKind,
+      headline: "Recovery is the limiter today, not motivation.",
+      recommendedAction: `Condense ${sessionLabel} and protect the next 48 hours instead of forcing full intensity.`,
+      whyNow: "Poor sleep and fatigue hurt quality more than volume, so the clean win is a smaller repeatable session.",
+      watchFor: "Worsening soreness, poor mechanics, or a second recovery hit tomorrow.",
+    };
+  }
+  if (promptKind === "missed") {
+    return {
+      promptKind,
+      headline: "Do not stack yesterday on top of today.",
+      recommendedAction: `Let the missed session go and execute ${sessionLabel} cleanly instead of chasing training debt.`,
+      whyNow: "Trying to make up missed work usually creates three messy days instead of one missed day.",
+      watchFor: "The urge to add volume back immediately.",
+    };
+  }
+  if (promptKind === "progress") {
+    return {
+      promptKind,
+      headline: "Push one notch, not five.",
+      recommendedAction: `Keep the full ${sessionLabel} and add one small progression only if the first half feels crisp.`,
+      whyNow: "Good momentum supports a controlled progression, but the week should not jump in load from one excited prompt.",
+      watchFor: "Session quality and next-day fatigue.",
+    };
+  }
+  if (promptKind === "pain") {
+    return {
+      promptKind,
+      headline: "Protect the irritated area first.",
+      recommendedAction: `De-load ${sessionLabel}, use the low-impact option, and keep the pain response from escalating.`,
+      whyNow: "Pain changes what is safe today more than any goal priority does.",
+      watchFor: "Pain that sharpens, spreads, or changes how you move.",
+    };
+  }
+  if (promptKind === "nutrition") {
+    return {
+      promptKind,
+      headline: "Tighten the food decision that matters most today.",
+      recommendedAction: leadingRecommendation || "Use the simplest meal structure that still supports training.",
+      whyNow: nutritionComparison?.hasActual
+        ? "Actual intake is more useful than assumptions, so nutrition adjustments should answer the real logged gap."
+        : "When logging is light, the safest move is a low-friction default instead of fake precision.",
+      watchFor: "Missed protein, missed carbs around training, or hydration lag.",
+    };
+  }
+  return {
+    promptKind,
+    headline: basisLabel ? `${basisLabel}: current coach status.` : "Current coach status.",
+    recommendedAction: leadingRecommendation || `Execute ${sessionLabel} as planned and log the actual result.`,
+    whyNow: leadingEffect || `Momentum is ${sanitizeText(momentum?.momentumState || "unknown", 60)} and the coach is staying inside deterministic plan boundaries.`,
+    watchFor: "Consistency, recovery, and whether today's session stays repeatable.",
+  };
+};
+
 export const inferCoachVoiceMode = (momentum) => {
   if (momentum?.coachMode === "protect mode") return "protect";
   if (momentum?.momentumState === "falling off") return "reset";
@@ -114,6 +215,7 @@ const buildCoachBrief = ({ todayWorkout, momentum, nutritionLayer, nutritionComp
 
 export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, logs, bodyweights, personalization, learning, salvage, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual = null, nutritionComparison = null, arbitration, expectations, memoryInsights = [], coachMemoryContext = null, realWorldNutrition, recalibration }) => {
   const s = detectCoachSignals(input);
+  const promptKind = inferCoachPromptKind(input, s);
   const voiceMode = inferCoachVoiceMode(momentum);
   const painLevel = inferPainLevel(input);
   const area = AFFECTED_AREAS.find(a => input.toLowerCase().includes(a.toLowerCase())) || "Achilles";
@@ -157,8 +259,15 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
     );
   }
 
-  if (s.missed || s.fatigue || learning?.stats?.harder >= 2 || salvage?.active) {
-    notices.push(`Recovery signal detected (${s.missed ? "missed session + " : ""}${s.fatigue ? "fatigue" : "soreness"}).`);
+  if (s.missed) {
+    notices.push("Missed-session context detected.");
+    addRecommendation("do not stack missed work on top of today; keep today's key session and let yesterday go.", "high");
+    effects.push("The week stays more stable when you stop chasing missed volume and return to the current day.");
+    actions.push({ type: COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME, payload: { pct: 10, reason: "missed_session_reset" } });
+  }
+
+  if (s.fatigue || learning?.stats?.harder >= 2 || salvage?.active) {
+    notices.push(`Recovery signal detected (${s.fatigue ? "fatigue" : "soreness"}).`);
     addRecommendation("reduce weekly density and prioritize completion of core sessions.", "high");
     effects.push("Hard sessions are down-shifted; consistency is prioritized over intensity.");
     actions.push(
@@ -243,6 +352,13 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
     }
   }
 
+  if (s.progress) {
+    notices.push("You asked for a progression check.");
+    addRecommendation("keep the full session and add only one small progression if quality stays high.", "moderate");
+    effects.push("Progression is capped so today's enthusiasm does not quietly rewrite the week's load.");
+    actions.push({ type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 1, reason: "progress_prompt" } });
+  }
+
   if (nutritionLayer?.dayType && ["hardRun", "longRun", "travelRun"].includes(nutritionLayer.dayType)) {
     addRecommendation("shift more carbs pre/post workout to support quality output.", "moderate");
     actions.push({ type: COACH_TOOL_ACTIONS.SHIFT_CARBS_AROUND_WORKOUT, payload: { pre: 30, post: 40 } });
@@ -309,24 +425,39 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
     dedupedActions.push(a);
     if (dedupedActions.length >= 4) break;
   }
+  const dedupedNotices = dedupeCoachLines(notices).slice(0, 4);
+  const dedupedRecommendations = dedupeCoachLines(recommendations).slice(0, 4);
+  const dedupedEffects = dedupeCoachLines(effects).slice(0, 4);
+  const summary = buildCoachPacketSummary({
+    promptKind,
+    todayWorkout,
+    planningBasis,
+    momentum,
+    nutritionComparison,
+    notices: dedupedNotices,
+    recommendations: dedupedRecommendations,
+    effects: dedupedEffects,
+  });
 
   return {
-    notices: notices.slice(0, 5),
-    recommendations: recommendations.slice(0, 5),
-    effects: effects.slice(0, 5),
+    notices: dedupedNotices,
+    recommendations: dedupedRecommendations,
+    effects: dedupedEffects,
     actions: dedupedActions,
+    summary,
     coachBrief: buildCoachBrief({
       todayWorkout,
       momentum,
       nutritionLayer,
       nutritionComparison,
-      notices: notices.slice(0, 5),
-      recommendations: recommendations.slice(0, 5),
-      effects: effects.slice(0, 5),
+      notices: dedupedNotices,
+      recommendations: dedupedRecommendations,
+      effects: dedupedEffects,
       coachMemoryContext,
       planningBasis,
     }),
     meta: {
+      promptKind,
       mode: voiceMode,
       momentum: momentum?.momentumState || "unknown",
       risk: momentum?.inconsistencyRisk || "unknown",

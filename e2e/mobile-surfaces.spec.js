@@ -48,19 +48,50 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("program-tab")).toBeVisible();
     await expect(page.getByTestId("program-this-week")).toBeVisible();
     await expect(page.getByTestId("program-future-weeks")).toBeVisible();
-    await expect(page.getByText("Open plan management")).toBeVisible();
+    await expect(page.getByText("Manage program + goals")).toBeVisible();
     await expect(page.getByText("PROGRAMS + STYLES").first()).not.toBeVisible();
     await expect(page.getByText("Refine Current Goal").first()).not.toBeVisible();
     await expect(page.getByText("Start New Goal Arc").first()).not.toBeVisible();
 
     await page.getByTestId("app-tab-settings").click();
     await expect(page.getByTestId("settings-tab")).toBeVisible();
+    await expect(page.getByTestId("settings-account-section")).toBeVisible();
+    await expect(page.getByTestId("settings-plan-management")).not.toBeVisible();
+    await expect(page.getByTestId("settings-advanced-section")).not.toBeVisible();
+
+    await page.getByTestId("settings-surface-plan").click();
     await expect(page.getByTestId("settings-plan-management")).toBeVisible();
     await expect(page.getByText("Programs and styles")).toBeVisible();
     await expect(page.getByText("Goal changes", { exact: true })).toBeVisible();
+
+    await page.getByTestId("settings-surface-advanced").click();
+    await expect(page.getByTestId("settings-advanced-section")).toBeVisible();
     await expect(page.getByText("Integrations and imports")).toBeVisible();
-    await expect(page.getByText("Apple Health").first()).not.toBeVisible();
-    await expect(page.getByText("Garmin Connect").first()).not.toBeVisible();
+    await expect(page.getByText("Apple Health").first()).toBeVisible();
+    await expect(page.getByText("Garmin Connect").first()).toBeVisible();
+  });
+
+  test("today, program, and log read the same planned session blocks", async ({ page }) => {
+    await completeRunningOnboarding(page);
+
+    const todayPlan = page.getByTestId("today-full-workout").getByTestId("planned-session-plan");
+    await expect(todayPlan).toBeVisible();
+    const todayPlanText = (await todayPlan.innerText()).replace(/\s+/g, " ").trim();
+    expect(todayPlanText.length).toBeGreaterThan(20);
+
+    await page.getByTestId("app-tab-program").click();
+    await page.locator("button").filter({ hasText: "Today view" }).first().click();
+    const programPlan = page.getByTestId("planned-session-plan");
+    await expect(programPlan).toBeVisible();
+    const programPlanText = (await programPlan.innerText()).replace(/\s+/g, " ").trim();
+    expect(programPlanText).toBe(todayPlanText);
+
+    await page.getByTestId("app-tab-log").click();
+    await page.getByRole("button", { name: /open detailed workout log/i }).click();
+    const logPlan = page.getByTestId("planned-session-plan");
+    await expect(logPlan).toBeVisible();
+    const logPlanText = (await logPlan.innerText()).replace(/\s+/g, " ").trim();
+    expect(logPlanText).toBe(todayPlanText);
   });
 
   test("workout and nutrition logging show strong saved state on mobile", async ({ page }) => {
@@ -83,6 +114,7 @@ test.describe("mobile surface simplification", () => {
 
     await page.getByTestId("app-tab-settings").click();
     await expect(page.getByTestId("settings-tab")).toBeVisible();
+    await page.getByTestId("settings-surface-preferences").click();
     await page.getByRole("button", { name: /Aggressive/i }).first().click();
 
     await page.getByTestId("app-tab-program").click();
@@ -104,10 +136,17 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByPlaceholder("Anthropic key (optional)").first()).not.toBeVisible();
     await expect(page.getByPlaceholder("Failure patterns").first()).not.toBeVisible();
 
+    const coachPrimaryEntry = page.getByTestId("coach-primary-entry");
+    const latestAssistantMessage = () => coachPrimaryEntry.locator('[data-testid="coach-message"][data-message-role="assistant"]').last();
     await page.getByText("I'm traveling today").click();
-    await expect.poll(async () => {
-      return page.locator("[data-testid='coach-primary-entry'] .coach-copy").count();
-    }).toBeGreaterThan(0);
+    await expect(latestAssistantMessage()).toContainText(/Travel day: keep/i);
+    await expect(latestAssistantMessage()).toContainText(/travel-ready session/i);
+    const travelReply = await latestAssistantMessage().innerText();
+
+    await page.getByText("I slept badly").click();
+    await expect.poll(async () => (await latestAssistantMessage().innerText()).trim()).not.toBe(travelReply.trim());
+    await expect(latestAssistantMessage()).toContainText(/recovery|sleep|readiness|condense/i);
+    await expect(latestAssistantMessage()).not.toContainText(/travel-ready session/i);
   });
 
   test("missing metrics route straight into baselines from Program", async ({ page }) => {
@@ -118,6 +157,7 @@ test.describe("mobile surface simplification", () => {
     await page.getByTestId("program-fix-metrics").click();
 
     await expect(page.getByTestId("settings-tab")).toBeVisible();
+    await expect(page.getByTestId("settings-plan-management")).toBeVisible();
     await expect(page.getByTestId("settings-metrics-baselines")).toHaveAttribute("open", "");
     await expect(page.getByText("Opened from Program because missing or low-confidence baselines are limiting how specific adaptation can be.")).toBeVisible();
   });

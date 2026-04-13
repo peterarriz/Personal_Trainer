@@ -460,6 +460,71 @@ test("coach packets stay materially different for travel versus poor sleep promp
   );
 });
 
+test("coach summaries diverge for missed-yesterday versus push-harder prompts", () => {
+  const trainingContext = buildTrainingContextFromEditor({
+    mode: "Gym",
+    equipment: "full_gym",
+    equipmentItems: ["barbell", "safe running access"],
+    time: "45",
+  });
+  const athleteProfile = buildAthleteProfile({
+    goals: [{ id: "goal_1", name: "Bench 225 and keep my running", category: "strength", active: true, priority: 1 }],
+    trainingContext,
+  });
+  const personalization = buildPersonalization({
+    trainingContext,
+    fitnessLevel: "intermediate",
+  });
+  const composer = buildComposer({
+    goals: athleteProfile.goals,
+    personalization,
+    athleteProfile,
+  });
+  const baseArgs = {
+    todayWorkout: { label: "Strength B", type: "strength+prehab", strSess: "B", strengthDuration: "40 min" },
+    currentWeek: 4,
+    logs: {},
+    bodyweights: [],
+    personalization: {
+      ...personalization,
+      trainingState: { loadStatus: "steady", fatigueScore: 2 },
+      travelState: { isTravelWeek: false, access: "gym" },
+    },
+    learning: {},
+    salvage: {},
+    planComposer: composer,
+    optimizationLayer: {},
+    failureMode: {},
+    momentum: { momentumState: "building momentum", inconsistencyRisk: "low", fatigueNotes: 0 },
+    strengthLayer: {},
+    nutritionLayer: { dayType: "strength", targets: { cal: 2600, p: 180, c: 240 } },
+    nutritionComparison: null,
+    arbitration: { primary: { category: "strength" } },
+    expectations: {},
+    memoryInsights: [],
+    coachMemoryContext: null,
+    realWorldNutrition: {},
+    recalibration: {},
+  };
+
+  const missedPacket = deterministicCoachPacket({
+    ...baseArgs,
+    input: "I missed yesterday",
+  });
+  const pushPacket = deterministicCoachPacket({
+    ...baseArgs,
+    input: "I want to push harder",
+  });
+
+  assert.match(missedPacket.summary.headline, /do not stack yesterday/i);
+  assert.match(pushPacket.summary.headline, /push one notch/i);
+  assert.notEqual(missedPacket.summary.recommendedAction, pushPacket.summary.recommendedAction);
+  assert.notDeepEqual(
+    missedPacket.actions.map((action) => action.type),
+    pushPacket.actions.map((action) => action.type)
+  );
+});
+
 test("strict program mode downgrades when recent execution drifts too far from the backbone", () => {
   const trainingContext = buildTrainingContextFromEditor({
     mode: "Home",

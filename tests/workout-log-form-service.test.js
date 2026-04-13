@@ -67,7 +67,7 @@ test("quick capture model keeps the default logging path compact for run days", 
   const quickCapture = buildWorkoutQuickCaptureModel({ draft });
 
   assert.equal(quickCapture.completeActionLabel, "Quick complete");
-  assert.equal(quickCapture.detailToggleLabel, "Add actual run details");
+  assert.equal(quickCapture.detailToggleLabel, "Add quick run details");
   assert.equal(quickCapture.saveActionLabel, "Save quick run log");
   assert.equal(quickCapture.run.enabled, true);
   assert.deepEqual(
@@ -122,11 +122,34 @@ test("quick capture model limits strength rows while keeping prescribed context 
 
   const quickCapture = buildWorkoutQuickCaptureModel({ draft });
 
-  assert.equal(quickCapture.detailToggleLabel, "Add actual sets and reps");
+  assert.equal(quickCapture.detailToggleLabel, "Add quick sets and reps");
   assert.equal(quickCapture.saveActionLabel, "Save quick strength log");
   assert.equal(quickCapture.strength.rows.length, 3);
   assert.equal(quickCapture.strength.hiddenRowCount, 1);
   assert.match(quickCapture.strength.rows[0].prescribedSummary, /4 sets/i);
+});
+
+test("run-day detailed logging stays seeded from the canonical planned session even if legacy generic fields exist", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "hard-run",
+      label: "Tempo Run",
+      run: { t: "Tempo", d: "10 min easy + 20 min tempo + 10 min easy" },
+    }),
+    logEntry: {
+      pushups: "25",
+      reps: "25",
+      weight: "0",
+    },
+  });
+
+  assert.equal(draft.family, WORKOUT_LOG_FAMILIES.run);
+  assert.equal(draft.generic.visible, false);
+  assert.equal(draft.strength.rows.length, 0);
+  assert.equal(draft.plannedSummary.sessionLabel, "Tempo Run");
+  assert.equal(draft.plannedSummary.sessionPlan.available, true);
+  assert.equal(draft.plannedSummary.sessionPlan.rows[1].title, "Tempo segment");
 });
 
 test("exercise substitution path preserves actual exercise change", () => {
