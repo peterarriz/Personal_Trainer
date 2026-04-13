@@ -85,3 +85,21 @@ test("coach-voice display falls back to deterministic copy when phrasing fails s
   assert.equal(displayCopy.helperText, anchor.why_it_matters);
   assert.equal(displayCopy.reassuranceLine, anchor.coach_voice_line);
 });
+
+test("coach-voice display copy strips backticks and internal tokens before rendering", () => {
+  const displayCopy = resolveCoachVoiceDisplayCopy({
+    anchor: {
+      anchor_id: "running_baseline:current_run_frequency",
+      field_id: "current_run_frequency",
+      question: "How many `current_run_frequency` details do you have?",
+      why_it_matters: "This keeps `goal_stack_confirmation` grounded instead of fuzzy.",
+      coach_voice_line: "Coach note: `running_endurance_anchor_kind` is not what I need yet.",
+    },
+    phrasing: null,
+  });
+
+  const combined = [displayCopy.questionText, displayCopy.helperText, displayCopy.reassuranceLine].join(" ");
+  assert.equal(combined.includes("`"), false);
+  assert.equal(/current_run_frequency|goal_stack_confirmation|running_endurance_anchor_kind/i.test(combined), false);
+  assert.match(combined, /runs per week|goal order|running benchmark/i);
+});

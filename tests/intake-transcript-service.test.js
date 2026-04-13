@@ -286,6 +286,39 @@ test("committed goal-added notes do not duplicate when the same outbox is draine
   assert.equal(secondQueue.entries.length, 0);
 });
 
+test("secondary-goal added note does not duplicate when a live UI note and the machine outbox share the same key", () => {
+  const goalAddedKey = "goal_added:bench 225";
+  const liveQueue = queueCoachTranscriptMessages({
+    texts: [{
+      text: "Added bench 225. If there's another goal that matters, drop it in. Otherwise we can keep moving.",
+      message_key: goalAddedKey,
+      idempotency_key: goalAddedKey,
+      message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+      transition_id: "transition_000123",
+      stage: "REVIEW_CONFIRM",
+    }],
+    nextMessageId: 151,
+    activeTransitionId: "transition_000123",
+  });
+
+  const outboxQueue = queueCoachTranscriptMessages({
+    texts: [{
+      text: "Added: bench 225.",
+      message_key: goalAddedKey,
+      idempotency_key: goalAddedKey,
+      message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+      transition_id: "transition_000123",
+      stage: "REVIEW_CONFIRM",
+    }],
+    nextMessageId: liveQueue.nextMessageId,
+    seenMessageKeys: liveQueue.acceptedMessageKeys,
+    activeTransitionId: "transition_000123",
+  });
+
+  assert.equal(liveQueue.entries.length, 1);
+  assert.equal(outboxQueue.entries.length, 0);
+});
+
 test("late AI proposal summaries are discarded once intake has moved to a newer transition", () => {
   const lateAiKey = buildTranscriptMessageKey({
     transition_id: "transition_000002",
@@ -328,4 +361,53 @@ test("late AI proposal summaries are discarded once intake has moved to a newer 
 
   assert.equal(currentQueue.entries.length, 1);
   assert.equal(currentQueue.entries[0].message_kind, TRANSCRIPT_MESSAGE_KINDS.aiSummary);
+});
+
+test("system-note topics keep review notes distinct while deduping repeated blocked confirmation notes", () => {
+  const transitionId = "transition_000321";
+  const stage = "REVIEW_CONFIRM";
+  const secondaryPromptKey = buildTranscriptMessageKey({
+    stage,
+    transition_id: transitionId,
+    message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+    topic: "secondary_goal_prompt",
+  });
+  const blockedConfirmKey = buildTranscriptMessageKey({
+    stage,
+    transition_id: transitionId,
+    message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+    topic: "confirm_blocked_target_timeline",
+  });
+
+  const queue = queueCoachTranscriptMessages({
+    texts: [
+      {
+        text: "Anything else you want to improve or maintain while chasing this?",
+        message_key: secondaryPromptKey,
+        transition_id: transitionId,
+        stage,
+        message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+      },
+      {
+        text: "I still need your race timing before I can build this.",
+        message_key: blockedConfirmKey,
+        transition_id: transitionId,
+        stage,
+        message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+      },
+      {
+        text: "I still need your race timing before I can build this.",
+        message_key: blockedConfirmKey,
+        transition_id: transitionId,
+        stage,
+        message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+      },
+    ],
+    nextMessageId: 181,
+    activeTransitionId: transitionId,
+  });
+
+  assert.equal(queue.entries.length, 2);
+  assert.equal(queue.entries[0].message_key, secondaryPromptKey);
+  assert.equal(queue.entries[1].message_key, blockedConfirmKey);
 });

@@ -90,6 +90,7 @@ import {
   TRAINING_CONTEXT_SOURCES,
   TRAINING_EQUIPMENT_VALUES,
   TRAINING_ENVIRONMENT_VALUES,
+  TRAINING_INTENSITY_VALUES,
   TRAINING_SESSION_DURATION_VALUES,
   trainingEnvironmentToDisplayMode,
   trainingEquipmentToEnvironmentCode,
@@ -174,6 +175,8 @@ import {
   hasWorkoutQuickCaptureValues,
 } from "./services/workout-log-form-service.js";
 import {
+  buildIntakeInjuryConstraintContext,
+  INTAKE_INJURY_IMPACT_OPTIONS,
   normalizeHomeEquipmentResponse,
   sanitizeIntakeText,
 } from "./services/intake-flow-service.js";
@@ -195,6 +198,11 @@ import {
   resolveNextCoachStreamTargetId,
   TRANSCRIPT_MESSAGE_KINDS,
 } from "./services/intake-transcript-service.js";
+import {
+  buildPersistableIntakeSession,
+  INTAKE_SESSION_STORAGE_KEY,
+  restorePersistedIntakeSession,
+} from "./services/intake-session-service.js";
 import {
   buildLegacyHistoryDisplayLabel,
   resolveLegacyPlannedDayHistoryEntry,
@@ -387,6 +395,31 @@ const safeStorageSet = (storageLike, key, value) => {
     return true;
   } catch {
     return false;
+  }
+};
+
+const safeStorageRemove = (storageLike, key) => {
+  try {
+    if (!storageLike?.removeItem) return false;
+    storageLike.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const readPersistedIntakeSessionSnapshot = ({
+  startingFresh = false,
+} = {}) => {
+  if (typeof window === "undefined") return null;
+  const raw = safeStorageGet(sessionStorage, INTAKE_SESSION_STORAGE_KEY, "");
+  if (!raw) return null;
+  try {
+    return restorePersistedIntakeSession(JSON.parse(raw), {
+      startingFresh: Boolean(startingFresh),
+    });
+  } catch {
+    return null;
   }
 };
 
@@ -2280,11 +2313,6 @@ const splitIntakeListText = (value = "") => String(value || "")
   .filter(Boolean)
   .slice(0, 8);
 
-const hasMeaningfulConstraintText = (value = "") => {
-  const text = String(value || "").trim();
-  return Boolean(text && !/^(none|nothing current|none currently|nope|healthy)$/i.test(text));
-};
-
 const extractAppearanceConstraints = (...values) => values
   .map((value) => String(value || "").trim())
   .filter((value) => value && /(abs|lean|athletic|toned|look|appearance|physique|body comp|body composition|shirtless|defined)/i.test(value))
@@ -2299,7 +2327,10 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
   const homeEquipment = Array.isArray(answers.home_equipment)
     ? answers.home_equipment
     : splitIntakeListText(answers.equipment_text || "");
-  const injuryText = String(answers.injury_text || "").trim();
+  const injuryConstraintContext = buildIntakeInjuryConstraintContext({
+    injuryText: answers.injury_text,
+    injuryImpact: answers.injury_impact,
+  });
   const timingConstraints = [
     answers.timeline_adjustment,
     answers.timeline_feedback,
@@ -2351,8 +2382,9 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
           : "",
       },
       injuryConstraintContext: {
-        injuryText,
-        constraints: hasMeaningfulConstraintText(injuryText) ? [injuryText] : [],
+        injuryText: injuryConstraintContext.injuryText,
+        injuryImpact: injuryConstraintContext.injuryImpact,
+        constraints: injuryConstraintContext.constraints,
       },
       userProvidedConstraints: {
         timingConstraints: mergedTimingConstraints,
@@ -6552,12 +6584,15 @@ Keep it plain and specific.`;
     const existingMemory = personalization?.coachMemory?.longTermMemory || [];
     const experienceLevel = answers.experience_level || "beginner";
     const trainingContext = buildTrainingContextFromAnswers({ answers });
+    const injuryConstraintContext = buildIntakeInjuryConstraintContext({
+      injuryText: answers.injury_text,
+      injuryImpact: answers.injury_impact,
+    });
     const sessionLength = trainingContext?.sessionDuration?.confirmed ? trainingContext.sessionDuration.value : (answers.session_length || "30");
-    const coachingStyle = String(answers.coaching_style || "Find the balance").trim();
+    const coachingStyle = String(answers.coaching_style || "Balanced coaching").trim();
     const trainingDaysLabel = String(answers.training_days || "3").trim();
     const trainingDays = trainingDaysLabel === "6+" ? 6 : Math.max(2, Number(trainingDaysLabel) || 3);
     const trainingLocation = trainingContext?.environment?.confirmed ? trainingEnvironmentToDisplayMode(trainingContext.environment.value) : "Unknown";
-    const injuryText = String(answers.injury_text || "").trim();
     const homeEquipment = Array.isArray(answers.home_equipment) ? answers.home_equipment.filter(Boolean) : [];
     const homeEquipmentOther = String(answers.home_equipment_other || "").trim();
     const normalizedEquipment = [
@@ -6568,8 +6603,8 @@ Keep it plain and specific.`;
       normalizedEquipment.push("Bodyweight only");
     }
     const constraints = [];
-    if (injuryText && !/nothing current|none|nope|healthy/i.test(injuryText)) {
-      constraints.push(injuryText);
+    if (injuryConstraintContext.hasCurrentIssue) {
+      constraints.push(...injuryConstraintContext.constraints);
     }
     const freshPacketArgs = buildIntakePacketArgsFromAnswers({ answers, existingMemory });
     const expectedRawGoalText = sanitizeIntakeText(String(freshPacketArgs?.intakeContext?.rawGoalText || "").trim());
@@ -6695,9 +6730,10 @@ Keep it plain and specific.`;
     const defaultMode = trainingContext?.environment?.confirmed
       ? trainingEnvironmentToDisplayMode(trainingContext.environment.value)
       : "Unknown";
-    const intensityPreference = coachingStyle === "Push me hard"
+    const intensityPosture = trainingContext?.intensityPosture?.value || TRAINING_INTENSITY_VALUES.unknown;
+    const intensityPreference = intensityPosture === TRAINING_INTENSITY_VALUES.aggressive
       ? "Aggressive"
-      : coachingStyle === "Keep it simple"
+      : intensityPosture === TRAINING_INTENSITY_VALUES.conservative
       ? "Conservative"
       : "Standard";
     const goalMix = orderedResolvedGoals?.map((goal) => goal?.summary).filter(Boolean).join(" + ") || primaryGoalLabel;
@@ -6781,12 +6817,22 @@ Keep it plain and specific.`;
           trainingContext?.environment?.value === TRAINING_ENVIRONMENT_VALUES.variable ? "environment changes often" : "recovery consistency",
         ],
         scheduleConstraints: [`Available ${trainingDaysLabel} days per week`, `Session length: ${SESSION_LENGTH_LABELS[sessionLength] || sessionLength}`],
-        pushResponse: coachingStyle === "Push me hard" ? "Responds well to direct, demanding coaching." : personalization.coachMemory?.pushResponse || "",
-        protectResponse: coachingStyle === "Find the balance" ? "Wants a balance between push and protection." : coachingStyle === "Keep it simple" ? "Prefers simple, sustainable prescriptions over aggressive progressions." : personalization.coachMemory?.protectResponse || "",
+        pushResponse: intensityPosture === TRAINING_INTENSITY_VALUES.aggressive
+          ? "Responds well to a harder push when recovery and guardrails are in place."
+          : personalization.coachMemory?.pushResponse || "",
+        protectResponse: intensityPosture === TRAINING_INTENSITY_VALUES.standard
+          ? "Wants balanced coaching with enough push to keep progress moving."
+          : intensityPosture === TRAINING_INTENSITY_VALUES.conservative
+          ? "Prefers a steadier approach that protects consistency over big swings."
+          : personalization.coachMemory?.protectResponse || "",
         preferredFoodPatterns: [
           primaryCategory === "body_comp" ? "high-protein fat-loss support" : "high-protein performance",
         ],
-        simplicityVsVariety: coachingStyle === "Keep it simple" ? "simplicity" : coachingStyle === "Let the data decide" ? "balanced" : "variety",
+        simplicityVsVariety: intensityPosture === TRAINING_INTENSITY_VALUES.conservative
+          ? "simplicity"
+          : intensityPosture === TRAINING_INTENSITY_VALUES.standard
+          ? "balanced"
+          : "variety",
         lastAdjustment: `Onboarding complete ${todayKey}.`,
         longTermMemory: [
           ...(personalization.coachMemory?.longTermMemory || []),
@@ -7423,40 +7469,49 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     ? "Starting fresh. I still remember everything from before — I'm just building a new plan from today. What do you want from this next plan? Exact or vague is fine."
     : "Hey. I'm going to ask you a few questions before I build your plan. Start with what you want from this plan — exact or vague both work.";
   const intakeDebugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
+  const restoredIntakeSessionRef = useRef(null);
+  if (restoredIntakeSessionRef.current === null) {
+    restoredIntakeSessionRef.current = readPersistedIntakeSessionSnapshot({
+      startingFresh,
+    });
+  }
+  const restoredIntakeSession = restoredIntakeSessionRef.current;
   const BUILD_STAGES = [
     "Mapping your training blocks...",
     "Calibrating intensity to your baseline...",
     "Setting up your nutrition targets...",
     "Almost ready...",
   ];
-  const messagesRef = useRef([]);
+  const messagesRef = useRef(restoredIntakeSession?.messages || []);
   const scrollRef = useRef(null);
   const composerRef = useRef(null);
-  const nextMessageIdRef = useRef(1);
-  const nextIntakeEventIdRef = useRef(1);
+  const nextMessageIdRef = useRef(Math.max(1, Number(restoredIntakeSession?.nextMessageId) || 1));
+  const nextIntakeEventIdRef = useRef(Math.max(1, Number(restoredIntakeSession?.nextIntakeEventId) || 1));
   const latestAssessmentRequestIdRef = useRef(0);
   const confirmBuildLockRef = useRef(false);
   const activeCommitSnapshotIdRef = useRef("");
   const committedCommitSnapshotIdsRef = useRef(new Set());
-  const processedIntakeMessageKeysRef = useRef(new Set());
-  const processedTranscriptIdempotencyKeysRef = useRef(new Set());
-  const secondaryGoalAddedMessageKeysRef = useRef(new Set());
-  const startedRef = useRef(false);
-  const [messages, setMessages] = useState([]);
-  const [answers, setAnswers] = useState({});
-  const [stepIndex, setStepIndex] = useState(0);
-  const [draft, setDraft] = useState("");
+  const processedIntakeMessageKeysRef = useRef(new Set(restoredIntakeSession?.processedMessageKeys || []));
+  const processedTranscriptIdempotencyKeysRef = useRef(new Set(restoredIntakeSession?.processedTranscriptKeys || []));
+  const secondaryGoalAddedMessageKeysRef = useRef(new Set(restoredIntakeSession?.secondaryGoalAddedMessageKeys || []));
+  const sessionPersistenceDisabledRef = useRef(false);
+  const startedRef = useRef(Boolean(restoredIntakeSession?.messages?.length));
+  const [messages, setMessages] = useState(() => restoredIntakeSession?.messages || []);
+  const [answers, setAnswers] = useState(() => restoredIntakeSession?.answers || {});
+  const [stepIndex, setStepIndex] = useState(() => Math.max(0, Number(restoredIntakeSession?.stepIndex) || 0));
+  const [draft, setDraft] = useState(() => String(restoredIntakeSession?.draft || ""));
   const [equipmentSelection, setEquipmentSelection] = useState([]);
   const [equipmentOther, setEquipmentOther] = useState("");
-  const [phase, setPhase] = useState("questions");
-  const [assessmentText, setAssessmentText] = useState("");
-  const [assessmentBoundary, setAssessmentBoundary] = useState({ typedIntakePacket: null, aiInterpretationProposal: null, transition_id: "" });
-  const [assessmentPreview, setAssessmentPreview] = useState({ goalResolution: null, goalFeasibility: null, arbitration: null, orderedResolvedGoals: [], reviewModel: null });
-  const [goalStackConfirmation, setGoalStackConfirmation] = useState(null);
-  const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState([]);
-  const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(null);
-  const [pendingSecondaryGoalPrompt, setPendingSecondaryGoalPrompt] = useState(null);
-  const [secondaryGoalEntries, setSecondaryGoalEntries] = useState([]);
+  const [phase, setPhase] = useState(() => restoredIntakeSession?.phase || "questions");
+  const [assessmentText, setAssessmentText] = useState(() => String(restoredIntakeSession?.assessmentText || ""));
+  const [assessmentBoundary, setAssessmentBoundary] = useState(() => restoredIntakeSession?.assessmentBoundary || { typedIntakePacket: null, aiInterpretationProposal: null, transition_id: "" });
+  const [assessmentPreview, setAssessmentPreview] = useState(() => restoredIntakeSession?.assessmentPreview || { goalResolution: null, goalFeasibility: null, arbitration: null, orderedResolvedGoals: [], reviewModel: null });
+  const [goalStackConfirmation, setGoalStackConfirmation] = useState(() => restoredIntakeSession?.goalStackConfirmation || null);
+  const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState(() => restoredIntakeSession?.askedClarifyingQuestions || []);
+  const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(() => restoredIntakeSession?.pendingClarifyingQuestion || null);
+  const [pendingSecondaryGoalPrompt, setPendingSecondaryGoalPrompt] = useState(() => restoredIntakeSession?.pendingSecondaryGoalPrompt || null);
+  const [secondaryGoalEntries, setSecondaryGoalEntries] = useState(() => restoredIntakeSession?.secondaryGoalEntries || []);
+  const [showSecondaryGoalCustomInput, setShowSecondaryGoalCustomInput] = useState(() => Boolean(restoredIntakeSession?.showSecondaryGoalCustomInput));
   const [clarificationValues, setClarificationValues] = useState({});
   const [clarificationFieldErrors, setClarificationFieldErrors] = useState({});
   const [clarificationFormError, setClarificationFormError] = useState("");
@@ -7465,39 +7520,51 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [anchorCapturePreview, setAnchorCapturePreview] = useState(null);
   const [coachVoicePhrasingByAnchorKey, setCoachVoicePhrasingByAnchorKey] = useState({});
   const [currentAnchorBindingTarget, setCurrentAnchorBindingTarget] = useState(null);
-  const [adjustmentTargetGoal, setAdjustmentTargetGoal] = useState(null);
+  const [adjustmentTargetGoal, setAdjustmentTargetGoal] = useState(() => restoredIntakeSession?.adjustmentTargetGoal || null);
   const [confirmBuildError, setConfirmBuildError] = useState("");
   const [confirmBuildSubmitting, setConfirmBuildSubmitting] = useState(false);
   const [confirmWarningAcknowledged, setConfirmWarningAcknowledged] = useState(false);
   const [assessing, setAssessing] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
-  const [intakeMachine, setIntakeMachine] = useState(() => createIntakeMachineState());
+  const [intakeMachine, setIntakeMachine] = useState(() => restoredIntakeSession?.intakeMachine || createIntakeMachineState());
   const [showParseDebug, setShowParseDebug] = useState(false);
   const intakeMachineRef = useRef(intakeMachine);
   const coachVoiceRequestKeysRef = useRef(new Set());
 
-  const buildFlow = (currentAnswers = {}) => ([
-    {
-      key: "goal_intent",
-      type: "text",
-      message: initialPrompt,
-      placeholder: "Examples: run a 1:45 half, look athletic again, get abs by summer, lose fat but keep strength",
-    },
-    { key: "experience_level", type: "buttons", message: "Got it. What's your training experience level?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week - not your best one.", options: ["2", "3", "4", "5", "6+"] },
-    { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
-    { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
-    ...(["Home", "Both"].includes(currentAnswers.training_location || "") ? [{
-      key: "home_equipment",
-      type: "multiselect",
-      message: "What do you have available at home?",
-      options: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
-    }] : []),
-    { key: "injury_text", type: "text_optional", message: "Do you have any injuries or physical limitations I need to plan around?", placeholder: "Anything current?", skipLabel: "Nothing current", skipValue: "Nothing current" },
-    { key: "coaching_style", type: "buttons", message: "Last one — how do you want to be coached?", options: ["Push me hard", "Find the balance", "Keep it simple", "Let the data decide"] },
-  ]);
-  const flow = useMemo(() => buildFlow(answers), [answers.training_location, initialPrompt]);
+  const buildFlow = (currentAnswers = {}) => {
+    const injuryQuestionContext = buildIntakeInjuryConstraintContext({
+      injuryText: currentAnswers.injury_text,
+      injuryImpact: currentAnswers.injury_impact,
+    });
+    return [
+      {
+        key: "goal_intent",
+        type: "text",
+        message: initialPrompt,
+        placeholder: "Examples: run a 1:45 half, look athletic again, get abs by summer, lose fat but keep strength",
+      },
+      { key: "experience_level", type: "buttons", message: "Got it. What's your training experience level?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
+      { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week - not your best one.", options: ["2", "3", "4", "5", "6+"] },
+      { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
+      { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
+      ...(["Home", "Both"].includes(currentAnswers.training_location || "") ? [{
+        key: "home_equipment",
+        type: "multiselect",
+        message: "What do you have available at home?",
+        options: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
+      }] : []),
+      { key: "injury_text", type: "text_optional", message: "Do you have any injuries or physical limitations I need to plan around?", placeholder: "Anything current?", skipLabel: "Nothing current", skipValue: "Nothing current" },
+      ...(injuryQuestionContext.hasCurrentIssue ? [{
+        key: "injury_impact",
+        type: "buttons",
+        message: "How is that affecting training most right now?",
+        options: [...INTAKE_INJURY_IMPACT_OPTIONS],
+      }] : []),
+      { key: "coaching_style", type: "buttons", message: "Last one — how do you want to be coached?", options: ["Keep me consistent", "Balanced coaching", "Push me (with guardrails)"] },
+    ];
+  };
+  const flow = useMemo(() => buildFlow(answers), [answers.training_location, answers.injury_text, initialPrompt]);
   const currentPrompt = flow[stepIndex] || null;
   const isCoachStreaming = Boolean(streamTargetId);
 
@@ -7517,6 +7584,67 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setMessages([{ id, role: "coach", text: sanitizeIntakeText(initialPrompt), displayedText: "" }]);
     setStreamTargetId(id);
   }, [initialPrompt]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (sessionPersistenceDisabledRef.current) {
+      safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
+      return;
+    }
+    const hasMeaningfulIntakeState = Boolean(
+      messages.length
+      || Object.keys(answers || {}).length
+      || String(draft || "").trim()
+      || phase !== "questions"
+      || stepIndex > 0
+      || intakeMachine?.stage !== INTAKE_MACHINE_STATES.FREEFORM_GOALS
+    );
+    if (!hasMeaningfulIntakeState) {
+      safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
+      return;
+    }
+    const snapshot = buildPersistableIntakeSession({
+      messages,
+      answers,
+      stepIndex,
+      draft,
+      phase,
+      assessmentText,
+      assessmentBoundary,
+      assessmentPreview,
+      goalStackConfirmation,
+      askedClarifyingQuestions,
+      pendingClarifyingQuestion,
+      pendingSecondaryGoalPrompt,
+      secondaryGoalEntries,
+      showSecondaryGoalCustomInput,
+      intakeMachine,
+      adjustmentTargetGoal,
+      nextMessageId: nextMessageIdRef.current,
+      nextIntakeEventId: nextIntakeEventIdRef.current,
+      secondaryGoalAddedMessageKeys: [...secondaryGoalAddedMessageKeysRef.current],
+      startingFresh,
+    });
+    safeStorageSet(sessionStorage, INTAKE_SESSION_STORAGE_KEY, JSON.stringify(snapshot));
+  }, [
+    adjustmentTargetGoal,
+    answers,
+    assessmentBoundary,
+    assessmentPreview,
+    askedClarifyingQuestions,
+    draft,
+    goalStackConfirmation,
+    intakeMachine,
+    messages,
+    pendingClarifyingQuestion,
+    pendingSecondaryGoalPrompt,
+    phase,
+    secondaryGoalEntries,
+    showSecondaryGoalCustomInput,
+    startingFresh,
+    stepIndex,
+    assessmentText,
+  ]);
 
   useEffect(() => {
     if (streamTargetId || phase === "building") return;
@@ -7737,6 +7865,15 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (phase !== "secondary_goal") return;
     setSecondaryGoalEntries(readAdditionalGoalEntries({ answers }));
   }, [phase, answers]);
+
+  useEffect(() => {
+    if (phase !== "secondary_goal") {
+      setShowSecondaryGoalCustomInput(false);
+      return;
+    }
+    setShowSecondaryGoalCustomInput(false);
+    setDraft("");
+  }, [phase, pendingSecondaryGoalPrompt?.prompt]);
 
   useEffect(() => {
     if (phase !== "building") return undefined;
@@ -8206,6 +8343,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           stage: currentStage,
           transition_id: currentTransitionId,
           message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+          topic: "secondary_goal_prompt",
         }),
       }]);
       return;
@@ -8611,17 +8749,40 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setAskedClarifyingQuestions(nextAskedQuestions);
     await runAssessment({ updatedAnswers, askedQuestions: nextAskedQuestions });
   };
+  const editLastAnchorAnswer = () => {
+    if (!activeMachineAnchor?.field_id || !Array.isArray(intakeMachine?.anchorBindingLog) || intakeMachine.anchorBindingLog.length === 0) return;
+    setConfirmBuildError("");
+    const nextMachineState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_BACK, {
+      edit_last_anchor: true,
+      now: new Date().toISOString(),
+    });
+    syncMachineDraftToIntakeView(nextMachineState);
+    setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
+    setClarificationValues({});
+    setClarificationFieldErrors({});
+    setClarificationFormError("");
+    setNaturalAnchorDraft("");
+    setAnchorCapturePreview(null);
+    setDraft("");
+    setPhase("clarify");
+  };
   const submitSecondaryGoalResponse = async (response = null) => {
     const customText = String(draft || "").trim();
-    if (!response?.key) return;
-    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal && !customText) return;
+    const responseKey = String(response?.key || "").trim();
+    const isCustomEntryResponse = responseKey === SECONDARY_GOAL_RESPONSE_KEYS.addGoal || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.custom;
+    const isPresetEntryResponse = responseKey === SECONDARY_GOAL_RESPONSE_KEYS.maintainStrength || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.maintainMobility;
+    const isSkipResponse = responseKey === SECONDARY_GOAL_RESPONSE_KEYS.skip || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly;
+    const isDoneResponse = responseKey === SECONDARY_GOAL_RESPONSE_KEYS.done || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.keepInferred;
+    if (!responseKey) return;
+    if (isCustomEntryResponse && !customText) return;
     setConfirmBuildError("");
-    const stagedEntries = response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal
+    const stagedEntries = isCustomEntryResponse
       ? Array.from(new Set([...secondaryGoalEntries, customText.trim()])).filter(Boolean)
       : secondaryGoalEntries;
-    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly) {
-      appendUserMessage("No, just this goal");
-    } else if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.done) {
+    if (isSkipResponse) {
+      appendUserMessage("Skip");
+    } else if (isDoneResponse) {
       appendUserMessage(stagedEntries.length ? `Also: ${stagedEntries.join("; ")}` : "No extra goals");
     }
     const outcome = applyIntakeSecondaryGoalResponse({
@@ -8638,24 +8799,40 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     });
     setAnswers(outcome.answers);
     setSecondaryGoalEntries(readAdditionalGoalEntries({ answers: outcome.answers }));
-    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal && outcome.keepCollecting) {
+    if (responseKey === SECONDARY_GOAL_RESPONSE_KEYS.addGoal && outcome.keepCollecting) {
       setDraft("");
       const goalMessageKey = String(customText || "").trim().toLowerCase();
       if (goalMessageKey && !secondaryGoalAddedMessageKeysRef.current.has(goalMessageKey)) {
+        const addedTranscriptMessageKey = `goal_added:${goalMessageKey}`;
         secondaryGoalAddedMessageKeysRef.current.add(goalMessageKey);
-        processedIntakeMessageKeysRef.current.add(`goal_added:${goalMessageKey}`);
-        appendCoachMessage(`Added ${customText.trim()}. If there's another goal that matters, drop it in. Otherwise we can keep moving.`);
+        processedIntakeMessageKeysRef.current.add(addedTranscriptMessageKey);
+        appendCoachMessage({
+          text: `Added ${customText.trim()}. If there's another goal that matters, drop it in. Otherwise we can keep moving.`,
+          message_key: addedTranscriptMessageKey,
+          idempotency_key: addedTranscriptMessageKey,
+          message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+          transition_id: intakeMachineRef.current?.transition_id || "",
+          stage: intakeMachineRef.current?.stage || "",
+        });
+      }
+      return;
+    }
+    if ((responseKey === SECONDARY_GOAL_RESPONSE_KEYS.custom || isPresetEntryResponse) && outcome.keepCollecting) {
+      setDraft("");
+      if (responseKey !== SECONDARY_GOAL_RESPONSE_KEYS.custom) {
+        setShowSecondaryGoalCustomInput(false);
       }
       return;
     }
     setDraft("");
+    setShowSecondaryGoalCustomInput(false);
     setPendingSecondaryGoalPrompt(null);
     setPendingClarifyingQuestion(null);
     if (!outcome.rerunAssessment) {
       setGoalStackConfirmation(outcome.goalStackConfirmation);
       setPhase("review");
       appendCoachMessage(
-        response.key === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly
+        isSkipResponse
           ? "Perfect. We'll keep the plan focused on the main goal."
           : stagedEntries.length
           ? "Perfect. I'll fold those extra goals into the review."
@@ -8666,6 +8843,17 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setGoalStackConfirmation(outcome.goalStackConfirmation);
     setAskedClarifyingQuestions([]);
     await runAssessment({ updatedAnswers: outcome.answers, askedQuestions: [] });
+  };
+  const handleSecondaryGoalQuickOption = async (option = null) => {
+    if (!option?.key) return;
+    if (option.key === SECONDARY_GOAL_RESPONSE_KEYS.custom) {
+      if (showSecondaryGoalCustomInput) {
+        setDraft("");
+      }
+      setShowSecondaryGoalCustomInput((prev) => !prev);
+      return;
+    }
+    await submitSecondaryGoalResponse(option);
   };
   const jumpToNextRequiredDetail = () => {
     setConfirmBuildError("");
@@ -8699,9 +8887,25 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       const blockedReason = acknowledgementMissing
         ? "Please confirm that you understand this timeline is aggressive."
         : latestConfirmationState?.reason || "I still need a little more grounded context before I can build your plan.";
+      const blockedTopic = acknowledgementMissing
+        ? "confirm_blocked_acknowledgement"
+        : `confirm_blocked_${String(latestConfirmationState?.next_required_field || latestConfirmationState?.status || "generic").replace(/\W+/g, "_").toLowerCase() || "generic"}`;
+      const currentTransitionId = intakeMachineRef.current?.transition_id || refreshedState?.transition_id || "";
+      const currentStage = intakeMachineRef.current?.stage || refreshedState?.stage || INTAKE_MACHINE_STATES.REVIEW_CONFIRM;
       setConfirmBuildError(blockedReason);
       setPhase("review");
-      appendCoachMessage(blockedReason);
+      appendCoachMessage({
+        text: blockedReason,
+        message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+        transition_id: currentTransitionId,
+        stage: currentStage,
+        message_key: buildTranscriptMessageKey({
+          stage: currentStage,
+          transition_id: currentTransitionId,
+          message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+          topic: blockedTopic,
+        }),
+      });
       return;
     }
     confirmBuildLockRef.current = true;
@@ -8750,6 +8954,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       try {
         await new Promise((resolve) => setTimeout(resolve, 3200));
         await onComplete(payload);
+        sessionPersistenceDisabledRef.current = true;
+        safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
         committedCommitSnapshotIdsRef.current.add(snapshotId);
         dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.COMMIT_COMPLETED, {
           confirmation_snapshot_id: snapshotId,
@@ -8798,6 +9004,35 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     goalStackConfirmation,
   });
   const goalReviewContract = goalStackReview?.reviewContract || reviewModel?.reviewContract || null;
+  const heardGoalRows = useMemo(() => {
+    const prioritizedGoals = [
+      ...(Array.isArray(goalStackReview?.activeGoals) ? goalStackReview.activeGoals : []),
+      ...(Array.isArray(goalStackReview?.backgroundGoals) ? goalStackReview.backgroundGoals : []),
+    ];
+    const seenGoalIds = new Set();
+    const rows = prioritizedGoals
+      .filter((goal) => {
+        const goalId = String(goal?.id || "").trim();
+        const goalSummary = sanitizeIntakeText(goal?.summary || "");
+        const dedupeKey = goalId || goalSummary.toLowerCase();
+        if (!dedupeKey || seenGoalIds.has(dedupeKey)) return false;
+        seenGoalIds.add(dedupeKey);
+        return Boolean(goalSummary);
+      })
+      .map((goal, index) => ({
+        id: String(goal?.id || `heard_goal_${index}`).trim(),
+        summary: sanitizeIntakeText(goal?.summary || ""),
+        detail: joinDisplayParts([
+          index === 0 ? "Leading now" : sanitizeIntakeText(goal?.roleLabel || "Also heard"),
+          sanitizeIntakeText(goal?.goalTypeLabel || "Goal"),
+        ]),
+      }));
+    const canRemove = rows.length > 1;
+    return rows.map((row) => ({
+      ...row,
+      canRemove,
+    }));
+  }, [goalStackReview]);
   const displayedPrimaryGoal = goalReviewContract?.lead_goal || goalStackReview?.activeGoals?.[0] || null;
   const displayedTrackingLabels = Array.from(new Set(
     (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
@@ -8820,6 +9055,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     ? Number(intakeMachine?.anchorFailureCounts?.[activeMachineAnchor?.field_id] || 0)
     : 0;
   const activeAnchorStrictMode = isMachineAnchorClarification && activeAnchorFailureCount >= 2;
+  const canEditLastAnchorAnswer = Boolean(
+    isMachineAnchorClarification
+    && Array.isArray(intakeMachine?.anchorBindingLog)
+    && intakeMachine.anchorBindingLog.length > 0
+  );
   const isStructuredClarification = isMachineAnchorClarification || (phase === "clarify" && isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion));
   const activeMachineAnchorSubmission = isMachineAnchorClarification ? buildAnchorSubmissionPayload(activeMachineAnchor) : null;
   const clarificationInputFields = isMachineAnchorClarification
@@ -8868,6 +9108,52 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         },
       });
     });
+  };
+  const removeHeardGoal = (goalId = "") => {
+    const cleanGoalId = String(goalId || "").trim();
+    if (!cleanGoalId || heardGoalRows.length <= 1) return;
+    setConfirmBuildError("");
+    const removedGoalIds = new Set(Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []);
+    removedGoalIds.add(cleanGoalId);
+    const rolesByGoalId = { ...(goalStackConfirmation?.rolesByGoalId || {}) };
+    delete rolesByGoalId[cleanGoalId];
+    const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
+      resolvedGoals: reviewGoals,
+      goalFeasibility: assessmentPreview?.goalFeasibility || null,
+      goalStackConfirmation: {
+        ...(goalStackConfirmation || {}),
+        removedGoalIds: [...removedGoalIds],
+        rolesByGoalId,
+      },
+    });
+    setGoalStackConfirmation(nextGoalStackConfirmation);
+    setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
+    setClarificationValues({});
+    setClarificationFieldErrors({});
+    setClarificationFormError("");
+    setNaturalAnchorDraft("");
+    setAnchorCapturePreview(null);
+    setShowSecondaryGoalCustomInput(false);
+    setDraft("");
+    const refreshedState = refreshReviewMachineState({
+      nextGoalStackConfirmation,
+    });
+    const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
+      machineState: refreshedState,
+      answersOverride: refreshedState?.draft?.answers || answers,
+    });
+    if (refreshedState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
+      setPendingSecondaryGoalPrompt(null);
+      setPhase("clarify");
+      return;
+    }
+    if (nextSecondaryGoalPrompt) {
+      setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
+      setPhase("secondary_goal");
+      return;
+    }
+    setPhase("review");
   };
   const toggleBackgroundPriority = () => {
     setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
@@ -8984,6 +9270,40 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
             {(phase === "review" || phase === "clarify" || phase === "secondary_goal") && !isCoachStreaming && (
               <div style={{ display:"grid", gap:"0.65rem" }}>
+                {heardGoalRows.length > 0 && (
+                  <div style={{ border:"1px solid rgba(111,148,198,0.16)", borderRadius:16, padding:"0.78rem 0.84rem", background:"rgba(10,18,32,0.68)", display:"grid", gap:"0.5rem" }}>
+                    <div style={{ display:"grid", gap:"0.18rem" }}>
+                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>HERE'S WHAT I HEARD</div>
+                      <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                        {heardGoalRows.length > 1
+                          ? "If one of these is off, remove it before I ask for the next detail."
+                          : "This is the goal I’m building around right now."}
+                      </div>
+                    </div>
+                    <div style={{ display:"grid", gap:"0.45rem" }}>
+                      {heardGoalRows.map((goal) => (
+                        <div key={goal.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", border:"1px solid rgba(111,148,198,0.12)", borderRadius:14, padding:"0.62rem 0.68rem", background:"rgba(7,18,33,0.78)" }}>
+                          <div style={{ display:"grid", gap:"0.16rem", flex:"1 1 220px" }}>
+                            <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.35, fontWeight:600 }}>{goal.summary}</div>
+                            {goal.detail && (
+                              <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{goal.detail}</div>
+                            )}
+                          </div>
+                          {goal.canRemove && (
+                            <button
+                              className="btn"
+                              onClick={() => removeHeardGoal(goal.id)}
+                              disabled={assessing || naturalAnchorSubmitting || confirmBuildSubmitting}
+                              style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {phase === "clarify" ? (
                   <div style={{ display:"grid", gap:"0.5rem" }}>
                     <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>
@@ -9414,6 +9734,15 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       >
                         {naturalAnchorSubmitting ? "Capturing..." : "Save this detail"}
                       </button>
+                      {canEditLastAnchorAnswer && (
+                        <button
+                          className="btn"
+                          onClick={editLastAnchorAnswer}
+                          style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                        >
+                          Edit last answer
+                        </button>
+                      )}
                       {!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.required && (
                         <button className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
                           Keep this goal
@@ -9445,6 +9774,32 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                       </div>
                     )}
+                    <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+                      {(Array.isArray(pendingSecondaryGoalPrompt?.quickOptions) ? pendingSecondaryGoalPrompt.quickOptions : []).map((option) => {
+                        const normalizedOptionValue = String(option?.value || "").trim().toLowerCase();
+                        const isSelected = Boolean(
+                          normalizedOptionValue
+                          && secondaryGoalEntries.some((goal) => String(goal || "").trim().toLowerCase() === normalizedOptionValue)
+                        );
+                        const isCustomOption = option?.key === SECONDARY_GOAL_RESPONSE_KEYS.custom;
+                        const isSkipOption = option?.key === SECONDARY_GOAL_RESPONSE_KEYS.skip;
+                        const isActive = isCustomOption ? showSecondaryGoalCustomInput : isSelected;
+                        return (
+                          <button
+                            key={option?.key || option?.label}
+                            className={isActive && !isSkipOption ? "btn btn-primary" : "btn"}
+                            onClick={() => handleSecondaryGoalQuickOption(option)}
+                            style={{
+                              color: isActive && !isSkipOption ? "#08111d" : (isSkipOption ? "#9fb4d3" : "#dbe7f6"),
+                              borderColor: isActive && !isSkipOption ? "#9fb4d3" : "#324961",
+                              background: isActive && !isSkipOption ? "#dbe7f6" : "transparent",
+                            }}
+                          >
+                            {option?.label || ""}
+                          </button>
+                        );
+                      })}
+                    </div>
                     {secondaryGoalEntries.length > 0 && (
                       <div style={{ display:"grid", gap:"0.3rem" }}>
                         <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>YOUR EXTRA GOALS</div>
@@ -9462,35 +9817,44 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                       </div>
                     )}
-                    <textarea
-                      ref={composerRef}
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      placeholder={pendingSecondaryGoalPrompt?.placeholder || "Example: bench 225"}
-                      rows={3}
-                      style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
-                    />
+                    {showSecondaryGoalCustomInput && (
+                      <div style={{ display:"grid", gap:"0.45rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:16, padding:"0.7rem", background:"rgba(8,14,25,0.46)" }}>
+                        <textarea
+                          ref={composerRef}
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          placeholder={pendingSecondaryGoalPrompt?.placeholder || "Example: bench 225"}
+                          rows={3}
+                          style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
+                        />
+                        <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.custom })}
+                            disabled={!draft.trim()}
+                          >
+                            Add custom goal
+                          </button>
+                          <button
+                            className="btn"
+                            onClick={() => {
+                              setDraft("");
+                              setShowSecondaryGoalCustomInput(false);
+                            }}
+                            style={{ color:"#9fb4d3", borderColor:"#324961" }}
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button
-                        className="btn btn-primary"
-                        onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.addGoal })}
-                        disabled={!draft.trim()}
-                      >
-                        Add another goal
-                      </button>
                       <button
                         className="btn"
                         onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.done })}
                         style={{ color:"#dbe7f6", borderColor:"#324961" }}
                       >
                         {secondaryGoalEntries.length ? "Continue with these goals" : "Continue"}
-                      </button>
-                      <button
-                        className="btn"
-                        onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly, label: "No, just this goal" })}
-                        style={{ color:"#9fb4d3", borderColor:"#324961" }}
-                      >
-                        Skip for now
                       </button>
                     </div>
                   </div>

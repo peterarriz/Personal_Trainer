@@ -1,6 +1,9 @@
+import { sanitizeDisplayCopy } from "./text-format-service.js";
+
 const normalizeText = (value = "") => String(value || "").replace(/\s+/g, " ").trim();
 const sanitizeText = (value = "", maxLength = 240) => normalizeText(value).slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
+const sanitizeDisplayLine = (value = "", maxLength = 220) => sanitizeDisplayCopy(sanitizeText(value, maxLength));
 
 const ALLOWED_PHRASING_KEYS = new Set(["questionText", "helperText", "reassuranceLine"]);
 const SCHEMA_WORD_PATTERN = /\b(field_id|anchor|schema|canonical|validation|goal_id|required field|transition_id)\b/i;
@@ -14,9 +17,9 @@ const validateCoachVoiceLine = (value = "", maxLength = 220) => {
 };
 
 export const buildDeterministicCoachVoiceCopy = (anchor = null) => ({
-  questionText: sanitizeText(anchor?.question || anchor?.label || "", 220),
-  helperText: sanitizeText(anchor?.why_it_matters || anchor?.helper_text || "", 220),
-  reassuranceLine: sanitizeText(anchor?.coach_voice_line || "", 180),
+  questionText: sanitizeDisplayLine(anchor?.question || anchor?.label || "", 220),
+  helperText: sanitizeDisplayLine(anchor?.why_it_matters || anchor?.helper_text || "", 220),
+  reassuranceLine: sanitizeDisplayLine(anchor?.coach_voice_line || "", 180),
 });
 
 export const buildCoachVoicePrompt = ({
@@ -81,9 +84,9 @@ export const sanitizeCoachVoiceVariant = ({
   if (/\?/.test(helperText) || /\?/.test(reassuranceLine)) return null;
 
   return {
-    questionText,
-    helperText,
-    reassuranceLine,
+    questionText: sanitizeDisplayLine(questionText, 220),
+    helperText: sanitizeDisplayLine(helperText, 220),
+    reassuranceLine: sanitizeDisplayLine(reassuranceLine, 180),
   };
 };
 

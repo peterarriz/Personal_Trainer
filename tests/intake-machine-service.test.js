@@ -723,6 +723,80 @@ test("runs per week answers clear only current_run_frequency on the current anch
   assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.field_id, "running_endurance_anchor_kind");
 });
 
+test("edit last answer re-asks the same first anchor without resetting intake", () => {
+  let runningState = buildRunningAnchorState();
+  runningState = intakeReducer(runningState, {
+    event_id: "evt_edit_last_timeline_answer",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: runningState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "October 12",
+      answer_value: "October 12",
+    }),
+  });
+
+  const editedState = intakeReducer(runningState, {
+    event_id: "evt_user_back_edit_last_anchor",
+    type: INTAKE_MACHINE_EVENTS.USER_BACK,
+    timestamp: TEST_NOW,
+    payload: {
+      edit_last_anchor: true,
+      now: TEST_NOW,
+    },
+  });
+
+  assert.equal(editedState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+  assert.equal(editedState.draft.answers.intake_completeness.fields.target_timeline, undefined);
+  assert.equal(editedState.draft.missingAnchorsEngine.currentAnchor.field_id, "target_timeline");
+  assert.equal(editedState.anchorBindingLog.length, 0);
+  assert.equal(editedState.anchorBindingsByFieldId.target_timeline, undefined);
+  assert.equal(editedState.ui.currentBindingTarget.field_id, "target_timeline");
+  assert.ok(editedState.draft.typedIntakePacket);
+});
+
+test("edit last answer only removes the most recent anchor field and keeps earlier answers intact", () => {
+  let runningState = buildRunningAnchorState();
+  runningState = intakeReducer(runningState, {
+    event_id: "evt_edit_last_keep_timeline",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: runningState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "October 12",
+      answer_value: "October 12",
+    }),
+  });
+  runningState = intakeReducer(runningState, {
+    event_id: "evt_edit_last_keep_frequency",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: runningState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "3 runs a week",
+      answer_value: "3 runs a week",
+    }),
+  });
+
+  const editedState = intakeReducer(runningState, {
+    event_id: "evt_user_back_edit_frequency_anchor",
+    type: INTAKE_MACHINE_EVENTS.USER_BACK,
+    timestamp: TEST_NOW,
+    payload: {
+      edit_last_anchor: true,
+      now: TEST_NOW,
+    },
+  });
+
+  assert.equal(editedState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+  assert.equal(editedState.draft.answers.intake_completeness.fields.target_timeline.value, "October 12");
+  assert.equal(editedState.draft.answers.intake_completeness.fields.current_run_frequency, undefined);
+  assert.equal(editedState.draft.missingAnchorsEngine.currentAnchor.field_id, "current_run_frequency");
+  assert.equal(editedState.anchorBindingLog.length, 1);
+  assert.equal(editedState.anchorBindingsByFieldId.target_timeline?.field_id, "target_timeline");
+  assert.equal(editedState.anchorBindingsByFieldId.current_run_frequency, undefined);
+});
+
 test("anchor answers reject missing or mismatched binding targets", () => {
   const runningState = buildRunningAnchorState();
   const missingBindingState = intakeReducer(runningState, {

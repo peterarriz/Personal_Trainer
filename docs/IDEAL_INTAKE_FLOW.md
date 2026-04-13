@@ -1,5 +1,11 @@
 # Ideal Intake Flow
 
+## Current Runtime Notes (2026-04)
+
+- After goal interpretation, the live app now shows a short "Here's what I heard" review with one row per parsed goal before required anchor collection begins.
+- The current correction surface is deterministic goal removal/editing from that review state, rather than a separate AI accept/revise screen.
+- Partial intake progress is restored from browser session storage until the user confirms and builds the plan or abandons the browser session.
+
 ## 1. Product Objective
 
 ### What intake is supposed to accomplish
