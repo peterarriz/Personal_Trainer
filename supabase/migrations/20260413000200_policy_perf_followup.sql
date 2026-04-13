@@ -28,6 +28,9 @@ begin
     'app_events'
   ]
   loop
+    if to_regclass(format('public.%I', tbl)) is null then
+      continue;
+    end if;
     execute format('alter table if exists public.%I enable row level security', tbl);
     execute format('drop policy if exists %I on public.%I', tbl || '_select_own', tbl);
     execute format('drop policy if exists %I on public.%I', tbl || '_insert_own', tbl);
