@@ -37,6 +37,21 @@ It is a preprocessing step that produces a small, stable, confirmed goal object 
 
 The output of this model should feed the canonical goal layer, not bypass it.
 
+## Capability Packet Handoff
+
+Resolved goals now hand off into a `GoalCapabilityPacket` before weekly planning.
+
+That packet is the planner-facing bridge between infinite user phrasing and finite planning logic. It declares:
+
+- dominant domain
+- support domains
+- capability mix
+- confidence
+- missing anchors
+- fallback planning mode
+
+This keeps goal resolution flexible while keeping the downstream planner deterministic.
+
 ## Core Principle
 
 There are three distinct layers:

@@ -98,6 +98,22 @@ test("half-marathon goals keep a specific event summary instead of generic runni
   assert.doesNotMatch(result.resolvedGoals[0].summary, /hybrid|aerobic base/i);
 });
 
+test("swim goals keep swim-specific summaries and domain adapter hints", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "swim a faster mile",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "swim a faster mile" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "performance");
+  assert.equal(result.resolvedGoals[0].summary, "Swim a faster mile");
+  assert.equal(result.resolvedGoals[0].primaryDomain, "swimming_endurance_technique");
+  assert.ok(result.resolvedGoals[0].candidateDomainAdapters.includes("swimming_endurance_technique"));
+  assert.ok(result.unresolvedGaps.some((gap) => /pool|swim/i.test(gap)));
+});
+
 test("pure running goals do not become hybrid even if provider interpretation drifts", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "run a 1:45 half marathon",

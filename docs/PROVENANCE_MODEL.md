@@ -33,6 +33,24 @@ Replace freeform "reason" text as the only explanation path with small, durable 
 }
 ```
 
+### Deterministic change summary
+
+Weekly and daily planning surfaces also carry a short deterministic `changeSummary` alongside richer provenance:
+
+```js
+{
+  didChange: true,
+  inputType: "workout_log",
+  horizon: "immediate_to_short",
+  headline: "Tempo Run was carried forward after the earlier skip.",
+  detail: "The next lower-priority slot was replaced so the week's backbone stays intact.",
+  preserved: "The longer endurance backbone stays preserved.",
+  surfaceLine: "Tempo Run was carried forward after the earlier skip. The longer endurance backbone stays preserved."
+}
+```
+
+This is not a replacement for provenance events. It is the short user-facing explanation contract for Today and Program.
+
 ## Actor Rules
 
 - `user`: direct user-applied overrides, quick prompts, manual context changes

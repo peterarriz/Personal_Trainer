@@ -43,6 +43,15 @@ export const buildStorageStatus = ({
   detail,
 });
 
+const applyStorageStatusUpdate = (setStorageStatus, nextStatus) => {
+  if (typeof setStorageStatus !== "function" || !nextStatus) return;
+  setStorageStatus(nextStatus);
+};
+
+const isTransientStorageMessage = (message = "") => (
+  /auth_transient|fetch_timeout|fetch_network|timeout|timed out|abort|aborted|failed to fetch|networkerror|network request failed|load failed 5\d\d|load failed 429|temporarily unavailable/i.test(String(message || ""))
+);
+
 export const classifyStorageError = (error) => {
   const message = String(error?.message || error || "");
   if (message === AUTH_REQUIRED) {
@@ -59,6 +68,17 @@ export const classifyStorageError = (error) => {
       label: "SYNC RETRYING",
       reason: STORAGE_STATUS_REASONS.transient,
       detail: "Cloud sync failed temporarily. Local changes are still being kept safely.",
+    });
+  }
+  if (isTransientStorageMessage(message)) {
+    const timeoutLike = /fetch_timeout|timeout|timed out|abort|aborted/i.test(message);
+    return buildStorageStatus({
+      mode: "local",
+      label: "SYNC RETRYING",
+      reason: STORAGE_STATUS_REASONS.transient,
+      detail: timeoutLike
+        ? "Cloud sync timed out. Local changes are still saved safely on this device."
+        : "Cloud sync is temporarily unreachable. Local changes are still saved safely on this device.",
     });
   }
   if (message === AUTH_PROVIDER_UNAVAILABLE || /Missing Supabase|Malformed Supabase|anon key|Supabase URL/i.test(message)) {
@@ -594,7 +614,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   }) => {
     localSave(payload);
     if (!authSession?.user?.id) {
-      setStorageStatus(buildStorageStatus({
+      applyStorageStatusUpdate(setStorageStatus, buildStorageStatus({
         mode: "local",
         label: "NOT SIGNED IN",
         reason: STORAGE_STATUS_REASONS.notSignedIn,
@@ -614,7 +634,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       } catch (e) {
         logDiag("coach memory sync failed", e?.message || "unknown");
       }
-      setStorageStatus(buildStorageStatus({
+      applyStorageStatusUpdate(setStorageStatus, buildStorageStatus({
         mode: "cloud",
         label: "SYNCED",
         reason: STORAGE_STATUS_REASONS.synced,
@@ -625,7 +645,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         logDiag("cloud.save.transient", "falling back to local while preserving session");
       }
       logDiag("Cloud save failed, local fallback active:", e.message);
-      setStorageStatus(classifyStorageError(e));
+      applyStorageStatusUpdate(setStorageStatus, classifyStorageError(e));
     }
   };
 

@@ -72,21 +72,31 @@ The plan model should resolve top-down in this order:
 
 1. Product mission and user profile
 2. Goal stack
-3. Program block
-4. Weekly intent
-5. Plan week
-6. Plan day
-7. Domain prescriptions
-8. Actual logs and outcomes
-9. Future adaptations
+3. Goal capability packet and domain adapter
+4. Program block
+5. Weekly intent
+6. Plan week
+7. Plan day
+8. Domain prescriptions
+9. Actual logs and outcomes
+10. Future adaptations
 
 Interpretation:
 
 - `ProgramBlock` defines the phase-level purpose.
+- `GoalCapabilityPacket` and the domain adapter map broad user intent into one finite planning substrate.
 - `WeeklyIntent` defines what this specific week is trying to accomplish.
 - `PlanDay` is the single daily operating decision.
 - Domain prescriptions are children of the day, not separate competing plans.
 - Actual outcomes influence future plan generation, never rewrite history.
+
+## Dynamic Planning Engine
+
+- Goal phrasing is normalized into a finite capability ontology.
+- One dominant domain adapter shapes the week without creating a second planner.
+- Training preference is a planning-policy input, not decorative copy.
+- Programs are backbones; Styles are overlays.
+- The engine must emit a short visible change summary whenever the plan materially changes.
 
 ## Daily Decision Engine Responsibilities
 

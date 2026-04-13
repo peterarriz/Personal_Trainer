@@ -2294,10 +2294,26 @@ const safeFetchWithTimeout = async (url, options = {}, timeoutMs = 8500) => {
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await fetch(url, { ...options, signal: ctrl.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`FETCH_TIMEOUT:${timeoutMs}`);
+    }
+    const message = String(error?.message || error || "");
+    if (/failed to fetch|networkerror|network request failed|load failed/i.test(message)) {
+      throw new Error(`FETCH_NETWORK:${message || "request_failed"}`);
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
   }
 };
+
+const sameStorageStatus = (left = null, right = null) => (
+  String(left?.mode || "") === String(right?.mode || "")
+  && String(left?.label || "") === String(right?.label || "")
+  && String(left?.reason || "") === String(right?.reason || "")
+  && String(left?.detail || "") === String(right?.detail || "")
+);
 
 const PRIMARY_GOAL_OPTIONS = ["fat_loss", "muscle_gain", "endurance", "general_fitness"];
 const PRIMARY_GOAL_LABELS = { fat_loss: "Fat Loss", muscle_gain: "Muscle Gain", endurance: "Endurance", general_fitness: "General Fitness" };
@@ -4262,6 +4278,14 @@ export default function TrainerDashboard() {
   const [nutritionActualLogs, setNutritionActualLogs] = useState({});
   const [analyzing, setAnalyzing] = useState(false);
   const [storageStatus, setStorageStatus] = useState(() => buildStorageStatus({ mode: "syncing", label: "SYNCING", reason: STORAGE_STATUS_REASONS.unknown, detail: "Cloud sync is initializing." }));
+  const applyStorageStatus = (nextStatus = null) => {
+    if (!nextStatus) return;
+    setStorageStatus((currentStatus) => (
+      sameStorageStatus(currentStatus, nextStatus)
+        ? currentStatus
+        : nextStatus
+    ));
+  };
   const [lastSaved, setLastSaved] = useState(null);
   const [dismissedTriggers, setDismissedTriggers] = useState([]);
   const [authSession, setAuthSession] = useState(null);
@@ -4318,6 +4342,11 @@ export default function TrainerDashboard() {
   const learningLayer = deriveLearningLayer({ dailyCheckins, logs, weeklyCheckins, momentum, personalization, validationLayer, optimizationLayer });
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
+  const prePlanWeeklyNutritionReview = useMemo(() => buildWeeklyNutritionReview({
+    anchorDateKey: todayKey,
+    plannedDayRecords,
+    nutritionActualLogs,
+  }), [todayKey, plannedDayRecords, nutritionActualLogs]);
   const planComposer = composeGoalNativePlan({
     goals: goalsModel,
     personalization,
@@ -4328,6 +4357,12 @@ export default function TrainerDashboard() {
     weekTemplates: WEEKS,
     athleteProfile: canonicalAthlete,
     logs,
+    dailyCheckins,
+    nutritionActualLogs,
+    weeklyNutritionReview: prePlanWeeklyNutritionReview,
+    coachActions,
+    todayKey,
+    currentDayOfWeek: dayOfWeek,
     plannedDayRecords,
     planWeekRecords,
   });
@@ -4429,6 +4464,7 @@ export default function TrainerDashboard() {
       weeklyIntent: currentPlanWeek?.weeklyIntent || null,
       planWeek: currentPlanWeek,
       plannedSession: currentPlanSession,
+      changeSummary: currentPlanWeek?.changeSummary || planComposer?.changeSummary || null,
       planningBasis: planComposer?.planningBasis || currentPlanWeek?.planningBasis || null,
     }
   );
@@ -5104,7 +5140,7 @@ export default function TrainerDashboard() {
         logDiag("startup.local_cache.import_failed", cacheErr?.message || "unknown");
       }
     }
-    if (statusOverride) setStorageStatus(statusOverride);
+    if (statusOverride) applyStorageStatus(statusOverride);
     return hasCache;
   };
 
@@ -5146,7 +5182,7 @@ export default function TrainerDashboard() {
       try {
         skipNextGoalsPersistRef.current = true;
         await (sbLoadRef.current?.() || Promise.resolve());
-        setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
+        applyStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
         logDiagRef.current?.("realtime.resync.ok", reason);
       } catch (e) {
         skipNextGoalsPersistRef.current = false;
@@ -5425,7 +5461,7 @@ export default function TrainerDashboard() {
       try {
         await sbLoad();
         setAuthError("");
-        setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
+        applyStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
       } catch(e) {
         logDiag("Cloud load failed:", e.message);
         const nextStatus = classifyStorageError(e);
@@ -5452,7 +5488,7 @@ export default function TrainerDashboard() {
             logDiag("local cache import fallback failed", cacheErr?.message || "unknown");
           }
         }
-        setStorageStatus(nextStatus);
+        applyStorageStatus(nextStatus);
       }
       setLoading(false);
     })();
@@ -5676,7 +5712,7 @@ export default function TrainerDashboard() {
       await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
       if (changedDateKey) await syncSessionLogShadowRow(changedDateKey, changedLog || null);
       setLastSaved(new Date().toLocaleTimeString());
-    } catch(e) { logDiag("saveLogs fallback", e.message); setStorageStatus(classifyStorageError(e)); }
+    } catch(e) { logDiag("saveLogs fallback", e.message); applyStorageStatus(classifyStorageError(e)); }
     analyzePlan(nextLogs);
   };
 
@@ -5689,7 +5725,7 @@ export default function TrainerDashboard() {
     try {
       await persistAll(logs, arr, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
       setLastSaved(new Date().toLocaleTimeString());
-    } catch(e) { logDiag("saveBodyweights fallback", e.message); setStorageStatus(classifyStorageError(e)); }
+    } catch(e) { logDiag("saveBodyweights fallback", e.message); applyStorageStatus(classifyStorageError(e)); }
   };
 
   const saveManualProgressInputs = async (update) => {
@@ -5700,7 +5736,7 @@ export default function TrainerDashboard() {
     try {
       await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
       setLastSaved(new Date().toLocaleTimeString());
-    } catch(e) { logDiag("saveManualProgressInputs fallback", e.message); setStorageStatus(classifyStorageError(e)); }
+    } catch(e) { logDiag("saveManualProgressInputs fallback", e.message); applyStorageStatus(classifyStorageError(e)); }
   };
 
   const saveProgramSelection = async (update) => {
@@ -5715,7 +5751,7 @@ export default function TrainerDashboard() {
       setLastSaved(new Date().toLocaleTimeString());
     } catch (e) {
       logDiag("saveProgramSelection fallback", e.message);
-      setStorageStatus(classifyStorageError(e));
+      applyStorageStatus(classifyStorageError(e));
     }
   };
 
@@ -6267,11 +6303,11 @@ Keep it plain and specific.`;
         runtimeState.planWeekRecords
       );
       setLastSaved("restored + synced");
-      setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
+      applyStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
       return true;
     } catch(e) {
       logDiag("import failed", e.message);
-      setStorageStatus(buildStorageStatus({
+      applyStorageStatus(buildStorageStatus({
         mode: "local",
         label: "RESTORE FAILED",
         reason: STORAGE_STATUS_REASONS.dataIncompatible,
@@ -6559,7 +6595,7 @@ Keep it plain and specific.`;
                   }),
                 });
               } else {
-                setStorageStatus(buildStorageStatus({
+                applyStorageStatus(buildStorageStatus({
                   mode: "local",
                   label: "LOCAL MODE",
                   reason: STORAGE_STATUS_REASONS.providerUnavailable,
@@ -10475,6 +10511,13 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   );
 
   const patchSettings = async (patch = {}) => {
+    const nextIntensityPreference = String(patch?.trainingPreferences?.intensityPreference || "").trim().toLowerCase();
+    const shouldPatchIntensityPosture = [
+      TRAINING_INTENSITY_VALUES.conservative,
+      TRAINING_INTENSITY_VALUES.standard,
+      TRAINING_INTENSITY_VALUES.aggressive,
+      TRAINING_INTENSITY_VALUES.adaptive,
+    ].includes(nextIntensityPreference);
     const next = mergePersonalization(personalization, {
       settings: {
         ...(settings || {}),
@@ -10484,6 +10527,15 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         appearance: { ...(settings?.appearance || {}), ...(patch?.appearance || {}) },
         notifications: { ...(settings?.notifications || {}), ...(patch?.notifications || {}) },
       },
+      trainingContext: shouldPatchIntensityPosture
+        ? {
+          intensityPosture: {
+            value: nextIntensityPreference,
+            confirmed: nextIntensityPreference !== TRAINING_INTENSITY_VALUES.unknown,
+            source: TRAINING_CONTEXT_SOURCES.environmentEditor,
+          },
+        }
+        : undefined,
     });
     setPersonalization(next);
     await onPersist(next);
@@ -12435,6 +12487,12 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
   });
   const livePlanningBasis = planDay?.week?.planningBasis || planComposer?.planningBasis || null;
   const livePlanBasisExplanation = livePlanningBasis?.planBasisExplanation || null;
+  const liveChangeSummary = planDay?.week?.changeSummary || currentPlanWeek?.changeSummary || planComposer?.changeSummary || null;
+  const todayChangeLine = sanitizeDisplayText(
+    liveChangeSummary?.surfaceLine
+    || [liveChangeSummary?.headline, liveChangeSummary?.preserved].filter(Boolean).join(" ")
+    || ""
+  );
   const strTrack = displayWorkout?.strengthTrack || todayWorkout?.strengthTrack || (environmentSelection?.neutral ? "" : "home");
   const strSess = displayWorkout?.strSess || todayWorkout?.strSess || "A";
   const strengthSetupLabel = sanitizeDisplayText(
@@ -12805,6 +12863,11 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           <div style={{ fontSize:"0.55rem", color:"#dbe7f6", lineHeight:1.5 }}>
             {successHeadline}
           </div>
+          {!!todayChangeLine && (
+            <div data-testid="today-change-summary" style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {todayChangeLine}
+            </div>
+          )}
           {!!planBasisHeadline && (
             <div data-testid="today-plan-basis" style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
               Plan basis: {planBasisHeadline}
@@ -14499,7 +14562,9 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const currentWeekPurposeLine = compressWeekCopy(currentWeeklyIntent?.focus || currentWeekLabel, 140);
   const currentWeekMattersLine = compressWeekCopy(weeklyCoachBrief || blockSummaryLine || "Current week plan", 165);
   const currentWeekChangesLine = compressWeekCopy(
-    badWeekTriage
+    currentWeekModel?.changeSummary?.surfaceLine
+      || currentWeekModel?.changeSummary?.headline
+      || badWeekTriage
       || (Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0
         ? currentWeekModel.constraints.slice(0, 2).join(" - ")
         : hierarchyIntentBits.join(" - ")),
@@ -14759,7 +14824,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
             <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.16rem", lineHeight:1.55 }}>
               {currentWeekPurposeLine}
             </div>
-            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>
+            <div data-testid="program-change-summary" style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>
               {currentWeekChangesLine}
             </div>
           </div>
