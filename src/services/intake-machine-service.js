@@ -1783,7 +1783,7 @@ const buildDeterministicIntakeDraft = ({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     answers,
   });
-  const goalFeasibility = assessGoalFeasibility({
+  const previewGoalFeasibility = assessGoalFeasibility({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     ...buildGoalFeasibilityContextFromIntake(intakeContext),
     intakeCompleteness: previewCompleteness,
@@ -1791,7 +1791,7 @@ const buildDeterministicIntakeDraft = ({
   });
   const feasibleResolvedGoals = applyFeasibilityPriorityOrdering({
     resolvedGoals: goalResolution?.resolvedGoals || [],
-    feasibility: goalFeasibility,
+    feasibility: previewGoalFeasibility,
   });
   const arbitrationInputs = buildConfirmedArbitrationInputs({
     answers,
@@ -1803,12 +1803,29 @@ const buildDeterministicIntakeDraft = ({
     confirmedPrimaryGoal: arbitrationInputs.confirmedPrimaryGoal,
     confirmedAdditionalGoals: arbitrationInputs.confirmedAdditionalGoals,
     additionalGoalTexts: arbitrationInputs.additionalGoalTexts,
-    goalFeasibility,
+    goalFeasibility: previewGoalFeasibility,
     intakeCompleteness: previewCompleteness,
+    answers,
     typedIntakePacket: typedPacket,
     now,
   });
   const orderedResolvedGoals = arbitration?.goals?.length ? arbitration.goals : feasibleResolvedGoals;
+  const activeResolvedGoals = applyIntakeGoalStackConfirmation({
+    resolvedGoals: orderedResolvedGoals,
+    goalStackConfirmation,
+    goalFeasibility: previewGoalFeasibility,
+  });
+  const effectiveResolvedGoals = activeResolvedGoals.length ? activeResolvedGoals : orderedResolvedGoals;
+  const activeCompleteness = deriveIntakeCompletenessState({
+    resolvedGoals: effectiveResolvedGoals,
+    answers,
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: effectiveResolvedGoals,
+    ...buildGoalFeasibilityContextFromIntake(intakeContext),
+    intakeCompleteness: activeCompleteness,
+    now,
+  });
   const reviewModel = buildIntakeGoalReviewModel({
     goalResolution,
     orderedResolvedGoals,
@@ -1823,7 +1840,7 @@ const buildDeterministicIntakeDraft = ({
   const missingAnchorsEngine = buildMissingAnchorsEngine({
     resolvedGoals: activeGoals,
     answers,
-    completenessState: reviewModel?.completeness || previewCompleteness,
+    completenessState: reviewModel?.completeness || activeCompleteness,
     bindingsByFieldId: anchorBindingsByFieldId,
   });
 
@@ -1837,7 +1854,7 @@ const buildDeterministicIntakeDraft = ({
     orderedResolvedGoals: clonePlainValue(orderedResolvedGoals),
     reviewModel: clonePlainValue(reviewModel),
     confirmationState: clonePlainValue(confirmationState),
-    intakeCompleteness: clonePlainValue(reviewModel?.completeness || previewCompleteness),
+    intakeCompleteness: clonePlainValue(reviewModel?.completeness || activeCompleteness),
     missingAnchorsEngine: clonePlainValue(missingAnchorsEngine),
     goalStackConfirmation: clonePlainValue(goalStackConfirmation),
     commitRequested: false,
@@ -2090,6 +2107,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
     case INTAKE_MACHINE_EVENTS.INTERPRETATION_READY: {
       const payload = event?.payload || {};
       const typedIntakePacket = payload?.assessment?.typedIntakePacket || payload?.typedIntakePacket || currentDraft.typedIntakePacket;
+      const suppressTranscript = Boolean(payload?.suppress_transcript || payload?.suppressTranscript);
       if (!typedIntakePacket) {
         return commitTransition({
           state,
@@ -2117,7 +2135,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
         : INTAKE_MACHINE_STATES.REALISM_GATE;
       const nextMessages = [];
       const assessmentText = sanitizeText(payload?.assessment?.text || "", 320);
-      if (assessmentText) {
+      if (!suppressTranscript && assessmentText) {
         nextMessages.push({
           message_kind: TRANSCRIPT_MESSAGE_KINDS.aiSummary,
           intent: sanitizeText(typedIntakePacket?.intent || "intake_interpretation", 80) || "intake_interpretation",
@@ -2125,16 +2143,16 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
           text: assessmentText,
         });
       }
-        if (nextStage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION && nextAnchor?.question) {
-          nextMessages.push({
-            message_kind: TRANSCRIPT_MESSAGE_KINDS.anchorQuestion,
-            anchor_id: nextAnchor.anchor_id,
-            text: buildDeterministicAnchorPromptText({
-              fieldId: nextAnchor.field_id,
-              prompt: nextAnchor.question,
-            }),
-          });
-        }
+      if (!suppressTranscript && nextStage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION && nextAnchor?.question) {
+        nextMessages.push({
+          message_kind: TRANSCRIPT_MESSAGE_KINDS.anchorQuestion,
+          anchor_id: nextAnchor.anchor_id,
+          text: buildDeterministicAnchorPromptText({
+            fieldId: nextAnchor.field_id,
+            prompt: nextAnchor.question,
+          }),
+        });
+      }
       return commitTransition({
         state,
         event,

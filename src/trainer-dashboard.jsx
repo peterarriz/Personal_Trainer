@@ -2606,7 +2606,7 @@ const buildPreviewGoalResolutionBundle = ({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     answers,
   });
-  const goalFeasibility = assessGoalFeasibility({
+  const previewGoalFeasibility = assessGoalFeasibility({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     ...buildGoalFeasibilityContextFromIntake(intakeContext),
     intakeCompleteness,
@@ -2614,7 +2614,7 @@ const buildPreviewGoalResolutionBundle = ({
   });
   const feasibleResolvedGoals = applyFeasibilityPriorityOrdering({
     resolvedGoals: goalResolution?.resolvedGoals || [],
-    feasibility: goalFeasibility,
+    feasibility: previewGoalFeasibility,
   });
   const arbitrationInputs = buildConfirmedArbitrationInputs({
     answers,
@@ -2626,12 +2626,29 @@ const buildPreviewGoalResolutionBundle = ({
     confirmedPrimaryGoal: arbitrationInputs.confirmedPrimaryGoal,
     confirmedAdditionalGoals: arbitrationInputs.confirmedAdditionalGoals,
     additionalGoalTexts: arbitrationInputs.additionalGoalTexts,
-    goalFeasibility,
+    goalFeasibility: previewGoalFeasibility,
     intakeCompleteness,
+    answers,
     typedIntakePacket,
     now,
   });
   const orderedResolvedGoals = arbitration?.goals?.length ? arbitration.goals : feasibleResolvedGoals;
+  const activeResolvedGoals = applyIntakeGoalStackConfirmation({
+    resolvedGoals: orderedResolvedGoals,
+    goalStackConfirmation: null,
+    goalFeasibility: previewGoalFeasibility,
+  });
+  const effectiveResolvedGoals = activeResolvedGoals.length ? activeResolvedGoals : orderedResolvedGoals;
+  const activeCompleteness = deriveIntakeCompletenessState({
+    resolvedGoals: effectiveResolvedGoals,
+    answers,
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: effectiveResolvedGoals,
+    ...buildGoalFeasibilityContextFromIntake(intakeContext),
+    intakeCompleteness: activeCompleteness,
+    now,
+  });
 
   return {
     typedIntakePacket,
@@ -6677,6 +6694,7 @@ Keep it plain and specific.`;
       additionalGoalTexts: arbitrationInputs.additionalGoalTexts,
       goalFeasibility,
       intakeCompleteness,
+      answers,
       typedIntakePacket: fallbackTypedIntakePacket,
       now: todayKey,
     });
@@ -8116,10 +8134,56 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         },
         answers: nextAnswers,
         goalStackConfirmation: nextGoalStackConfirmation,
+        suppress_transcript: true,
         now: new Date().toISOString(),
       }
     ));
     syncMachineDraftToIntakeView(refreshedState);
+    return refreshedState;
+  };
+  const clearReviewEditingState = () => {
+    setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
+    setClarificationValues({});
+    setClarificationFieldErrors({});
+    setClarificationFormError("");
+    setNaturalAnchorDraft("");
+    setAnchorCapturePreview(null);
+    setShowSecondaryGoalCustomInput(false);
+    setDraft("");
+  };
+  const routeFromRefreshedReviewState = ({
+    refreshedState = null,
+    answersOverride = answers,
+  } = {}) => {
+    const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
+      machineState: refreshedState,
+      answersOverride: refreshedState?.draft?.answers || answersOverride,
+    });
+    if (refreshedState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
+      setPendingSecondaryGoalPrompt(null);
+      setPhase("clarify");
+      return;
+    }
+    if (nextSecondaryGoalPrompt) {
+      setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
+      setPhase("secondary_goal");
+      return;
+    }
+    setPendingSecondaryGoalPrompt(null);
+    setPhase("review");
+  };
+  const applyGoalStackConfirmationUpdate = (nextGoalStackConfirmation = null) => {
+    setConfirmBuildError("");
+    clearReviewEditingState();
+    setGoalStackConfirmation(nextGoalStackConfirmation);
+    const refreshedState = refreshReviewMachineState({
+      nextGoalStackConfirmation,
+    });
+    routeFromRefreshedReviewState({
+      refreshedState,
+      answersOverride: refreshedState?.draft?.answers || answers,
+    });
     return refreshedState;
   };
   const resetIntakeForGoalEdit = (nextAnswers = answers) => {
@@ -8904,6 +8968,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       const blockedTopic = acknowledgementMissing
         ? "confirm_blocked_acknowledgement"
         : `confirm_blocked_${String(latestConfirmationState?.next_required_field || latestConfirmationState?.status || "generic").replace(/\W+/g, "_").toLowerCase() || "generic"}`;
+      const blockedMessageKey = `review_note:${blockedTopic}`;
       const currentTransitionId = intakeMachineRef.current?.transition_id || refreshedState?.transition_id || "";
       const currentStage = intakeMachineRef.current?.stage || refreshedState?.stage || INTAKE_MACHINE_STATES.REVIEW_CONFIRM;
       setConfirmBuildError(blockedReason);
@@ -8913,12 +8978,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
         transition_id: currentTransitionId,
         stage: currentStage,
-        message_key: buildTranscriptMessageKey({
-          stage: currentStage,
-          transition_id: currentTransitionId,
-          message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
-          topic: blockedTopic,
-        }),
+        message_key: blockedMessageKey,
+        idempotency_key: blockedMessageKey,
       });
       return;
     }
@@ -9112,46 +9173,45 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!intakeDebugMode && showParseDebug) setShowParseDebug(false);
   }, [intakeDebugMode, showParseDebug]);
   const setLeadingGoal = (goalId) => {
-    setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
+    const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
       resolvedGoals: reviewGoals,
       goalFeasibility: assessmentPreview?.goalFeasibility || null,
       goalStackConfirmation: {
-        ...(prev || {}),
+        ...(goalStackConfirmation || {}),
         primaryGoalId: goalId,
-        removedGoalIds: (Array.isArray(prev?.removedGoalIds) ? prev.removedGoalIds : []).filter((id) => id !== goalId),
+        removedGoalIds: (Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []).filter((id) => id !== goalId),
         rolesByGoalId: {
-          ...(prev?.rolesByGoalId || {}),
+          ...(goalStackConfirmation?.rolesByGoalId || {}),
           [goalId]: GOAL_STACK_ROLES.primary,
         },
       },
-    }));
+    });
+    applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
   };
   const updateSecondaryGoalMode = (goalId, mode = GOAL_STACK_ROLES.maintained) => {
-    setGoalStackConfirmation((prev) => {
-      const removedGoalIds = new Set(Array.isArray(prev?.removedGoalIds) ? prev.removedGoalIds : []);
-      const rolesByGoalId = { ...(prev?.rolesByGoalId || {}) };
-      if (mode === "removed") {
-        removedGoalIds.add(goalId);
-        delete rolesByGoalId[goalId];
-      } else {
-        removedGoalIds.delete(goalId);
-        rolesByGoalId[goalId] = mode;
-      }
-      return buildIntakeGoalStackConfirmation({
-        resolvedGoals: reviewGoals,
-        goalFeasibility: assessmentPreview?.goalFeasibility || null,
-        goalStackConfirmation: {
-          ...(prev || {}),
-          removedGoalIds: [...removedGoalIds],
-          rolesByGoalId,
-        },
-      });
+    const removedGoalIds = new Set(Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []);
+    const rolesByGoalId = { ...(goalStackConfirmation?.rolesByGoalId || {}) };
+    if (mode === "removed") {
+      removedGoalIds.add(goalId);
+      delete rolesByGoalId[goalId];
+    } else {
+      removedGoalIds.delete(goalId);
+      rolesByGoalId[goalId] = mode;
+    }
+    const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
+      resolvedGoals: reviewGoals,
+      goalFeasibility: assessmentPreview?.goalFeasibility || null,
+      goalStackConfirmation: {
+        ...(goalStackConfirmation || {}),
+        removedGoalIds: [...removedGoalIds],
+        rolesByGoalId,
+      },
     });
+    applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
   };
   const removeHeardGoal = (goalId = "") => {
     const cleanGoalId = String(goalId || "").trim();
     if (!cleanGoalId || heardGoalRows.length <= 1) return;
-    setConfirmBuildError("");
     const removedGoalIds = new Set(Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []);
     removedGoalIds.add(cleanGoalId);
     const rolesByGoalId = { ...(goalStackConfirmation?.rolesByGoalId || {}) };
@@ -9165,44 +9225,18 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         rolesByGoalId,
       },
     });
-    setGoalStackConfirmation(nextGoalStackConfirmation);
-    setPendingClarifyingQuestion(null);
-    setPendingSecondaryGoalPrompt(null);
-    setClarificationValues({});
-    setClarificationFieldErrors({});
-    setClarificationFormError("");
-    setNaturalAnchorDraft("");
-    setAnchorCapturePreview(null);
-    setShowSecondaryGoalCustomInput(false);
-    setDraft("");
-    const refreshedState = refreshReviewMachineState({
-      nextGoalStackConfirmation,
-    });
-    const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
-      machineState: refreshedState,
-      answersOverride: refreshedState?.draft?.answers || answers,
-    });
-    if (refreshedState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
-      setPendingSecondaryGoalPrompt(null);
-      setPhase("clarify");
-      return;
-    }
-    if (nextSecondaryGoalPrompt) {
-      setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
-      setPhase("secondary_goal");
-      return;
-    }
-    setPhase("review");
+    applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
   };
   const toggleBackgroundPriority = () => {
-    setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
+    const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
       resolvedGoals: reviewGoals,
       goalFeasibility: assessmentPreview?.goalFeasibility || null,
       goalStackConfirmation: {
-        ...(prev || {}),
-        keepResiliencePriority: prev?.keepResiliencePriority === false,
+        ...(goalStackConfirmation || {}),
+        keepResiliencePriority: goalStackConfirmation?.keepResiliencePriority === false,
       },
-    }));
+    });
+    applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
   };
 
   return (

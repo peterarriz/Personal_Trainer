@@ -215,6 +215,83 @@ test("review keeps background and later goals visible while planner-facing confi
   assert.deepEqual(confirmedStack.map((goal) => goal.planningCategory), ["running", "strength"]);
 });
 
+test("deferred appearance goals do not keep their missing proxy anchors in the finalization gate", () => {
+  const packet = buildIntakePacket({ rawGoalText: "run a 1:45 half marathon" });
+  const resolution = resolvePrimaryGoal("run a 1:45 half marathon", packet);
+  const arbitration = buildGoalArbitrationStack({
+    resolvedGoals: resolution.resolvedGoals,
+    confirmedPrimaryGoal: resolution.resolvedGoals[0],
+    additionalGoalTexts: ["get a six pack"],
+    goalFeasibility: {
+      confirmationAction: "proceed",
+      conflictFlags: [],
+    },
+    intakeCompleteness: {
+      facts: {},
+      missingRequired: [
+        { label: "Appearance tracking proxy" },
+      ],
+      missingOptional: [],
+    },
+    answers: {
+      intake_completeness: {
+        fields: {
+          target_timeline: { raw: "October", value: "2026-10", mode: "month" },
+          current_run_frequency: { raw: "3 runs/week", value: 3 },
+          running_endurance_anchor_kind: { raw: "Longest recent run", value: "longest_recent_run" },
+          longest_recent_run: { raw: "7 miles", value: 7, unit: "miles", miles: 7 },
+        },
+      },
+    },
+    typedIntakePacket: packet,
+    now: "2026-04-11",
+  });
+
+  assert.equal(
+    arbitration.supportGoals.some((goal) => goal?.planningCategory === "body_comp")
+    || arbitration.deferredGoals.some((goal) => goal?.planningCategory === "body_comp"),
+    true
+  );
+  assert.equal(arbitration.conflictSummary.status, "clear");
+  assert.equal(arbitration.finalization.ready, true);
+  assert.equal(arbitration.finalization.blocked, false);
+  assert.deepEqual(arbitration.finalization.blockingIssues, []);
+});
+
+test("secondary-goal arbitration dedupes the same appearance lane when it is present in both raw intent and explicit additional goals", () => {
+  const primaryPacket = buildIntakePacket({ rawGoalText: "run a 1:45 half marathon" });
+  const primaryResolution = resolvePrimaryGoal("run a 1:45 half marathon", primaryPacket);
+  const combinedPacket = buildIntakePacket({ rawGoalText: "run a 1:45 half marathon. get a six pack" });
+  const combinedResolution = resolvePrimaryGoal("run a 1:45 half marathon. get a six pack", combinedPacket);
+  const arbitration = buildGoalArbitrationStack({
+    resolvedGoals: combinedResolution.resolvedGoals,
+    confirmedPrimaryGoal: primaryResolution.resolvedGoals[0],
+    additionalGoalTexts: ["get a six pack"],
+    goalFeasibility: {
+      confirmationAction: "proceed",
+      conflictFlags: [],
+    },
+    intakeCompleteness: {
+      facts: {},
+      missingRequired: [],
+      missingOptional: [],
+    },
+    answers: {
+      goal_intent: "run a 1:45 half marathon",
+      additional_goals_list: ["get a six pack"],
+    },
+    typedIntakePacket: combinedPacket,
+    now: "2026-04-11",
+  });
+
+  const appearanceGoals = arbitration.goals.filter((goal) => (
+    goal?.planningCategory === "body_comp"
+    && goal?.goalFamily === "appearance"
+  ));
+
+  assert.equal(appearanceGoals.length, 1);
+});
+
 test("malformed bmi phrasing requires clarification before arbitration finalizes", () => {
   const packet = buildIntakePacket({ rawGoalText: "BMI under 10%" });
   const resolution = resolvePrimaryGoal("BMI under 10%", packet);

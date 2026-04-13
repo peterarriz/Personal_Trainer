@@ -1,4 +1,5 @@
 import { GOAL_MEASURABILITY_TIERS, resolveGoalTranslation } from "./goal-resolution-service.js";
+import { deriveIntakeCompletenessState } from "./intake-completeness-service.js";
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
@@ -144,16 +145,22 @@ const preserveSpecificAdditionalGoalSummary = (goal = {}, sourceText = "") => {
   return goal;
 };
 
+const normalizeArbitrationSummary = (value = "") => sanitizeText(value, 180)
+  .toLowerCase()
+  .replace(/\bwhile the primary goal leads\b/g, "")
+  .replace(/\bwith repeatable training\b/g, "")
+  .replace(/\bby the target window\b/g, "")
+  .replace(/\bover the target window\b/g, "")
+  .replace(/\bin the target window\b/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
+
 const buildGoalCandidateKey = (goal = {}) => {
   const planningCategory = sanitizeText(goal?.planningCategory || "", 40).toLowerCase();
   const goalFamily = sanitizeText(goal?.goalFamily || "", 40).toLowerCase();
   const metricKey = sanitizeText(goal?.primaryMetric?.key || "", 80).toLowerCase();
   const metricValue = sanitizeText(goal?.primaryMetric?.targetValue || "", 40).toLowerCase();
-  const summary = sanitizeText(goal?.summary || "", 180)
-    .toLowerCase()
-    .replace(/\bwhile the primary goal leads\b/g, "")
-    .replace(/\bwith repeatable training\b/g, "")
-    .trim();
+  const summary = normalizeArbitrationSummary(goal?.summary || "");
   const sourceText = sanitizeText(goal?.arbitrationSourceText || goal?.rawIntent?.text || "", 180).toLowerCase();
   return `${planningCategory}:${goalFamily}:${metricKey}:${metricValue}:${summary || sourceText}`;
 };
@@ -580,6 +587,7 @@ export const buildGoalArbitrationStack = ({
   additionalGoalTexts = [],
   goalFeasibility = null,
   intakeCompleteness = null,
+  answers = null,
   typedIntakePacket = null,
   now = new Date(),
 } = {}) => {
@@ -786,11 +794,18 @@ export const buildGoalArbitrationStack = ({
   const maintainedGoals = orderedGoals.filter((goal) => goal.goalArbitrationRole === GOAL_ROLES.maintained);
   const supportGoals = orderedGoals.filter((goal) => goal.goalArbitrationRole === GOAL_ROLES.background);
   const deferredGoals = orderedGoals.filter((goal) => goal.goalArbitrationRole === GOAL_ROLES.deferred);
+  const activeGoals = [normalizedLeadGoal, ...maintainedGoals].filter(Boolean);
+  const activeCompleteness = answers && typeof answers === "object"
+    ? deriveIntakeCompletenessState({
+        resolvedGoals: activeGoals,
+        answers,
+      })
+    : intakeCompleteness;
   const conflictSummary = buildConflictSummary({
     orderedGoals,
     deferredGoals,
     goalFeasibility,
-    intakeCompleteness,
+    intakeCompleteness: activeCompleteness,
     scheduleTight,
   });
   const arbitrationReasoning = buildArbitrationReasoning({
@@ -800,14 +815,14 @@ export const buildGoalArbitrationStack = ({
     supportGoals,
     deferredGoals,
     goalFeasibility,
-    intakeCompleteness,
+    intakeCompleteness: activeCompleteness,
     scheduleTight,
     highConflict,
   });
   const finalization = buildFinalizationState({
     orderedGoals,
     conflictSummary,
-    intakeCompleteness,
+    intakeCompleteness: activeCompleteness,
   });
   const backgroundGoalIds = supportGoals.map((goal) => goal.id);
   const deferredGoalIds = deferredGoals.map((goal) => goal.id);

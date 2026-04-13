@@ -201,6 +201,52 @@ test.describe("intake onboarding e2e", () => {
     expect(getActiveNonResilienceGoals(cache).length).toBeGreaterThan(1);
   });
 
+  test("promoting a background goal to lead reroutes intake without duplicating transcript copy", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "run a 1:45 half marathon",
+      experienceLevel: "Intermediate",
+      trainingDays: "3",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+    });
+
+    await completeAnchors(page, {
+      target_timeline: { type: "natural", value: "October" },
+      current_run_frequency: { type: "natural", value: "3 runs/week" },
+      running_endurance_anchor_kind: { type: "choice", value: "longest_recent_run" },
+      longest_recent_run: { type: "natural", value: "7 miles" },
+      recent_pace_baseline: { type: "natural", value: "8:55 pace" },
+    }, { maxSteps: 6 });
+
+    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("secondary_goal");
+    await page.getByTestId("intake-secondary-option-custom").click();
+    await page.getByTestId("intake-secondary-custom-input").fill("get a six pack");
+    await page.getByTestId("intake-secondary-add-custom").click();
+    await page.getByTestId("intake-secondary-continue").click();
+
+    await waitForReview(page);
+    const confirmationStatusBefore = await getConfirmationStatus(page);
+    expect(["proceed", "warn"]).toContain(confirmationStatusBefore);
+    const promoteButtons = page.locator(
+      "[data-testid='intake-review-lane-support-goals'] [data-testid^='intake-review-action-change-priority-'], " +
+      "[data-testid='intake-review-lane-deferred-goals'] [data-testid^='intake-review-action-change-priority-']"
+    );
+    await expect(promoteButtons).toHaveCount(1);
+    const promoteButton = promoteButtons.first();
+    await expect(promoteButton).toBeVisible();
+
+    const transcriptBefore = await getTranscriptEntries(page);
+    await promoteButton.click();
+
+    await expect.poll(() => getCurrentPhase(page), { timeout: 12_000 }).toBe("clarify");
+    await expect.poll(() => getCurrentFieldId(page), { timeout: 12_000 }).toMatch(/appearance_proxy_anchor_kind|current_bodyweight|current_waist/);
+
+    const transcriptAfter = await getTranscriptEntries(page);
+    expect(transcriptAfter.length).toBe(transcriptBefore.length);
+    await expectTranscriptKeysUnique(page);
+  });
+
   test("editing the goal midstream clears stale running anchors and moves to the new goal", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
