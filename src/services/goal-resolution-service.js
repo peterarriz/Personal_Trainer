@@ -235,10 +235,32 @@ const detectSignals = (text = "") => {
   };
 };
 
+const normalizeClockToken = (value = "") => {
+  const token = String(value || "").trim();
+  if (!token) return "";
+  return token.split(":").length === 2 ? `${token}:00` : token;
+};
+
+const minutesToClockToken = (totalMinutes) => {
+  if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return "";
+  const wholeMinutes = Math.round(totalMinutes);
+  const hours = Math.floor(wholeMinutes / 60);
+  const minutes = wholeMinutes % 60;
+  return `${hours}:${String(minutes).padStart(2, "0")}:00`;
+};
+
 const extractTimeToken = (text = "") => {
-  const match = String(text || "").match(/\b(\d{1,2}:\d{2}(?::\d{2})?)\b/);
-  if (!match?.[1]) return "";
-  return match[1].split(":").length === 2 ? `${match[1]}:00` : match[1];
+  const normalized = String(text || "");
+  const clockMatch = normalized.match(/\b(\d{1,2}:\d{2}(?::\d{2})?)\b/);
+  if (clockMatch?.[1]) return normalizeClockToken(clockMatch[1]);
+
+  const hourMatch = normalized.match(/\b(\d{1,2}(?:\.\d+)?)\s*(?:hour|hours|hr|hrs)\b/i);
+  const minuteMatch = normalized.match(/\b(\d{1,3}(?:\.\d+)?)\s*(?:minute|minutes|min|mins)\b/i);
+  if (hourMatch?.[1] || minuteMatch?.[1]) {
+    const totalMinutes = (Number(hourMatch?.[1] || 0) * 60) + Number(minuteMatch?.[1] || 0);
+    return minutesToClockToken(totalMinutes);
+  }
+  return "";
 };
 
 const extractRunningPrimaryMetric = (text = "") => {
@@ -268,8 +290,21 @@ const extractStrengthPrimaryMetric = (text = "") => {
   ];
   const lift = liftMap.find((item) => item.pattern.test(text));
   if (!lift) return null;
-  const weightMatch = String(text || "").match(/\b(\d{2,4}(?:\.\d+)?)\s*(?:lb|lbs|pounds?)?\b/i);
-  const targetValue = weightMatch?.[1] || "";
+  const explicitWeightMatches = Array.from(String(text || "").matchAll(/\b(\d{2,4}(?:\.\d+)?)\s*(?:lb|lbs|pounds?)\b/ig))
+    .map((match) => Number(match?.[1] || 0))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const topSetMatches = Array.from(String(text || "").matchAll(/\b(\d{2,4}(?:\.\d+)?)\s*[x×]\s*\d{1,2}\b/ig))
+    .map((match) => Number(match?.[1] || 0))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const genericWeightMatches = Array.from(String(text || "").matchAll(/\b(\d{2,4}(?:\.\d+)?)\b/g))
+    .map((match) => Number(match?.[1] || 0))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const candidateWeights = explicitWeightMatches.length
+    ? explicitWeightMatches
+    : topSetMatches.length
+    ? topSetMatches
+    : genericWeightMatches;
+  const targetValue = candidateWeights.length ? String(Math.max(...candidateWeights)) : "";
   return {
     key: lift.key,
     label: lift.label,

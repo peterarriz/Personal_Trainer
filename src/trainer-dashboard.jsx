@@ -4278,6 +4278,7 @@ export default function TrainerDashboard() {
     const requestedTab = new URLSearchParams(window.location.search).get("tab");
     return requestedTab === "settings" ? 5 : 0;
   });
+  const [settingsFocus, setSettingsFocus] = useState("");
   const [logs, setLogs] = useState({});
   const [bodyweights, setBodyweights] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -4354,6 +4355,9 @@ export default function TrainerDashboard() {
   const baseTodayWorkout = getTodayWorkout(currentWeek, dayOfWeek);
   const baseWeek = WEEKS[(currentWeek - 1) % WEEKS.length] || WEEKS[0];
   const todayKey = new Date().toISOString().split("T")[0];
+  useEffect(() => {
+    if (tab !== 5 && settingsFocus) setSettingsFocus("");
+  }, [tab, settingsFocus]);
   const dismissedTriggerStorageKey = `dismissed_triggers_${todayKey}`;
   const dayOverride = coachPlanAdjustments.dayOverrides?.[todayKey];
   const nutritionOverride = coachPlanAdjustments.nutritionOverrides?.[todayKey];
@@ -7529,7 +7533,7 @@ Keep it plain and specific.`;
               </div>
             </div>
           </div>
-          <button data-testid="app-tab-settings" className="btn" onClick={()=>setTab(5)} aria-label="Open settings" title="Settings" style={{ width:44, height:44, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, background:"var(--surface-1)" }}>
+          <button data-testid="app-tab-settings" className="btn" onClick={()=>{ setSettingsFocus(""); setTab(5); }} aria-label="Open settings" title="Settings" style={{ width:44, height:44, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, background:"var(--surface-1)" }}>
             <SettingsIcon size={18} />
           </button>
         </div>
@@ -7554,7 +7558,7 @@ Keep it plain and specific.`;
         {/* PROGRAM */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} saveProgramSelection={saveProgramSelection} todayWorkout={planDay?.resolved?.training} onManagePlan={()=>setTab(5)} />
+            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} saveProgramSelection={saveProgramSelection} todayWorkout={planDay?.resolved?.training} onManagePlan={(focus = "plan")=>{ setSettingsFocus(focus); setTab(5); }} />
           </ProgramTabErrorBoundary>
         )}
 
@@ -7565,7 +7569,7 @@ Keep it plain and specific.`;
         {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} weeklyNutritionReview={weeklyNutritionReview} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} />}
 
         {/* COACH */}
-        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onOpenSettings={()=>setTab(5)} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onOpenSettings={()=>{ setSettingsFocus("advanced"); setTab(5); }} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
           setCoachPlanAdjustments(nextCoachPlanAdjustments);
@@ -7574,7 +7578,7 @@ Keep it plain and specific.`;
           await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
 
-        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onPersist={async (nextPersonalization) => {
+        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} focusSection={settingsFocus} onPersist={async (nextPersonalization) => {
           setPersonalization(nextPersonalization);
           await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
@@ -10544,6 +10548,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
 function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
   const normalizedAppearance = normalizeAppearanceSettings(appearance);
+  const previewMode = normalizedAppearance.mode === "Light" ? "Light" : "Dark";
   const handleThemeChange = (themeId) => {
     if (typeof onPatchAppearance !== "function") return;
     onPatchAppearance({
@@ -10564,11 +10569,16 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
   return (
     <div style={{ display:"grid", gap:"0.55rem" }}>
       <div style={{ fontSize:"0.54rem", color:"var(--text-soft)", lineHeight:1.55 }}>
-        Pick one curated theme, then choose the light or dark surface mode that feels best.
+        Pick one curated identity, then choose how it should render. The preview cards show real surface, accent, and typography differences instead of just swatches.
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
         {BRAND_THEME_OPTIONS.map((themeOption) => {
           const selected = normalizedAppearance.theme === themeOption.id;
+          const previewTheme = buildBrandThemeState({
+            appearance: { theme: themeOption.id, mode: previewMode },
+            systemPrefersDark: previewMode === "Dark",
+          });
+          const previewVars = previewTheme.cssVars || {};
           return (
             <button
               key={themeOption.id}
@@ -10592,10 +10602,40 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
                 </div>
                 {selected && <span className="tag" style={{ fontSize:"0.42rem" }}>Selected</span>}
               </div>
-              <div style={{ display:"flex", gap:"0.22rem" }}>
-                {themeOption.preview.map((swatch, index) => (
-                  <div key={`${themeOption.id}_${index}`} style={{ height:12, flex:1, borderRadius:999, background:swatch, border:"1px solid var(--border)" }} />
-                ))}
+              <div
+                style={{
+                  display:"grid",
+                  gap:"0.32rem",
+                  borderRadius:14,
+                  padding:"0.56rem",
+                  background:previewTheme.appBackground,
+                  border:`1px solid ${previewVars["--border"] || "var(--border)"}`,
+                  boxShadow:previewVars["--shadow-1"] || "none",
+                }}
+              >
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.3rem" }}>
+                  <div style={{ fontFamily:previewVars["--font-display"], fontSize:"0.66rem", color:previewVars["--text-strong"] }}>FORMA</div>
+                  <div style={{ fontSize:"0.4rem", color:previewVars["--badge-text"], background:previewVars["--badge-bg"], border:`1px solid ${previewVars["--badge-border"]}`, borderRadius:999, padding:"0.1rem 0.28rem" }}>
+                    {previewMode}
+                  </div>
+                </div>
+                <div style={{ display:"grid", gap:"0.18rem", background:previewVars["--panel"], border:`1px solid ${previewVars["--card-border"]}`, borderRadius:12, padding:"0.45rem" }}>
+                  <div style={{ fontSize:"0.52rem", color:previewVars["--text-strong"], lineHeight:1.35 }}>Today is crisp and readable.</div>
+                  <div style={{ fontSize:"0.44rem", color:previewVars["--text-soft"], lineHeight:1.45 }}>Session card, typography, and accents should feel like a different product identity.</div>
+                  <div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap", marginTop:"0.08rem" }}>
+                    <span style={{ fontSize:"0.4rem", color:previewVars["--badge-text"], background:previewVars["--badge-bg"], border:`1px solid ${previewVars["--badge-border"]}`, borderRadius:999, padding:"0.08rem 0.26rem" }}>
+                      45 min
+                    </span>
+                    <span style={{ fontSize:"0.4rem", color:previewVars["--accent"], background:previewVars["--accent-soft"], border:`1px solid ${previewVars["--border-strong"]}`, borderRadius:999, padding:"0.08rem 0.26rem" }}>
+                      Quality day
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.22rem" }}>
+                  {themeOption.preview.map((swatch, index) => (
+                    <div key={`${themeOption.id}_${index}`} style={{ height:10, borderRadius:999, background:swatch, border:"1px solid rgba(255,255,255,0.08)" }} />
+                  ))}
+                </div>
               </div>
               <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>{themeOption.description}</div>
             </button>
@@ -10624,7 +10664,7 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
         })}
       </div>
       <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.5 }}>
-        Current direction: {PRODUCT_BRAND.name}. {BRAND_FOUNDATION.recommendedProductName} stays curated on purpose, so themes feel distinct instead of duplicated.
+        Current direction: {PRODUCT_BRAND.name}. Curated themes stay deliberately different, and `System` follows your OS while `Dark` and `Light` stay intentionally separate surfaces.
       </div>
     </div>
   );
@@ -10634,6 +10674,12 @@ function ProfileSetupGate({ personalization = {}, onComplete = async () => {} })
   const settings = personalization?.settings || DEFAULT_PERSONALIZATION.settings;
   const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
   const activeTrainingContext = deriveTrainingContextFromPersonalization({ personalization });
+  const experienceOptions = [
+    { label: "Brand new", years: 0, helper: "Just starting or restarting" },
+    { label: "About 1 year", years: 1, helper: "Some consistency, still building basics" },
+    { label: "2-4 years", years: 3, helper: "Regular training background" },
+    { label: "5+ years", years: 5, helper: "Longer training history" },
+  ];
   const [draft, setDraft] = useState({
     name: profile?.name && profile.name !== "Athlete" ? profile.name : "",
     units: settings?.units?.weight === "kg" ? "metric" : "imperial",
@@ -10675,53 +10721,128 @@ function ProfileSetupGate({ personalization = {}, onComplete = async () => {} })
   };
 
   return (
-    <div data-testid="profile-setup-gate" style={{ maxWidth:560, margin:"0 auto", minHeight:"100vh", display:"grid", placeItems:"center", padding:"1rem" }}>
+    <div data-testid="profile-setup-gate" style={{ maxWidth:680, margin:"0 auto", minHeight:"100vh", display:"grid", placeItems:"center", padding:"1rem" }}>
       <div className="card card-strong card-hero" style={{ width:"100%", borderColor:"var(--border-strong)" }}>
-        <div style={{ display:"grid", gap:"0.22rem", marginBottom:"0.8rem" }}>
+        <div style={{ display:"grid", gap:"0.3rem", marginBottom:"0.9rem" }}>
           <div className="sect-title">Profile Setup</div>
-          <div style={{ fontSize:"0.58rem", color:"var(--text-soft)", lineHeight:1.55 }}>
-            Keep this short. The app needs a real person, a real setup, and a usable default environment before intake starts.
+          <div style={{ fontSize:"0.6rem", color:"var(--text-strong)", lineHeight:1.5 }}>
+            Set the person and training reality first. This is what lets FORMA stop guessing about your body, schedule, and setup before intake starts asking goal questions.
+          </div>
+          <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
+            {["Real name and timezone", "Body + units", "Training setup defaults"].map((label) => (
+              <span key={label} className="tag" style={{ fontSize:"0.44rem" }}>{label}</span>
+            ))}
           </div>
         </div>
-        <div style={{ display:"grid", gap:"0.5rem" }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.4rem" }}>
-            <input data-testid="profile-setup-name" value={draft.name} onChange={(e)=>updateDraft("name", e.target.value)} placeholder="Name" />
-            <input data-testid="profile-setup-timezone" value={draft.timezone} onChange={(e)=>updateDraft("timezone", e.target.value)} placeholder="Timezone" />
+        <div style={{ display:"grid", gap:"0.6rem" }}>
+          <div style={{ border:"1px solid var(--border)", borderRadius:16, padding:"0.78rem", background:"var(--surface-2)", display:"grid", gap:"0.5rem" }}>
+            <div>
+              <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", marginBottom:"0.12rem" }}>About you</div>
+              <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+                These fields make reminders, units, and baseline assumptions line up with a real person instead of a blank demo profile.
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:"0.42rem" }}>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Display name</span>
+                <input data-testid="profile-setup-name" value={draft.name} onChange={(e)=>updateDraft("name", e.target.value)} placeholder="What should coach call you?" />
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Timezone</span>
+                <input data-testid="profile-setup-timezone" value={draft.timezone} onChange={(e)=>updateDraft("timezone", e.target.value)} placeholder="America/Chicago" />
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Units</span>
+                <select data-testid="profile-setup-units" value={draft.units} onChange={(e)=>updateDraft("units", e.target.value)}>
+                  <option value="imperial">Imperial</option>
+                  <option value="metric">Metric</option>
+                </select>
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Birth year</span>
+                <input data-testid="profile-setup-birth-year" type="number" value={draft.birthYear} onChange={(e)=>updateDraft("birthYear", e.target.value)} placeholder="1992" />
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Height</span>
+                <input data-testid="profile-setup-height" value={draft.height} onChange={(e)=>updateDraft("height", e.target.value)} placeholder={draft.units === "metric" ? "Height in cm" : "e.g. 5'10\""} />
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Current bodyweight</span>
+                <input data-testid="profile-setup-weight" type="number" step="0.1" value={draft.weight} onChange={(e)=>updateDraft("weight", e.target.value)} placeholder={draft.units === "metric" ? "Weight in kg" : "Weight in lb"} />
+              </label>
+            </div>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.4rem" }}>
-            <select data-testid="profile-setup-units" value={draft.units} onChange={(e)=>updateDraft("units", e.target.value)}>
-              <option value="imperial">Imperial units</option>
-              <option value="metric">Metric units</option>
-            </select>
-            <input data-testid="profile-setup-birth-year" type="number" value={draft.birthYear} onChange={(e)=>updateDraft("birthYear", e.target.value)} placeholder="Birth year" />
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 120px", gap:"0.4rem" }}>
-            <input data-testid="profile-setup-height" value={draft.height} onChange={(e)=>updateDraft("height", e.target.value)} placeholder={draft.units === "metric" ? "Height (cm)" : "Height (e.g. 6'1\")"} />
-            <input data-testid="profile-setup-weight" type="number" step="0.1" value={draft.weight} onChange={(e)=>updateDraft("weight", e.target.value)} placeholder={draft.units === "metric" ? "Weight (kg)" : "Weight (lb)"} />
-            <input data-testid="profile-setup-training-age" type="number" min="0" max="60" value={draft.trainingAgeYears} onChange={(e)=>updateDraft("trainingAgeYears", e.target.value)} placeholder="Training age" />
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.4rem" }}>
-            <select data-testid="profile-setup-environment" value={draft.environmentMode} onChange={(e)=>updateDraft("environmentMode", e.target.value)}>
-              {["Home", "Gym", "Both", "Varies a lot"].map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-            <select data-testid="profile-setup-equipment" value={draft.equipmentAccess} onChange={(e)=>updateDraft("equipmentAccess", e.target.value)}>
-              <option value={TRAINING_EQUIPMENT_VALUES.none}>No equipment</option>
-              <option value={TRAINING_EQUIPMENT_VALUES.dumbbells}>Dumbbells</option>
-              <option value={TRAINING_EQUIPMENT_VALUES.basicGym}>Basic gym</option>
-              <option value={TRAINING_EQUIPMENT_VALUES.fullGym}>Full gym</option>
-              <option value={TRAINING_EQUIPMENT_VALUES.mixed}>Mixed setup</option>
-            </select>
-            <select data-testid="profile-setup-session-length" value={draft.sessionLength} onChange={(e)=>updateDraft("sessionLength", e.target.value)}>
-              <option value={TRAINING_SESSION_DURATION_VALUES.min20}>20 min</option>
-              <option value={TRAINING_SESSION_DURATION_VALUES.min30}>30 min</option>
-              <option value={TRAINING_SESSION_DURATION_VALUES.min45}>45 min</option>
-              <option value={TRAINING_SESSION_DURATION_VALUES.min60Plus}>60+ min</option>
-            </select>
+
+          <div style={{ border:"1px solid var(--border)", borderRadius:16, padding:"0.78rem", background:"var(--surface-2)", display:"grid", gap:"0.5rem" }}>
+            <div>
+              <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", marginBottom:"0.12rem" }}>Training reality</div>
+              <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+                These defaults shape the sessions the planner will prescribe on day one. They should reflect your normal week, not your ideal week.
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.42rem" }}>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Usual environment</span>
+                <select data-testid="profile-setup-environment" value={draft.environmentMode} onChange={(e)=>updateDraft("environmentMode", e.target.value)}>
+                  {["Home", "Gym", "Both", "Varies a lot"].map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Equipment access</span>
+                <select data-testid="profile-setup-equipment" value={draft.equipmentAccess} onChange={(e)=>updateDraft("equipmentAccess", e.target.value)}>
+                  <option value={TRAINING_EQUIPMENT_VALUES.none}>No equipment</option>
+                  <option value={TRAINING_EQUIPMENT_VALUES.dumbbells}>Dumbbells</option>
+                  <option value={TRAINING_EQUIPMENT_VALUES.basicGym}>Basic gym</option>
+                  <option value={TRAINING_EQUIPMENT_VALUES.fullGym}>Full gym</option>
+                  <option value={TRAINING_EQUIPMENT_VALUES.mixed}>Mixed setup</option>
+                </select>
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Usual session length</span>
+                <select data-testid="profile-setup-session-length" value={draft.sessionLength} onChange={(e)=>updateDraft("sessionLength", e.target.value)}>
+                  <option value={TRAINING_SESSION_DURATION_VALUES.min20}>20 min</option>
+                  <option value={TRAINING_SESSION_DURATION_VALUES.min30}>30 min</option>
+                  <option value={TRAINING_SESSION_DURATION_VALUES.min45}>45 min</option>
+                  <option value={TRAINING_SESSION_DURATION_VALUES.min60Plus}>60+ min</option>
+                </select>
+              </label>
+            </div>
+            <div style={{ display:"grid", gap:"0.22rem" }}>
+              <div style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Years of consistent training</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.32rem" }}>
+                {experienceOptions.map((option) => {
+                  const selected = Number(draft.trainingAgeYears || 0) === option.years;
+                  return (
+                    <button
+                      key={option.label}
+                      type="button"
+                      className="btn"
+                      onClick={() => updateDraft("trainingAgeYears", String(option.years))}
+                      style={{
+                        textAlign:"left",
+                        display:"grid",
+                        gap:"0.12rem",
+                        borderColor:selected ? "var(--border-strong)" : "var(--border)",
+                        background:selected ? "var(--tab-active-bg)" : "var(--surface-1)",
+                        color:selected ? "var(--tab-active-text)" : "var(--text-soft)",
+                      }}
+                    >
+                      <span style={{ fontSize:"0.48rem", color:selected ? "var(--text-strong)" : "inherit" }}>{option.label}</span>
+                      <span style={{ fontSize:"0.43rem", lineHeight:1.4 }}>{option.helper}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <input data-testid="profile-setup-training-age" type="number" min="0" max="60" value={draft.trainingAgeYears} onChange={(e)=>updateDraft("trainingAgeYears", e.target.value)} placeholder="Or type the number of years directly" />
+              <div style={{ fontSize:"0.46rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+                A close estimate is enough. This only prevents the planner from treating a detrained beginner and a longtime lifter like the same person.
+              </div>
+            </div>
           </div>
           {error && <div style={{ fontSize:"0.52rem", color:"#fbbf24", lineHeight:1.45 }}>{error}</div>}
           <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
-            <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>
-              Intake stays separate. This step only sets the basic person and environment the planner can trust.
+            <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.55, maxWidth:430 }}>
+              Intake stays separate. This step only locks in the person, body defaults, and training setup the planner should trust before goal interpretation begins.
             </div>
             <button data-testid="profile-setup-save" className="btn btn-primary" onClick={handleContinue} disabled={!canContinue || saving} style={{ fontSize:"0.54rem" }}>
               {saving ? "Saving..." : "Continue to intake"}
@@ -10877,7 +10998,7 @@ function MetricsBaselinesSection({
   );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [] }) {
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], focusSection = "" }) {
   const appleHealth = personalization?.connectedDevices?.appleHealth || {};
   const garmin = personalization?.connectedDevices?.garmin || {};
   const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
@@ -11022,6 +11143,40 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   };
 
+  const saveAccountProfile = async () => {
+    const birthYear = accountProfileDraft.birthYear === "" ? "" : Number(accountProfileDraft.birthYear) || "";
+    const normalizedWeight = accountProfileDraft.weight === "" ? "" : Number(accountProfileDraft.weight) || "";
+    const normalizedHeight = accountProfileDraft.unitsHeight === "cm"
+      ? (accountProfileDraft.height === "" ? "" : Number(accountProfileDraft.height) || "")
+      : accountProfileDraft.height;
+    const trainingAgeYears = accountProfileDraft.trainingAgeYears === "" ? "" : Math.max(0, Number(accountProfileDraft.trainingAgeYears) || 0);
+    const next = mergePersonalization(personalization, {
+      profile: {
+        ...(profile || {}),
+        name: String(accountProfileDraft.name || "").trim(),
+        timezone: String(accountProfileDraft.timezone || "").trim() || DEFAULT_TIMEZONE,
+        birthYear,
+        age: birthYear ? Math.max(13, new Date().getFullYear() - birthYear) : "",
+        height: normalizedHeight,
+        weight: normalizedWeight,
+        bodyweight: normalizedWeight,
+        trainingAgeYears,
+      },
+      settings: {
+        ...(settings || {}),
+        units: {
+          ...(unitSettings || {}),
+          weight: accountProfileDraft.unitsWeight || unitSettings?.weight || "lbs",
+          height: accountProfileDraft.unitsHeight || unitSettings?.height || "ft_in",
+          distance: accountProfileDraft.unitsDistance || unitSettings?.distance || "miles",
+        },
+      },
+    });
+    setPersonalization(next);
+    await onPersist(next);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+  };
+
   const persistAppleHealth = async (patch = {}) => {
     const next = mergePersonalization(personalization, {
       connectedDevices: {
@@ -11122,6 +11277,19 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const profileHeightVal = profile?.height ?? "";
   const profileBirthYearVal = profile?.birthYear ?? "";
   const profileTimezoneVal = profile?.timezone || DEFAULT_TIMEZONE;
+  const buildAccountProfileDraft = () => ({
+    name: profile?.name || "",
+    timezone: profileTimezoneVal,
+    birthYear: profileBirthYearVal === "" ? "" : String(profileBirthYearVal),
+    height: profileHeightVal ?? "",
+    weight: profileWeightVal === "" ? "" : String(profileWeightVal),
+    trainingAgeYears: profile?.trainingAgeYears === "" || profile?.trainingAgeYears == null ? "" : String(profile.trainingAgeYears),
+    unitsWeight: unitSettings?.weight || "lbs",
+    unitsHeight: unitSettings?.height || "ft_in",
+    unitsDistance: unitSettings?.distance || "miles",
+  });
+  const [accountProfileDraft, setAccountProfileDraft] = useState(buildAccountProfileDraft);
+  const [metricsDetailsOpen, setMetricsDetailsOpen] = useState(focusSection === "metrics");
   const garminLastSyncLabel = garmin?.lastSyncAt ? new Date(garmin.lastSyncAt).toLocaleString() : "never";
   const formatIntegrationTimestamp = (value) => value ? new Date(value).toLocaleString() : "never";
   const integrationStateTone = (state = "idle") => {
@@ -11454,6 +11622,22 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     coachMemory.simplicityVsVariety,
     coachMemory.preferredFoodPatterns,
   ]);
+  useEffect(() => {
+    setAccountProfileDraft(buildAccountProfileDraft());
+  }, [
+    profile?.name,
+    profileTimezoneVal,
+    profileBirthYearVal,
+    profileHeightVal,
+    profileWeightVal,
+    profile?.trainingAgeYears,
+    unitSettings?.weight,
+    unitSettings?.height,
+    unitSettings?.distance,
+  ]);
+  useEffect(() => {
+    if (focusSection === "metrics") setMetricsDetailsOpen(true);
+  }, [focusSection]);
   const saveCoachSetup = async () => {
     const updated = mergePersonalization(personalization, {
       coachMemory: {
@@ -11640,7 +11824,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.7rem" }}>
           <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:0 }}>SETTINGS</div>
           <div style={{ fontSize:"0.55rem", color:"#8ea4c7", lineHeight:1.55 }}>
-            Manage profile, plan basis, theme, and advanced controls here instead of inside your training tabs.
+            Account controls, plan management, appearance, integrations, and advanced setup live here instead of inside the main training tabs.
           </div>
           {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:C.green }}>{settingsSaveMsg}</div>}
         </div>
@@ -11687,55 +11871,57 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 )}
               </div>
             )}
+            <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem", display:"grid", gap:"0.4rem" }}>
+              <div style={{ display:"grid", gap:"0.14rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>ACCOUNT PROFILE</div>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                  Save identity and unit defaults here in one step so routine edits do not trigger repeated cloud writes while you type.
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.35rem" }}>
+                <input value={accountProfileDraft.name} onChange={e=>setAccountProfileDraft((current) => ({ ...current, name: e.target.value }))} placeholder="Display name" />
+                <input value={accountProfileDraft.timezone} onChange={e=>setAccountProfileDraft((current) => ({ ...current, timezone: e.target.value }))} placeholder="Timezone" />
+                <input type="number" value={accountProfileDraft.birthYear} onChange={e=>setAccountProfileDraft((current) => ({ ...current, birthYear: e.target.value }))} placeholder="Birth year" />
+                <input type="number" step="0.1" value={accountProfileDraft.weight} onChange={e=>setAccountProfileDraft((current) => ({ ...current, weight: e.target.value }))} placeholder={`Weight (${accountProfileDraft.unitsWeight || unitSettings?.weight || "lbs"})`} />
+                {accountProfileDraft.unitsHeight === "cm" ? (
+                  <input type="number" value={accountProfileDraft.height} onChange={e=>setAccountProfileDraft((current) => ({ ...current, height: e.target.value }))} placeholder="Height (cm)" />
+                ) : (
+                  <input value={accountProfileDraft.height} onChange={e=>setAccountProfileDraft((current) => ({ ...current, height: e.target.value }))} placeholder={"Height (e.g. 5'10\")"} />
+                )}
+                <input type="number" min="0" max="60" value={accountProfileDraft.trainingAgeYears} onChange={e=>setAccountProfileDraft((current) => ({ ...current, trainingAgeYears: e.target.value }))} placeholder="Years of consistent training" />
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:"0.35rem" }}>
+                <select value={accountProfileDraft.unitsWeight} onChange={e=>setAccountProfileDraft((current) => ({ ...current, unitsWeight: e.target.value }))}>
+                  <option value="lbs">Weight: lbs</option>
+                  <option value="kg">Weight: kg</option>
+                </select>
+                <select value={accountProfileDraft.unitsHeight} onChange={e=>setAccountProfileDraft((current) => ({ ...current, unitsHeight: e.target.value }))}>
+                  <option value="ft_in">Height: ft-in</option>
+                  <option value="cm">Height: cm</option>
+                </select>
+                <select value={accountProfileDraft.unitsDistance} onChange={e=>setAccountProfileDraft((current) => ({ ...current, unitsDistance: e.target.value }))}>
+                  <option value="miles">Distance: miles</option>
+                  <option value="kilometers">Distance: km</option>
+                </select>
+              </div>
+              <button className="btn" onClick={saveAccountProfile} style={{ width:"fit-content", fontSize:"0.49rem", color:"#dbe7f6", borderColor:"#324761" }}>
+                Save account profile
+              </button>
+            </div>
           </section>
 
           <section data-testid="settings-plan-management" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.4rem" }}>
-            <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>PROFILE</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 110px", gap:"0.35rem" }}>
-              <input value={profile?.name || ""} onChange={e=>patchProfile({ name: e.target.value })} placeholder="Name" />
-              <input type="number" value={profile?.age || ""} onChange={e=>patchProfile({ age: Number(e.target.value) || "" })} placeholder="Age" />
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
-              <input value={profileTimezoneVal} onChange={e=>patchProfile({ timezone: e.target.value })} placeholder="Timezone" />
-              <input type="number" value={profileBirthYearVal} onChange={e=>patchProfile({ birthYear: e.target.value === "" ? "" : Number(e.target.value) || "" })} placeholder="Birth year" />
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
-              <input
-                type="number"
-                step="0.1"
-                value={profileWeightVal}
-                onChange={e=>patchProfile({ weight: e.target.value === "" ? "" : Number(e.target.value), bodyweight: e.target.value === "" ? "" : Number(e.target.value) })}
-                placeholder={`Weight (${unitSettings?.weight || "lbs"})`}
-              />
-              {unitSettings?.height === "cm" ? (
-                <input type="number" value={profileHeightVal} onChange={e=>patchProfile({ height: e.target.value === "" ? "" : Number(e.target.value) })} placeholder="Height (cm)" />
-              ) : (
-                <input value={profileHeightVal} onChange={e=>patchProfile({ height: e.target.value })} placeholder={`Height (${unitSettings?.height === "ft_in" ? "e.g., 6'1\"" : "value"})`} />
-              )}
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.35rem" }}>
-              <select value={unitSettings?.weight || "lbs"} onChange={e=>patchSettings({ units: { ...unitSettings, weight: e.target.value } })}>
-                <option value="lbs">Weight: lbs</option>
-                <option value="kg">Weight: kg</option>
-              </select>
-              <select value={unitSettings?.height || "ft_in"} onChange={e=>patchSettings({ units: { ...unitSettings, height: e.target.value } })}>
-                <option value="ft_in">Height: ft-in</option>
-                <option value="cm">Height: cm</option>
-              </select>
-              <select value={unitSettings?.distance || "miles"} onChange={e=>patchSettings({ units: { ...unitSettings, distance: e.target.value } })}>
-                <option value="miles">Distance: miles</option>
-                <option value="kilometers">Distance: km</option>
-              </select>
-            </div>
-          </section>
-
-          <section style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.4rem" }}>
             <div style={{ display:"grid", gap:"0.14rem" }}>
               <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>PLAN MANAGEMENT</div>
               <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
                 Programs, styles, and goal changes live here so Program can stay focused on reading the week.
               </div>
             </div>
+            {focusSection === "metrics" && (
+              <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.5 }}>
+                Opened from Program because missing or low-confidence baselines are limiting how specific adaptation can be.
+              </div>
+            )}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
               <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
                 <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT BASIS</div>
@@ -11817,7 +12003,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 )}
               </div>
             </details>
-            <details data-testid="settings-metrics-baselines">
+            <details data-testid="settings-metrics-baselines" open={metricsDetailsOpen} onToggle={e=>setMetricsDetailsOpen(e.currentTarget.open)}>
               <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Metrics / baselines</summary>
               <MetricsBaselinesSection
                 athleteProfile={athleteProfile}
@@ -11832,7 +12018,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
           </section>
 
           <section style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
-            <div className="sect-title" style={{ color:C.purple, marginBottom:0 }}>PREFERENCES</div>
+            <div className="sect-title" style={{ color:C.purple, marginBottom:0 }}>APP PREFERENCES</div>
             <button className="btn" onClick={()=>setShowEnvEditor((value)=>!value)} style={{ justifyContent:"space-between", fontSize:"0.54rem", color:"#dbe7f6" }}>
               Default environment: {trainingPrefs?.defaultEnvironment || "Home"} <span>{showEnvEditor ? "Hide" : "Edit"}</span>
             </button>
@@ -11863,7 +12049,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
           </section>
 
           <details style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem" }}>
-            <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Coach setup</summary>
+            <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Advanced coach setup</summary>
             <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
               <input value={coachMemoryDraft.failurePatterns} onChange={e=>setCoachMemoryDraft((current) => ({ ...current, failurePatterns: e.target.value }))} placeholder="Failure patterns" />
               <input value={coachMemoryDraft.commonBarriers} onChange={e=>setCoachMemoryDraft((current) => ({ ...current, commonBarriers: e.target.value }))} placeholder="Common barriers" />
@@ -11922,7 +12108,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
           </details>
 
           <details style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem" }}>
-            <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Notifications, backup, and reset</summary>
+            <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Backup, notifications, and reset</summary>
             <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
               <label style={{ fontSize:"0.52rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.allOff)} onChange={e=>patchSettings({ notifications: { ...notif, allOff: e.target.checked } })} /> All notifications off</label>
               <label style={{ fontSize:"0.52rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.weeklyReminderOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, weeklyReminderOn: e.target.checked } })} /> Weekly check-in reminder</label>
@@ -13508,6 +13694,37 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       <details className="card">
         <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Adjust today</summary>
         <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+          <div style={{ display:"grid", gap:"0.18rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>Today's setup override</div>
+            <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
+              {["Home", "Gym", "Travel"].map((mode) => {
+                const selected = environmentSelection?.scope === "today" && String(environmentSelection?.mode || "").toLowerCase() === mode.toLowerCase();
+                return (
+                  <button
+                    key={mode}
+                    className="btn"
+                    onClick={async ()=>setEnvironmentMode({ mode, scope:"today" })}
+                    style={{
+                      fontSize:"0.5rem",
+                      color:selected ? "#0f172a" : C.blue,
+                      background:selected ? C.blue : "transparent",
+                      borderColor:`${C.blue}35`,
+                    }}
+                  >
+                    {mode}
+                  </button>
+                );
+              })}
+              {environmentSelection?.scope === "today" && (
+                <button className="btn" onClick={async ()=>setEnvironmentMode({ scope:"today", clearTodayOverride:true })} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+                  Use default setup
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>
+              Temporary for today only. If this preset supports substitutions, the session refreshes immediately.
+            </div>
+          </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
             <button className="btn" onClick={()=>setSessionVariant((value)=>value === "short" ? "standard" : "short")} style={{ fontSize:"0.5rem", color: sessionVariant === "short" ? "#0f172a" : C.green, background: sessionVariant === "short" ? C.green : "transparent", borderColor:C.green+"30" }}>
               {sessionVariant === "short" ? "Short version active" : "Shorten to 20 min"}
@@ -14342,7 +14559,7 @@ function PlannedSessionDetailCard({ session = null, accentColor = "#00c2ff" }) {
       />
       {(exercisePreview.available || exercisePreview.note) && (
         <div style={{ border:`1px solid ${accentColor}22`, borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
-          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>EXERCISE PREVIEW</div>
+          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>SESSION PLAN</div>
           {exercisePreview.available ? (
             <div style={{ display:"grid", gap:"0.22rem" }}>
               {(exercisePreview.rows || []).map((row, index) => (
@@ -15423,12 +15640,12 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
           </div>
         </div>
         <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.55rem" }}>
-          <button className="btn" onClick={onManagePlan} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
-            Manage plan settings
+          <button className="btn" onClick={()=>onManagePlan("plan")} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+            Open plan management
           </button>
           {metricsBaselinesModel?.missingCards?.length > 0 && (
-            <button data-testid="program-fix-metrics" className="btn" onClick={onManagePlan} style={{ fontSize:"0.52rem", color:C.amber, borderColor:`${C.amber}35` }}>
-              Fix missing metrics
+            <button data-testid="program-fix-metrics" className="btn" onClick={()=>onManagePlan("metrics")} style={{ fontSize:"0.52rem", color:C.amber, borderColor:`${C.amber}35` }}>
+              Open metrics / baselines
             </button>
           )}
           <div style={{ fontSize:"0.5rem", color:"#8fa5c8", alignSelf:"center" }}>
@@ -16928,7 +17145,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
         <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.5rem" }}>
           <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>LOG WORKOUT</div>
           <div style={{ fontSize:"0.52rem", color:"#94a3b8", lineHeight:1.45 }}>
-            Save today fast, then open more detail only if you need it.
+            Save today fast, then add actual details only if you need them.
           </div>
           {savedMsg && (
             <div data-testid="log-save-status" role="status" style={{ fontSize:"0.52rem", color:C.green, lineHeight:1.45 }}>
@@ -16942,7 +17159,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
             Save quick log
           </button>
           <button className="btn" onClick={()=>setDetailedOpen((value) => !value)} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b4765" }}>
-            {detailedOpen ? "Hide full detail" : "Open full detail"}
+            {detailedOpen ? "Hide detailed logging" : "Open detailed logging"}
           </button>
         </div>
         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
@@ -16980,7 +17197,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       </div>
 
       <details className="card" open={detailedOpen} onToggle={e=>setDetailedOpen(e.currentTarget.open)}>
-        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Full detail capture</summary>
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Detailed logging</summary>
         <div style={{ marginTop:"0.45rem", display:"grid", gap:"0.55rem" }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem" }}>
             <input type="date" value={detailed.date} onChange={e=>setDetailed(buildDetailedDraft(e.target.value, logs?.[e.target.value] || {}))} />
@@ -17607,7 +17824,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     : "";
   const hasSavedStorePreference = Boolean(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0]);
   const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0] || "Saved default");
-  const EMPTY_NUTRITION_CHECK = { status: "", deviationKind: "", issue: "", note: "" };
+  const EMPTY_NUTRITION_CHECK = { deviationKind: "", issue: "", note: "" };
   const [nutritionCheck, setNutritionCheck] = useState(EMPTY_NUTRITION_CHECK);
   const [nutritionSaveAck, setNutritionSaveAck] = useState("");
   const [lastKey, setLastKey] = useState("");
@@ -17847,7 +18064,6 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
       return;
     }
     setNutritionCheck({
-      status: actualNutritionToday?.quickStatus || "",
       deviationKind: actualNutritionToday?.deviationKind || "",
       issue: actualNutritionToday?.issue || "",
       note: actualNutritionToday?.note || "",
@@ -17875,8 +18091,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const hasExplicitNutritionSignal = (payload = {}) => {
     const safePayload = payload || {};
     return Boolean(
-      String(safePayload?.status || "").trim()
-      || String(safePayload?.deviationKind || "").trim()
+      String(safePayload?.deviationKind || "").trim()
       || String(safePayload?.issue || "").trim()
       || String(safePayload?.note || "").trim()
       || Number(safePayload?.hydrationOz || 0) > 0
@@ -17973,30 +18188,31 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
 
       <div data-testid="nutrition-quick-log" className="card card-action" style={{ borderColor:C.green+"30", background:"#0d1410" }}>
         <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
-          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>QUICK ACTUAL LOG</div>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>DAILY ACTUAL CHECK</div>
           <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
-            Log the day in a few taps so planned and actual stay separate.
+            Log what actually happened. The app derives adherence from this outcome instead of asking you to rate the same day twice.
           </div>
         </div>
         <div style={{ display:"grid", gap:"0.35rem" }}>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem" }}>
-            {[["on_track","on track"],["decent","decent"],["off_track","off track"]].map(([key, label]) => (
-              <button key={key} className="btn" onClick={()=>setNutritionCheck((current)=>({ ...current, status:key }))} style={{ fontSize:"0.6rem", borderColor:nutritionCheck.status===key?C.blue:"#1e293b", color:nutritionCheck.status===key?C.blue:"#64748b", background:nutritionCheck.status===key?`${C.blue}12`:"transparent" }}>
+          <div style={{ display:"grid", gap:"0.18rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>How did the day compare with the plan?</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.3rem" }}>
+              {[["followed","Followed plan"],["under_fueled","Under-fueled"],["over_indulged","Ate more than planned"],["deviated","Different than plan"]].map(([key, label]) => (
+                <button key={key} className="btn" onClick={()=>setNutritionCheck((current)=>({ ...current, deviationKind:key, issue:key === "followed" ? "" : current.issue }))} style={{ fontSize:"0.54rem", borderColor:nutritionCheck.deviationKind===key?C.green:"#1e293b", color:nutritionCheck.deviationKind===key?C.green:"#64748b", background:nutritionCheck.deviationKind===key?`${C.green}12`:"transparent" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ display:"grid", gap:"0.18rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>Main friction, if anything</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.3rem" }}>
+              {[["","None"],["hunger","Hunger"],["convenience","Convenience"],["travel","Travel"]].map(([key, label]) => (
+                <button key={label} className="btn" onClick={()=>setNutritionCheck((current)=>({ ...current, issue:key }))} style={{ fontSize:"0.54rem", borderColor:(nutritionCheck.issue||"")===key?C.blue:"#1e293b", color:(nutritionCheck.issue||"")===key?C.blue:"#64748b", background:(nutritionCheck.issue||"")===key?`${C.blue}12`:"transparent" }}>
                 {label}
               </button>
             ))}
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.3rem" }}>
-            {[["followed","followed"],["under_fueled","under"],["over_indulged","over"],["deviated","changed"]].map(([key, label]) => (
-              <button key={key} className="btn" onClick={()=>setNutritionCheck((current)=>({
-                ...current,
-                deviationKind: key,
-                status: key === "followed" ? "on_track" : key === "deviated" ? "decent" : "off_track",
-                issue: key === "followed" ? "" : current.issue,
-              }))} style={{ fontSize:"0.54rem", borderColor:nutritionCheck.deviationKind===key?C.green:"#1e293b", color:nutritionCheck.deviationKind===key?C.green:"#64748b", background:nutritionCheck.deviationKind===key?`${C.green}12`:"transparent" }}>
-                {label}
-              </button>
-            ))}
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
             <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck((current)=>({ ...current, note:e.target.value }))} placeholder="Quick note (optional)" />
@@ -18567,6 +18783,22 @@ Rules for every response:
     return map[label] || label;
   };
 
+  const stripCoachRecommendationTone = (text = "") => String(text || "")
+    .replace(/^[^:]+:\s*/i, "")
+    .replace(/\s*\[[^\]]+\]\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const buildCompactCoachFallbackText = (packet = null) => {
+    const recommendation = stripCoachRecommendationTone(packet?.recommendations?.[0] || "");
+    const reason = sanitizeDisplayText(packet?.effects?.[0] || packet?.notices?.[0] || "");
+    const action = packet?.actions?.[0]
+      ? `Available action: ${sanitizeStatusLabel(packet.actions[0].type, "coach change")}.`
+      : "No state changes happen until you accept a recommendation.";
+    return [recommendation || sanitizeDisplayText(packet?.notices?.[0] || "Coach update ready."), reason, action]
+      .filter(Boolean)
+      .join(" ");
+  };
+
   const streamCoachResponse = async ({ userMsg, history }) => {
     const deterministic = deterministicCoachPacket({ input: userMsg, todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
     validateDeterministicCoachPacketInvariant(deterministic, "deterministicCoachPacket.chat");
@@ -18601,7 +18833,7 @@ Rules for every response:
       coachMode,
       userMsg,
       history,
-      deterministicText: deterministic?.coachBrief || deterministic?.recommendations?.[0] || deterministic?.notices?.[0] || "Coach update ready.",
+      deterministicText: buildCompactCoachFallbackText(deterministic),
       packetArgs: coachPacketArgs,
       fetchImpl: fetch,
       onText: (text) => setStreamingText(text),
@@ -18658,11 +18890,11 @@ Rules for every response:
     setStreamingCursor(true);
     if (preset) await persistReadinessPromptSignal(preset);
     const ts = Date.now();
-    const nextHistory = [...messages, { role:"user", text:userMsg, ts }].slice(-20);
+    const nextHistory = [...messages, { role:"user", text:userMsg, ts }].slice(-12);
     setMessages(nextHistory);
-    const historyForModel = nextHistory.filter(m => m.role === "user" || m.role === "assistant").slice(-20).map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.text || m.response || "" }));
+    const historyForModel = nextHistory.filter(m => m.role === "user" || m.role === "assistant").slice(-12).map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.text || m.response || "" }));
     const streamed = await streamCoachResponse({ userMsg, history: historyForModel });
-    setMessages(m => [...m, { role:"assistant", text: streamed.text, source: streamed.source, ts: Date.now(), helpful: null }].slice(-20));
+    setMessages(m => [...m, { role:"assistant", text: streamed.text, source: streamed.source, ts: Date.now(), helpful: null }].slice(-12));
     setLoading(false);
     setStreamingCursor(false);
     setStreamingText("");
@@ -19026,9 +19258,6 @@ Rules for every response:
               {coachDecision.options[1].label}
             </button>
           )}
-          <button className="btn" onClick={onOpenSettings} style={{ fontSize:"0.52rem", color:"#8fa5c8", borderColor:"#2b3d55" }}>
-            Open advanced settings
-          </button>
         </div>
       </div>
 
@@ -19036,7 +19265,7 @@ Rules for every response:
         <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.35rem" }}>
           <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>ASK COACH</div>
           <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
-            Ask for a decision, a plan explanation, or a safe next move.
+            Ask for a decision, a plan explanation, or a safe next move. Quick prompts should lead to meaningfully different guidance, not the same speech with swapped wording.
           </div>
         </div>
         <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem", marginBottom:"0.35rem" }}>
@@ -19073,9 +19302,9 @@ Rules for every response:
       </details>
 
       <details className="card">
-        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Conversation history</summary>
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Recent conversation</summary>
         <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
-          {messages.slice(-20).map((message, index) => (
+          {messages.slice(-12).map((message, index) => (
             <div key={`${index}_${message.role}`} style={{ justifySelf:message.role==="user"?"end":"start", maxWidth:"92%", background:message.role==="user"?"#15263f":"#101b2d", border:message.role==="user"?"1px solid #325178":"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
               <div className="coach-copy" style={{ fontSize:"0.54rem", color:message.role==="user"?"#a9bddc":"#dbe7f6", whiteSpace:"pre-wrap", lineHeight:1.5 }}>
                 {message.text || "Coach update ready."}

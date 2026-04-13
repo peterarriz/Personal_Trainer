@@ -396,6 +396,70 @@ test("coach packet explains active program basis and adherence without pretendin
   assert.match(packet.coachBrief, /ADHERENCE:/i);
 });
 
+test("coach packets stay materially different for travel versus poor sleep prompts", () => {
+  const trainingContext = buildTrainingContextFromEditor({
+    mode: "Gym",
+    equipment: "full_gym",
+    equipmentItems: ["barbell", "safe running access"],
+    time: "45",
+  });
+  const athleteProfile = buildAthleteProfile({
+    goals: [{ id: "goal_1", name: "Run a stronger half marathon", category: "running", active: true, priority: 1 }],
+    trainingContext,
+  });
+  const personalization = buildPersonalization({
+    trainingContext,
+    fitnessLevel: "intermediate",
+  });
+  const composer = buildComposer({
+    goals: athleteProfile.goals,
+    personalization,
+    athleteProfile,
+  });
+  const baseArgs = {
+    todayWorkout: { label: "Tempo Run", type: "hard-run", run: { t: "Tempo", d: "35 min" } },
+    currentWeek: 3,
+    logs: {},
+    bodyweights: [],
+    personalization: {
+      ...personalization,
+      trainingState: { loadStatus: "steady", fatigueScore: 4 },
+      travelState: { isTravelWeek: false, access: "gym" },
+    },
+    learning: {},
+    salvage: {},
+    planComposer: composer,
+    optimizationLayer: {},
+    failureMode: {},
+    momentum: { momentumState: "stable", inconsistencyRisk: "low", fatigueNotes: 2 },
+    strengthLayer: {},
+    nutritionLayer: { dayType: "hardRun", targets: { cal: 2700, p: 180, c: 300 } },
+    nutritionComparison: null,
+    arbitration: { primary: { category: "running" } },
+    expectations: {},
+    memoryInsights: [],
+    coachMemoryContext: null,
+    realWorldNutrition: {},
+    recalibration: {},
+  };
+
+  const travelPacket = deterministicCoachPacket({
+    ...baseArgs,
+    input: "I'm traveling today",
+  });
+  const sleepPacket = deterministicCoachPacket({
+    ...baseArgs,
+    input: "I slept badly and feel cooked today",
+  });
+
+  assert.match(travelPacket.notices.join(" "), /travel/i);
+  assert.doesNotMatch(sleepPacket.notices.join(" "), /travel/i);
+  assert.notDeepEqual(
+    travelPacket.actions.map((action) => action.type),
+    sleepPacket.actions.map((action) => action.type)
+  );
+});
+
 test("strict program mode downgrades when recent execution drifts too far from the backbone", () => {
   const trainingContext = buildTrainingContextFromEditor({
     mode: "Home",

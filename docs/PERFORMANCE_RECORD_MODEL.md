@@ -163,3 +163,8 @@ Performance records are now explicit planner inputs for:
 - near-term quality-session protection
 
 They influence future planning posture, but they do not mutate historical actual records.
+
+## 2026-04-13 Hardening Notes
+
+- Quick logging copy now distinguishes planned versus actual capture more explicitly.
+- Log prepopulation is expected to come from the same canonical prescribed session used by Today and Program.

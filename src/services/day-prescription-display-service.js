@@ -177,7 +177,7 @@ const buildStrengthExercisePreview = ({ training = {}, prescribedExercises = [] 
     return {
       available: false,
       rows: [],
-      note: "Exercise-level structure was not stored for this session yet.",
+      note: "This stored session only has summary-level structure right now.",
     };
   }
 

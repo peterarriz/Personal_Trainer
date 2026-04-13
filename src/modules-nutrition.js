@@ -529,7 +529,7 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
 
   const defaultMealStructure = nutritionLayer?.simplified
     ? ["Meal 1: protein + carb anchor", "Meal 2: default safe meal", "Meal 3: protein + veg + carb", "Snack: protein + fruit"]
-    : ["Meal 1: structured breakfast", "Meal 2: performance lunch", "Meal 3: recovery dinner", "Snack: protein top-up"];
+    : ["Meal 1: structured breakfast", "Meal 2: performance lunch", "Meal 3: recovery dinner", "Snack: extra protein snack"];
 
   const constraints = [];
   if (travelMode) constraints.push("travel_logistics");

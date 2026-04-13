@@ -76,3 +76,29 @@ test("Atlas and Circuit stay materially distinct in both accent and canvas", () 
   assert.notEqual(atlasLight.cssVars["--bg"], circuitLight.cssVars["--bg"]);
   assert.notEqual(atlasLight.cssVars["--brand-accent"], circuitLight.cssVars["--brand-accent"]);
 });
+
+test("System mode follows OS preference while explicit Dark and Light remain intentionally separate", () => {
+  const atlasSystemDark = buildBrandThemeState({
+    appearance: { theme: "Atlas", mode: "System" },
+    systemPrefersDark: true,
+  });
+  const atlasSystemLight = buildBrandThemeState({
+    appearance: { theme: "Atlas", mode: "System" },
+    systemPrefersDark: false,
+  });
+  const atlasDark = buildBrandThemeState({
+    appearance: { theme: "Atlas", mode: "Dark" },
+    systemPrefersDark: false,
+  });
+  const atlasLight = buildBrandThemeState({
+    appearance: { theme: "Atlas", mode: "Light" },
+    systemPrefersDark: true,
+  });
+
+  assert.equal(atlasSystemDark.resolvedMode, "Dark");
+  assert.equal(atlasSystemLight.resolvedMode, "Light");
+  assert.equal(atlasSystemDark.cssVars["--brand-accent"], atlasDark.cssVars["--brand-accent"]);
+  assert.equal(atlasSystemLight.cssVars["--brand-accent"], atlasLight.cssVars["--brand-accent"]);
+  assert.notEqual(atlasDark.cssVars["--bg"], atlasLight.cssVars["--bg"]);
+  assert.notEqual(atlasDark.cssVars["--panel"], atlasLight.cssVars["--panel"]);
+});

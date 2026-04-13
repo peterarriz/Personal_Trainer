@@ -26,7 +26,7 @@ test("strength placeholder sessions expand into concise prescription detail", ()
   assert.match(summary.expectedDuration, /40-55 min/i);
   assert.match(summary.movementNote, /second full-body strength template/i);
   assert.equal(summary.exercisePreview.available, false);
-  assert.match(summary.exercisePreview.note, /not stored/i);
+  assert.match(summary.exercisePreview.note, /summary-level structure/i);
   assert.match(summary.why, /strength lane moving/i);
 });
 

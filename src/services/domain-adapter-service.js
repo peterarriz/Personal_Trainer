@@ -186,7 +186,7 @@ const addAggressiveTopUp = (templates = {}, session) => {
   if (next?.[0]?.type === "rest") next[0] = session;
   return {
     dayTemplates: next,
-    effects: [session?.label ? `${session.label} was added as an optional top-up.` : "An optional top-up exposure was added."],
+    effects: [session?.label ? `${session.label} was added as an optional short add-on.` : "An optional short add-on was added."],
   };
 };
 
@@ -242,8 +242,8 @@ export const applyPreferencePolicyToDayTemplates = ({
         support: "3-5 short jump sets + landing refreshers.",
       })
     : buildConditioningSession({
-        label: "Optional Top-Up Session",
-        detail: "15-20 min controlled aerobic top-up or mobility finisher",
+        label: "Optional Short Add-On",
+        detail: "15-20 min controlled aerobic work or a mobility finisher",
         lowImpact: true,
       });
   const expanded = addAggressiveTopUp(next, aggressiveTopUp);
@@ -261,7 +261,7 @@ export const applyPreferencePolicyToDayTemplates = ({
   });
   return {
     dayTemplates: expanded.dayTemplates,
-    effects: dedupeStrings(["Aggressive preference preserved more work and added a small top-up exposure.", ...(expanded.effects || [])]),
+    effects: dedupeStrings(["Aggressive preference preserved more work and added a small optional add-on.", ...(expanded.effects || [])]),
     changed: true,
   };
 };

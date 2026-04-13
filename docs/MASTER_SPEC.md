@@ -234,3 +234,11 @@ AI is not allowed to:
 - When certainty is low, the system should say so explicitly instead of sounding authoritative.
 - Trust is earned by traceability, stable contracts, and faithful separation of plan from reality.
 - Default trust copy should stay short: basis, change, and save state first; deeper explanation only when requested.
+
+## 2026-04-13 Hardening Update
+
+- Settings now separates Account, Plan Management, App Preferences, Appearance, Integrations, and Advanced Coach setup more clearly.
+- Profile editing in Settings is explicit-save to avoid repeated cloud writes during typing.
+- Missing Program metrics now route directly to Settings → Metrics / Baselines.
+- Daily nutrition logging uses one outcome model based on actual deviation plus friction, while weekly planning stays visible as a separate execution layer.
+- Coach explanation remains helpful, but accepted deterministic actions still own canonical state changes.

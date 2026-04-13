@@ -182,6 +182,33 @@ test("strength goal parsing preserves four-digit lift targets for downstream rea
   assert.match(result.planningGoals[0].measurableTarget, /2200 lb/i);
 });
 
+test("marathon time language in minutes stays attached to the marathon goal instead of collapsing to a generic event", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 30 minute marathon",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "run a 30 minute marathon" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.rawIntent, "run a 30 minute marathon");
+  assert.equal(result.resolvedGoals[0].primaryMetric.key, "marathon_time");
+  assert.equal(result.resolvedGoals[0].primaryMetric.targetValue, "0:30:00");
+  assert.equal(result.resolvedGoals[0].summary, "Run a marathon in 0:30:00");
+});
+
+test("strength parsing prefers the intended benchmark when smaller accessory weights are also mentioned", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "bench press 225 lbs, not 45 lb dumbbells",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "bench press 225 lbs, not 45 lb dumbbells" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals[0].primaryMetric.key, "bench_press_weight");
+  assert.equal(result.resolvedGoals[0].primaryMetric.targetValue, "225");
+  assert.match(result.planningGoals[0].measurableTarget, /225 lb/i);
+});
+
 test("appearance goals stay proxy-measurable and use a time horizon when timing is approximate", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "have six pack by August",
