@@ -76,6 +76,22 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("nutrition-save-status")).toContainText("Saved");
   });
 
+  test("training preference changes are visible on Program and Today", async ({ page }) => {
+    await completeRunningOnboarding(page);
+
+    await page.getByTestId("app-tab-settings").click();
+    await expect(page.getByTestId("settings-tab")).toBeVisible();
+    await page.getByRole("button", { name: /Aggressive/i }).first().click();
+
+    await page.getByTestId("app-tab-program").click();
+    await expect(page.getByTestId("program-tab")).toBeVisible();
+    await expect(page.getByTestId("program-change-summary")).toContainText("Aggressive preference");
+
+    await page.getByTestId("app-tab-today").click();
+    await expect(page.getByTestId("today-tab")).toBeVisible();
+    await expect(page.getByTestId("today-change-summary")).toContainText("Aggressive preference");
+  });
+
   test("coach stays focused on conversation and decisions, not configuration", async ({ page }) => {
     await completeRunningOnboarding(page);
 

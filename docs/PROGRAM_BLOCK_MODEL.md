@@ -127,6 +127,22 @@ This should be treated as transitional. New planning work should prefer `program
 - `buildCanonicalPlanDay(...)` stores `programBlock` under `planDay.week`
 - Program and Today read `programBlock` directly for block explanation and trust
 
+## Domain Adapter Influence
+
+`ProgramBlock` is now downstream of the selected domain adapter.
+
+That means:
+
+- running goals and swim goals can share the same hierarchy while producing different block semantics
+- power / vertical goals can remain in the same planner while receiving a different weekly shape
+- fallback domains can still produce a safe `ProgramBlock` without pretending niche expertise
+
+## Program And Style Interaction
+
+- Program selection can change the block backbone and week skeleton.
+- Style selection can bias the block feel and session flavor.
+- Neither Program nor Style replaces the goal stack.
+
 ## Near-Term Follow-Up
 
 - Let `WeeklyIntent` carry richer explicit child links to block-level success criteria instead of only inheriting summary text

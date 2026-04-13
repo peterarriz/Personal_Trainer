@@ -10,6 +10,13 @@ const TYPE_LABELS = {
   "long-run": "Long run",
   "run+strength": "Run + strength",
   "strength+prehab": "Strength",
+  "swim-technique": "Technique swim",
+  "swim-aerobic": "Aerobic swim",
+  "swim-threshold": "Threshold swim",
+  "swim-endurance": "Endurance swim",
+  "power-skill": "Power session",
+  "reactive-plyo": "Reactive plyometrics",
+  "sprint-support": "Sprint support",
   conditioning: "Conditioning",
   strength: "Strength",
   recovery: "Recovery",
@@ -22,6 +29,13 @@ const PURPOSE_BY_TYPE = {
   "long-run": "Build endurance and resilience.",
   "run+strength": "Pair run quality with a strength touchpoint.",
   "strength+prehab": "Build or maintain strength while supporting durability.",
+  "swim-technique": "Build technique, rhythm, and clean swim mechanics.",
+  "swim-aerobic": "Build aerobic swim durability without turning the day into a race effort.",
+  "swim-threshold": "Build threshold pacing while protecting technique quality.",
+  "swim-endurance": "Build sustained swim endurance and pacing control.",
+  "power-skill": "Build explosive intent without sloppy fatigue.",
+  "reactive-plyo": "Build reactive ability and clean elastic contacts.",
+  "sprint-support": "Keep sprint and approach rhythm connected to the week.",
   conditioning: "Keep conditioning support in the week without a full run focus.",
   strength: "Build or maintain strength.",
   recovery: "Absorb work and protect the next productive session.",
@@ -40,6 +54,13 @@ const SESSION_LABEL_RULES = [
   { pattern: /^supportive conditioning run$/i, label: "Easy conditioning run" },
   { pattern: /^supportive run\/walk$/i, label: "Easy run/walk" },
   { pattern: /^strength focus$/i, label: "Full-body strength focus" },
+  { pattern: /^technique swim$/i, label: "Technique swim" },
+  { pattern: /^aerobic swim$/i, label: "Aerobic swim" },
+  { pattern: /^threshold swim$/i, label: "Threshold swim" },
+  { pattern: /^long aerobic swim$/i, label: "Long aerobic swim" },
+  { pattern: /^jump technique \+ power$/i, label: "Jump technique + power" },
+  { pattern: /^reactive plyometrics$/i, label: "Reactive plyometrics" },
+  { pattern: /^sprint \/ approach support$/i, label: "Sprint / approach support" },
   { pattern: /^short version strength$/i, label: "Short full-body strength A" },
   { pattern: /^short version strength ([ab])$/i, build: (match) => `Short full-body strength ${String(match?.[1] || "").toUpperCase()}` },
 ];
@@ -76,6 +97,9 @@ const PURPOSE_LABEL_RULES = [
   { pattern: /strength finish/i, purpose: "Get the main run done, then add a short strength touchpoint." },
   { pattern: /conditioning intervals/i, purpose: "Build work capacity without turning the day into a full run session." },
   { pattern: /easy conditioning run|easy run\/walk/i, purpose: "Add low-stress aerobic work without stealing recovery from bigger sessions." },
+  { pattern: /technique swim/i, purpose: "Groove technique and aerobic rhythm without turning the day into a grind." },
+  { pattern: /threshold swim/i, purpose: "Build threshold swim pacing while keeping stroke quality honest." },
+  { pattern: /jump technique \+ power|reactive plyometrics/i, purpose: "Build explosive quality while protecting tendon freshness." },
 ];
 
 const estimateRunDuration = (detail = "", fallbackType = "") => {
@@ -168,6 +192,18 @@ const buildStrengthExercisePreview = ({ training = {}, prescribedExercises = [] 
 const buildStructure = (training = {}) => {
   if (training?.run?.d) {
     return sanitizeText(`${training.run.t ? `${training.run.t}: ` : ""}${training.run.d}`, 180);
+  }
+  if (training?.swim?.d || training?.swim?.setLine) {
+    return sanitizeText([
+      training?.swim?.focus ? `${training.swim.focus}:` : "",
+      training?.swim?.setLine || training?.swim?.d || "",
+    ].filter(Boolean).join(" "), 180);
+  }
+  if (training?.power?.dose || training?.power?.support) {
+    return sanitizeText([
+      training?.power?.focus || "",
+      training?.power?.support || training?.power?.dose || "",
+    ].filter(Boolean).join(" - "), 180);
   }
   if (training?.strengthDose) return sanitizeText(training.strengthDose, 180);
   if (training?.strengthDuration) {

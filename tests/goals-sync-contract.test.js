@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createAuthStorageModule, LOCAL_CACHE_KEY } from "../src/modules-auth-storage.js";
+import {
+  classifyStorageError,
+  createAuthStorageModule,
+  LOCAL_CACHE_KEY,
+  STORAGE_STATUS_REASONS,
+} from "../src/modules-auth-storage.js";
 
 const noop = () => {};
 
@@ -233,4 +238,12 @@ test("persistAll keeps local cache active when no signed-in session exists", asy
 
   assert.equal(nextStorageStatus?.reason, "not_signed_in");
   assert.deepEqual(JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY)), payload);
+});
+
+test("transient network storage failures are labeled as retrying instead of permanent fallback", () => {
+  const status = classifyStorageError(new Error("FETCH_NETWORK: load failed"));
+
+  assert.equal(status.reason, STORAGE_STATUS_REASONS.transient);
+  assert.equal(status.label, "SYNC RETRYING");
+  assert.match(status.detail, /temporarily unreachable|saved safely/i);
 });
