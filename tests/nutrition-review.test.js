@@ -69,6 +69,24 @@ test("nutrition actuals normalize and compare against prescription without legac
   assert.equal(comparison.matters, "high");
 });
 
+test("nutrition actuals can be logged from a single deviation model without a separate status field", () => {
+  const actualNutritionLog = normalizeActualNutritionLog({
+    dateKey: "2026-04-09",
+    feedback: {
+      deviationKind: "followed",
+      issue: "",
+      note: "Followed the plan cleanly.",
+      hydrationOz: 84,
+      hydrationTargetOz: 96,
+    },
+  });
+
+  assert.equal(actualNutritionLog.deviationKind, "followed");
+  assert.equal(actualNutritionLog.quickStatus, "on_track");
+  assert.equal(actualNutritionLog.adherence, "high");
+  assert.equal(actualNutritionLog.followedPlan, true);
+});
+
 test("day review keeps original and latest prescription separate from actual execution", () => {
   const dateKey = "2026-04-08";
   const originalRecord = buildPlannedRecord({ dateKey, label: "Upper Strength" });

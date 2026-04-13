@@ -67,7 +67,7 @@ test("quick capture model keeps the default logging path compact for run days", 
   const quickCapture = buildWorkoutQuickCaptureModel({ draft });
 
   assert.equal(quickCapture.completeActionLabel, "Quick complete");
-  assert.equal(quickCapture.detailToggleLabel, "Add run details");
+  assert.equal(quickCapture.detailToggleLabel, "Add actual run details");
   assert.equal(quickCapture.saveActionLabel, "Save quick run log");
   assert.equal(quickCapture.run.enabled, true);
   assert.deepEqual(
@@ -122,7 +122,7 @@ test("quick capture model limits strength rows while keeping prescribed context 
 
   const quickCapture = buildWorkoutQuickCaptureModel({ draft });
 
-  assert.equal(quickCapture.detailToggleLabel, "Add sets and reps");
+  assert.equal(quickCapture.detailToggleLabel, "Add actual sets and reps");
   assert.equal(quickCapture.saveActionLabel, "Save quick strength log");
   assert.equal(quickCapture.strength.rows.length, 3);
   assert.equal(quickCapture.strength.hiddenRowCount, 1);

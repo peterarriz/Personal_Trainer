@@ -148,3 +148,9 @@ That means:
 - Let `WeeklyIntent` carry richer explicit child links to block-level success criteria instead of only inheriting summary text
 - Persist historical `PlanWeek` records if archive-era weekly review needs durable week snapshots
 - Expand future-week surfaces to describe `ProgramBlock.window` more directly, not only phase transitions
+
+## 2026-04-13 Hardening Notes
+
+- Program reading surfaces now need to stay aligned with the canonical `PlanDay.resolved.training` contract used by Today and Log.
+- Missing metrics are now treated as a plan-management trust issue and deep-link into Metrics / Baselines from Program.
+- User-facing copy should avoid internal phrases like `top-up` when describing optional extra work.

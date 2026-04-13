@@ -171,6 +171,8 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   };
   let lastSyncedGoalsFingerprint = "";
   let lastSyncedCoachMemoryFingerprint = "";
+  let lastPersistedPayloadFingerprint = "";
+  let lastPersistedUserId = "";
   const SB_CONFIG_ERROR = !SB_URL
     ? "Missing Supabase URL. Set VITE_SUPABASE_URL."
     : !hasValidSupabaseUrl
@@ -732,6 +734,8 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   }) => {
     localSave(payload);
     if (!authSession?.user?.id) {
+      lastPersistedPayloadFingerprint = "";
+      lastPersistedUserId = "";
       applyStorageStatusUpdate(setStorageStatus, buildStorageStatus({
         mode: "local",
         label: "NOT SIGNED IN",
@@ -741,7 +745,20 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       return;
     }
     try {
+      const payloadFingerprint = createStableFingerprint(payload || {});
+      const currentUserId = String(authSession?.user?.id || "");
+      if (payloadFingerprint === lastPersistedPayloadFingerprint && currentUserId === lastPersistedUserId) {
+        applyStorageStatusUpdate(setStorageStatus, buildStorageStatus({
+          mode: "cloud",
+          label: "SYNCED",
+          reason: STORAGE_STATUS_REASONS.synced,
+          detail: "Cloud state is already current.",
+        }));
+        return;
+      }
       await sbSave({ payload, authSession, setAuthSession });
+      lastPersistedPayloadFingerprint = payloadFingerprint;
+      lastPersistedUserId = currentUserId;
       const nextGoalsFingerprint = createStableFingerprint(payload?.goals || []);
       const nextCoachMemoryFingerprint = createStableFingerprint((payload?.personalization || DEFAULT_PERSONALIZATION)?.coachMemory || {});
       try {
@@ -770,6 +787,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       if (e?.message === AUTH_TRANSIENT) {
         logDiag("cloud.save.transient", "falling back to local while preserving session");
       }
+      lastPersistedPayloadFingerprint = "";
       logDiag("Cloud save failed, local fallback active:", e.message);
       applyStorageStatusUpdate(setStorageStatus, classifyStorageError(e));
     }

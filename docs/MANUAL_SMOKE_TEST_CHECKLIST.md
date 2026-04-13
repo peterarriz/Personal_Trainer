@@ -122,3 +122,24 @@ Use this after each architecture wave. Keep it fast: the goal is to catch obviou
   - action taken
   - expected vs actual
   - console/network error if present
+
+## 13. Hardening Pass Additions
+
+- Auth:
+  - Logout from Settings and confirm the app returns to the auth gate.
+  - Delete account and confirm local auth/cache entries are removed.
+  - Attempt same-email reuse after deletion and confirm the flow behaves like signup again.
+- Profile bootstrap:
+  - Confirm grouped profile setup fields render cleanly on mobile.
+  - Confirm `Years of consistent training` appears instead of unexplained training jargon.
+- Program and baselines:
+  - From Program, use `Open metrics / baselines` and confirm Settings opens with the metrics section expanded.
+- Today and Log:
+  - Confirm Today shows the full session plan and that Log uses actual-versus-planned wording.
+  - Confirm Today's temporary environment override re-renders the session without changing the weekly default.
+- Nutrition:
+  - Confirm daily actual logging uses one outcome selection plus friction, not two competing status models.
+  - Confirm weekly grocery planning remains visible and tied to the current week.
+- Coach:
+  - Confirm advanced provider setup is absent from the main Coach surface.
+  - Confirm at least two quick prompts produce meaningfully different guidance.

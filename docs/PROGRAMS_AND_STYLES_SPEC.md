@@ -341,3 +341,9 @@ These items are intentionally not treated as complete:
 4. Drop available days or equipment so a strict Program no longer fits and confirm the UI shows the visible downgrade or suspension explanation.
 5. Open Today and Coach after each change and confirm both explain the active basis in plain English.
 6. Open Program and confirm the week view changes, but the activation controls stay in Settings rather than Program.
+
+## 2026-04-13 Hardening Notes
+
+- Program remains a read-first surface.
+- Program activation, style changes, goal changes, and baseline repair live in Settings → Plan Management.
+- Program should deep-link missing metrics into Metrics / Baselines instead of duplicating management controls inline.

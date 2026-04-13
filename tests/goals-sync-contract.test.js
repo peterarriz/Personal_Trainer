@@ -387,7 +387,7 @@ test("persistAll skips unchanged goal and coach-memory shadow syncs on repeated 
 
   assert.equal(goalsPosts.length, 1);
   assert.equal(coachMemoryPosts.length, 1);
-  assert.equal(trainerDataPosts.length, 2);
+  assert.equal(trainerDataPosts.length, 1);
 });
 
 test("transient network storage failures are labeled as retrying instead of permanent fallback", () => {

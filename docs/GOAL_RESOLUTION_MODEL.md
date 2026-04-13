@@ -477,3 +477,9 @@ This is enough to support planning without turning goal resolution into a sprawl
 - `hypothesis`
 
 `rawIntent.text`, `resolved.summary`, `resolved.goalFamily`, `resolved.measurableTier`, `resolved.confidence`, and the review/refinement metadata should generally be present even for fuzzy goals.
+
+## 2026-04-13 Hardening Notes
+
+- Natural duration language like `30 minute marathon` must stay attached to the event goal and normalize into a faithful time metric.
+- Strength parsing now prefers the intended benchmark when multiple weights are present in the same sentence, which protects phrases like `bench 225, not 45 lb dumbbells`.
+- Raw goal intent remains inspectable alongside normalized interpretation so semantic drift can be audited instead of hidden.

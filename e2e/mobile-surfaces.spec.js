@@ -48,7 +48,7 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("program-tab")).toBeVisible();
     await expect(page.getByTestId("program-this-week")).toBeVisible();
     await expect(page.getByTestId("program-future-weeks")).toBeVisible();
-    await expect(page.getByText("Manage plan settings")).toBeVisible();
+    await expect(page.getByText("Open plan management")).toBeVisible();
     await expect(page.getByText("PROGRAMS + STYLES").first()).not.toBeVisible();
     await expect(page.getByText("Refine Current Goal").first()).not.toBeVisible();
     await expect(page.getByText("Start New Goal Arc").first()).not.toBeVisible();
@@ -73,7 +73,7 @@ test.describe("mobile surface simplification", () => {
 
     await page.getByTestId("app-tab-nutrition").click();
     await expect(page.getByTestId("nutrition-tab")).toBeVisible();
-    await page.getByRole("button", { name: /on track/i }).first().click();
+    await page.getByRole("button", { name: /followed plan/i }).click();
     await page.getByTestId("nutrition-save-quick").click();
     await expect(page.getByTestId("nutrition-save-status")).toContainText("Saved");
   });
@@ -100,7 +100,7 @@ test.describe("mobile surface simplification", () => {
     await page.getByTestId("app-tab-coach").click();
     await expect(page.getByTestId("coach-tab")).toBeVisible();
     await expect(page.getByTestId("coach-primary-entry")).toBeVisible();
-    await expect(page.getByText("Open advanced settings")).toBeVisible();
+    await expect(page.getByText("Open advanced settings")).not.toBeVisible();
     await expect(page.getByPlaceholder("Anthropic key (optional)").first()).not.toBeVisible();
     await expect(page.getByPlaceholder("Failure patterns").first()).not.toBeVisible();
 
@@ -108,5 +108,17 @@ test.describe("mobile surface simplification", () => {
     await expect.poll(async () => {
       return page.locator("[data-testid='coach-primary-entry'] .coach-copy").count();
     }).toBeGreaterThan(0);
+  });
+
+  test("missing metrics route straight into baselines from Program", async ({ page }) => {
+    await completeRunningOnboarding(page);
+
+    await page.getByTestId("app-tab-program").click();
+    await expect(page.getByTestId("program-tab")).toBeVisible();
+    await page.getByTestId("program-fix-metrics").click();
+
+    await expect(page.getByTestId("settings-tab")).toBeVisible();
+    await expect(page.getByTestId("settings-metrics-baselines")).toHaveAttribute("open", "");
+    await expect(page.getByText("Opened from Program because missing or low-confidence baselines are limiting how specific adaptation can be.")).toBeVisible();
   });
 });

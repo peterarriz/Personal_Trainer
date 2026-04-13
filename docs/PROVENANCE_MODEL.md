@@ -108,3 +108,8 @@ This is not a replacement for provenance events. It is the short user-facing exp
 - Use `details` for machine-usable context, not long prose.
 - Use `summary` as a derived convenience field, not the source of truth.
 - New durable adjustment records should include either inline `provenance` or a sidecar provenance map when the stored value is primitive-like.
+
+## 2026-04-13 Hardening Notes
+
+- Coach fallback phrasing may change, but provenance still belongs to deterministic accepted actions, not to wording-only AI responses.
+- Program and day adjustments should remain traceable even when cloud save is degraded or retried locally.

@@ -481,11 +481,11 @@ export const buildWorkoutQuickCaptureModel = ({ draft = {} } = {}) => {
     family,
     completeActionLabel: prescribedLabel ? "Quick complete" : "Mark complete",
     detailToggleLabel: family === WORKOUT_LOG_FAMILIES.run
-      ? "Add run details"
+      ? "Add actual run details"
       : family === WORKOUT_LOG_FAMILIES.strength
-        ? "Add sets and reps"
+        ? "Add actual sets and reps"
         : family === WORKOUT_LOG_FAMILIES.mixed
-          ? "Add time or lifts"
+          ? "Add actual details"
           : "Add quick details",
     saveActionLabel: family === WORKOUT_LOG_FAMILIES.run
       ? "Save quick run log"

@@ -1,4 +1,7 @@
+const { assertSyntheticLabSafeEnvironment } = require("../src/services/synthetic-athlete-lab/env-guard.js");
 const { runSyntheticAthleteLab } = require("../src/services/synthetic-athlete-lab/runner.js");
+
+assertSyntheticLabSafeEnvironment(process.env);
 
 const report = runSyntheticAthleteLab();
 
