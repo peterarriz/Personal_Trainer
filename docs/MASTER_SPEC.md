@@ -19,11 +19,13 @@ For any given day, the athlete should be able to open the app and get:
 
 - Deterministic state first. Core decisions must come from structured application state, not UI heuristics or freeform AI output.
 - One shared model, many screens. Today, Program, Coach, Nutrition, and Logging are different views over the same product state.
+- One obvious job per screen. Reading, logging, coaching, and management should not be mixed by default.
 - Planned state and actual state stay separate. Prescription is not evidence.
 - Derived state must be reproducible. If a value can be recalculated from canonical state, it should not become a hidden source of truth.
 - Explicit provenance beats implicit behavior. Users should be able to tell where a recommendation came from.
 - AI may interpret and explain, but it must not silently mutate canonical records.
 - Scope should stay narrow per change. New work should strengthen existing seams instead of creating parallel systems.
+- Mobile-first hierarchy wins. Default views should be concise, scannable, and action-first, with deeper detail behind progressive disclosure.
 
 ## Canonical Entities
 
@@ -127,34 +129,42 @@ Logging rules:
 ### Today
 
 - Present the single recommended `PlanDay`.
-- Explain why the decision is correct for today.
+- Make today's session the first thing visible.
 - Capture today's check-in and actual outcome with minimal friction.
-- Surface urgent adjustments, constraints, and success criteria.
+- Keep rationale short by default and expandable on demand.
 
 ### Program
 
-- Show the hierarchy from goals to block to week to day.
-- Make weekly intent and plan continuity visible.
-- Show how today's decision fits the broader plan.
-- Expose future structure without pretending future days are final actuals.
+- Show the current week clearly and the next few weeks clearly.
+- Keep the surface mostly read-oriented, not override-oriented.
+- Make plan continuity and major changes visible without long essays.
+- Push plan-management actions into Settings.
 
 ### Coach
 
 - Translate structured state into coaching guidance, options, and rationale.
-- Propose explicit actions or adjustments that can be accepted or rejected.
+- Help the user make decisions or understand adjustments.
+- Keep configuration and provider controls out of the default conversation flow.
 - Never become an untracked hidden writer of canonical state.
 
 ### Nutrition
 
-- Present the nutrition prescription derived from today's overall decision.
+- Present today's nutrition prescription first.
 - Capture nutrition reality separately from training completion.
-- Show meal structure, hydration, supplements, and practical execution support.
+- Make daily logging quick; keep support content secondary and collapsible.
 
 ### Logging
 
 - Act as the audit layer for what actually happened.
+- Make quick capture the primary action.
 - Preserve the distinction between prescribed, modified, skipped, and completed behavior.
-- Support review, correction, and trend visibility without rewriting plan history.
+- Keep review/history detail secondary so logging stays fast.
+
+### Settings
+
+- Own profile, preferences, theme, plan management, and advanced controls.
+- Own Program/Style activation and goal-management actions that should not live in Program.
+- Hide unfinished integrations and advanced/debug controls by default.
 
 ## AI Boundaries
 
@@ -190,3 +200,4 @@ AI is not allowed to:
 - Deterministic application state outranks AI-generated wording.
 - When certainty is low, the system should say so explicitly instead of sounding authoritative.
 - Trust is earned by traceability, stable contracts, and faithful separation of plan from reality.
+- Default trust copy should stay short: basis, change, and save state first; deeper explanation only when requested.

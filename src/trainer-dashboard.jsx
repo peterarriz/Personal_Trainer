@@ -7302,7 +7302,7 @@ Keep it plain and specific.`;
               </div>
             </div>
           </div>
-          <button className="btn" onClick={()=>setTab(5)} aria-label="Open settings" title="Settings" style={{ width:44, height:44, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, background:"var(--surface-1)" }}>
+          <button data-testid="app-tab-settings" className="btn" onClick={()=>setTab(5)} aria-label="Open settings" title="Settings" style={{ width:44, height:44, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, background:"var(--surface-1)" }}>
             <SettingsIcon size={18} />
           </button>
         </div>
@@ -7322,12 +7322,12 @@ Keep it plain and specific.`;
         </div>
 
         {/* TODAY */}
-        {tab === 0 && <TodayTab planDay={planDay} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} loading={loading} storageStatus={storageStatus} authError={authError} />}
+        {tab === 0 && <TodayTab planDay={planDay} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} onGoLog={()=>setTab(2)} loading={loading} storageStatus={storageStatus} authError={authError} />}
 
         {/* PROGRAM */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} saveProgramSelection={saveProgramSelection} todayWorkout={planDay?.resolved?.training} />
+            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} saveProgramSelection={saveProgramSelection} todayWorkout={planDay?.resolved?.training} onManagePlan={()=>setTab(5)} />
           </ProgramTabErrorBoundary>
         )}
 
@@ -7338,7 +7338,7 @@ Keep it plain and specific.`;
         {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} weeklyNutritionReview={weeklyNutritionReview} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} />}
 
         {/* COACH */}
-        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onOpenSettings={()=>setTab(5)} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
           setCoachPlanAdjustments(nextCoachPlanAdjustments);
@@ -7347,7 +7347,7 @@ Keep it plain and specific.`;
           await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
 
-        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} deviceSyncAudit={deviceSyncAudit} onDeleteAccount={async ()=>{
+        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} onDeleteAccount={async ()=>{
           const clearedLogs = {};
           const clearedBodyweights = [];
           const clearedDaily = {};
@@ -10303,8 +10303,8 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
 
   return (
     <div style={{ display:"grid", gap:"0.55rem" }}>
-      <div style={{ fontSize:"0.54rem", color:"var(--text-soft)", lineHeight:1.6 }}>
-        {PRODUCT_BRAND.name} uses three curated identities instead of a loose accent picker. Pick the overall brand tone first, then choose the surface mode that feels best on your eyes.
+      <div style={{ fontSize:"0.54rem", color:"var(--text-soft)", lineHeight:1.55 }}>
+        Pick one curated theme, then choose the light or dark surface mode that feels best.
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
         {BRAND_THEME_OPTIONS.map((themeOption) => {
@@ -10361,44 +10361,14 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
           );
         })}
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
-        <div className="empty-state" style={{ padding:"0.72rem" }}>
-          <div style={{ fontFamily:"var(--font-display)", fontSize:"0.62rem", color:"var(--text-strong)" }}>Brand direction</div>
-          <div style={{ fontSize:"0.52rem", color:"var(--text-soft)", lineHeight:1.6, marginTop:"0.16rem" }}>
-            {BRAND_FOUNDATION.recommendedProductName} is a premium fitness operating system: dark-first, editorial, and broadly athletic without falling into bro-gym or generic SaaS styling.
-          </div>
-          <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.55, marginTop:"0.28rem" }}>
-            {PRODUCT_BRAND.logoDirection}
-          </div>
-        </div>
-        <div className="empty-state" style={{ padding:"0.72rem" }}>
-          <div style={{ fontFamily:"var(--font-display)", fontSize:"0.62rem", color:"var(--text-strong)" }}>Typography</div>
-          <div style={{ display:"grid", gap:"0.24rem", marginTop:"0.18rem" }}>
-            {BRAND_FOUNDATION.typographyHierarchy.map((item) => (
-              <div key={item.label}>
-                <div style={{ fontSize:"0.49rem", color:"var(--text-strong)" }}>{item.label} · {item.usage}</div>
-                <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>{item.direction}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="empty-state" style={{ padding:"0.72rem" }}>
-          <div style={{ fontFamily:"var(--font-display)", fontSize:"0.62rem", color:"var(--text-strong)" }}>Tokens and patterns</div>
-          <div style={{ display:"grid", gap:"0.28rem", marginTop:"0.18rem" }}>
-            {[...BRAND_FOUNDATION.baseDesignTokens, ...BRAND_FOUNDATION.patterns].map((item) => (
-              <div key={item.label}>
-                <div style={{ fontSize:"0.49rem", color:"var(--text-strong)" }}>{item.label}</div>
-                <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>{item.detail}</div>
-              </div>
-            ))}
-          </div>
-        </div>
+      <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+        Current direction: {PRODUCT_BRAND.name}. {BRAND_FOUNDATION.recommendedProductName} stays curated on purpose, so themes feel distinct instead of duplicated.
       </div>
     </div>
   );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, deviceSyncAudit }) {
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }) }) {
   const appleHealth = personalization?.connectedDevices?.appleHealth || {};
   const garmin = personalization?.connectedDevices?.garmin || {};
   const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
@@ -10423,12 +10393,86 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const [garminImportText, setGarminImportText] = useState("");
   const [importMsg, setImportMsg] = useState("");
   const [locationMsg, setLocationMsg] = useState("");
+  const [selectedSettingsProgramId, setSelectedSettingsProgramId] = useState("");
+  const [selectedSettingsStyleId, setSelectedSettingsStyleId] = useState("");
+  const [selectedSettingsProgramFidelityMode, setSelectedSettingsProgramFidelityMode] = useState(PROGRAM_FIDELITY_MODES.adaptToMe);
+  const [planManagementNotice, setPlanManagementNotice] = useState("");
+  const [planManagementError, setPlanManagementError] = useState("");
+  const [goalChangeMode, setGoalChangeMode] = useState(GOAL_CHANGE_MODES.refineCurrentGoal);
+  const [goalChangeIntent, setGoalChangeIntent] = useState("");
+  const [goalChangePreview, setGoalChangePreview] = useState(null);
+  const [goalChangeError, setGoalChangeError] = useState("");
+  const [goalChangeNotice, setGoalChangeNotice] = useState("");
+  const [goalChangePreviewing, setGoalChangePreviewing] = useState(false);
+  const [goalChangeApplying, setGoalChangeApplying] = useState(false);
   const settings = personalization?.settings || DEFAULT_PERSONALIZATION.settings;
   const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
   const unitSettings = settings?.units || DEFAULT_PERSONALIZATION.settings.units;
   const trainingPrefs = settings?.trainingPreferences || DEFAULT_PERSONALIZATION.settings.trainingPreferences;
   const appearance = settings?.appearance || DEFAULT_PERSONALIZATION.settings.appearance;
   const notif = settings?.notifications || DEFAULT_PERSONALIZATION.settings.notifications;
+  const coachMemory = personalization?.coachMemory || DEFAULT_PERSONALIZATION.coachMemory || {};
+  const [coachMemoryDraft, setCoachMemoryDraft] = useState({
+    failurePatterns: (coachMemory.failurePatterns || []).join(", "),
+    commonBarriers: (coachMemory.commonBarriers || []).join(", "),
+    simplicityVsVariety: coachMemory.simplicityVsVariety || "",
+    preferredFoodPatterns: (coachMemory.preferredFoodPatterns || []).join(", "),
+  });
+  const [coachApiKey, setCoachApiKey] = useState(typeof window !== "undefined"
+    ? resolveStoredAiApiKey({ safeStorageGet, storageLike: localStorage })
+    : "");
+  const goals = athleteProfile?.goals || [];
+  const programsState = useMemo(
+    () => normalizeProgramsSelectionState(personalization?.programs || createDefaultProgramSelectionState()),
+    [personalization?.programs]
+  );
+  const programDefinitions = useMemo(() => listProgramDefinitions(), []);
+  const styleDefinitions = useMemo(() => listStyleDefinitions(), []);
+  const activeBasisSnapshot = useMemo(
+    () => buildActiveBasisSnapshot({ programsState }),
+    [programsState]
+  );
+  const activeProgramDefinition = activeBasisSnapshot?.activeProgramDefinition || null;
+  const activeStyleDefinition = activeBasisSnapshot?.activeStyleDefinition || null;
+  const selectedSettingsProgramDefinition = useMemo(
+    () => getProgramDefinitionById(selectedSettingsProgramId || "") || programDefinitions?.[0] || null,
+    [selectedSettingsProgramId, programDefinitions]
+  );
+  const selectedSettingsStyleDefinition = useMemo(
+    () => getStyleDefinitionById(selectedSettingsStyleId || "") || styleDefinitions?.[0] || null,
+    [selectedSettingsStyleId, styleDefinitions]
+  );
+  const settingsProgramCompatibility = useMemo(
+    () => assessProgramCompatibility({
+      programDefinition: selectedSettingsProgramDefinition,
+      athleteProfile,
+      personalization,
+      goals,
+      fidelityMode: selectedSettingsProgramFidelityMode,
+    }),
+    [selectedSettingsProgramDefinition, athleteProfile, personalization, goals, selectedSettingsProgramFidelityMode]
+  );
+  const settingsStyleCompatibility = useMemo(
+    () => assessStyleCompatibility({
+      styleDefinition: selectedSettingsStyleDefinition,
+      programDefinition: activeProgramDefinition,
+      athleteProfile,
+      goals,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+    }),
+    [selectedSettingsStyleDefinition, activeProgramDefinition, athleteProfile, goals, programsState?.activeProgramInstance]
+  );
+  const settingsPlanBasisExplanation = useMemo(
+    () => planComposer?.planningBasis?.planBasisExplanation || buildPlanBasisExplanation({
+      athleteProfile,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+      activeStyleSelection: programsState?.activeStyleSelection || null,
+      programDefinition: activeProgramDefinition,
+      styleDefinition: activeStyleDefinition,
+      compatibilityAssessment: programsState?.lastCompatibilityAssessment || null,
+    }),
+    [planComposer, athleteProfile, programsState?.activeProgramInstance, programsState?.activeStyleSelection, programsState?.lastCompatibilityAssessment, activeProgramDefinition, activeStyleDefinition]
+  );
 
   const patchSettings = async (patch = {}) => {
     const next = mergePersonalization(personalization, {
@@ -10864,7 +10908,499 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash || ""}`;
     window.history.replaceState({}, "", nextUrl);
   }, []);
+  useEffect(() => {
+    if (!selectedSettingsProgramId && programDefinitions?.[0]?.id) setSelectedSettingsProgramId(programDefinitions[0].id);
+  }, [programDefinitions, selectedSettingsProgramId]);
+  useEffect(() => {
+    if (!selectedSettingsStyleId && styleDefinitions?.[0]?.id) setSelectedSettingsStyleId(styleDefinitions[0].id);
+  }, [styleDefinitions, selectedSettingsStyleId]);
+  useEffect(() => {
+    setCoachMemoryDraft({
+      failurePatterns: (coachMemory.failurePatterns || []).join(", "),
+      commonBarriers: (coachMemory.commonBarriers || []).join(", "),
+      simplicityVsVariety: coachMemory.simplicityVsVariety || "",
+      preferredFoodPatterns: (coachMemory.preferredFoodPatterns || []).join(", "),
+    });
+  }, [
+    coachMemory.failurePatterns,
+    coachMemory.commonBarriers,
+    coachMemory.simplicityVsVariety,
+    coachMemory.preferredFoodPatterns,
+  ]);
+  const saveCoachSetup = async () => {
+    const updated = mergePersonalization(personalization, {
+      coachMemory: {
+        ...(personalization?.coachMemory || {}),
+        failurePatterns: coachMemoryDraft.failurePatterns.split(",").map((item) => item.trim()).filter(Boolean),
+        commonBarriers: coachMemoryDraft.commonBarriers.split(",").map((item) => item.trim()).filter(Boolean),
+        preferredFoodPatterns: coachMemoryDraft.preferredFoodPatterns.split(",").map((item) => item.trim()).filter(Boolean),
+        simplicityVsVariety: coachMemoryDraft.simplicityVsVariety || "",
+      },
+    });
+    setPersonalization(updated);
+    if (typeof window !== "undefined") safeStorageSet(localStorage, "coach_api_key", coachApiKey || "");
+    await onPersist(updated);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+  };
+  const commitSettingsProgramsState = async (nextProgramsState, notice = "") => {
+    setPlanManagementError("");
+    setPlanManagementNotice(notice);
+    await saveProgramSelection(nextProgramsState);
+  };
+  const handleSettingsActivateProgram = async () => {
+    if (!selectedSettingsProgramDefinition?.id) return;
+    if (settingsProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
+      setPlanManagementNotice("");
+      setPlanManagementError(settingsProgramCompatibility?.blockedConstraints?.[0] || settingsProgramCompatibility?.reasons?.[0] || "This program is not a clean fit right now.");
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const nextProgramInstance = createProgramInstance({
+      programDefinition: selectedSettingsProgramDefinition,
+      userId: "local",
+      fidelityMode: selectedSettingsProgramFidelityMode,
+      compatibilityAssessment: settingsProgramCompatibility,
+      athleteProfile,
+      activationDate: nowIso,
+    });
+    const nextStyleSelection = selectedSettingsProgramFidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle
+      ? null
+      : programsState?.activeStyleSelection || null;
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: programsState?.activeProgramInstance ? "replaced_program" : "activated_program",
+      programDefinition: selectedSettingsProgramDefinition,
+      fidelityMode: selectedSettingsProgramFidelityMode,
+      reason: settingsProgramCompatibility?.reasons?.[0] || buildCompatibilityHeadline(settingsProgramCompatibility),
+      createdAt: nowIso,
+    });
+    await commitSettingsProgramsState({
+      ...programsState,
+      activeProgramInstance: nextProgramInstance,
+      activeStyleSelection: nextStyleSelection,
+      lastCompatibilityAssessment: settingsProgramCompatibility,
+      planBasisExplanation: buildPlanBasisExplanation({
+        athleteProfile,
+        activeProgramInstance: nextProgramInstance,
+        activeStyleSelection: nextStyleSelection,
+        programDefinition: selectedSettingsProgramDefinition,
+        styleDefinition: selectedSettingsProgramFidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle ? null : activeStyleDefinition,
+        compatibilityAssessment: settingsProgramCompatibility,
+      }),
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    }, `${selectedSettingsProgramDefinition.displayName} is now the active program basis.`);
+  };
+  const handleSettingsActivateStyle = async () => {
+    if (!selectedSettingsStyleDefinition?.id) return;
+    if (settingsStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
+      setPlanManagementNotice("");
+      setPlanManagementError(settingsStyleCompatibility?.blockedConstraints?.[0] || settingsStyleCompatibility?.reasons?.[0] || "This style does not fit the current plan basis.");
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const nextStyleSelection = createStyleSelection({
+      styleDefinition: selectedSettingsStyleDefinition,
+      userId: "local",
+      compatibleWithCurrentPlan: settingsStyleCompatibility?.outcome !== COMPATIBILITY_OUTCOMES.incompatible,
+      influenceLevel: STYLE_INFLUENCE_LEVELS.standard,
+      activationDate: nowIso,
+    });
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: programsState?.activeStyleSelection ? "replaced_style" : "activated_style",
+      styleDefinition: selectedSettingsStyleDefinition,
+      reason: settingsStyleCompatibility?.reasons?.[0] || buildCompatibilityHeadline(settingsStyleCompatibility),
+      createdAt: nowIso,
+    });
+    await commitSettingsProgramsState({
+      ...programsState,
+      activeStyleSelection: nextStyleSelection,
+      lastCompatibilityAssessment: settingsStyleCompatibility,
+      planBasisExplanation: buildPlanBasisExplanation({
+        athleteProfile,
+        activeProgramInstance: programsState?.activeProgramInstance || null,
+        activeStyleSelection: nextStyleSelection,
+        programDefinition: activeProgramDefinition,
+        styleDefinition: selectedSettingsStyleDefinition,
+        compatibilityAssessment: settingsStyleCompatibility,
+      }),
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    }, `${selectedSettingsStyleDefinition.displayName} is now the active style layer.`);
+  };
+  const handleSettingsClearProgramLayer = async () => {
+    if (!programsState?.activeProgramInstance && !programsState?.activeStyleSelection) return;
+    const nowIso = new Date().toISOString();
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: "cleared_basis",
+      programDefinition: activeProgramDefinition,
+      styleDefinition: activeStyleDefinition,
+      fidelityMode: programsState?.activeProgramInstance?.fidelityMode || "",
+      reason: "Returned to the default goal-driven basis.",
+      createdAt: nowIso,
+    });
+    await commitSettingsProgramsState({
+      ...programsState,
+      activeProgramInstance: null,
+      activeStyleSelection: null,
+      lastCompatibilityAssessment: null,
+      planBasisExplanation: buildPlanBasisExplanation({
+        athleteProfile,
+        activeProgramInstance: null,
+        activeStyleSelection: null,
+        programDefinition: null,
+        styleDefinition: null,
+        compatibilityAssessment: null,
+      }),
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    }, "Program and style basis cleared. The planner is back on the default goal-driven basis.");
+  };
+  const handleSettingsGoalPreview = async () => {
+    const cleanGoalText = sanitizeIntakeText(goalChangeIntent || "");
+    if (!cleanGoalText) {
+      setGoalChangeError("Add the goal in plain English first.");
+      setGoalChangePreview(null);
+      return;
+    }
+    setGoalChangePreviewing(true);
+    setGoalChangeError("");
+    setGoalChangeNotice("");
+    try {
+      const preview = await previewGoalChange({
+        rawGoalText: cleanGoalText,
+        changeMode: goalChangeMode,
+      });
+      if (!preview?.orderedResolvedGoals?.length) {
+        setGoalChangeError("Preview could not resolve a clean goal stack.");
+        setGoalChangePreview(null);
+      } else {
+        setGoalChangePreview(preview);
+      }
+    } catch (error) {
+      setGoalChangeError(error?.message || "Goal preview failed.");
+      setGoalChangePreview(null);
+    } finally {
+      setGoalChangePreviewing(false);
+    }
+  };
+  const handleSettingsGoalApply = async () => {
+    if (!goalChangePreview?.orderedResolvedGoals?.length) {
+      setGoalChangeError("Preview the goal change before confirming it.");
+      return;
+    }
+    setGoalChangeApplying(true);
+    setGoalChangeError("");
+    setGoalChangeNotice("");
+    try {
+      const result = await applyGoalChange({
+        rawGoalText: goalChangeIntent,
+        changeMode: goalChangeMode,
+        previewBundle: goalChangePreview,
+      });
+      if (!result?.ok) {
+        setGoalChangeError(result?.error || "Goal change could not be applied.");
+        return;
+      }
+      setGoalChangeNotice(`${goalChangePreview?.modeMeta?.label || "Goal change"} applied.`);
+      setGoalChangeIntent("");
+      setGoalChangePreview(null);
+    } catch (error) {
+      setGoalChangeError(error?.message || "Goal change could not be applied.");
+    } finally {
+      setGoalChangeApplying(false);
+    }
+  };
   return (
+    <div className="fi" data-testid="settings-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      <div className="card card-subtle">
+        <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.7rem" }}>
+          <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:0 }}>SETTINGS</div>
+          <div style={{ fontSize:"0.55rem", color:"#8ea4c7", lineHeight:1.55 }}>
+            Manage profile, plan basis, theme, and advanced controls here instead of inside your training tabs.
+          </div>
+          {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:C.green }}>{settingsSaveMsg}</div>}
+        </div>
+
+        <div style={{ display:"grid", gap:"0.75rem" }}>
+          <section data-testid="settings-plan-management" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.4rem" }}>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>PROFILE</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 110px", gap:"0.35rem" }}>
+              <input value={profile?.name || ""} onChange={e=>patchProfile({ name: e.target.value })} placeholder="Name" />
+              <input type="number" value={profile?.age || ""} onChange={e=>patchProfile({ age: Number(e.target.value) || "" })} placeholder="Age" />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+              <input
+                type="number"
+                step="0.1"
+                value={profileWeightVal}
+                onChange={e=>patchProfile({ weight: e.target.value === "" ? "" : Number(e.target.value), bodyweight: e.target.value === "" ? "" : Number(e.target.value) })}
+                placeholder={`Weight (${unitSettings?.weight || "lbs"})`}
+              />
+              {unitSettings?.height === "cm" ? (
+                <input type="number" value={profileHeightVal} onChange={e=>patchProfile({ height: e.target.value === "" ? "" : Number(e.target.value) })} placeholder="Height (cm)" />
+              ) : (
+                <input value={profileHeightVal} onChange={e=>patchProfile({ height: e.target.value })} placeholder={`Height (${unitSettings?.height === "ft_in" ? "e.g., 6'1\"" : "value"})`} />
+              )}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.35rem" }}>
+              <select value={unitSettings?.weight || "lbs"} onChange={e=>patchSettings({ units: { ...unitSettings, weight: e.target.value } })}>
+                <option value="lbs">Weight: lbs</option>
+                <option value="kg">Weight: kg</option>
+              </select>
+              <select value={unitSettings?.height || "ft_in"} onChange={e=>patchSettings({ units: { ...unitSettings, height: e.target.value } })}>
+                <option value="ft_in">Height: ft-in</option>
+                <option value="cm">Height: cm</option>
+              </select>
+              <select value={unitSettings?.distance || "miles"} onChange={e=>patchSettings({ units: { ...unitSettings, distance: e.target.value } })}>
+                <option value="miles">Distance: miles</option>
+                <option value="kilometers">Distance: km</option>
+              </select>
+            </div>
+          </section>
+
+          <section style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.4rem" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>PLAN MANAGEMENT</div>
+              <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                Programs, styles, and goal changes live here so Program can stay focused on reading the week.
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
+              <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
+                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT BASIS</div>
+                <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45, marginTop:"0.12rem" }}>
+                  {settingsPlanBasisExplanation?.basisSummary || "Goal-driven default"}
+                </div>
+                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                  {settingsPlanBasisExplanation?.personalizationSummary || "No separate program or style layer is active."}
+                </div>
+              </div>
+              <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
+                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>ACTIVE LAYERS</div>
+                <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.12rem", lineHeight:1.5 }}>
+                  Program: {activeProgramDefinition?.displayName || "None"}
+                </div>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
+                  Style: {activeStyleDefinition?.displayName || "None"}
+                </div>
+                <button className="btn" onClick={handleSettingsClearProgramLayer} style={{ width:"fit-content", marginTop:"0.3rem", fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+                  Clear basis
+                </button>
+              </div>
+            </div>
+            {(planManagementNotice || planManagementError) && (
+              <div style={{ fontSize:"0.52rem", color:planManagementError ? C.amber : C.green, lineHeight:1.5 }}>
+                {planManagementError || planManagementNotice}
+              </div>
+            )}
+            <details>
+              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Programs and styles</summary>
+              <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+                <select value={selectedSettingsProgramId} onChange={(e)=>setSelectedSettingsProgramId(e.target.value)} style={{ fontSize:"0.54rem" }}>
+                  {programDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName}</option>)}
+                </select>
+                <select value={selectedSettingsProgramFidelityMode} onChange={(e)=>setSelectedSettingsProgramFidelityMode(e.target.value)} style={{ fontSize:"0.52rem" }}>
+                  <option value={PROGRAM_FIDELITY_MODES.adaptToMe}>Adapt to me</option>
+                  <option value={PROGRAM_FIDELITY_MODES.strict}>Mostly as written</option>
+                  <option value={PROGRAM_FIDELITY_MODES.useAsStyle}>Use as style</option>
+                </select>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{selectedSettingsProgramDefinition?.summary || "Select a program."}</div>
+                {settingsProgramCompatibility?.headline && <div style={{ fontSize:"0.48rem", color:settingsProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : "#8fa5c8", lineHeight:1.45 }}>{settingsProgramCompatibility.headline}</div>}
+                <button className="btn btn-primary" onClick={handleSettingsActivateProgram} style={{ width:"fit-content", fontSize:"0.5rem" }}>Use this program</button>
+                <div style={{ borderTop:"1px solid #1e293b", paddingTop:"0.35rem", display:"grid", gap:"0.35rem" }}>
+                  <select value={selectedSettingsStyleId} onChange={(e)=>setSelectedSettingsStyleId(e.target.value)} style={{ fontSize:"0.54rem" }}>
+                    {styleDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName}</option>)}
+                  </select>
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{selectedSettingsStyleDefinition?.summary || "Select a style."}</div>
+                  {settingsStyleCompatibility?.headline && <div style={{ fontSize:"0.48rem", color:settingsStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : "#8fa5c8", lineHeight:1.45 }}>{settingsStyleCompatibility.headline}</div>}
+                  <button className="btn" onClick={handleSettingsActivateStyle} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Apply style</button>
+                </div>
+              </div>
+            </details>
+            <details>
+              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Goal changes</summary>
+              <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+                <select value={goalChangeMode} onChange={(e)=>setGoalChangeMode(e.target.value)} style={{ fontSize:"0.54rem" }}>
+                  <option value={GOAL_CHANGE_MODES.refineCurrentGoal}>Refine current goal</option>
+                  <option value={GOAL_CHANGE_MODES.reprioritizeGoalStack}>Re-prioritize goals</option>
+                  <option value={GOAL_CHANGE_MODES.startNewGoalArc}>Start new goal arc</option>
+                </select>
+                <input value={goalChangeIntent} onChange={(e)=>setGoalChangeIntent(e.target.value)} placeholder="Describe the goal change in plain English" />
+                <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                  <button className="btn btn-primary" onClick={handleSettingsGoalPreview} disabled={goalChangePreviewing || goalChangeApplying} style={{ fontSize:"0.5rem" }}>
+                    {goalChangePreviewing ? "Previewing..." : "Preview"}
+                  </button>
+                  <button className="btn" onClick={handleSettingsGoalApply} disabled={goalChangeApplying || !goalChangePreview?.orderedResolvedGoals?.length} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>
+                    {goalChangeApplying ? "Applying..." : "Confirm"}
+                  </button>
+                </div>
+                {(goalChangeError || goalChangeNotice) && <div style={{ fontSize:"0.48rem", color:goalChangeError ? C.amber : C.green, lineHeight:1.45 }}>{goalChangeError || goalChangeNotice}</div>}
+                {goalChangePreview?.orderedResolvedGoals?.length > 0 && (
+                  <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem" }}>
+                    {goalChangePreview.orderedResolvedGoals.map((goal) => (
+                      <div key={goal.id || goal.name} style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                        {goal.priority ? `${goal.priority}. ` : ""}{goal.name}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </details>
+          </section>
+
+          <section style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
+            <div className="sect-title" style={{ color:C.purple, marginBottom:0 }}>PREFERENCES</div>
+            <button className="btn" onClick={()=>setShowEnvEditor((value)=>!value)} style={{ justifyContent:"space-between", fontSize:"0.54rem", color:"#dbe7f6" }}>
+              Default environment: {trainingPrefs?.defaultEnvironment || "Home"} <span>{showEnvEditor ? "Hide" : "Edit"}</span>
+            </button>
+            {showEnvEditor && (
+              <div style={{ display:"grid", gap:"0.3rem", border:"1px solid #243752", borderRadius:9, padding:"0.45rem" }}>
+                <select value={trainingPrefs?.defaultEnvironment || "Home"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, defaultEnvironment: e.target.value } })}>
+                  {["Home","Gym","Travel"].map((mode)=><option key={mode} value={mode}>{mode}</option>)}
+                </select>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Day-specific changes still happen from Today.</div>
+              </div>
+            )}
+            <select value={trainingPrefs?.weeklyCheckinDay || "Sun"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, weeklyCheckinDay: e.target.value } })}>
+              {["Sun","Mon","Sat"].map((day)=><option key={day} value={day}>Weekly check-in day: {day}</option>)}
+            </select>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.28rem" }}>
+              {[["Conservative","Lower risk"],["Standard","Balanced"],["Aggressive","Higher risk"]].map(([mode, desc]) => (
+                <button key={mode} className="btn" onClick={()=>patchSettings({ trainingPreferences: { ...trainingPrefs, intensityPreference: mode } })} style={{ fontSize:"0.5rem", color:trainingPrefs?.intensityPreference===mode?C.green:"#9fb2d2", borderColor:trainingPrefs?.intensityPreference===mode?C.green+"35":"#324961", textAlign:"left" }}>
+                  <div>{mode}</div>
+                  <div style={{ fontSize:"0.44rem", color:"#7f94b3", marginTop:"0.1rem" }}>{desc}</div>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
+            <div className="sect-title" style={{ color:C.amber, marginBottom:0 }}>APPEARANCE</div>
+            <AppearanceThemeSection appearance={appearance} onPatchAppearance={(nextAppearance) => patchSettings({ appearance: nextAppearance })} />
+          </section>
+
+          <details style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem" }}>
+            <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Coach setup</summary>
+            <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+              <input value={coachMemoryDraft.failurePatterns} onChange={e=>setCoachMemoryDraft((current) => ({ ...current, failurePatterns: e.target.value }))} placeholder="Failure patterns" />
+              <input value={coachMemoryDraft.commonBarriers} onChange={e=>setCoachMemoryDraft((current) => ({ ...current, commonBarriers: e.target.value }))} placeholder="Common barriers" />
+              <input value={coachMemoryDraft.preferredFoodPatterns} onChange={e=>setCoachMemoryDraft((current) => ({ ...current, preferredFoodPatterns: e.target.value }))} placeholder="Food patterns" />
+              <input value={coachMemoryDraft.simplicityVsVariety} onChange={e=>setCoachMemoryDraft((current) => ({ ...current, simplicityVsVariety: e.target.value }))} placeholder="Simplicity vs variety" />
+              <details>
+                <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>Advanced AI provider key</summary>
+                <div style={{ marginTop:"0.3rem", display:"grid", gap:"0.2rem" }}>
+                  <input value={coachApiKey} onChange={e=>setCoachApiKey(e.target.value)} placeholder="Anthropic key (optional)" />
+                  <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>Hidden by default so Coach stays out of configuration mode.</div>
+                </div>
+              </details>
+              <button className="btn" onClick={saveCoachSetup} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Save coach setup</button>
+            </div>
+          </details>
+
+          <details style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem" }}>
+            <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Integrations and imports</summary>
+            <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                Apple Health, Garmin, and location stay de-emphasized until they are clearly live and useful.
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.35rem" }}>
+                {[["Apple Health", appleIntegration],["Garmin Connect", garminIntegration],["Location", locationIntegration]].map(([label, state]) => {
+                  const tone = integrationStateTone(state.state);
+                  return (
+                    <div key={label} style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.48rem 0.52rem" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", gap:"0.3rem", alignItems:"center", flexWrap:"wrap" }}>
+                        <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>{label}</div>
+                        <span style={{ fontSize:"0.45rem", color:tone.color, background:tone.bg, padding:"0.12rem 0.34rem", borderRadius:999 }}>{state.label}</span>
+                      </div>
+                      <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.45 }}>{state.summary}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                <button className="btn" onClick={requestAppleHealth} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>Connect Apple Health</button>
+                <button className="btn" onClick={connectGarmin} disabled={garminBusy !== ""} style={{ fontSize:"0.48rem", color:C.green, borderColor:C.green+"35" }}>{garminBusy === "connect" ? "Connecting..." : "Connect Garmin"}</button>
+                <button className="btn" onClick={requestLocationAccess} style={{ fontSize:"0.48rem", color:C.amber, borderColor:C.amber+"35" }}>Request location</button>
+              </div>
+              {!!checkMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{checkMsg}</div>}
+              {!!garminMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{garminMsg}</div>}
+              {!!locationMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{locationMsg}</div>}
+              <details>
+                <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>Manual imports</summary>
+                <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.35rem" }}>
+                  <textarea value={appleImportText} onChange={e=>setAppleImportText(e.target.value)} placeholder="Apple Health JSON import" style={{ minHeight:62, fontSize:"0.5rem" }} />
+                  <button className="btn" onClick={()=>importDeviceData("apple")} style={{ width:"fit-content", fontSize:"0.47rem", color:C.blue, borderColor:C.blue+"35" }}>Import Apple JSON</button>
+                  <textarea value={garminImportText} onChange={e=>setGarminImportText(e.target.value)} placeholder="Garmin JSON import" style={{ minHeight:62, fontSize:"0.5rem" }} />
+                  <button className="btn" onClick={()=>importDeviceData("garmin")} style={{ width:"fit-content", fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>Import Garmin JSON</button>
+                  {!!importMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{importMsg}</div>}
+                </div>
+              </details>
+            </div>
+          </details>
+
+          <details style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem" }}>
+            <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Notifications, backup, and reset</summary>
+            <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+              <label style={{ fontSize:"0.52rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.allOff)} onChange={e=>patchSettings({ notifications: { ...notif, allOff: e.target.checked } })} /> All notifications off</label>
+              <label style={{ fontSize:"0.52rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.weeklyReminderOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, weeklyReminderOn: e.target.checked } })} /> Weekly check-in reminder</label>
+              <label style={{ fontSize:"0.52rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.proactiveNudgeOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, proactiveNudgeOn: e.target.checked } })} /> Coach proactive nudge</label>
+              <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                <button className="btn" onClick={exportData} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>Export data</button>
+                <button className="btn" onClick={handleCopyBackup} style={{ fontSize:"0.48rem", color:"#dbe7f6" }}>Copy backup code</button>
+                <button className="btn" onClick={onStartFresh} style={{ fontSize:"0.48rem", color:"#9fb2d2", borderColor:"#324761" }}>Start new plan</button>
+              </div>
+              {!!backupMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{backupMsg}</div>}
+              <textarea value={backupCode} onChange={e=>setBackupCode(e.target.value)} placeholder="Paste backup code to restore" style={{ minHeight:62, fontSize:"0.5rem" }} />
+              <button className="btn" onClick={handleRestoreRequest} style={{ width:"fit-content", fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>Validate restore code</button>
+              <button className="btn" onClick={()=>{ setDeleteOpen((value)=>!value); setDeleteStep(1); setDeleteConfirm(""); }} style={{ width:"fit-content", fontSize:"0.47rem", color:C.red, borderColor:C.red+"35" }}>Delete account</button>
+              {deleteOpen && (
+                <div style={{ border:"1px solid #3b2a39", borderRadius:8, padding:"0.45rem", display:"grid", gap:"0.3rem" }}>
+                  {deleteStep === 1 ? (
+                    <>
+                      <div style={{ fontSize:"0.5rem", color:"#f1d4dd" }}>Export first if you may want this data later.</div>
+                      <button className="btn" onClick={()=>{ exportData(); setDeleteStep(2); }} style={{ fontSize:"0.48rem" }}>Export first, then continue</button>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize:"0.5rem", color:"#f1d4dd" }}>Type <b>DELETE</b> to confirm.</div>
+                      <input value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} placeholder="DELETE" />
+                      <button className="btn" disabled={deleteConfirm !== "DELETE"} onClick={onDeleteAccount} style={{ fontSize:"0.48rem", color:C.red, borderColor:C.red+"35" }}>Confirm delete account</button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </details>
+        </div>
+      </div>
+
+      {connectOpen && (
+        <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
+          <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
+            <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
+              {PRODUCT_BRAND.name} can read Apple Health workouts and device context that some recommendations use. You can revoke access any time.
+            </div>
+            <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
+            <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
+              Skip for now
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showRestoreConfirm && (
+        <div onClick={()=>setShowRestoreConfirm(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
+          <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f", display:"grid", gap:"0.45rem" }}>
+            <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>
+              Restore replaces current local data with the backup payload.
+            </div>
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+              <button className="btn btn-primary" onClick={confirmRestore}>Restore backup</button>
+              <button className="btn" onClick={()=>setShowRestoreConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+  if (false) return (
     <div className="fi" data-testid="today-tab">
       <div className="card card-subtle">
         <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
@@ -11627,7 +12163,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
 }
 
 // TODAY TAB
-function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, loading, storageStatus, authError }) {
+function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, onGoProgram = () => {}, onGoLog = () => {}, loading, storageStatus, authError }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const userProfile = athleteProfile?.userProfile || {};
   const planDayRecovery = planDay?.resolved?.recovery || null;
@@ -12172,8 +12708,232 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     }
     return storageStatus?.detail || "Cloud sync unavailable right now. Using local data safely.";
   })();
+  const todayLoggedLine = checkinAck
+    || (todayLog?.ts
+      ? `Saved ${new Date(todayLog.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. ${sanitizeStatusLabel(todayLog?.checkin?.status, "logged")}.`
+      : "");
+  const todaySessionMeta = [
+    displayRun?.t || (hasStrength ? `Strength ${strSess}` : sanitizeStatusLabel(displayWorkout?.type, "session")),
+    displayRun?.d || displayWorkout?.strengthDuration || "",
+    displayRun ? `${runPace}/mi` : sanitizeDisplayText(displayWorkout?.intensityGuidance || ""),
+    hasStrength ? strengthSetupLabel : "",
+  ].filter(Boolean);
+  const handleSaveTodayQuickCheckin = async () => {
+    if (checkin.status === "not_logged" || checkinSaving) return;
+    setCheckinSaving(true);
+    setCheckinAck("");
+    setTodayDataError("");
+    try {
+      const parsed = parseMicroCheckin(checkin.note || "");
+      const basePayload = parsed ? { ...checkin, ...parsed } : { ...checkin };
+      const readinessUpdate = deriveReadinessAdjustedCheckin(basePayload);
+      const strengthPerformance = hasStrength
+        ? Object.values(strengthInputs || {})
+            .map((row) => ({
+              ...row,
+              weightUsed: row?.bodyweightOnly || row?.bandTension ? null : toFiniteNumber(row?.weightUsed ?? row?.actualWeight, null),
+              actualWeight: row?.bodyweightOnly || row?.bandTension ? null : toFiniteNumber(row?.actualWeight ?? row?.weightUsed, null),
+              repsCompleted: Number(row?.repsCompleted || row?.actualReps || 0),
+              actualReps: Number(row?.actualReps || row?.repsCompleted || 0),
+              actualSets: Number(row?.actualSets || row?.prescribedSets || 0),
+            }))
+            .filter((row) => row.exercise && Number(row.actualReps || 0) > 0 && Number(row.actualSets || 0) > 0)
+        : [];
+      const payload = {
+        ...basePayload,
+        ...(readinessUpdate.adjusted || {}),
+        readiness: readinessUpdate.readiness || basePayload.readiness || DEFAULT_DAILY_CHECKIN.readiness,
+        strengthPerformance,
+      };
+      await saveDailyCheckin(todayKey, payload);
+      if (checkin.bodyweight && !Number.isNaN(parseFloat(checkin.bodyweight))) {
+        const entry = { date: todayKey, w: parseFloat(checkin.bodyweight) };
+        const nextBW = [...bodyweights.filter((item) => item.date !== todayKey), entry].sort((a, b) => a.date.localeCompare(b.date));
+        await saveBodyweights(nextBW);
+      }
+      const savedTime = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const statusLine = payload.status === "completed_as_planned"
+        ? "Marked complete as planned."
+        : payload.status === "completed_modified"
+        ? "Marked complete with changes."
+        : payload.status === "partial_completed"
+        ? "Marked partially complete."
+        : payload.status === "skipped"
+        ? "Marked skipped."
+        : "Saved.";
+      setCheckinAck(`Saved ${savedTime}. ${statusLine}`);
+      setPostSaveInsight(
+        payload.status === "skipped"
+          ? `Tomorrow ${tomorrowHasSession ? `stays scheduled as ${tomorrowWorkout?.label || "planned"}.` : "is unchanged."}`
+          : (reducedLoadSourceLine || "Tomorrow is unchanged.")
+      );
+    } catch {
+      setCheckinAck("");
+      setTodayDataError("Save did not finish. Try again. Your local data is still available.");
+    } finally {
+      setCheckinSaving(false);
+    }
+  };
 
   return (
+    <div className="fi" data-testid="today-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      {authError && (
+        <div className="card card-soft" style={{ borderColor:C.amber+"35", fontSize:"0.54rem", color:C.amber }}>
+          {authError}
+        </div>
+      )}
+      {!authError && storageStatus?.mode === "local" && (
+        <div className="card card-soft" style={{ borderColor:"#2a3b56", fontSize:"0.52rem", color:"#8fa5c8" }}>
+          {storageBannerCopy}
+        </div>
+      )}
+
+      <div data-testid="today-session-card" className="card card-strong card-hero" style={{ borderColor:cardColor+"30" }}>
+        <div style={{ display:"grid", gap:"0.28rem" }}>
+          <div className="sect-title" style={{ color:cardColor, marginBottom:0 }}>TODAY</div>
+          <div style={{ fontSize:"1rem", color:"#f8fafc", lineHeight:1.25 }}>{displayWorkout?.label || "Rest day"}</div>
+          <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
+            {todaySessionMeta.map((item) => (
+              <span key={item} style={{ fontSize:"0.46rem", color:"#dbe7f6", background:"#132033", padding:"0.14rem 0.38rem", borderRadius:999 }}>
+                {item}
+              </span>
+            ))}
+            <span style={{ fontSize:"0.46rem", color:readinessTone, background:readinessTone+"15", padding:"0.14rem 0.38rem", borderRadius:999 }}>
+              {readinessBadgeLabel}
+            </span>
+          </div>
+          <div style={{ fontSize:"0.55rem", color:"#dbe7f6", lineHeight:1.5 }}>
+            {successHeadline}
+          </div>
+          {!!planBasisHeadline && (
+            <div data-testid="today-plan-basis" style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              Plan basis: {planBasisHeadline}
+            </div>
+          )}
+          {todayLoggedLine && (
+            <div data-testid="today-save-status" role="status" style={{ fontSize:"0.52rem", color:C.green, lineHeight:1.45 }}>
+              {todayLoggedLine}
+            </div>
+          )}
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.55rem" }}>
+          <button className="btn btn-primary" onClick={onGoLog} style={{ fontSize:"0.54rem" }}>Log workout</button>
+          <button className="btn" onClick={onGoProgram} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>View week</button>
+        </div>
+      </div>
+
+      <div className="card card-action" data-testid="today-quick-log" style={{ borderColor:C.green+"30", background:"#0d1410" }}>
+        <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>LOG TODAY</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            Save the outcome fast. Use the full Log tab only if you want more detail.
+          </div>
+        </div>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            {CHECKIN_STATUS_OPTIONS.map((opt) => (
+              <button key={opt.key} className="btn" onClick={()=>setCheckin((current) => ({ ...current, status: opt.key }))} style={{ fontSize:"0.5rem", color:checkin.status===opt.key?C.green:"#64748b", borderColor:checkin.status===opt.key?C.green+"40":"#1e293b" }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            {CHECKIN_FEEL_OPTIONS.map((opt) => (
+              <button key={opt.key} className="btn" onClick={()=>setCheckin((current) => ({ ...current, sessionFeel: opt.key }))} style={{ fontSize:"0.5rem", color:checkin.sessionFeel===opt.key?C.blue:"#64748b", borderColor:checkin.sessionFeel===opt.key?C.blue+"40":"#1e293b" }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 92px auto", gap:"0.35rem" }}>
+            <input value={checkin.note || ""} onChange={e=>setCheckin((current) => ({ ...current, note: e.target.value }))} placeholder="Optional note" />
+            <input type="number" step="0.1" value={checkin.bodyweight || ""} onChange={e=>setCheckin((current) => ({ ...current, bodyweight: e.target.value }))} placeholder="BW" />
+            <button data-testid="today-save-log" className="btn btn-primary" disabled={checkin.status === "not_logged" || checkinSaving} onClick={handleSaveTodayQuickCheckin} style={{ fontSize:"0.52rem", opacity:(checkin.status === "not_logged" || checkinSaving) ? 0.45 : 1 }}>
+              {checkinSaving ? "Saving..." : "Save"}
+            </button>
+          </div>
+          {postSaveInsight && <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{postSaveInsight}</div>}
+          {todayDataError && <div role="alert" style={{ fontSize:"0.5rem", color:C.amber }}>{todayDataError}</div>}
+        </div>
+        <details style={{ marginTop:"0.45rem" }}>
+          <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>More logging detail</summary>
+          <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.35rem" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.3rem" }}>
+              <input type="number" step="0.5" value={checkin?.actualRecovery?.sleepHours || ""} onChange={e=>setCheckin((current) => ({ ...current, actualRecovery: { ...(current?.actualRecovery || {}), sleepHours: e.target.value } }))} placeholder="Sleep hrs" />
+              <input type="number" step="1" value={checkin?.actualRecovery?.mobilityMinutes || ""} onChange={e=>setCheckin((current) => ({ ...current, actualRecovery: { ...(current?.actualRecovery || {}), mobilityMinutes: e.target.value } }))} placeholder="Mobility min" />
+              <input type="number" step="1" value={checkin?.actualRecovery?.tissueWorkMinutes || ""} onChange={e=>setCheckin((current) => ({ ...current, actualRecovery: { ...(current?.actualRecovery || {}), tissueWorkMinutes: e.target.value } }))} placeholder="Tissue work" />
+            </div>
+            {hasStrength && (
+              <div style={{ display:"grid", gap:"0.28rem" }}>
+                {strExercises.slice(0, 4).map((ex) => {
+                  const key = normalizeExerciseKey(ex?.ex || "");
+                  const row = strengthInputs?.[key] || {};
+                  return (
+                    <div key={key} style={{ display:"grid", gridTemplateColumns:"1fr 72px 62px 62px", gap:"0.25rem", alignItems:"center" }}>
+                      <div style={{ fontSize:"0.48rem", color:"#cbd5e1", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{ex.ex}</div>
+                      <input type="number" step="2.5" placeholder="lb" value={row.weightUsed || ""} onChange={e=>setStrengthInputs((prev) => ({ ...prev, [key]: { ...prev[key], exercise: ex.ex, weightUsed: e.target.value, actualWeight: e.target.value } }))} />
+                      <input type="number" placeholder="sets" value={row.actualSets || ""} onChange={e=>setStrengthInputs((prev) => ({ ...prev, [key]: { ...prev[key], exercise: ex.ex, actualSets: e.target.value } }))} />
+                      <input type="number" placeholder="reps" value={row.repsCompleted || ""} onChange={e=>setStrengthInputs((prev) => ({ ...prev, [key]: { ...prev[key], exercise: ex.ex, repsCompleted: e.target.value, actualReps: e.target.value } }))} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </details>
+      </div>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Why today?</summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+          <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{rationaleHeadline}</div>
+          {!!rationaleSupport && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{rationaleSupport}</div>}
+          {!!planBasisHeadline && <div data-testid="today-plan-basis-detail" style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>Plan basis: {planBasisHeadline}</div>}
+          {!!planBasisSupportLine && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{planBasisSupportLine}</div>}
+          {!!planBasisCompromiseLine && <div style={{ fontSize:"0.49rem", color:C.amber, lineHeight:1.45 }}>Tradeoff: {planBasisCompromiseLine}</div>}
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Recovery: {recoveryPrescriptionLine}</div>
+          {!!programBlockLine && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Current block: {programBlockLine}</div>}
+          <PlannedSessionDetailCard
+            session={{
+              day: "Today",
+              title: displayWorkout?.label || "Today's session",
+              summary: todayPrescriptionSummary,
+            }}
+            accentColor={cardColor}
+          />
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Adjust today</summary>
+        <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+            <button className="btn" onClick={()=>setSessionVariant((value)=>value === "short" ? "standard" : "short")} style={{ fontSize:"0.5rem", color: sessionVariant === "short" ? "#0f172a" : C.green, background: sessionVariant === "short" ? C.green : "transparent", borderColor:C.green+"30" }}>
+              {sessionVariant === "short" ? "Short version active" : "Shorten to 20 min"}
+            </button>
+            <button className="btn" onClick={()=>setSessionVariant((value)=>value === "extended" ? "standard" : "extended")} style={{ fontSize:"0.5rem", color: sessionVariant === "extended" ? "#0f172a" : C.amber, background: sessionVariant === "extended" ? C.amber : "transparent", borderColor:C.amber+"35" }}>
+              {sessionVariant === "extended" ? "Extended version active" : "Extend by 15 min"}
+            </button>
+          </div>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            <button className="btn" onClick={async ()=>{
+              if (tomorrowHasSession) { setShiftChoiceOpen(true); return; }
+              const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
+              setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
+            }} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"30" }}>Move to tomorrow</button>
+            {shiftUndo && <button className="btn" onClick={async ()=>{ await restoreShiftTodayWorkout(shiftUndo); setShiftUndo(null); }} style={{ fontSize:"0.5rem", color:C.amber, borderColor:C.amber+"35" }}>Undo move</button>}
+          </div>
+          {shiftChoiceOpen && (
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+              <button className="btn" onClick={async ()=>{ const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" }); setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 }); setShiftChoiceOpen(false); }} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>Replace tomorrow</button>
+              <button className="btn" onClick={async ()=>{ const undo = await shiftTodayWorkout({ daysForward: 1, mode: "add_second" }); setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 }); setShiftChoiceOpen(false); }} style={{ fontSize:"0.48rem", color:C.green, borderColor:C.green+"35" }}>Add second session</button>
+              <button className="btn" onClick={()=>setShiftChoiceOpen(false)} style={{ fontSize:"0.48rem" }}>Cancel</button>
+            </div>
+          )}
+        </div>
+      </details>
+    </div>
+  );
+  if (false) return (
     <div className="fi">
       {loading && (
         <div className="card card-soft" style={{ marginBottom:"0.7rem", borderColor:"#2a3b56", fontSize:"0.56rem", color:"#9fb2d2" }}>
@@ -13219,7 +13979,7 @@ function GoalAnchorQuickEntryPanel({
   );
 }
 
-function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, saveBodyweights = async () => null, saveManualProgressInputs = async () => null, saveProgramSelection = async () => null, todayWorkout: legacyTodayWorkout }) {
+function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, saveBodyweights = async () => null, saveManualProgressInputs = async () => null, saveProgramSelection = async () => null, todayWorkout: legacyTodayWorkout, onManagePlan = () => {} }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const goalBuckets = athleteProfile?.goalBuckets || {};
@@ -13990,6 +14750,193 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   };
 
   return (
+    <div className="fi" data-testid="program-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      <div className="card card-strong card-hero" style={{ borderColor:C.blue+"30" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.55rem", flexWrap:"wrap" }}>
+          <div style={{ minWidth:0 }}>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.16rem" }}>PROGRAM</div>
+            <div style={{ fontSize:"0.8rem", color:"#f8fafc", lineHeight:1.35 }}>{currentWeekLabel}</div>
+            <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.16rem", lineHeight:1.55 }}>
+              {currentWeekPurposeLine}
+            </div>
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>
+              {currentWeekChangesLine}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+            <span style={{ fontSize:"0.48rem", color:programTrustTone.color, background:programTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{programTrust.label}</span>
+            <span style={{ fontSize:"0.48rem", color:currentWeekModel?.adjusted ? C.green : "#8fa5c8", background:currentWeekModel?.adjusted ? `${C.green}14` : "#1e293b", padding:"0.16rem 0.42rem", borderRadius:999 }}>
+              {currentWeekModel?.adjusted ? "Adjusted week" : "Normal week"}
+            </span>
+          </div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.4rem", marginTop:"0.55rem" }}>
+          <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>PLAN BASIS</div>
+            <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.14rem", lineHeight:1.5 }}>
+              {livePlanBasisExplanation?.basisSummary || "Goal-driven default"}
+            </div>
+            {!!liveProgramAdherence?.summary && (
+              <div style={{ fontSize:"0.48rem", color:liveProgramAdherence?.state === "off_program" ? C.amber : "#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
+                {liveProgramAdherence.summary}
+              </div>
+            )}
+          </div>
+          <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>ACTIVE GOALS</div>
+            <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.14rem", lineHeight:1.5 }}>
+              {activeGoalsList.length ? activeGoalsList.map((goal) => goal.name).join(" • ") : "No active goals"}
+            </div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
+              {currentWeekMetaLine}
+            </div>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.55rem" }}>
+          <button className="btn" onClick={onManagePlan} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+            Manage plan settings
+          </button>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", alignSelf:"center" }}>
+            {currentWeekContextLine}
+          </div>
+        </div>
+      </div>
+
+      <div className="card card-subtle" data-testid="program-this-week">
+        <div style={{ display:"grid", gap:"0.14rem", marginBottom:"0.55rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>THIS WEEK</div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+            {currentWeekWinLine}
+          </div>
+        </div>
+        <div style={{ display:"grid", gap:"0.4rem" }}>
+          {(currentWeekSessions ?? []).map((session) => (
+            <button
+              key={session.key || `current_${session.day}_${session.title}`}
+              className="btn"
+              onClick={() => setSelectedProgramSessionKey((prev) => prev === session.key ? "" : session.key)}
+              style={{
+                border:`1px solid ${selectedProgramSessionKey === session.key ? `${C.green}55` : "#22324a"}`,
+                borderRadius:12,
+                background:"#0f172a",
+                padding:"0.6rem 0.65rem",
+                textAlign:"left",
+                display:"grid",
+                gap:"0.12rem",
+              }}
+            >
+              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+                <div style={{ display:"flex", gap:"0.28rem", alignItems:"center", minWidth:0 }}>
+                  {session.icon && <InlineGlyph name={session.icon} color={C.green} size={12} />}
+                  <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{session.day} · {sanitizeDisplayText(session.title)}</div>
+                </div>
+                {session.live && <span style={{ fontSize:"0.44rem", color:C.green, background:`${C.green}14`, padding:"0.12rem 0.32rem", borderRadius:999 }}>Today view</span>}
+              </div>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{sanitizeDisplayText(session.detail || "Planned session")}</div>
+            </button>
+          ))}
+        </div>
+        {selectedCurrentWeekSession && (
+          <div style={{ marginTop:"0.55rem" }}>
+            <PlannedSessionDetailCard session={selectedCurrentWeekSession} accentColor={C.green} />
+          </div>
+        )}
+      </div>
+
+      <div className="card card-subtle" data-testid="program-future-weeks">
+        <div style={{ display:"grid", gap:"0.14rem", marginBottom:"0.55rem" }}>
+          <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>NEXT WEEKS</div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+            These are projected weeks. They are for scanning the direction of the block, not micro-managing every future day.
+          </div>
+        </div>
+        <div style={{ display:"grid", gap:"0.45rem" }}>
+          {futureWeekRows.map((weekRow) => {
+            const weekSessions = getProgramWeekSessions(weekRow.absoluteWeek, weekRow);
+            const selectedFutureSession = weekSessions.find((session) => session.key === selectedProgramSessionKey) || null;
+            const isExpanded = openWeek === weekRow.absoluteWeek;
+            const focusLine = weekRow?.planWeek?.weeklyIntent?.focus || weekRow?.focus || "Projected week";
+            const summaryLine = weekSessions.length > 0
+              ? weekSessions.slice(0, 3).map((session) => `${session.day} ${session.title}`).join(" • ")
+              : focusLine;
+            return (
+              <div key={weekRow.absoluteWeek} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem 0.65rem", display:"grid", gap:"0.32rem" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+                  <div>
+                    <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{sanitizeDisplayText(weekRow.weekLabel || `Week ${weekRow.absoluteWeek}`)}</div>
+                    <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.45 }}>{focusLine}</div>
+                  </div>
+                  <button className="btn" onClick={()=>setOpenWeek(openWeek === weekRow.absoluteWeek ? null : weekRow.absoluteWeek)} style={{ fontSize:"0.48rem" }}>
+                    {isExpanded ? "Hide" : "View"}
+                  </button>
+                </div>
+                {!isExpanded && <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.45 }}>{summaryLine}</div>}
+                {isExpanded && (
+                  <div style={{ display:"grid", gap:"0.35rem" }}>
+                    {weekSessions.map((session) => (
+                      <button
+                        key={session.key || `${weekRow.absoluteWeek}_${session.day}_${session.title}`}
+                        className="btn"
+                        onClick={() => setSelectedProgramSessionKey((prev) => prev === session.key ? "" : session.key)}
+                        style={{
+                          border:`1px solid ${selectedProgramSessionKey === session.key ? `${C.blue}55` : "#22324a"}`,
+                          borderRadius:10,
+                          background:"#111827",
+                          padding:"0.5rem 0.55rem",
+                          textAlign:"left",
+                          display:"grid",
+                          gap:"0.1rem",
+                        }}
+                      >
+                        <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.4 }}>{session.day} · {sanitizeDisplayText(session.title)}</div>
+                        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.4 }}>{sanitizeDisplayText(session.detail || "Planned session")}</div>
+                      </button>
+                    ))}
+                    {selectedFutureSession && <PlannedSessionDetailCard session={selectedFutureSession} accentColor={C.blue} />}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.56rem", color:"#dbe7f6" }}>Why this week and what changed</summary>
+        <div style={{ display:"grid", gap:"0.28rem", marginTop:"0.45rem" }}>
+          <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.5 }}>{currentWeekPurposeLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>What changed: {currentWeekChangesLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Win the week: {currentWeekWinLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{programTrust.summary}</div>
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.56rem", color:"#dbe7f6" }}>Committed history</summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+          {committedWeekHistoryPreview.length === 0 ? (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              No committed week history yet.
+            </div>
+          ) : (
+            committedWeekHistoryPreview.map((entry) => (
+              <div key={entry.weekKey} style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem" }}>
+                <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.45 }}>{entry.label}</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.45 }}>
+                  {[
+                    entry?.plannedSessionCount ? `${entry.plannedSessionCount} planned` : null,
+                    entry?.loggedSessionCount ? `${entry.loggedSessionCount} logged` : null,
+                    entry?.weeklyCheckin?.ts ? "weekly check-in saved" : null,
+                  ].filter(Boolean).join(" • ") || "History saved"}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </details>
+    </div>
+  );
+  if (false) return (
     <div className="fi">
       <div style={{ display:"grid", gap:"0.85rem" }}>
         <section className="card card-strong card-hero" style={{ borderColor:C.blue+"30" }}>
@@ -15044,6 +15991,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   });
   const [saved, setSaved] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
+  const [savedAtLabel, setSavedAtLabel] = useState("");
   const [feelTooltip, setFeelTooltip] = useState("");
   const [quickDetailsOpen, setQuickDetailsOpen] = useState(false);
   const [detailedOpen, setDetailedOpen] = useState(false);
@@ -15287,8 +16235,9 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     await saveLogs({ ...logs, [today]: entry }, { changedDateKey: today });
     setSaved(true);
     setSavedMsg("Workout completed as prescribed.");
+    setSavedAtLabel(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
     setQuickDetailsOpen(false);
-    setTimeout(()=>setSaved(false), 1800);
+    setTimeout(()=>setSaved(false), 4000);
   };
 
   const persistWorkoutLog = async ({ source = "full" } = {}) => {
@@ -15304,6 +16253,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     });
     await saveLogs({ ...logs, [detailed.date]: nextEntry }, { changedDateKey: detailed.date });
     setSaved(true);
+    setSavedAtLabel(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
     if (source === "quick") {
       setSavedMsg(detailed.date < today ? "Quick workout log saved. Edited." : "Quick workout log saved.");
       setQuickDetailsOpen(false);
@@ -15311,7 +16261,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       setSavedMsg(detailed.date < today ? "Workout details saved. Edited." : "Workout details saved.");
     }
     setDetailed(buildDetailedDraft(detailed.date, nextEntry));
-    setTimeout(()=>setSaved(false), 1800);
+    setTimeout(()=>setSaved(false), 4000);
   };
   const saveDetailed = async () => {
     await persistWorkoutLog({ source: "full" });
@@ -15338,6 +16288,133 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   }, []);
 
   return (
+    <div className="fi" data-testid="log-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      <div className="card card-action" style={{ borderColor:C.green+"40", background:"#0d1711" }}>
+        <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.5rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>LOG WORKOUT</div>
+          <div style={{ fontSize:"0.52rem", color:"#94a3b8", lineHeight:1.45 }}>
+            Save today fast, then open more detail only if you need it.
+          </div>
+          {savedMsg && (
+            <div data-testid="log-save-status" role="status" style={{ fontSize:"0.52rem", color:C.green, lineHeight:1.45 }}>
+              {saved ? `Saved ${savedAtLabel}. ${savedMsg}` : savedMsg}
+            </div>
+          )}
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginBottom:"0.35rem" }}>
+          <button data-testid="log-complete-prescribed" className="btn btn-primary" onClick={savePrescribed} style={{ fontSize:"0.54rem" }}>{quickCapture.completeActionLabel}</button>
+          <button data-testid="log-save-quick" className="btn" onClick={saveQuickCapture} disabled={!quickCaptureHasValues} style={{ fontSize:"0.52rem", color:quickCaptureHasValues ? "#dbe7f6" : "#64748b", borderColor:quickCaptureHasValues ? "#2b4765" : "#1e293b" }}>
+            Save quick log
+          </button>
+          <button className="btn" onClick={()=>setDetailedOpen((value) => !value)} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b4765" }}>
+            {detailedOpen ? "Hide full detail" : "Open full detail"}
+          </button>
+        </div>
+        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+          {quickCapture.helperLine} {quickCapture.supportLine}
+        </div>
+        <details open={quickDetailsOpen} onToggle={e=>setQuickDetailsOpen(e.currentTarget.open)} style={{ marginTop:"0.45rem" }}>
+          <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>
+            {quickDetailsOpen ? "Hide quick detail fields" : quickCapture.detailToggleLabel}
+          </summary>
+          <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.4rem" }}>
+            {!!quickCapture.run?.enabled && (
+              <div style={{ display:"grid", gap:"0.3rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Run actuals</div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.35rem" }}>
+                  <input value={detailed.run?.duration || ""} onChange={e=>setDetailed({ ...detailed, run: { ...(detailed.run || {}), enabled: true, duration: e.target.value } })} placeholder="Time" />
+                  <input type="number" step="0.1" value={detailed.run?.distance || ""} onChange={e=>setDetailed({ ...detailed, run: { ...(detailed.run || {}), enabled: true, distance: e.target.value } })} placeholder="Miles" />
+                  <input value={detailed.run?.pace || ""} onChange={e=>setDetailed({ ...detailed, run: { ...(detailed.run || {}), enabled: true, pace: e.target.value } })} placeholder="Pace" />
+                </div>
+              </div>
+            )}
+            {!!quickCapture.strength?.enabled && (quickCapture.strength.rows || []).length > 0 && (
+              <div style={{ display:"grid", gap:"0.28rem" }}>
+                {(quickCapture.strength.rows || []).slice(0, 4).map((row) => (
+                  <div key={`quick_strength_row_${row.rowIndex}`} style={{ display:"grid", gridTemplateColumns:"1fr 80px 62px 62px", gap:"0.3rem", alignItems:"center" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#dbe7f6", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{row.exercise}</div>
+                    <input type="number" step="2.5" value={detailed.strength?.rows?.[row.rowIndex]?.actualWeight || ""} onChange={e=>updateStrengthRow(row.rowIndex, { actualWeight: e.target.value, mode: "weighted" })} placeholder="Weight" />
+                    <input type="number" value={detailed.strength?.rows?.[row.rowIndex]?.actualSets || ""} onChange={e=>updateStrengthRow(row.rowIndex, { actualSets: e.target.value })} placeholder="Sets" />
+                    <input type="number" value={detailed.strength?.rows?.[row.rowIndex]?.actualReps || ""} onChange={e=>updateStrengthRow(row.rowIndex, { actualReps: e.target.value })} placeholder="Reps" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </details>
+      </div>
+
+      <details className="card" open={detailedOpen} onToggle={e=>setDetailedOpen(e.currentTarget.open)}>
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Full detail capture</summary>
+        <div style={{ marginTop:"0.45rem", display:"grid", gap:"0.55rem" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem" }}>
+            <input type="date" value={detailed.date} onChange={e=>setDetailed(buildDetailedDraft(e.target.value, logs?.[e.target.value] || {}))} />
+            <input value={detailed.sessionLabel || ""} onChange={e=>setDetailed({ ...detailed, sessionLabel:e.target.value })} placeholder="Workout label" />
+          </div>
+          {(detailed.prescribedLabel || detailed.sessionType) && (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              Planned: {detailed.prescribedLabel || sanitizeStatusLabel(detailed.sessionType)}
+            </div>
+          )}
+          <div style={{ display:"grid", gridTemplateColumns:"120px 1fr", gap:"0.35rem" }}>
+            <input value={detailed.location || ""} onChange={e=>setDetailed({ ...detailed, location:e.target.value })} placeholder="Location" />
+            <input value={detailed.notes || ""} onChange={e=>setDetailed({ ...detailed, notes:e.target.value })} placeholder="Notes" />
+          </div>
+          <button className="btn btn-primary" onClick={saveDetailed} style={{ width:"fit-content", fontSize:"0.52rem" }}>Save workout log</button>
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Planned vs actual review</summary>
+        <div style={{ marginTop:"0.45rem", display:"grid", gap:"0.45rem" }}>
+          <select value={selectedReviewDate} onChange={(e)=>setSelectedReviewDate(e.target.value)} style={{ fontSize:"0.54rem", minWidth:150 }}>
+            {(reviewDateKeys || []).slice(0, 60).map((dateKey) => (
+              <option key={dateKey} value={dateKey}>{dateKey}</option>
+            ))}
+          </select>
+          <HistoryAuditDayReviewCard
+            title="DAY REVIEW"
+            subtitle="Prescription and actual stay separate."
+            review={selectedDayReview}
+            palette={C}
+            sanitizeDisplayText={sanitizeDisplayText}
+            sanitizeStatusLabel={sanitizeStatusLabel}
+            buildReviewBadgeTone={reviewBadgeTone}
+            summarizeExecutionDelta={summarizeExecutionDelta}
+            formatReviewTimestamp={formatReviewTimestamp}
+            buildSessionSummary={buildSessionSummary}
+            buildNutritionActualSummary={buildNutritionActualSummary}
+            buildRecoveryActualSummary={buildRecoveryActualSummary}
+            cleanHistorySessionName={cleanHistorySessionName}
+            describeProvenanceRecord={describeProvenanceRecord}
+          />
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Recent history</summary>
+        <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+          {history.slice(0, 12).map(([date, log]) => (
+            <div key={date} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.45rem", alignItems:"center", border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.48rem 0.55rem" }}>
+              <button className="btn" onClick={()=>openHistoryEntry(date, log)} style={{ border:"none", background:"transparent", padding:0, textAlign:"left", minWidth:0 }}>
+                <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.4 }}>{new Date(date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} · {cleanHistorySessionName(log?.type || "Session")}</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.4 }}>{summarizeExecutionDelta(getPlanComparison(date, log))}</div>
+              </button>
+              {pendingDeleteDate === date ? (
+                <div style={{ display:"flex", gap:"0.25rem", alignItems:"center", flexWrap:"wrap" }}>
+                  <button className="btn" onClick={()=>delLog(date)} style={{ fontSize:"0.46rem", color:C.red, borderColor:C.red+"30", padding:"0.1rem 0.32rem" }}>Delete</button>
+                  <button className="btn" onClick={()=>setPendingDeleteDate("")} style={{ fontSize:"0.46rem", padding:"0.1rem 0.32rem" }}>Cancel</button>
+                </div>
+              ) : (
+                <button className="btn" onClick={()=>setPendingDeleteDate(date)} style={{ fontSize:"0.46rem", color:C.red, borderColor:C.red+"30" }}>DEL</button>
+              )}
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+  if (false) return (
     <div className="fi">
       <div className="card card-action" style={{ marginBottom:"0.8rem", borderColor:C.green+"40", background:"#0d1711" }}>
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>LOG WORKOUT</div>
@@ -15896,6 +16973,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const hasSavedStorePreference = Boolean(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0]);
   const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0] || "Saved default");
   const [nutritionCheck, setNutritionCheck] = useState({ status: "on_track", deviationKind: "followed", issue: "", note: "" });
+  const [nutritionSaveAck, setNutritionSaveAck] = useState("");
   const [lastKey, setLastKey] = useState("");
   const [showNutritionWhy, setShowNutritionWhy] = useState(false);
   const [openMealKey, setOpenMealKey] = useState("");
@@ -16148,15 +17226,24 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     const reply = deriveFridgeCoachMealSuggestion({ fridgeInput, dayType });
     setFridgeCoachReply(reply.coachLine || "");
   };
+  const announceNutritionSave = (message = "Saved nutrition update.") => {
+    const stamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    setNutritionSaveAck(`Saved ${stamp}. ${message}`);
+    setTimeout(() => setNutritionSaveAck(""), 4000);
+  };
+  const persistNutritionFeedback = async (payload, successMessage = "Saved nutrition update.") => {
+    await saveNutritionActualLog(todayKey, payload);
+    announceNutritionSave(successMessage);
+  };
   const logHydration = async (oz = 12) => {
     const nextOz = Math.min(hydrationTargetOz, (hydrationOz || 0) + oz);
     setHydrationOz(nextOz);
-    await saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz: nextOz, hydrationTargetOz, hydrationNudgedAt });
+    await persistNutritionFeedback({ ...nutritionCheck, hydrationOz: nextOz, hydrationTargetOz, hydrationNudgedAt }, "Hydration saved.");
   };
   const toggleSupplementTaken = async (name) => {
     const nextTaken = { ...supplementTaken, [name]: !supplementTaken?.[name] };
     setSupplementTaken(nextTaken);
-    await saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken: nextTaken });
+    await persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken: nextTaken }, "Supplement update saved.");
   };
   const addCustomSupplement = async () => {
     if (!newSupplementName.trim() || !newSupplementTiming.trim()) return;
@@ -16167,10 +17254,12 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
     setNewSupplementName("");
     setNewSupplementTiming("");
+    announceNutritionSave("Supplement defaults saved.");
   };
   const removeCustomSupplement = async (name) => {
     const nextStack = (favorites?.supplementStack || []).filter((x) => String(x?.name || "").toLowerCase() !== String(name || "").toLowerCase());
     await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
+    announceNutritionSave("Supplement defaults saved.");
   };
 
   const nutritionTone = buildReviewBadgeTone(nutritionComparison?.adherence || nutritionComparison?.deviationKind, C);
@@ -16197,6 +17286,130 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     : "Use your default: protein + carb + fruit + water.");
 
   return (
+    <div className="fi" data-testid="nutrition-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      <div className="card card-soft card-action" style={{ borderColor:C.blue+"28" }}>
+        <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.5rem" }}>
+          <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>TODAY'S NUTRITION</div>
+          <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.5 }}>{directiveSentence}</div>
+          {nutritionSaveAck && <div data-testid="nutrition-save-status" role="status" style={{ fontSize:"0.5rem", color:C.green, lineHeight:1.45 }}>{nutritionSaveAck}</div>}
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.35rem" }}>
+          {[["Protein", proteinLevel, C.red], ["Carbs", carbLevel, C.green], ["Calories", calorieLevel, C.amber]].map(([label, value, tone]) => (
+            <div key={label} style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem" }}>
+              <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>{label}</div>
+              <div style={{ fontSize:"0.62rem", color:tone, marginTop:"0.12rem" }}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45, marginTop:"0.45rem" }}>
+          {comparisonLabel}. {complianceLine}
+        </div>
+      </div>
+
+      <div className="card card-action" style={{ borderColor:C.green+"30", background:"#0d1410" }}>
+        <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>QUICK ACTUAL LOG</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            Log the day in a few taps so planned and actual stay separate.
+          </div>
+        </div>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem" }}>
+            {[["on_track","on track"],["decent","decent"],["off_track","off track"]].map(([key, label]) => (
+              <button key={key} className="btn" onClick={()=>setNutritionCheck((current)=>({ ...current, status:key }))} style={{ fontSize:"0.6rem", borderColor:nutritionCheck.status===key?C.blue:"#1e293b", color:nutritionCheck.status===key?C.blue:"#64748b", background:nutritionCheck.status===key?`${C.blue}12`:"transparent" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.3rem" }}>
+            {[["followed","followed"],["under_fueled","under"],["over_indulged","over"],["deviated","changed"]].map(([key, label]) => (
+              <button key={key} className="btn" onClick={()=>setNutritionCheck((current)=>({
+                ...current,
+                deviationKind: key,
+                status: key === "followed" ? "on_track" : key === "deviated" ? "decent" : "off_track",
+                issue: key === "followed" ? "" : current.issue,
+              }))} style={{ fontSize:"0.54rem", borderColor:nutritionCheck.deviationKind===key?C.green:"#1e293b", color:nutritionCheck.deviationKind===key?C.green:"#64748b", background:nutritionCheck.deviationKind===key?`${C.green}12`:"transparent" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+            <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck((current)=>({ ...current, note:e.target.value }))} placeholder="Quick note (optional)" />
+            <button data-testid="nutrition-save-quick" className="btn btn-primary" onClick={()=>persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt }, actualNutritionToday?.loggedAt ? "Nutrition log updated." : "Nutrition log saved.")} style={{ fontSize:"0.52rem" }}>
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="card card-subtle">
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap", marginBottom:"0.35rem" }}>
+          <div>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.14rem" }}>HYDRATION</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{hydrationTargetLabel}</div>
+          </div>
+          <button className="btn" onClick={()=>logHydration(12)} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"35" }}>Add 12 oz</button>
+        </div>
+        <div style={{ width:"100%", height:10, borderRadius:999, background:"#0f172a", border:"1px solid #243752", overflow:"hidden" }}>
+          <div style={{ width:`${hydrationPct}%`, height:"100%", background: hydrationPct >= 100 ? C.green : C.blue, transition:"width 180ms ease" }} />
+        </div>
+      </div>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Meal guide and why</summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+          <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.5 }}>{whyThisToday}</div>
+          {[breakfast, lunch, dinner, snack].filter(Boolean).map((meal, index) => (
+            <div key={`${meal}_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {["Breakfast", "Lunch", "Dinner", "Snack"][index]}: {meal}
+            </div>
+          ))}
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Practical support</summary>
+        <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{fastFallback}</div>
+          {showNearbySection && nearby.length > 0 && (
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              Nearby: {nearby.map((option) => `${option.name} (${option.meal})`).join(" • ")}
+            </div>
+          )}
+          {showSundayGrocerySection && basket?.headline && (
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              Grocery: {basket.headline}
+            </div>
+          )}
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Supplements and weekly review</summary>
+        <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+          {supplementRows.slice(0, 4).map((supp) => (
+            <div key={supp.name} style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.35rem", alignItems:"center", border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.42rem 0.48rem" }}>
+              <button className="btn" onClick={()=>toggleSupplementTaken(supp.name)} style={{ width:24, minWidth:24, height:24, padding:0, borderColor:"#2d435f", color:supplementTaken?.[supp.name] ? C.green : "#64748b", background:"transparent", fontSize:"0.62rem" }}>
+                {supplementTaken?.[supp.name] ? "✓" : ""}
+              </button>
+              <div>
+                <div style={{ fontSize:"0.52rem", color:"#dbe7f6" }}>{supp.name}</div>
+                <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.08rem" }}>{supp.instruction}</div>
+              </div>
+              <button className="btn" onClick={()=>setOpenSupplementInfo((current) => current === supp.name ? "" : supp.name)} style={{ fontSize:"0.45rem", color:"#8fa5c8", borderColor:"#2c3e58" }}>
+                {openSupplementInfo === supp.name ? "Hide" : "Why"}
+              </button>
+            </div>
+          ))}
+          {openSupplementInfo && <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{supplementInfoByName[openSupplementInfo]?.plain || ""}</div>}
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            {weeklyNutritionReview?.coaching?.headline || "Weekly review fills in as daily logs accumulate."}
+          </div>
+        </div>
+      </details>
+    </div>
+  );
+  if (false) return (
     <div className="fi">
       <div className="card card-soft card-action" style={{ marginBottom:"0.8rem", borderColor:C.blue+"28" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap", marginBottom:"0.45rem" }}>
@@ -16498,7 +17711,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
 }
 
 // COACH TAB (REDESIGNED)
-function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, athleteProfile = null, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, weeklyNutritionReview = null, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
+function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, athleteProfile = null, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, weeklyNutritionReview = null, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onOpenSettings = () => {}, onPersist }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const goalState = athleteProfile?.goalState || {};
@@ -17112,8 +18325,104 @@ Rules for every response:
   const supportSupplementLine = compressCoachCopy(supplementCoachLine, 120);
   const latestWeeklyReviewLine = compressCoachCopy(sundayArchive[0]?.paragraph || weeklyNotice, 180);
   const latestNoteMatchesSummary = latestAssistantSummary === coachRecommendationLine || latestAssistantSummary === coachNextLine;
+  const coachPrimaryPrompts = quickPrompts.filter((prompt) => [
+    "I missed yesterday",
+    "I'm traveling today",
+    "I slept badly",
+    "I want to push harder",
+  ].includes(prompt));
 
   return (
+    <div className="fi" data-testid="coach-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      <div className="card card-strong card-hero" style={{ borderColor:C.blue+"38" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.35rem" }}>
+          <div>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.16rem" }}>COACH</div>
+            <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.45 }}>{coachRecommendationLine}</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{coachPlanLine || coachProvenance}</div>
+          </div>
+          <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+            <span style={{ fontSize:"0.48rem", color:decisionTone.color, background:decisionTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachDecisionMode}</span>
+            <span style={{ fontSize:"0.48rem", color:coachTrustTone.color, background:coachTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachTrust.label}</span>
+          </div>
+        </div>
+        <div className="coach-copy" style={{ display:"grid", gap:"0.18rem", fontSize:"0.54rem", lineHeight:1.55 }}>
+          <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachWhyLine}</div>
+          <div><span style={{ color:"#94a3b8" }}>Next:</span> {coachNextLine}</div>
+          <div><span style={{ color:"#94a3b8" }}>Watching:</span> {coachWatchLine}</div>
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.5rem" }}>
+          <button className={`btn ${coachDecision.options?.[0]?.primary ? "btn-primary" : ""}`} onClick={()=>applyDecisionOption(coachDecision.options?.[0])} style={{ fontSize:"0.54rem" }}>
+            {coachDecision.options?.[0]?.label || "Keep full session"}
+          </button>
+          {coachDecision.options?.[1] && (
+            <button className="btn" onClick={()=>applyDecisionOption(coachDecision.options?.[1])} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+              {coachDecision.options[1].label}
+            </button>
+          )}
+          <button className="btn" onClick={onOpenSettings} style={{ fontSize:"0.52rem", color:"#8fa5c8", borderColor:"#2b3d55" }}>
+            Open advanced settings
+          </button>
+        </div>
+      </div>
+
+      <div className="card card-action" data-testid="coach-primary-entry" style={{ borderColor:C.green+"30" }}>
+        <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.35rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>ASK COACH</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            Ask for a decision, a plan explanation, or a safe next move.
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem", marginBottom:"0.35rem" }}>
+          {coachPrimaryPrompts.map((prompt) => (
+            <button key={prompt} className="btn" onClick={()=>send(prompt)} style={{ whiteSpace:"nowrap", fontSize:"0.52rem" }}>{prompt}</button>
+          ))}
+        </div>
+        <div style={{ display:"flex", gap:"0.45rem" }}>
+          <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Ask coach what to do next" style={{ flex:1 }} disabled={loading} />
+          <button className="btn btn-primary" onClick={()=>send()} disabled={loading} style={{ opacity:loading?0.5:1 }}>Send</button>
+        </div>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+          {messages.slice(-4).map((message, index) => (
+            <div key={`${index}_${message.role}`} style={{ justifySelf:message.role==="user"?"end":"start", maxWidth:"92%", background:message.role==="user"?"#15263f":"#101b2d", border:message.role==="user"?"1px solid #325178":"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
+              <div className="coach-copy" style={{ fontSize:"0.54rem", color:message.role==="user"?"#a9bddc":"#dbe7f6", whiteSpace:"pre-wrap", lineHeight:1.5 }}>
+                {message.text || "Coach update ready."}
+              </div>
+            </div>
+          ))}
+          {loading && <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Coach is drafting a response...</div>}
+        </div>
+      </div>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Accepted action and support details</summary>
+        <div style={{ display:"grid", gap:"0.28rem", marginTop:"0.45rem" }}>
+          <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.45 }}>{acceptedActionHeadline}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{acceptedActionSummary}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Nutrition: {supportNutritionLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Recovery: {supportRecoveryLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Supplements: {supportSupplementLine}</div>
+          <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>{boundaryLine}</div>
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Conversation history</summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+          {messages.slice(-20).map((message, index) => (
+            <div key={`${index}_${message.role}`} style={{ justifySelf:message.role==="user"?"end":"start", maxWidth:"92%", background:message.role==="user"?"#15263f":"#101b2d", border:message.role==="user"?"1px solid #325178":"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}>
+              <div className="coach-copy" style={{ fontSize:"0.54rem", color:message.role==="user"?"#a9bddc":"#dbe7f6", whiteSpace:"pre-wrap", lineHeight:1.5 }}>
+                {message.text || "Coach update ready."}
+              </div>
+              {message.source && <div style={{ fontSize:"0.44rem", color:"#8fa5c8", marginTop:"0.16rem" }}>Source: {formatCoachResponseSource(message.source)}</div>}
+            </div>
+          ))}
+          {latestWeeklyReviewLine && <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{latestWeeklyReviewLine}</div>}
+        </div>
+      </details>
+    </div>
+  );
+  if (false) return (
     <div className="fi" style={{ display:"grid", gap:"0.75rem" }}>
       <div className="card card-strong card-hero" style={{ borderColor:C.blue+"38" }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.35rem" }}>
