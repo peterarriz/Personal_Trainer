@@ -340,6 +340,11 @@ async function enterLocalIntakeIfNeeded(page) {
     await expect(authGate).toBeVisible();
     await page.getByTestId("continue-local-mode").click();
   }
+  const profileGate = page.getByTestId("profile-setup-gate");
+  if (await profileGate.count()) {
+    await expect(profileGate).toBeVisible();
+    await completeProfileSetup(page);
+  }
   await expect(page.getByTestId("intake-root")).toBeVisible();
   await waitForIntakeSurface();
 }
@@ -389,8 +394,12 @@ async function completeIntroQuestionnaire(page, {
   coachingStyle = "Balanced coaching",
 } = {}) {
   await expect(page.getByTestId("intake-question-input-goal-intent")).toBeVisible();
-  await page.getByTestId("intake-question-input-goal-intent").fill(goalText);
-  await page.getByTestId("intake-question-send").click();
+  if (String(goalText || "").trim()) {
+    await page.getByTestId("intake-question-input-goal-intent").fill(goalText);
+    await page.getByTestId("intake-question-send").click();
+  } else {
+    await page.getByTestId("intake-question-foundation").click();
+  }
   await page.getByTestId(`intake-question-option-experience-level-${toTestIdFragment(experienceLevel)}`).click();
   await page.getByTestId(`intake-question-option-training-days-${toTestIdFragment(trainingDays)}`).click();
   await page.getByTestId(`intake-question-option-session-length-${toTestIdFragment(sessionLength)}`).click();
@@ -420,6 +429,97 @@ async function completeIntroQuestionnaire(page, {
   await expect(page.getByTestId("intake-structured-step")).toBeVisible({ timeout: 20_000 });
 }
 
+async function completeProfileSetup(page, overrides = {}) {
+  const profileGate = page.getByTestId("profile-setup-gate");
+  if (!await profileGate.count()) return;
+  await expect(profileGate).toBeVisible();
+  const values = {
+    name: "Jordan",
+    timezone: "America/Chicago",
+    units: "imperial",
+    birthYear: "1992",
+    height: "6'0\"",
+    weight: "190",
+    trainingAgeYears: "3",
+    environment: "Gym",
+    equipment: "basic_gym",
+    sessionLength: "45",
+    ...(overrides || {}),
+  };
+  await page.getByTestId("profile-setup-name").fill(values.name);
+  await page.getByTestId("profile-setup-timezone").fill(values.timezone);
+  await page.getByTestId("profile-setup-units").selectOption(values.units);
+  await page.getByTestId("profile-setup-birth-year").fill(values.birthYear);
+  await page.getByTestId("profile-setup-height").fill(values.height);
+  await page.getByTestId("profile-setup-weight").fill(values.weight);
+  await page.getByTestId("profile-setup-training-age").fill(values.trainingAgeYears);
+  await page.getByTestId("profile-setup-environment").selectOption(values.environment);
+  await page.getByTestId("profile-setup-equipment").selectOption(values.equipment);
+  await page.getByTestId("profile-setup-session-length").selectOption(values.sessionLength);
+  await page.getByTestId("profile-setup-save").click();
+}
+
+const MONTH_NUMBER_BY_NAME = {
+  january: "01",
+  february: "02",
+  march: "03",
+  april: "04",
+  may: "05",
+  june: "06",
+  july: "07",
+  august: "08",
+  september: "09",
+  october: "10",
+  november: "11",
+  december: "12",
+  jan: "01",
+  feb: "02",
+  mar: "03",
+  apr: "04",
+  jun: "06",
+  jul: "07",
+  aug: "08",
+  sep: "09",
+  sept: "09",
+  oct: "10",
+  nov: "11",
+  dec: "12",
+};
+
+function normalizeNativeTimelineInput(rawValue, inputType = "month") {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return "";
+  if (inputType === "month" && /^\d{4}-\d{2}$/.test(raw)) return raw;
+  if (inputType === "date" && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  const now = new Date();
+  const lower = raw.toLowerCase();
+  const explicitYearMatch = lower.match(/\b(20\d{2})\b/);
+  const monthNameMatch = lower.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b/);
+  const dayMatch = lower.match(/\b([0-2]?\d|3[0-1])\b/);
+  const inferredYear = explicitYearMatch
+    ? explicitYearMatch[1]
+    : lower.includes("next year")
+    ? String(now.getFullYear() + 1)
+    : String(now.getFullYear());
+  const inferredMonth = monthNameMatch
+    ? MONTH_NUMBER_BY_NAME[monthNameMatch[1]]
+    : String(now.getMonth() + 1).padStart(2, "0");
+
+  if (inputType === "date") {
+    const inferredDay = dayMatch ? String(dayMatch[1]).padStart(2, "0") : "01";
+    return `${inferredYear}-${inferredMonth}-${inferredDay}`;
+  }
+  return `${inferredYear}-${inferredMonth}`;
+}
+
+function normalizeNumericInput(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return "";
+  const numericMatch = raw.match(/-?\d+(?:\.\d+)?/);
+  return numericMatch ? numericMatch[0] : raw;
+}
+
 async function answerCurrentAnchor(page, response = {}) {
   const fieldId = await getCurrentFieldId(page);
   if (!fieldId) throw new Error("No active anchor field is visible.");
@@ -428,7 +528,24 @@ async function answerCurrentAnchor(page, response = {}) {
   if (response.type === "choice") {
     await page.getByTestId(`intake-anchor-choice-${fieldFragment}-${toTestIdFragment(response.value)}`).click();
   } else if (response.type === "natural") {
-    await page.getByTestId("intake-anchor-natural-input").fill(response.value);
+    const naturalToggle = page.getByTestId("intake-anchor-toggle-natural");
+    const naturalInput = page.getByTestId("intake-anchor-natural-input");
+    if (await naturalToggle.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await naturalToggle.click();
+      await expect(naturalInput).toBeVisible();
+      await naturalInput.fill(response.value);
+    } else {
+      const structuredInput = page.getByTestId(`intake-anchor-input-${fieldFragment}`);
+      await expect(structuredInput).toBeVisible();
+      const nativeInputType = await structuredInput.evaluate((node) => node?.type || "");
+      if (nativeInputType === "month" || nativeInputType === "date") {
+        await structuredInput.fill(normalizeNativeTimelineInput(response.value, nativeInputType));
+      } else if (nativeInputType === "number") {
+        await structuredInput.fill(normalizeNumericInput(response.value));
+      } else {
+        await structuredInput.fill(String(response.value));
+      }
+    }
   } else if (response.type === "number") {
     await page.getByTestId(`intake-anchor-input-${fieldFragment}`).fill(String(response.value));
     if (response.unit) {
@@ -574,6 +691,7 @@ module.exports = {
   answerCurrentAnchor,
   confirmIntakeBuild,
   completeAnchors,
+  completeProfileSetup,
   completeIntroQuestionnaire,
   enterLocalIntakeIfNeeded,
   getAppEvents,

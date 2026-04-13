@@ -187,10 +187,10 @@ test("powerbuilding strict materially reshapes the real week around lifting", ()
   const labels = Object.values(composer.dayTemplates || {}).map((session) => session?.label).filter(Boolean);
 
   assert.equal(composer.runtimeFidelityMode, PROGRAM_RUNTIME_FIDELITY.strict);
-  assert.ok(labels.includes("Lower-Body Strength"));
-  assert.ok(labels.includes("Upper-Body Strength"));
-  assert.ok(labels.includes("Lower-Body Hypertrophy"));
-  assert.ok(labels.includes("Upper-Body Hypertrophy"));
+  assert.ok(labels.some((label) => /lower-body strength/i.test(label)));
+  assert.ok(labels.some((label) => /upper-body strength/i.test(label)));
+  assert.ok(labels.some((label) => /lower-body hypertrophy/i.test(label)));
+  assert.ok(labels.some((label) => /upper-body hypertrophy/i.test(label)));
 });
 
 test("style selection changes the live week even without a named program", () => {

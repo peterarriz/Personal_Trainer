@@ -83,7 +83,7 @@ test("strength sessions surface exercise-level detail when prescribed rows exist
   assert.equal(summary.exercisePreview.rows[1].structure, "4 x 15");
 });
 
-test("exercise preview limits itself to a compact first few rows", () => {
+test("exercise preview keeps the full prescribed structure available for Today execution", () => {
   const summary = buildDayPrescriptionDisplay({
     training: {
       type: "strength",
@@ -99,6 +99,6 @@ test("exercise preview limits itself to a compact first few rows", () => {
   });
 
   assert.equal(summary.exercisePreview.available, true);
-  assert.equal(summary.exercisePreview.rows.length, 4);
-  assert.match(summary.exercisePreview.note, /first few prescribed exercises/i);
+  assert.equal(summary.exercisePreview.rows.length, 5);
+  assert.equal(summary.exercisePreview.note, "");
 });

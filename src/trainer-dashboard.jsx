@@ -133,6 +133,12 @@ import {
   upsertGoalAnchorQuickEntry,
 } from "./services/goal-anchor-quick-entry-service.js";
 import {
+  buildMetricsBaselinesModel,
+} from "./services/metrics-baselines-service.js";
+import {
+  buildSupportTierModel,
+} from "./services/support-tier-service.js";
+import {
   buildActiveBasisSnapshot,
   buildProgramCatalogViewModel,
   buildProgramSelectionHistoryEntry,
@@ -215,8 +221,16 @@ import {
 } from "./review-audit-components.jsx";
 
 // PROFILE
+const DEFAULT_TIMEZONE = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Chicago";
+  } catch {
+    return "America/Chicago";
+  }
+})();
+
 const PROFILE = {
-  name: "Athlete", height: "6'1\"", weight: 190, age: 30,
+  name: "Athlete", height: "6'1\"", weight: 190, age: 30, timezone: DEFAULT_TIMEZONE,
   goalRace: "TBD", goalTime: "TBD", goalPace: "TBD",
   startDate: new Date(),
   tdee: 3100,
@@ -2792,6 +2806,11 @@ const DEFAULT_PERSONALIZATION = {
   userGoalProfile: { ...DEFAULT_USER_GOAL_PROFILE },
   profile: {
     name: "Athlete",
+    timezone: DEFAULT_TIMEZONE,
+    birthYear: "",
+    height: "",
+    weight: "",
+    profileSetupComplete: false,
     onboardingComplete: false,
     trainingAgeYears: 0,
     preferredCoachingTone: "adaptive",
@@ -4292,6 +4311,9 @@ export default function TrainerDashboard() {
   const [authMode, setAuthMode] = useState("signin");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [authDisplayName, setAuthDisplayName] = useState("");
+  const [authUnits, setAuthUnits] = useState("imperial");
+  const [authTimezone, setAuthTimezone] = useState(DEFAULT_TIMEZONE);
   const [authError, setAuthError] = useState("");
   const [authInitializing, setAuthInitializing] = useState(true);
   const [startupLocalResumeAvailable, setStartupLocalResumeAvailable] = useState(false);
@@ -4302,6 +4324,7 @@ export default function TrainerDashboard() {
   const realtimeInterruptedRef = useRef(false);
   const lastLocalMutationAtRef = useRef(0);
   const skipNextGoalsPersistRef = useRef(false);
+  const suspendLocalPersistenceRef = useRef(false);
   const authSessionRef = useRef(null);
   const sbLoadRef = useRef(null);
   const logDiagRef = useRef(null);
@@ -4357,6 +4380,7 @@ export default function TrainerDashboard() {
     weekTemplates: WEEKS,
     athleteProfile: canonicalAthlete,
     logs,
+    bodyweights,
     dailyCheckins,
     nutritionActualLogs,
     weeklyNutritionReview: prePlanWeeklyNutritionReview,
@@ -5047,15 +5071,93 @@ export default function TrainerDashboard() {
   const { SB_URL, SB_KEY, SB_CONFIG_ERROR, localLoad } = authStorage;
 
   const handleSignIn = async () => {
+    suspendLocalPersistenceRef.current = false;
     await authStorage.handleSignIn({ authEmail, authPassword, setAuthError, setAuthSession });
   };
 
   const handleSignUp = async () => {
-    await authStorage.handleSignUp({ authEmail, authPassword, setAuthError, setAuthSession });
+    suspendLocalPersistenceRef.current = false;
+    const result = await authStorage.handleSignUp({
+      authEmail,
+      authPassword,
+      authProfile: {
+        displayName: authDisplayName,
+        units: authUnits,
+        timezone: authTimezone,
+      },
+      setAuthError,
+      setAuthSession,
+    });
+    if (result?.ok) {
+      setPersonalization((current) => mergePersonalization(current, {
+        profile: {
+          ...current?.profile,
+          name: String(authDisplayName || "").trim() || current?.profile?.name || DEFAULT_PERSONALIZATION.profile.name,
+          timezone: String(authTimezone || "").trim() || current?.profile?.timezone || DEFAULT_PERSONALIZATION.profile.timezone,
+          profileSetupComplete: false,
+        },
+        settings: {
+          ...(current?.settings || DEFAULT_PERSONALIZATION.settings),
+          units: authUnits === "metric"
+            ? { weight: "kg", height: "cm", distance: "kilometers" }
+            : { weight: "lbs", height: "ft_in", distance: "miles" },
+        },
+      }));
+      if (result?.needsEmailConfirmation) {
+        setAuthMode("signin");
+      }
+    }
   };
 
   const handleSignOut = async () => {
     await authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
+  };
+
+  const resetRuntimeAfterAccountRemoval = () => {
+    suspendLocalPersistenceRef.current = true;
+    const resetPersonalization = mergePersonalization(DEFAULT_PERSONALIZATION, {
+      profile: {
+        ...DEFAULT_PERSONALIZATION.profile,
+        onboardingComplete: false,
+      },
+    });
+    setLogs({});
+    setBodyweights([]);
+    setDailyCheckins({});
+    setPlannedDayRecords({});
+    setPlanWeekRecords({});
+    setWeeklyCheckins({});
+    setGoals(normalizeGoals(DEFAULT_MULTI_GOALS));
+    setPersonalization(resetPersonalization);
+    setCoachActions([]);
+    setCoachPlanAdjustments(DEFAULT_COACH_PLAN_ADJUSTMENTS);
+    setNutritionFavorites(DEFAULT_NUTRITION_FAVORITES);
+    setNutritionActualLogs({});
+    setPaceOverrides({});
+    setWeekNotes({});
+    setPlanAlerts([]);
+    setTab(0);
+    setAuthError("");
+    setStartupLocalResumeAccepted(false);
+    setStartupLocalResumeAvailable(false);
+  };
+
+  const handleDeleteAccount = async () => {
+    try {
+      await authStorage.handleDeleteAccount({
+        authSession,
+        setAuthSession,
+        setStorageStatus,
+        setAuthError,
+        clearLocalData: async () => {
+          resetRuntimeAfterAccountRemoval();
+        },
+      });
+    } catch (error) {
+      const nextStatus = classifyStorageError(error);
+      applyStorageStatus(nextStatus);
+      setAuthError(error?.message || "Account deletion failed.");
+    }
   };
 
   const buildPersistedPersonalization = (draftPersonalization = personalization, draftGoals = goals) => {
@@ -5094,6 +5196,7 @@ export default function TrainerDashboard() {
   };
 
   const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionActualLogs = nutritionActualLogs, newPlannedDayRecords = plannedDayRecords, newPlanWeekRecords = planWeekRecords) => {
+    if (suspendLocalPersistenceRef.current) return;
     const normalizedGoalPayload = normalizeGoals(newGoals || []);
     const runtimeState = buildCanonicalRuntimeState({
       logs: newLogs,
@@ -5188,7 +5291,7 @@ export default function TrainerDashboard() {
         skipNextGoalsPersistRef.current = false;
         logDiagRef.current?.("realtime.resync.failed", reason, e?.message || "unknown");
       }
-    }, 250);
+    }, 900);
   };
 
   const getPlannedDayHistoryForDate = (dateKey, logEntry = null) => {
@@ -6572,13 +6675,47 @@ Keep it plain and specific.`;
             ? "Cloud sign-in is unavailable right now. You can still keep going locally on this device."
             : startupLocalResumeAvailable
             ? "Sign in to sync your private training state, or continue locally with the data already on this device."
+            : authMode === "signup"
+            ? "Create the account first, then finish the short profile setup before intake starts."
             : "Sign in to load your private training state."}
         </div>
-        <input value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="email" style={{ marginBottom:"0.4rem" }} />
-        <input type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="password" style={{ marginBottom:"0.5rem" }} />
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
-          <button className="btn btn-primary" onClick={handleSignIn} style={{ fontSize:"0.56rem" }} disabled={storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable}>SIGN IN</button>
-          <button className="btn" onClick={handleSignUp} style={{ fontSize:"0.56rem", color:"#94a3b8" }} disabled={storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable}>SIGN UP</button>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.45rem" }}>
+          <button data-testid="auth-mode-signin" className="btn" onClick={() => setAuthMode("signin")} style={{ fontSize:"0.54rem", color:authMode === "signin" ? "#dbe7f6" : "#94a3b8", borderColor:authMode === "signin" ? "#3a5674" : "#324961", background:authMode === "signin" ? "rgba(71,126,176,0.12)" : "transparent" }}>
+            Sign in
+          </button>
+          <button data-testid="auth-mode-signup" className="btn" onClick={() => setAuthMode("signup")} style={{ fontSize:"0.54rem", color:authMode === "signup" ? "#dbe7f6" : "#94a3b8", borderColor:authMode === "signup" ? "#3a5674" : "#324961", background:authMode === "signup" ? "rgba(71,126,176,0.12)" : "transparent" }}>
+            Create account
+          </button>
+        </div>
+        {authMode === "signup" && (
+          <>
+            <input data-testid="auth-signup-name" value={authDisplayName} onChange={e=>setAuthDisplayName(e.target.value)} placeholder="first name or display name" style={{ marginBottom:"0.4rem" }} />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.4rem" }}>
+              <select data-testid="auth-signup-units" value={authUnits} onChange={e=>setAuthUnits(e.target.value)} style={{ fontSize:"0.58rem" }}>
+                <option value="imperial">Units: imperial</option>
+                <option value="metric">Units: metric</option>
+              </select>
+              <input data-testid="auth-signup-timezone" value={authTimezone} onChange={e=>setAuthTimezone(e.target.value)} placeholder="Timezone" />
+            </div>
+          </>
+        )}
+        <input data-testid="auth-email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="email" style={{ marginBottom:"0.4rem" }} />
+        <input data-testid="auth-password" type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="password" style={{ marginBottom:"0.5rem" }} />
+        <div style={{ display:"grid", gridTemplateColumns:"1fr", gap:"0.35rem" }}>
+          <button
+            data-testid="auth-submit"
+            className="btn btn-primary"
+            onClick={authMode === "signup" ? handleSignUp : handleSignIn}
+            style={{ fontSize:"0.56rem" }}
+            disabled={
+              storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable
+              || !String(authEmail || "").trim()
+              || !String(authPassword || "").trim()
+              || (authMode === "signup" && !String(authDisplayName || "").trim())
+            }
+          >
+            {authMode === "signup" ? "Create account" : "Sign in"}
+          </button>
         </div>
         {(startupLocalResumeAvailable || storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable) && (
           <button
@@ -6586,6 +6723,7 @@ Keep it plain and specific.`;
             className="btn"
             onClick={() => {
               if (startupLocalResumeAvailable) {
+                suspendLocalPersistenceRef.current = false;
                 hydrateLocalRuntimeCache({
                   statusOverride: buildStorageStatus({
                     mode: "local",
@@ -6595,6 +6733,7 @@ Keep it plain and specific.`;
                   }),
                 });
               } else {
+                suspendLocalPersistenceRef.current = false;
                 applyStorageStatus(buildStorageStatus({
                   mode: "local",
                   label: "LOCAL MODE",
@@ -6640,6 +6779,51 @@ Keep it plain and specific.`;
   const activeBrandTheme = brandThemeState.theme;
   const activeAppearanceMode = brandThemeState.resolvedMode;
   const onboardingComplete = personalization?.profile?.onboardingComplete;
+  const profileSetupComplete = personalization?.profile?.profileSetupComplete ?? onboardingComplete;
+  const finishProfileSetup = async (profileDraft = {}) => {
+    const todayKey = new Date().toISOString().split("T")[0];
+    const unitPreset = profileDraft?.units === "metric"
+      ? { weight: "kg", height: "cm", distance: "kilometers" }
+      : { weight: "lbs", height: "ft_in", distance: "miles" };
+    const nextTrainingContext = buildTrainingContextFromEditor({
+      mode: profileDraft?.environmentMode || "Home",
+      equipment: profileDraft?.equipmentAccess || TRAINING_EQUIPMENT_VALUES.unknown,
+      time: profileDraft?.sessionLength || TRAINING_SESSION_DURATION_VALUES.min30,
+      intensity: personalization?.settings?.trainingPreferences?.intensityPreference || TRAINING_INTENSITY_VALUES.standard,
+    });
+    const birthYear = Number(profileDraft?.birthYear || 0) || "";
+    const age = birthYear ? Math.max(13, new Date().getFullYear() - birthYear) : "";
+    const nextPersonalization = mergePersonalization(personalization, {
+      profile: {
+        ...personalization.profile,
+        name: String(profileDraft?.name || "").trim() || personalization?.profile?.name || DEFAULT_PERSONALIZATION.profile.name,
+        timezone: String(profileDraft?.timezone || "").trim() || personalization?.profile?.timezone || DEFAULT_PERSONALIZATION.profile.timezone,
+        birthYear,
+        age,
+        height: profileDraft?.height,
+        weight: profileDraft?.weight,
+        trainingAgeYears: Math.max(0, Number(profileDraft?.trainingAgeYears || 0) || 0),
+        estimatedFitnessLevel: profileDraft?.trainingAgeYears >= 5 ? "advanced" : profileDraft?.trainingAgeYears >= 2 ? "intermediate" : personalization?.profile?.estimatedFitnessLevel || "beginner",
+        profileSetupComplete: true,
+      },
+      settings: {
+        ...(personalization.settings || DEFAULT_PERSONALIZATION.settings),
+        units: unitPreset,
+      },
+      trainingContext: nextTrainingContext,
+      environmentConfig: {
+        ...(personalization.environmentConfig || DEFAULT_PERSONALIZATION.environmentConfig),
+        defaultMode: trainingEnvironmentToDisplayMode(nextTrainingContext?.environment?.value || "") || "Home",
+        base: {
+          equipment: trainingEquipmentToEnvironmentCode(nextTrainingContext?.equipmentAccess?.value || "") || "unknown",
+          time: nextTrainingContext?.sessionDuration?.value || "30",
+        },
+      },
+    });
+    setPersonalization(nextPersonalization);
+    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
+    setLastSaved(todayKey);
+  };
   const finishOnboarding = async (answers) => {
     const todayKey = new Date().toISOString().split("T")[0];
     const existingMemory = personalization?.coachMemory?.longTermMemory || [];
@@ -6832,6 +7016,7 @@ Keep it plain and specific.`;
     const nextPersonalizationBase = mergePersonalization(personalization, {
       profile: {
         ...personalization.profile,
+        profileSetupComplete: true,
         onboardingComplete: true,
         preferredTrainingStyle: coachingStyle,
         goalMix,
@@ -7066,6 +7251,7 @@ Keep it plain and specific.`;
     const nextPersonalizationBase = mergePersonalization(personalization, {
       profile: {
         ...personalization.profile,
+        profileSetupComplete: true,
         onboardingComplete: true,
         goalMix,
       },
@@ -7315,7 +7501,12 @@ Keep it plain and specific.`;
         details[open]{animation:fi 0.18s ease}
       `}</style>
 
-      {!onboardingComplete ? (
+      {!profileSetupComplete ? (
+        <ProfileSetupGate
+          personalization={personalization}
+          onComplete={finishProfileSetup}
+        />
+      ) : !onboardingComplete ? (
         <OnboardingCoach onComplete={finishOnboarding} startingFresh={Boolean(personalization?.planResetUndo?.startedAt)} existingMemory={personalization?.coachMemory?.longTermMemory || []} />
       ) : (
       <div data-testid="app-shell" style={{ maxWidth:980, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
@@ -7383,31 +7574,7 @@ Keep it plain and specific.`;
           await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
 
-        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} onDeleteAccount={async ()=>{
-          const clearedLogs = {};
-          const clearedBodyweights = [];
-          const clearedDaily = {};
-          const clearedPlannedDayRecords = {};
-          const clearedPlanWeekRecords = {};
-          const clearedWeekly = {};
-          const clearedGoals = normalizeGoals(DEFAULT_MULTI_GOALS);
-          const resetPersonalization = mergePersonalization(DEFAULT_PERSONALIZATION, { profile: { ...DEFAULT_PERSONALIZATION.profile, onboardingComplete: false } });
-          setLogs(clearedLogs);
-          setBodyweights(clearedBodyweights);
-          setDailyCheckins(clearedDaily);
-          setPlannedDayRecords(clearedPlannedDayRecords);
-          setPlanWeekRecords(clearedPlanWeekRecords);
-          setWeeklyCheckins(clearedWeekly);
-          setGoals(clearedGoals);
-          setPersonalization(resetPersonalization);
-          setCoachActions([]);
-          setCoachPlanAdjustments(DEFAULT_COACH_PLAN_ADJUSTMENTS);
-          setNutritionFavorites(DEFAULT_NUTRITION_FAVORITES);
-          setNutritionActualLogs({});
-          await persistAll(clearedLogs, clearedBodyweights, {}, {}, [], resetPersonalization, [], DEFAULT_COACH_PLAN_ADJUSTMENTS, clearedGoals, clearedDaily, clearedWeekly, DEFAULT_NUTRITION_FAVORITES, {}, clearedPlannedDayRecords, clearedPlanWeekRecords);
-          setAuthError("");
-          await authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
-        }} onPersist={async (nextPersonalization) => {
+        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onPersist={async (nextPersonalization) => {
           setPersonalization(nextPersonalization);
           await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
@@ -7578,6 +7745,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [clarificationFieldErrors, setClarificationFieldErrors] = useState({});
   const [clarificationFormError, setClarificationFormError] = useState("");
   const [naturalAnchorDraft, setNaturalAnchorDraft] = useState("");
+  const [anchorEntryMode, setAnchorEntryMode] = useState("structured");
   const [naturalAnchorSubmitting, setNaturalAnchorSubmitting] = useState(false);
   const [anchorCapturePreview, setAnchorCapturePreview] = useState(null);
   const [coachVoicePhrasingByAnchorKey, setCoachVoicePhrasingByAnchorKey] = useState({});
@@ -7863,6 +8031,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setClarificationValues({});
       setClarificationFieldErrors({});
       setClarificationFormError("");
+      setAnchorEntryMode("structured");
       setNaturalAnchorDraft("");
       setAnchorCapturePreview(null);
       return;
@@ -7898,6 +8067,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setClarificationValues(nextValues);
       setClarificationFieldErrors({});
       setClarificationFormError("");
+      setAnchorEntryMode("structured");
       setDraft("");
       setNaturalAnchorDraft("");
       setAnchorCapturePreview(null);
@@ -7908,6 +8078,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setClarificationValues({});
       setClarificationFieldErrors({});
       setClarificationFormError("");
+      setAnchorEntryMode("structured");
       setNaturalAnchorDraft("");
       setAnchorCapturePreview(null);
       return;
@@ -7918,6 +8089,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }));
     setClarificationFieldErrors({});
     setClarificationFormError("");
+    setAnchorEntryMode("structured");
     setDraft("");
     setNaturalAnchorDraft("");
     setAnchorCapturePreview(null);
@@ -8519,6 +8691,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     const storedValue = currentPrompt?.valueMap?.[clean] ?? clean;
     await advanceConversation({ ...answers, [explicitKey]: storedValue });
   };
+  const submitFoundationStart = async () => {
+    appendUserMessage("Start with a foundation plan");
+    await advanceConversation({
+      ...answers,
+      goal_intent: "",
+      primary_goal: "general_fitness",
+    });
+  };
   const submitEquipmentAnswer = async () => {
     const equipmentResponse = normalizeHomeEquipmentResponse({
       selection: equipmentSelection,
@@ -8580,7 +8760,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         setClarificationFormError("The current anchor lost its binding target. Please try the active card again.");
         return;
       }
-      const naturalReply = activeAnchorStrictMode ? "" : String(naturalAnchorDraft || "").trim();
+      const naturalReply = anchorEntryMode === "natural" && !activeAnchorStrictMode
+        ? String(naturalAnchorDraft || "").trim()
+        : "";
       if (naturalReply) {
         appendUserMessage(naturalReply);
         setNaturalAnchorSubmitting(true);
@@ -8663,6 +8845,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           });
           setClarificationFieldErrors({});
           setClarificationFormError(failedState?.ui?.lastParseError || extractedCandidate.clarifyingQuestion || extraction.userFacingError || "Can you confirm that before I save it?");
+          return;
+        }
+
+        if (extraction?.status === "runtime_failed" || extraction?.status === "no_response") {
+          setAnchorEntryMode("structured");
+          setAnchorCapturePreview(null);
+          setClarificationFieldErrors({});
+          setClarificationFormError("Natural capture is unavailable right now. Use the guided field above instead.");
           return;
         }
 
@@ -9191,6 +9381,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     ? Number(intakeMachine?.anchorFailureCounts?.[activeMachineAnchor?.field_id] || 0)
     : 0;
   const activeAnchorStrictMode = isMachineAnchorClarification && activeAnchorFailureCount >= 2;
+  const allowNaturalAnchorMode = isMachineAnchorClarification && !activeAnchorStrictMode && activeMachineAnchor?.input_type !== "choice_chips";
   const canEditLastAnchorAnswer = Boolean(
     isMachineAnchorClarification
     && Array.isArray(intakeMachine?.anchorBindingLog)
@@ -9383,6 +9574,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       <button data-testid="intake-question-send" className="btn btn-primary" onClick={() => submitCurrentAnswer(draft)} disabled={!draft.trim()}>
                         Send
                       </button>
+                      {currentPrompt.key === "goal_intent" && (
+                        <button data-testid="intake-question-foundation" className="btn" onClick={submitFoundationStart} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
+                          Start with a foundation plan
+                        </button>
+                      )}
                       {currentPrompt.type === "text_optional" && (
                         <button data-testid="intake-question-skip" className="btn" onClick={() => submitCurrentAnswer(currentPrompt.skipValue || currentPrompt.skipLabel)} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
                           {currentPrompt.skipLabel}
@@ -9548,7 +9744,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       )}
                                     </div>
                                   )}
-                                  {anchorCard.input_type === "date_or_month" && (
+                                  {anchorEntryMode !== "natural" && anchorCard.input_type === "date_or_month" && (
                                     <div style={{ display:"grid", gap:"0.5rem" }}>
                                       <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
                                         {[
@@ -9585,7 +9781,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       />
                                     </div>
                                   )}
-                                  {anchorCard.input_type === "number_with_unit" && (
+                                  {anchorEntryMode !== "natural" && anchorCard.input_type === "number_with_unit" && (
                                     <div style={{ display:"grid", gap:"0.5rem" }}>
                                       <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
                                         <input
@@ -9636,7 +9832,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       </div>
                                     </div>
                                   )}
-                                  {anchorCard.input_type === "strength_top_set" && (
+                                  {anchorEntryMode !== "natural" && anchorCard.input_type === "strength_top_set" && (
                                     <div style={{ display:"grid", gap:"0.5rem" }}>
                                       <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
                                         {[
@@ -9700,7 +9896,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       </div>
                                     </div>
                                   )}
-                                  {anchorCard.input_type !== "choice_chips" && anchorCard.input_type !== "date_or_month" && anchorCard.input_type !== "number_with_unit" && anchorCard.input_type !== "strength_top_set" && (
+                                  {anchorEntryMode !== "natural" && anchorCard.input_type !== "choice_chips" && anchorCard.input_type !== "date_or_month" && anchorCard.input_type !== "number_with_unit" && anchorCard.input_type !== "strength_top_set" && (
                                     <input
                                       data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}`}
                                       ref={composerRef}
@@ -9763,7 +9959,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       )}
                                     </div>
                                   )}
-                                  {anchorCard.input_type === "strength_top_set" ? (
+                                  {anchorCard.input_type === "strength_top_set" && anchorEntryMode !== "natural" ? (
                                     <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.62rem", background:"rgba(15,23,42,0.5)", display:"grid", gap:"0.18rem" }}>
                                       <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.1em" }}>STRUCTURED CAPTURE</div>
                                       <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
@@ -9777,22 +9973,50 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                         Two parsing attempts missed. Use the field control above and one of the examples so I bind only this field.
                                       </div>
                                     </div>
-                                  ) : (
+                                  ) : allowNaturalAnchorMode ? (
                                     <div style={{ display:"grid", gap:"0.3rem" }}>
-                                      <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>OR TYPE IT NATURALLY</div>
-                                      <textarea
-                                        data-testid="intake-anchor-natural-input"
-                                        value={naturalAnchorDraft}
-                                        onChange={(e) => setNaturalAnchorDraft(e.target.value)}
-                                        placeholder="Example: my bench is around 185 x 5 right now"
-                                        rows={2}
-                                        style={{ minHeight:72, resize:"vertical", fontSize:"0.82rem", lineHeight:1.45 }}
-                                      />
-                                      <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>
-                                        I'll only try to capture this field from your reply. Everything else gets ignored.
+                                      <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                                        <button
+                                          type="button"
+                                          data-testid="intake-anchor-toggle-structured"
+                                          className="btn"
+                                          onClick={() => setAnchorEntryMode("structured")}
+                                          style={{ fontSize:"0.5rem", color:anchorEntryMode === "structured" ? "#07131f" : "#dbe7f6", borderColor:anchorEntryMode === "structured" ? "rgba(0,194,255,0.42)" : "#324961", background:anchorEntryMode === "structured" ? "linear-gradient(135deg, rgba(0,194,255,0.9), rgba(127,221,255,0.72))" : "rgba(15,23,42,0.72)" }}
+                                        >
+                                          Guided field
+                                        </button>
+                                        <button
+                                          type="button"
+                                          data-testid="intake-anchor-toggle-natural"
+                                          className="btn"
+                                          onClick={() => setAnchorEntryMode("natural")}
+                                          style={{ fontSize:"0.5rem", color:anchorEntryMode === "natural" ? "#07131f" : "#dbe7f6", borderColor:anchorEntryMode === "natural" ? "rgba(39,245,154,0.42)" : "#324961", background:anchorEntryMode === "natural" ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)" }}
+                                        >
+                                          Type instead
+                                        </button>
                                       </div>
+                                      {anchorEntryMode === "natural" ? (
+                                        <div style={{ display:"grid", gap:"0.3rem" }}>
+                                          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>TYPE THIS DETAIL</div>
+                                          <textarea
+                                            data-testid="intake-anchor-natural-input"
+                                            value={naturalAnchorDraft}
+                                            onChange={(e) => setNaturalAnchorDraft(e.target.value)}
+                                            placeholder={anchorCard.input_type === "date_or_month" ? "Example: October 2026 or May 18, 2027" : "Example: my bench is around 185 x 5 right now"}
+                                            rows={2}
+                                            style={{ minHeight:72, resize:"vertical", fontSize:"0.82rem", lineHeight:1.45 }}
+                                          />
+                                          <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>
+                                            I'll only try to capture this field from your reply. Everything else gets ignored.
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                                          Use the guided field above by default. Switch to <b>Type instead</b> only if that is easier.
+                                        </div>
+                                      )}
                                     </div>
-                                  )}
+                                  ) : null}
                                   {clarificationFieldErrors?.[fieldId] && (
                                     <div data-testid="intake-anchor-field-error" style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[fieldId]}</div>
                                   )}
@@ -9869,7 +10093,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         className="btn btn-primary"
                         onClick={submitClarification}
                         disabled={isMachineAnchorClarification
-                          ? !(activeMachineAnchorSubmission?.raw_text || (!activeAnchorStrictMode && String(naturalAnchorDraft || "").trim())) || naturalAnchorSubmitting
+                          ? !(anchorEntryMode === "natural" ? String(naturalAnchorDraft || "").trim() : activeMachineAnchorSubmission?.raw_text) || naturalAnchorSubmitting
                           : isStructuredClarification
                           ? clarificationInputFields.every((field) => !String(clarificationValues?.[field.key] || "").trim())
                           : !draft.trim()}
@@ -10348,6 +10572,7 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
           return (
             <button
               key={themeOption.id}
+              data-testid={`settings-theme-${toTestIdFragment(themeOption.id)}`}
               className="btn"
               onClick={() => handleThemeChange(themeOption.id)}
               style={{
@@ -10383,6 +10608,7 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
           return (
             <button
               key={mode}
+              data-testid={`settings-theme-mode-${toTestIdFragment(mode)}`}
               className="btn"
               onClick={() => handleModeChange(mode)}
               style={{
@@ -10404,7 +10630,254 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
   );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }) }) {
+function ProfileSetupGate({ personalization = {}, onComplete = async () => {} }) {
+  const settings = personalization?.settings || DEFAULT_PERSONALIZATION.settings;
+  const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
+  const activeTrainingContext = deriveTrainingContextFromPersonalization({ personalization });
+  const [draft, setDraft] = useState({
+    name: profile?.name && profile.name !== "Athlete" ? profile.name : "",
+    units: settings?.units?.weight === "kg" ? "metric" : "imperial",
+    timezone: profile?.timezone || DEFAULT_TIMEZONE,
+    height: profile?.height || "",
+    weight: profile?.weight || "",
+    birthYear: profile?.birthYear || "",
+    trainingAgeYears: profile?.trainingAgeYears || "",
+    environmentMode: trainingEnvironmentToDisplayMode(activeTrainingContext?.environment?.value || "") || "Home",
+    equipmentAccess: activeTrainingContext?.equipmentAccess?.value || TRAINING_EQUIPMENT_VALUES.basicGym,
+    sessionLength: activeTrainingContext?.sessionDuration?.value || TRAINING_SESSION_DURATION_VALUES.min30,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const updateDraft = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
+  const canContinue = Boolean(
+    String(draft?.name || "").trim()
+    && String(draft?.timezone || "").trim()
+    && String(draft?.height || "").trim()
+    && String(draft?.weight || "").trim()
+    && String(draft?.birthYear || "").trim()
+  );
+
+  const handleContinue = async () => {
+    if (!canContinue) {
+      setError("Add name, timezone, height, weight, and birth year before continuing.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onComplete(draft);
+    } catch (nextError) {
+      setError(nextError?.message || "Profile setup could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div data-testid="profile-setup-gate" style={{ maxWidth:560, margin:"0 auto", minHeight:"100vh", display:"grid", placeItems:"center", padding:"1rem" }}>
+      <div className="card card-strong card-hero" style={{ width:"100%", borderColor:"var(--border-strong)" }}>
+        <div style={{ display:"grid", gap:"0.22rem", marginBottom:"0.8rem" }}>
+          <div className="sect-title">Profile Setup</div>
+          <div style={{ fontSize:"0.58rem", color:"var(--text-soft)", lineHeight:1.55 }}>
+            Keep this short. The app needs a real person, a real setup, and a usable default environment before intake starts.
+          </div>
+        </div>
+        <div style={{ display:"grid", gap:"0.5rem" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.4rem" }}>
+            <input data-testid="profile-setup-name" value={draft.name} onChange={(e)=>updateDraft("name", e.target.value)} placeholder="Name" />
+            <input data-testid="profile-setup-timezone" value={draft.timezone} onChange={(e)=>updateDraft("timezone", e.target.value)} placeholder="Timezone" />
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.4rem" }}>
+            <select data-testid="profile-setup-units" value={draft.units} onChange={(e)=>updateDraft("units", e.target.value)}>
+              <option value="imperial">Imperial units</option>
+              <option value="metric">Metric units</option>
+            </select>
+            <input data-testid="profile-setup-birth-year" type="number" value={draft.birthYear} onChange={(e)=>updateDraft("birthYear", e.target.value)} placeholder="Birth year" />
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 120px", gap:"0.4rem" }}>
+            <input data-testid="profile-setup-height" value={draft.height} onChange={(e)=>updateDraft("height", e.target.value)} placeholder={draft.units === "metric" ? "Height (cm)" : "Height (e.g. 6'1\")"} />
+            <input data-testid="profile-setup-weight" type="number" step="0.1" value={draft.weight} onChange={(e)=>updateDraft("weight", e.target.value)} placeholder={draft.units === "metric" ? "Weight (kg)" : "Weight (lb)"} />
+            <input data-testid="profile-setup-training-age" type="number" min="0" max="60" value={draft.trainingAgeYears} onChange={(e)=>updateDraft("trainingAgeYears", e.target.value)} placeholder="Training age" />
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:"0.4rem" }}>
+            <select data-testid="profile-setup-environment" value={draft.environmentMode} onChange={(e)=>updateDraft("environmentMode", e.target.value)}>
+              {["Home", "Gym", "Both", "Varies a lot"].map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+            <select data-testid="profile-setup-equipment" value={draft.equipmentAccess} onChange={(e)=>updateDraft("equipmentAccess", e.target.value)}>
+              <option value={TRAINING_EQUIPMENT_VALUES.none}>No equipment</option>
+              <option value={TRAINING_EQUIPMENT_VALUES.dumbbells}>Dumbbells</option>
+              <option value={TRAINING_EQUIPMENT_VALUES.basicGym}>Basic gym</option>
+              <option value={TRAINING_EQUIPMENT_VALUES.fullGym}>Full gym</option>
+              <option value={TRAINING_EQUIPMENT_VALUES.mixed}>Mixed setup</option>
+            </select>
+            <select data-testid="profile-setup-session-length" value={draft.sessionLength} onChange={(e)=>updateDraft("sessionLength", e.target.value)}>
+              <option value={TRAINING_SESSION_DURATION_VALUES.min20}>20 min</option>
+              <option value={TRAINING_SESSION_DURATION_VALUES.min30}>30 min</option>
+              <option value={TRAINING_SESSION_DURATION_VALUES.min45}>45 min</option>
+              <option value={TRAINING_SESSION_DURATION_VALUES.min60Plus}>60+ min</option>
+            </select>
+          </div>
+          {error && <div style={{ fontSize:"0.52rem", color:"#fbbf24", lineHeight:1.45 }}>{error}</div>}
+          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
+            <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+              Intake stays separate. This step only sets the basic person and environment the planner can trust.
+            </div>
+            <button data-testid="profile-setup-save" className="btn btn-primary" onClick={handleContinue} disabled={!canContinue || saving} style={{ fontSize:"0.54rem" }}>
+              {saving ? "Saving..." : "Continue to intake"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricsBaselinesSection({
+  athleteProfile = null,
+  personalization = {},
+  logs = {},
+  bodyweights = [],
+  onPatchProfile = async () => null,
+  saveManualProgressInputs = async () => null,
+  onSaved = () => {},
+}) {
+  const todayKey = new Date().toISOString().split("T")[0];
+  const model = useMemo(() => buildMetricsBaselinesModel({
+    athleteProfile,
+    personalization,
+    bodyweights,
+    logs,
+  }), [athleteProfile, personalization, bodyweights, logs]);
+  const supportTier = useMemo(() => buildSupportTierModel({
+    goals: athleteProfile?.goals || [],
+    domainAdapterId: athleteProfile?.primaryGoal?.resolvedGoal?.primaryDomain || "",
+    goalCapabilityStack: athleteProfile?.goalCapabilityStack || null,
+  }), [athleteProfile]);
+  const [drafts, setDrafts] = useState({
+    bodyweight: "",
+    waist: "",
+    liftExercise: "",
+    liftWeight: "",
+    liftReps: "",
+    runDistance: "",
+    runDuration: "",
+    runPace: "",
+    swimDistance: "",
+    swimDuration: "",
+    swimNote: "",
+    jumpValue: "",
+    jumpUnit: "in",
+  });
+  const [savingKey, setSavingKey] = useState("");
+
+  const updateDraft = (key, value) => setDrafts((current) => ({ ...current, [key]: value }));
+  const upsertMetricSeries = (rows = [], nextRow = {}) => {
+    const safeDate = String(nextRow?.date || todayKey).trim() || todayKey;
+    return [
+      ...(Array.isArray(rows) ? rows : []).filter((row) => String(row?.date || "") !== safeDate),
+      { ...nextRow, date: safeDate, source: "user_override" },
+    ].sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
+  };
+  const saveEntry = async (key, runSave) => {
+    setSavingKey(key);
+    try {
+      await runSave();
+      onSaved("Saved. The planner can use that anchor on the next recompute.");
+    } finally {
+      setSavingKey("");
+    }
+  };
+
+  return (
+    <div data-testid="metrics-baselines-section" style={{ display:"grid", gap:"0.45rem", marginTop:"0.45rem" }}>
+      <div style={{ display:"grid", gap:"0.14rem" }}>
+        <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>
+          {supportTier.headline}. {supportTier.basisLine}
+        </div>
+        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+          Missing or low-confidence anchors: {model.missingCards.length}. Changing any saved metric here can adapt the plan.
+        </div>
+      </div>
+      <div style={{ display:"grid", gap:"0.35rem" }}>
+        {model.cards.map((card) => (
+          <div key={card.id} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+              <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>{card.label}</div>
+              <span style={{ fontSize:"0.44rem", color:card.missing ? C.amber : "#8fa5c8", background:card.missing ? `${C.amber}12` : "#172233", padding:"0.12rem 0.32rem", borderRadius:999 }}>{card.sourceLabel}</span>
+            </div>
+            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.45 }}>{card.value}</div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{card.detail}</div>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", lineHeight:1.45 }}>{card.planningImpact}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display:"grid", gap:"0.42rem" }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-bodyweight" value={drafts.bodyweight} onChange={(e)=>updateDraft("bodyweight", e.target.value)} placeholder="Current bodyweight" />
+          <button data-testid="metrics-save-bodyweight" className="btn" onClick={() => saveEntry("bodyweight", async () => onPatchProfile({ weight: drafts.bodyweight === "" ? "" : Number(drafts.bodyweight) || "" }))} disabled={!String(drafts.bodyweight || "").trim() || savingKey === "bodyweight"} style={{ fontSize:"0.5rem" }}>{savingKey === "bodyweight" ? "Saving..." : "Save"}</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-waist" value={drafts.waist} onChange={(e)=>updateDraft("waist", e.target.value)} placeholder="Waist (optional)" />
+          <button data-testid="metrics-save-waist" className="btn" onClick={() => saveEntry("waist", async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({ manualProgressInputs: current, type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.waist, entry: { date: todayKey, value: drafts.waist, note: "Saved from Metrics / Baselines" } })))} disabled={!String(drafts.waist || "").trim() || savingKey === "waist"} style={{ fontSize:"0.5rem" }}>{savingKey === "waist" ? "Saving..." : "Save"}</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1.2fr 0.8fr 0.6fr auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-lift-exercise" value={drafts.liftExercise} onChange={(e)=>updateDraft("liftExercise", e.target.value)} placeholder="Lift benchmark" />
+          <input data-testid="metrics-input-lift-weight" value={drafts.liftWeight} onChange={(e)=>updateDraft("liftWeight", e.target.value)} placeholder="Weight" />
+          <input data-testid="metrics-input-lift-reps" value={drafts.liftReps} onChange={(e)=>updateDraft("liftReps", e.target.value)} placeholder="Reps" />
+          <button data-testid="metrics-save-lift" className="btn" onClick={() => saveEntry("lift", async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({ manualProgressInputs: current, type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.liftBenchmark, entry: { date: todayKey, exercise: drafts.liftExercise || "Lift benchmark", weight: drafts.liftWeight, reps: drafts.liftReps, sets: 1, note: "Saved from Metrics / Baselines" } })))} disabled={!drafts.liftWeight || !drafts.liftReps || savingKey === "lift"} style={{ fontSize:"0.5rem" }}>{savingKey === "lift" ? "Saving..." : "Save"}</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"0.7fr 0.8fr 0.8fr auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-run-distance" value={drafts.runDistance} onChange={(e)=>updateDraft("runDistance", e.target.value)} placeholder="Run miles" />
+          <input data-testid="metrics-input-run-duration" value={drafts.runDuration} onChange={(e)=>updateDraft("runDuration", e.target.value)} placeholder="Minutes" />
+          <input data-testid="metrics-input-run-pace" value={drafts.runPace} onChange={(e)=>updateDraft("runPace", e.target.value)} placeholder="Pace" />
+          <button data-testid="metrics-save-run" className="btn" onClick={() => saveEntry("run", async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({ manualProgressInputs: current, type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.runBenchmark, entry: { date: todayKey, distanceMiles: drafts.runDistance, durationMinutes: drafts.runDuration, paceText: drafts.runPace, note: "Saved from Metrics / Baselines" } })))} disabled={(!drafts.runDistance && !drafts.runDuration && !drafts.runPace) || savingKey === "run"} style={{ fontSize:"0.5rem" }}>{savingKey === "run" ? "Saving..." : "Save"}</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"0.8fr 0.8fr 1fr auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-swim-distance" value={drafts.swimDistance} onChange={(e)=>updateDraft("swimDistance", e.target.value)} placeholder="Swim yards" />
+          <input data-testid="metrics-input-swim-duration" value={drafts.swimDuration} onChange={(e)=>updateDraft("swimDuration", e.target.value)} placeholder="Duration" />
+          <input data-testid="metrics-input-swim-note" value={drafts.swimNote} onChange={(e)=>updateDraft("swimNote", e.target.value)} placeholder="Swim note" />
+          <button data-testid="metrics-save-swim" className="btn" onClick={() => saveEntry("swim", async () => saveManualProgressInputs((current) => ({
+            ...(current || {}),
+            measurements: { ...(current?.measurements || {}) },
+            benchmarks: { ...(current?.benchmarks || {}) },
+            metrics: {
+              ...(current?.metrics || {}),
+              swim_benchmark: upsertMetricSeries(current?.metrics?.swim_benchmark || [], {
+                date: todayKey,
+                distance: drafts.swimDistance === "" ? null : Number(drafts.swimDistance) || null,
+                duration: drafts.swimDuration,
+                note: drafts.swimNote,
+              }),
+            },
+          })))} disabled={(!drafts.swimDistance && !drafts.swimDuration && !drafts.swimNote) || savingKey === "swim"} style={{ fontSize:"0.5rem" }}>{savingKey === "swim" ? "Saving..." : "Save"}</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 90px auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-jump" value={drafts.jumpValue} onChange={(e)=>updateDraft("jumpValue", e.target.value)} placeholder="Vertical jump" />
+          <select value={drafts.jumpUnit} onChange={(e)=>updateDraft("jumpUnit", e.target.value)} style={{ fontSize:"0.54rem" }}>
+            <option value="in">in</option>
+            <option value="cm">cm</option>
+          </select>
+          <button data-testid="metrics-save-jump" className="btn" onClick={() => saveEntry("jump", async () => saveManualProgressInputs((current) => ({
+            ...(current || {}),
+            measurements: { ...(current?.measurements || {}) },
+            benchmarks: { ...(current?.benchmarks || {}) },
+            metrics: {
+              ...(current?.metrics || {}),
+              vertical_jump: upsertMetricSeries(current?.metrics?.vertical_jump || [], {
+                date: todayKey,
+                value: drafts.jumpValue === "" ? null : Number(drafts.jumpValue) || null,
+                unit: drafts.jumpUnit,
+              }),
+            },
+          })))} disabled={!drafts.jumpValue || savingKey === "jump"} style={{ fontSize:"0.5rem" }}>{savingKey === "jump" ? "Saving..." : "Save"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [] }) {
   const appleHealth = personalization?.connectedDevices?.appleHealth || {};
   const garmin = personalization?.connectedDevices?.garmin || {};
   const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
@@ -10647,6 +11120,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const lastGarminActivity = (garmin?.activities || []).slice(-1)[0];
   const profileWeightVal = profile?.weight ?? profile?.bodyweight ?? "";
   const profileHeightVal = profile?.height ?? "";
+  const profileBirthYearVal = profile?.birthYear ?? "";
+  const profileTimezoneVal = profile?.timezone || DEFAULT_TIMEZONE;
   const garminLastSyncLabel = garmin?.lastSyncAt ? new Date(garmin.lastSyncAt).toLocaleString() : "never";
   const formatIntegrationTimestamp = (value) => value ? new Date(value).toLocaleString() : "never";
   const integrationStateTone = (state = "idle") => {
@@ -11171,11 +11646,58 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         </div>
 
         <div style={{ display:"grid", gap:"0.75rem" }}>
+          <section data-testid="settings-account-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div className="sect-title" style={{ color:"#dbe7f6", marginBottom:0 }}>ACCOUNT</div>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                {authSession?.user?.email
+                  ? `Signed in as ${authSession.user.email}.`
+                  : "You are currently using this device without a signed-in cloud account."}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+              {authSession?.user?.email ? (
+                <>
+                  <button data-testid="settings-logout" className="btn" onClick={onLogout} style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324761" }}>
+                    Logout
+                  </button>
+                  <button data-testid="settings-delete-account" className="btn" onClick={()=>{ setDeleteOpen((value)=>!value); setDeleteStep(1); setDeleteConfirm(""); }} style={{ fontSize:"0.48rem", color:C.red, borderColor:C.red+"35" }}>
+                    Delete account
+                  </button>
+                </>
+              ) : (
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                  Local mode is active. Sign in from the auth gate if you want cloud sync and account controls.
+                </div>
+              )}
+            </div>
+            {authSession?.user?.email && deleteOpen && (
+              <div style={{ border:"1px solid #3b2a39", borderRadius:8, padding:"0.45rem", display:"grid", gap:"0.3rem" }}>
+                {deleteStep === 1 ? (
+                  <>
+                    <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>This removes the signed-in FORMA account, not just local app rows. Export first if you may want this history later.</div>
+                    <button data-testid="settings-delete-account-export" className="btn" onClick={()=>{ exportData(); setDeleteStep(2); }} style={{ width:"fit-content", fontSize:"0.48rem" }}>Export first, then continue</button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>Type <b>DELETE</b> to permanently remove the account.</div>
+                    <input data-testid="settings-delete-account-confirm" value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} placeholder="DELETE" />
+                    <button data-testid="settings-delete-account-submit" className="btn" disabled={deleteConfirm !== "DELETE"} onClick={onDeleteAccount} style={{ width:"fit-content", fontSize:"0.48rem", color:C.red, borderColor:C.red+"35" }}>Confirm delete account</button>
+                  </>
+                )}
+              </div>
+            )}
+          </section>
+
           <section data-testid="settings-plan-management" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.4rem" }}>
             <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>PROFILE</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 110px", gap:"0.35rem" }}>
               <input value={profile?.name || ""} onChange={e=>patchProfile({ name: e.target.value })} placeholder="Name" />
               <input type="number" value={profile?.age || ""} onChange={e=>patchProfile({ age: Number(e.target.value) || "" })} placeholder="Age" />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+              <input value={profileTimezoneVal} onChange={e=>patchProfile({ timezone: e.target.value })} placeholder="Timezone" />
+              <input type="number" value={profileBirthYearVal} onChange={e=>patchProfile({ birthYear: e.target.value === "" ? "" : Number(e.target.value) || "" })} placeholder="Birth year" />
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
               <input
@@ -11295,6 +11817,18 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 )}
               </div>
             </details>
+            <details data-testid="settings-metrics-baselines">
+              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Metrics / baselines</summary>
+              <MetricsBaselinesSection
+                athleteProfile={athleteProfile}
+                personalization={personalization}
+                logs={logs}
+                bodyweights={bodyweights}
+                onPatchProfile={patchProfile}
+                saveManualProgressInputs={saveManualProgressInputs}
+                onSaved={setSettingsSaveMsg}
+              />
+            </details>
           </section>
 
           <section style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
@@ -11401,23 +11935,6 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               {!!backupMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{backupMsg}</div>}
               <textarea value={backupCode} onChange={e=>setBackupCode(e.target.value)} placeholder="Paste backup code to restore" style={{ minHeight:62, fontSize:"0.5rem" }} />
               <button className="btn" onClick={handleRestoreRequest} style={{ width:"fit-content", fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>Validate restore code</button>
-              <button className="btn" onClick={()=>{ setDeleteOpen((value)=>!value); setDeleteStep(1); setDeleteConfirm(""); }} style={{ width:"fit-content", fontSize:"0.47rem", color:C.red, borderColor:C.red+"35" }}>Delete account</button>
-              {deleteOpen && (
-                <div style={{ border:"1px solid #3b2a39", borderRadius:8, padding:"0.45rem", display:"grid", gap:"0.3rem" }}>
-                  {deleteStep === 1 ? (
-                    <>
-                      <div style={{ fontSize:"0.5rem", color:"#f1d4dd" }}>Export first if you may want this data later.</div>
-                      <button className="btn" onClick={()=>{ exportData(); setDeleteStep(2); }} style={{ fontSize:"0.48rem" }}>Export first, then continue</button>
-                    </>
-                  ) : (
-                    <>
-                      <div style={{ fontSize:"0.5rem", color:"#f1d4dd" }}>Type <b>DELETE</b> to confirm.</div>
-                      <input value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} placeholder="DELETE" />
-                      <button className="btn" disabled={deleteConfirm !== "DELETE"} onClick={onDeleteAccount} style={{ fontSize:"0.48rem", color:C.red, borderColor:C.red+"35" }}>Confirm delete account</button>
-                    </>
-                  )}
-                </div>
-              )}
             </div>
           </details>
         </div>
@@ -12770,6 +13287,12 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     || (todayLog?.ts
       ? `Saved ${new Date(todayLog.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. ${sanitizeStatusLabel(todayLog?.checkin?.status, "logged")}.`
       : "");
+  const showTransientSyncLine = !authError
+    && storageStatus?.mode === "local"
+    && storageStatus?.reason === STORAGE_STATUS_REASONS.transient;
+  const showStorageBanner = !authError
+    && storageStatus?.mode === "local"
+    && storageStatus?.reason !== STORAGE_STATUS_REASONS.transient;
   const todaySessionMeta = [
     displayRun?.t || (hasStrength ? `Strength ${strSess}` : sanitizeStatusLabel(displayWorkout?.type, "session")),
     displayRun?.d || displayWorkout?.strengthDuration || "",
@@ -12840,7 +13363,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           {authError}
         </div>
       )}
-      {!authError && storageStatus?.mode === "local" && (
+      {showStorageBanner && (
         <div className="card card-soft" style={{ borderColor:"#2a3b56", fontSize:"0.52rem", color:"#8fa5c8" }}>
           {storageBannerCopy}
         </div>
@@ -12860,6 +13383,11 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
               {readinessBadgeLabel}
             </span>
           </div>
+          {showTransientSyncLine && (
+            <div data-testid="today-sync-status" style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {storageStatus?.detail || "Sync is retrying quietly in the background. Local data stays active."}
+            </div>
+          )}
           <div style={{ fontSize:"0.55rem", color:"#dbe7f6", lineHeight:1.5 }}>
             {successHeadline}
           </div>
@@ -12883,6 +13411,17 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           <button className="btn btn-primary" onClick={onGoLog} style={{ fontSize:"0.54rem" }}>Log workout</button>
           <button className="btn" onClick={onGoProgram} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>View week</button>
         </div>
+      </div>
+
+      <div data-testid="today-full-workout">
+        <PlannedSessionDetailCard
+          session={{
+            day: "Today",
+            title: displayWorkout?.label || "Today's session",
+            summary: todayPrescriptionSummary,
+          }}
+          accentColor={cardColor}
+        />
       </div>
 
       <div className="card card-action" data-testid="today-quick-log" style={{ borderColor:C.green+"30", background:"#0d1410" }}>
@@ -14543,6 +15082,20 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const futureWeekRows = (displayHorizon || []).filter((h) => Number(h?.absoluteWeek || 0) > currentWeek);
   const selectedCurrentWeekSession = currentWeekSessions.find((session) => session.key === selectedProgramSessionKey) || null;
   const activeGoalsList = (goals || []).filter((goal) => goal?.active);
+  const metricsBaselinesModel = useMemo(() => buildMetricsBaselinesModel({
+    athleteProfile,
+    personalization,
+    bodyweights,
+    logs,
+  }), [athleteProfile, personalization, bodyweights, logs]);
+  const supportTierModel = useMemo(() => (
+    planComposer?.supportTier
+    || buildSupportTierModel({
+      goals,
+      domainAdapterId: planComposer?.domainAdapter?.id || "",
+      goalCapabilityStack: planComposer?.goalCapabilityStack || null,
+    })
+  ), [planComposer, goals]);
   const currentWeekLabel = currentWeekRow?.weekLabel || currentWeekModel?.label || `Week ${currentWeek}`;
   const blockSummaryLine = currentProgramBlock?.summary || currentWeekModel?.summary || planComposer?.programBlock?.summary || arbitration.allocationNarrative;
   const committedWeekHistoryPreview = committedWeekHistory.slice(0, 6);
@@ -14575,6 +15128,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     `${sessionsCompletedThisWeek}/${Math.max(1, plannedSessionsThisWeek)} sessions done`,
     nextWeekType,
     currentWeekModel?.adjusted ? "plan adjusted" : "",
+    metricsBaselinesModel?.missingCards?.length ? `${metricsBaselinesModel.missingCards.length} anchor${metricsBaselinesModel.missingCards.length === 1 ? "" : "s"} missing` : "",
   ].filter(Boolean).join(" - ");
   const currentWeekContextLine = currentCommittedWeekReview
     ? `Saved week snapshot for ${currentCommittedWeekReview.label}.`
@@ -14856,11 +15410,27 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
               {currentWeekMetaLine}
             </div>
           </div>
+          <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>METRICS + SUPPORT</div>
+            <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.14rem", lineHeight:1.5 }}>
+              {supportTierModel?.shortLabel || "Support tier"}{metricsBaselinesModel?.missingCards?.length ? ` • ${metricsBaselinesModel.missingCards.length} anchor${metricsBaselinesModel.missingCards.length === 1 ? "" : "s"} missing` : ""}
+            </div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
+              {metricsBaselinesModel?.missingCards?.[0]
+                ? `${metricsBaselinesModel.missingCards[0].label} is still missing, so the planner is staying conservative there.`
+                : supportTierModel?.honestyLine || "The current planning lane has enough anchors to stay more specific."}
+            </div>
+          </div>
         </div>
         <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.55rem" }}>
           <button className="btn" onClick={onManagePlan} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
             Manage plan settings
           </button>
+          {metricsBaselinesModel?.missingCards?.length > 0 && (
+            <button data-testid="program-fix-metrics" className="btn" onClick={onManagePlan} style={{ fontSize:"0.52rem", color:C.amber, borderColor:`${C.amber}35` }}>
+              Fix missing metrics
+            </button>
+          )}
           <div style={{ fontSize:"0.5rem", color:"#8fa5c8", alignSelf:"center" }}>
             {currentWeekContextLine}
           </div>
@@ -17037,7 +17607,8 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     : "";
   const hasSavedStorePreference = Boolean(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0]);
   const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0] || "Saved default");
-  const [nutritionCheck, setNutritionCheck] = useState({ status: "on_track", deviationKind: "followed", issue: "", note: "" });
+  const EMPTY_NUTRITION_CHECK = { status: "", deviationKind: "", issue: "", note: "" };
+  const [nutritionCheck, setNutritionCheck] = useState(EMPTY_NUTRITION_CHECK);
   const [nutritionSaveAck, setNutritionSaveAck] = useState("");
   const [lastKey, setLastKey] = useState("");
   const [showNutritionWhy, setShowNutritionWhy] = useState(false);
@@ -17268,10 +17839,16 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     strengthDay,
   });
   useEffect(() => {
-    if (!actualNutritionToday?.loggedAt) return;
+    if (!actualNutritionToday?.loggedAt) {
+      setNutritionCheck(EMPTY_NUTRITION_CHECK);
+      setHydrationOz(0);
+      setHydrationNudgedAt(null);
+      setSupplementTaken({});
+      return;
+    }
     setNutritionCheck({
-      status: actualNutritionToday?.quickStatus || "on_track",
-      deviationKind: actualNutritionToday?.deviationKind || "followed",
+      status: actualNutritionToday?.quickStatus || "",
+      deviationKind: actualNutritionToday?.deviationKind || "",
       issue: actualNutritionToday?.issue || "",
       note: actualNutritionToday?.note || "",
     });
@@ -17285,7 +17862,6 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     setShowHydrationNudge(true);
     const nudgedAt = Date.now();
     setHydrationNudgedAt(nudgedAt);
-    saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt: nudgedAt });
   }, [hydrationPct, hydrationNudgedAt, showHydrationNudge, todayKey]);
   const requestFridgeMeal = () => {
     const reply = deriveFridgeCoachMealSuggestion({ fridgeInput, dayType });
@@ -17296,10 +17872,27 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     setNutritionSaveAck(`Saved ${stamp}. ${message}`);
     setTimeout(() => setNutritionSaveAck(""), 4000);
   };
+  const hasExplicitNutritionSignal = (payload = {}) => {
+    const safePayload = payload || {};
+    return Boolean(
+      String(safePayload?.status || "").trim()
+      || String(safePayload?.deviationKind || "").trim()
+      || String(safePayload?.issue || "").trim()
+      || String(safePayload?.note || "").trim()
+      || Number(safePayload?.hydrationOz || 0) > 0
+      || Object.values(safePayload?.supplementTaken || {}).some(Boolean)
+    );
+  };
   const persistNutritionFeedback = async (payload, successMessage = "Saved nutrition update.") => {
+    if (!hasExplicitNutritionSignal(payload)) return;
     await saveNutritionActualLog(todayKey, payload);
     announceNutritionSave(successMessage);
   };
+  const nutritionQuickLogReady = hasExplicitNutritionSignal({
+    ...nutritionCheck,
+    hydrationOz,
+    supplementTaken,
+  });
   const logHydration = async (oz = 12) => {
     const nextOz = Math.min(hydrationTargetOz, (hydrationOz || 0) + oz);
     setHydrationOz(nextOz);
@@ -17349,10 +17942,17 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     : savedFallbackMeal
     ? `Saved default: ${savedFallbackMeal}`
     : "Use your default: protein + carb + fruit + water.");
+  const weeklyGrocerySupportLine = basket?.headline
+    ? `Grocery: ${basket.headline}`
+    : groceryExecutionSupport?.summary
+    ? `Grocery support: ${groceryExecutionSupport.summary}`
+    : hasSavedStorePreference
+    ? `${store}: ${(groceryHooks?.priorityItems || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`
+    : `Suggested staples: ${(groceryHooks?.priorityItems || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`;
 
   return (
     <div className="fi" data-testid="nutrition-tab" style={{ display:"grid", gap:"0.75rem" }}>
-      <div className="card card-soft card-action" style={{ borderColor:C.blue+"28" }}>
+      <div data-testid="nutrition-daily-target" className="card card-soft card-action" style={{ borderColor:C.blue+"28" }}>
         <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.5rem" }}>
           <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>TODAY'S NUTRITION</div>
           <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.5 }}>{directiveSentence}</div>
@@ -17371,7 +17971,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
         </div>
       </div>
 
-      <div className="card card-action" style={{ borderColor:C.green+"30", background:"#0d1410" }}>
+      <div data-testid="nutrition-quick-log" className="card card-action" style={{ borderColor:C.green+"30", background:"#0d1410" }}>
         <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
           <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>QUICK ACTUAL LOG</div>
           <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
@@ -17400,7 +18000,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
             <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck((current)=>({ ...current, note:e.target.value }))} placeholder="Quick note (optional)" />
-            <button data-testid="nutrition-save-quick" className="btn btn-primary" onClick={()=>persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt }, actualNutritionToday?.loggedAt ? "Nutrition log updated." : "Nutrition log saved.")} style={{ fontSize:"0.52rem" }}>
+            <button data-testid="nutrition-save-quick" className="btn btn-primary" disabled={!nutritionQuickLogReady} onClick={()=>persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken }, actualNutritionToday?.loggedAt ? "Nutrition log updated." : "Nutrition log saved.")} style={{ fontSize:"0.52rem", opacity:nutritionQuickLogReady ? 1 : 0.5 }}>
               Save
             </button>
           </div>
@@ -17432,20 +18032,21 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
         </div>
       </details>
 
-      <details className="card">
-        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Practical support</summary>
+      <details className="card" data-testid="nutrition-weekly-planning">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>This week and grocery planning</summary>
         <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+          <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>{weeklyNutritionHeadline}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{weeklyAdaptationLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{weeklyPlannedVsActualLine}</div>
           <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{fastFallback}</div>
           {showNearbySection && nearby.length > 0 && (
             <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
               Nearby: {nearby.map((option) => `${option.name} (${option.meal})`).join(" • ")}
             </div>
           )}
-          {showSundayGrocerySection && basket?.headline && (
-            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
-              Grocery: {basket.headline}
-            </div>
-          )}
+          <div data-testid="nutrition-grocery-support" style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            {weeklyGrocerySupportLine}
+          </div>
         </div>
       </details>
 

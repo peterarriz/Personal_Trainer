@@ -109,8 +109,8 @@ const html = `<!DOCTYPE html>
     <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a0f;color:#334155;font-family:monospace;font-size:0.7rem;letter-spacing:0.2em">LOADING...</div>
   </div>
   <script>
-window.__SUPABASE_URL = ${JSON.stringify(SUPABASE_URL)};
-window.__SUPABASE_ANON_KEY = ${JSON.stringify(SUPABASE_ANON_KEY)};
+window.__SUPABASE_URL = window.__SUPABASE_URL || ${JSON.stringify(SUPABASE_URL)};
+window.__SUPABASE_ANON_KEY = window.__SUPABASE_ANON_KEY || ${JSON.stringify(SUPABASE_ANON_KEY)};
 
 const __externals = {
   react: React,
