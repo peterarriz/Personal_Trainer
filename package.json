@@ -5,10 +5,18 @@
   "scripts": {
     "build": "node scripts/build.js",
     "dev": "npx serve . -p 3000",
-    "test": "node -r sucrase/register --test tests/*.test.js"
+    "test": "node -r sucrase/register --test tests/*.test.js",
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed",
+    "e2e:debug": "playwright test --debug",
+    "e2e:install": "playwright install chromium"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",
     "sucrase": "^3.35.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "serve": "^14.2.6"
   }
 }

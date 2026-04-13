@@ -398,6 +398,13 @@ const safeStorageSet = (storageLike, key, value) => {
   }
 };
 
+const toTestIdFragment = (value = "") => String(value || "")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-+|-+$/g, "")
+  .slice(0, 80);
+
 const safeStorageRemove = (storageLike, key) => {
   try {
     if (!storageLike?.removeItem) return false;
@@ -6504,7 +6511,7 @@ Keep it plain and specific.`;
   );
 
   if (!authSession?.user?.id && !startupLocalResumeAccepted) return (
-    <div style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#e7edf7", padding:"1rem" }}>
+    <div data-testid="auth-gate" style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#e7edf7", padding:"1rem" }}>
       <div style={{ width:"100%", maxWidth:380, border:"1px solid rgba(114,138,173,0.24)", borderRadius:16, padding:"1rem", background:"#162131", boxShadow:"0 14px 28px rgba(5,10,18,0.28)" }}>
         <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1.08rem", fontWeight:700, letterSpacing:"0.05em", color:"#f6f8fc", marginBottom:"0.5rem" }}>ACCOUNT ACCESS</div>
         <div style={{ fontSize:"0.58rem", color:"#8da0bb", marginBottom:"0.5rem" }}>
@@ -6522,6 +6529,7 @@ Keep it plain and specific.`;
         </div>
         {(startupLocalResumeAvailable || storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable) && (
           <button
+            data-testid="continue-local-mode"
             className="btn"
             onClick={() => {
               if (startupLocalResumeAvailable) {
@@ -7105,7 +7113,7 @@ Keep it plain and specific.`;
   };
 
   return (
-    <div style={{ ...themeTokens, fontFamily:"var(--font-body)", background:appBackground, minHeight:"100vh", color:"var(--text)", padding:onboardingComplete ? "1.65rem 1.2rem" : 0 }}>
+    <div data-testid="app-root" data-onboarding-complete={onboardingComplete ? "true" : "false"} style={{ ...themeTokens, fontFamily:"var(--font-body)", background:appBackground, minHeight:"100vh", color:"var(--text)", padding:onboardingComplete ? "1.65rem 1.2rem" : 0 }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
         :root{
@@ -7256,7 +7264,7 @@ Keep it plain and specific.`;
       {!onboardingComplete ? (
         <OnboardingCoach onComplete={finishOnboarding} startingFresh={Boolean(personalization?.planResetUndo?.startedAt)} existingMemory={personalization?.coachMemory?.longTermMemory || []} />
       ) : (
-      <div style={{ maxWidth:980, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
+      <div data-testid="app-shell" style={{ maxWidth:980, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
 
         {/* HEADER BAR */}
         <div style={{ display:"flex", alignItems:"stretch", justifyContent:"space-between", marginBottom:"1.25rem", gap:"0.85rem", flexWrap:"wrap" }}>
@@ -7288,7 +7296,7 @@ Keep it plain and specific.`;
         {/* TABS */}
         <div style={{ display:"flex", gap:"0.35rem", marginBottom:"1.25rem", background:"var(--tab-strip-bg)", padding:"0.36rem", borderRadius:18, border:"1px solid var(--tab-strip-border)", overflowX:"auto", boxShadow:"var(--shadow-1)", backdropFilter:"blur(10px)" }}>
           {TABS.map((t,i) => (
-            <button key={t} className="btn" onClick={()=>setTab(i)}
+            <button key={t} data-testid={`app-tab-${toTestIdFragment(t)}`} className="btn" onClick={()=>setTab(i)}
               style={{ color:tab===i?"var(--tab-active-text)":"var(--tab-text)", background:tab===i?"var(--tab-active-bg)":"transparent", borderColor:tab===i?"var(--border-strong)":"transparent", fontWeight:tab===i?700:500, flexShrink:0, minWidth:96 }}>
               {t}
             </button>
@@ -7893,7 +7901,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     () => reviewGoals.map((goal) => `${goal?.id || ""}:${goal?.summary || ""}:${goal?.planningPriority || ""}`).join("|"),
     [reviewGoals]
   );
-  const reviewModel = useMemo(() => buildIntakeGoalReviewModel({
+  const derivedReviewModel = useMemo(() => buildIntakeGoalReviewModel({
     goalResolution: assessmentPreview?.goalResolution || null,
     orderedResolvedGoals: reviewGoals,
     goalFeasibility: assessmentPreview?.goalFeasibility || null,
@@ -7910,73 +7918,80 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     answers,
     goalStackConfirmation,
   ]);
-  const confirmationState = useMemo(() => deriveIntakeConfirmationState({
-    reviewModel,
-  }), [reviewModel]);
+  const derivedConfirmationState = useMemo(() => deriveIntakeConfirmationState({
+    reviewModel: derivedReviewModel,
+  }), [derivedReviewModel]);
+  const activeReviewModel = intakeMachine?.draft?.reviewModel || derivedReviewModel;
+  const activeConfirmationState = intakeMachine?.draft?.confirmationState || derivedConfirmationState;
+  const activeReviewGoals = Array.isArray(intakeMachine?.draft?.orderedResolvedGoals) && intakeMachine.draft.orderedResolvedGoals.length
+    ? intakeMachine.draft.orderedResolvedGoals
+    : reviewGoals;
+  const activeGoalResolution = intakeMachine?.draft?.goalResolution || assessmentPreview?.goalResolution || null;
+  const activeGoalFeasibility = intakeMachine?.draft?.goalFeasibility || assessmentPreview?.goalFeasibility || null;
   const secondaryGoalEligible = useMemo(() => canAskSecondaryGoal({
     stage: intakeMachine?.stage || "",
-    reviewModel: intakeMachine?.draft?.reviewModel || reviewModel,
-    confirmationState: intakeMachine?.draft?.confirmationState || confirmationState,
+    reviewModel: activeReviewModel,
+    confirmationState: activeConfirmationState,
     answers: intakeMachine?.draft?.answers || answers,
   }), [
     intakeMachine?.stage,
     intakeMachine?.draft?.reviewModel,
     intakeMachine?.draft?.confirmationState,
     intakeMachine?.draft?.answers,
-    reviewModel,
-    confirmationState,
+    activeReviewModel,
+    activeConfirmationState,
     answers,
   ]);
-  const confirmationStatusLabel = confirmationState?.status === "incomplete"
+  const confirmationStatusLabel = activeConfirmationState?.status === "incomplete"
     ? "Need one more detail"
-    : confirmationState?.status === "block"
+    : activeConfirmationState?.status === "block"
     ? "Needs a safer first step"
-    : confirmationState?.status === "warn"
+    : activeConfirmationState?.status === "warn"
     ? "Ambitious but workable"
     : "Ready to build";
-  const confirmationHeadline = confirmationState?.status === "incomplete"
+  const confirmationHeadline = activeConfirmationState?.status === "incomplete"
     ? "I need one more detail before I build this."
-    : confirmationState?.status === "block"
+    : activeConfirmationState?.status === "block"
     ? "I need to tighten this up before I build."
-    : confirmationState?.status === "warn"
+    : activeConfirmationState?.status === "warn"
     ? "This is aggressive, but I can build for it."
     : "This looks realistic from where you're starting.";
   const confirmationNeedsList = useMemo(() => {
     return buildIntakeConfirmationNeedsList({
-      reviewModel,
+      reviewModel: activeReviewModel,
       machineState: intakeMachine,
-      confirmationState,
+      confirmationState: activeConfirmationState,
       maxItems: 3,
     });
-  }, [reviewModel, intakeMachine, confirmationState]);
-  const confirmationAllowsProceed = confirmationState?.status === "proceed" || confirmationState?.status === "warn";
+  }, [activeReviewModel, intakeMachine, activeConfirmationState]);
+  const confirmationAllowsProceed = activeConfirmationState?.status === "proceed" || activeConfirmationState?.status === "warn";
   const confirmCtaEnabled = Boolean(
     confirmationAllowsProceed
-    && confirmationState?.canConfirm
-    && (!confirmationState?.requiresAcknowledgement || confirmWarningAcknowledged)
+    && activeConfirmationState?.canConfirm
+    && (!activeConfirmationState?.requiresAcknowledgement || confirmWarningAcknowledged)
   );
-  const confirmationTone = confirmationState?.status === "block" || confirmationState?.status === "incomplete"
+  const confirmationTone = activeConfirmationState?.status === "block" || activeConfirmationState?.status === "incomplete"
     ? C.amber
-    : confirmationState?.status === "warn"
+    : activeConfirmationState?.status === "warn"
     ? "#facc15"
     : "#8fa5c8";
 
   useEffect(() => {
     setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
-      resolvedGoals: reviewGoals,
+      resolvedGoals: activeReviewGoals,
       goalStackConfirmation: prev,
-      goalFeasibility: assessmentPreview?.goalFeasibility || null,
+      goalFeasibility: activeGoalFeasibility,
     }));
-  }, [reviewGoalSignature, assessmentPreview?.goalFeasibility]);
+  }, [reviewGoalSignature, activeReviewGoals, activeGoalFeasibility]);
 
   useEffect(() => {
     setConfirmWarningAcknowledged(false);
   }, [
-    confirmationState?.status,
-    confirmationState?.reason,
-    confirmationState?.next_required_field,
-    reviewModel?.reviewContract?.lead_goal?.id,
-    Array.isArray(reviewModel?.reviewContract?.maintained_goals) ? reviewModel.reviewContract.maintained_goals.map((goal) => goal?.id || "").join("|") : "",
+    activeConfirmationState?.status,
+    activeConfirmationState?.reason,
+    activeConfirmationState?.next_required_field,
+    activeReviewModel?.reviewContract?.lead_goal?.id,
+    Array.isArray(activeReviewModel?.reviewContract?.maintained_goals) ? activeReviewModel.reviewContract.maintained_goals.map((goal) => goal?.id || "").join("|") : "",
   ]);
 
   useEffect(() => {
@@ -8019,11 +8034,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       timestamp: new Date().toISOString(),
       payload,
     };
-    let nextState = intakeMachineRef.current;
-    setIntakeMachine((prev) => {
-      nextState = intakeReducer(prev, nextEvent);
-      return nextState;
-    });
+    const previousState = intakeMachineRef.current || intakeMachine || createIntakeMachineState();
+    const nextState = intakeReducer(previousState, nextEvent);
+    intakeMachineRef.current = nextState;
+    setIntakeMachine(nextState);
     return nextState;
   };
   const settleIntakeMachine = (machineState = null) => {
@@ -8858,7 +8872,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const jumpToNextRequiredDetail = () => {
     setConfirmBuildError("");
     const refreshedState = refreshReviewMachineState();
-    const refreshedConfirmation = refreshedState?.draft?.confirmationState || confirmationState || null;
+    const refreshedConfirmation = refreshedState?.draft?.confirmationState || activeConfirmationState || null;
     const nextAnchor = refreshedState?.draft?.missingAnchorsEngine?.currentAnchor || null;
     if (nextAnchor?.field_id) {
       setPendingClarifyingQuestion(null);
@@ -8874,7 +8888,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (confirmBuildSubmitting || confirmBuildLockRef.current) return;
     setConfirmBuildError("");
     const refreshedState = refreshReviewMachineState();
-    const latestConfirmationState = refreshedState?.draft?.confirmationState || confirmationState || null;
+    const latestConfirmationState = refreshedState?.draft?.confirmationState || activeConfirmationState || null;
     const latestAllowsProceed = latestConfirmationState?.status === "proceed" || latestConfirmationState?.status === "warn";
     const latestCanConfirm = Boolean(latestConfirmationState?.canConfirm);
     const latestRequiresAcknowledgement = Boolean(latestConfirmationState?.requiresAcknowledgement);
@@ -8952,11 +8966,27 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         starting_fresh: startingFresh,
       };
       try {
+        if (typeof window !== "undefined" && typeof window.dispatchEvent === "function" && typeof window.CustomEvent === "function") {
+          window.dispatchEvent(new window.CustomEvent("trainer:intake-commit", {
+            detail: {
+              phase: "start",
+              confirmationSnapshotId: snapshotId,
+            },
+          }));
+        }
         await new Promise((resolve) => setTimeout(resolve, 3200));
         await onComplete(payload);
         sessionPersistenceDisabledRef.current = true;
         safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
         committedCommitSnapshotIdsRef.current.add(snapshotId);
+        if (typeof window !== "undefined" && typeof window.dispatchEvent === "function" && typeof window.CustomEvent === "function") {
+          window.dispatchEvent(new window.CustomEvent("trainer:intake-commit", {
+            detail: {
+              phase: "success",
+              confirmationSnapshotId: snapshotId,
+            },
+          }));
+        }
         dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.COMMIT_COMPLETED, {
           confirmation_snapshot_id: snapshotId,
           now: new Date().toISOString(),
@@ -8969,6 +8999,15 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             ? `I hit a problem while finishing onboarding: ${error.message}`
             : "I hit a problem while finishing onboarding. Please try again."
         );
+        if (typeof window !== "undefined" && typeof window.dispatchEvent === "function" && typeof window.CustomEvent === "function") {
+          window.dispatchEvent(new window.CustomEvent("trainer:intake-commit", {
+            detail: {
+              phase: "failure",
+              confirmationSnapshotId: snapshotId,
+              message: failureMessage,
+            },
+          }));
+        }
         dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.COMMIT_FAILED, {
           confirmation_snapshot_id: snapshotId,
           error: failureMessage,
@@ -8998,12 +9037,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     startingFresh,
   ]);
   const goalStackReview = buildIntakeGoalStackReviewModel({
-    resolvedGoals: reviewGoals,
-    goalResolution: assessmentPreview?.goalResolution || null,
-    goalFeasibility: assessmentPreview?.goalFeasibility || null,
+    resolvedGoals: activeReviewGoals,
+    goalResolution: activeGoalResolution,
+    goalFeasibility: activeGoalFeasibility,
     goalStackConfirmation,
   });
-  const goalReviewContract = goalStackReview?.reviewContract || reviewModel?.reviewContract || null;
+  const goalReviewContract = goalStackReview?.reviewContract || activeReviewModel?.reviewContract || null;
   const heardGoalRows = useMemo(() => {
     const prioritizedGoals = [
       ...(Array.isArray(goalStackReview?.activeGoals) ? goalStackReview.activeGoals : []),
@@ -9167,7 +9206,16 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   };
 
   return (
-    <div style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, rgba(0,194,255,0.12), transparent 36%), radial-gradient(110% 110% at 100% 0%, rgba(124,92,255,0.18), transparent 40%), linear-gradient(180deg,#05080f 0%, #0a1322 55%, #0d182b 100%)", padding:"1.25rem 1rem 1.5rem" }}>
+    <div
+      data-testid="intake-root"
+      data-intake-phase={phase}
+      data-intake-stage={String(intakeMachine?.stage || "")}
+      data-current-question-key={String(currentPrompt?.key || "")}
+      data-current-field-id={String(activeMachineAnchor?.field_id || "")}
+      data-current-anchor-id={String(activeMachineAnchor?.anchor_id || "")}
+      data-confirmation-status={String(activeConfirmationState?.status || "")}
+      style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, rgba(0,194,255,0.12), transparent 36%), radial-gradient(110% 110% at 100% 0%, rgba(124,92,255,0.18), transparent 40%), linear-gradient(180deg,#05080f 0%, #0a1322 55%, #0d182b 100%)", padding:"1.25rem 1rem 1.5rem" }}
+    >
       <div style={{ width:"100%", maxWidth:860, display:"grid", gridTemplateRows:"auto 1fr", gap:"1rem" }}>
         <div style={{ display:"flex", alignItems:"center", gap:"0.75rem", color:"#dbe7f6" }}>
           <div style={{ width:42, height:42, borderRadius:999, display:"grid", placeItems:"center", background:"linear-gradient(135deg,#13243a 0%, #1a3553 100%)", border:"1px solid rgba(111,148,198,0.28)", fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, letterSpacing:"0.08em" }}>
@@ -9179,9 +9227,15 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           </div>
         </div>
         <div style={{ border:"1px solid rgba(111,148,198,0.18)", borderRadius:24, background:"rgba(8,14,25,0.82)", boxShadow:"0 24px 54px rgba(0,0,0,0.36)", minHeight:0, overflow:"hidden", display:"grid", gridTemplateRows:"1fr auto" }}>
-          <div ref={scrollRef} style={{ padding:"1.1rem 1rem 0.8rem", overflowY:"auto", display:"grid", gap:"0.7rem", alignContent:"start" }}>
+          <div data-testid="intake-transcript" ref={scrollRef} style={{ padding:"1.1rem 1rem 0.8rem", overflowY:"auto", display:"grid", gap:"0.7rem", alignContent:"start" }}>
             {messages.map((message) => (
-              <div key={message.id} style={{ justifySelf:message.role === "user" ? "end" : "start", maxWidth:"min(78ch, 88%)" }}>
+              <div
+                key={message.id}
+                data-testid="intake-message"
+                data-message-role={message.role}
+                data-message-key={String(message.message_key || message.idempotency_key || "")}
+                style={{ justifySelf:message.role === "user" ? "end" : "start", maxWidth:"min(78ch, 88%)" }}
+              >
                 <div style={{
                   background:message.role === "user" ? "linear-gradient(135deg, rgba(0,194,255,0.22), rgba(0,194,255,0.08))" : "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
                   border:message.role === "user" ? "1px solid rgba(0,194,255,0.28)" : "1px solid rgba(111,148,198,0.18)",
@@ -9199,7 +9253,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
               </div>
             ))}
             {assessing && (
-              <div style={{ justifySelf:"start", maxWidth:"88%" }}>
+              <div data-testid="intake-assessing" style={{ justifySelf:"start", maxWidth:"88%" }}>
                 <div style={{ background:"linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))", border:"1px solid rgba(111,148,198,0.18)", borderRadius:"18px 18px 18px 6px", padding:"0.72rem 0.88rem", fontSize:"0.84rem", color:"#8fa5c8" }}>
                   Coach is sizing up the timeline...
                 </div>
@@ -9208,11 +9262,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           </div>
           <div style={{ borderTop:"1px solid rgba(111,148,198,0.14)", padding:"0.9rem 1rem 1rem", background:"rgba(7,12,21,0.92)" }}>
             {phase === "questions" && currentPrompt && !isCoachStreaming && (
-              <div style={{ display:"grid", gap:"0.6rem" }}>
+              <div data-testid="intake-question-step" style={{ display:"grid", gap:"0.6rem" }}>
                 {currentPrompt.type === "buttons" && (
                   <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min(currentPrompt.options.length, 4)}, minmax(0,1fr))`, gap:"0.45rem" }}>
                     {currentPrompt.options.map((option) => (
-                      <button key={option} className="btn" onClick={() => submitCurrentAnswer(option)} style={{ minHeight:46, fontSize:"0.68rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                      <button key={option} data-testid={`intake-question-option-${toTestIdFragment(currentPrompt.key)}-${toTestIdFragment(option)}`} className="btn" onClick={() => submitCurrentAnswer(option)} style={{ minHeight:46, fontSize:"0.68rem", color:"#dbe7f6", borderColor:"#324961" }}>
                         {option}
                       </button>
                     ))}
@@ -9226,6 +9280,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         return (
                           <button
                             key={option}
+                            data-testid={`intake-question-option-${toTestIdFragment(currentPrompt.key)}-${toTestIdFragment(option)}`}
                             className="btn"
                             onClick={() => setEquipmentSelection((prev) => selected ? prev.filter((item) => item !== option) : [...prev, option])}
                             style={{ fontSize:"0.64rem", color:selected ? C.green : "#c4d4ec", borderColor:selected ? C.green+"45" : "#324961", background:selected ? "rgba(39,245,154,0.09)" : undefined }}
@@ -9236,9 +9291,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       })}
                     </div>
                     {equipmentSelection.includes("Other") && (
-                      <input ref={composerRef} value={equipmentOther} onChange={(e) => setEquipmentOther(e.target.value)} placeholder="Other home setup" />
+                      <input data-testid="intake-question-input-home-equipment-other" ref={composerRef} value={equipmentOther} onChange={(e) => setEquipmentOther(e.target.value)} placeholder="Other home setup" />
                     )}
-                    <button className="btn btn-primary" onClick={submitEquipmentAnswer} disabled={equipmentSelection.length === 0 || (equipmentSelection.includes("Other") && !equipmentOther.trim())}>
+                    <button data-testid="intake-question-continue" className="btn btn-primary" onClick={submitEquipmentAnswer} disabled={equipmentSelection.length === 0 || (equipmentSelection.includes("Other") && !equipmentOther.trim())}>
                       Continue
                     </button>
                   </div>
@@ -9246,6 +9301,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                 {(currentPrompt.type === "text" || currentPrompt.type === "text_optional") && (
                   <div style={{ display:"grid", gap:"0.5rem" }}>
                     <textarea
+                      data-testid={`intake-question-input-${toTestIdFragment(currentPrompt.key)}`}
                       ref={composerRef}
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
@@ -9254,11 +9310,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
                     />
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={() => submitCurrentAnswer(draft)} disabled={!draft.trim()}>
+                      <button data-testid="intake-question-send" className="btn btn-primary" onClick={() => submitCurrentAnswer(draft)} disabled={!draft.trim()}>
                         Send
                       </button>
                       {currentPrompt.type === "text_optional" && (
-                        <button className="btn" onClick={() => submitCurrentAnswer(currentPrompt.skipValue || currentPrompt.skipLabel)} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
+                        <button data-testid="intake-question-skip" className="btn" onClick={() => submitCurrentAnswer(currentPrompt.skipValue || currentPrompt.skipLabel)} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
                           {currentPrompt.skipLabel}
                         </button>
                       )}
@@ -9269,9 +9325,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             )}
 
             {(phase === "review" || phase === "clarify" || phase === "secondary_goal") && !isCoachStreaming && (
-              <div style={{ display:"grid", gap:"0.65rem" }}>
+              <div data-testid="intake-structured-step" style={{ display:"grid", gap:"0.65rem" }}>
                 {heardGoalRows.length > 0 && (
-                  <div style={{ border:"1px solid rgba(111,148,198,0.16)", borderRadius:16, padding:"0.78rem 0.84rem", background:"rgba(10,18,32,0.68)", display:"grid", gap:"0.5rem" }}>
+                  <div data-testid="intake-heard-goals" style={{ border:"1px solid rgba(111,148,198,0.16)", borderRadius:16, padding:"0.78rem 0.84rem", background:"rgba(10,18,32,0.68)", display:"grid", gap:"0.5rem" }}>
                     <div style={{ display:"grid", gap:"0.18rem" }}>
                       <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>HERE'S WHAT I HEARD</div>
                       <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>
@@ -9282,7 +9338,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     </div>
                     <div style={{ display:"grid", gap:"0.45rem" }}>
                       {heardGoalRows.map((goal) => (
-                        <div key={goal.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", border:"1px solid rgba(111,148,198,0.12)", borderRadius:14, padding:"0.62rem 0.68rem", background:"rgba(7,18,33,0.78)" }}>
+                        <div key={goal.id} data-testid="intake-heard-goal-row" data-goal-id={goal.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", border:"1px solid rgba(111,148,198,0.12)", borderRadius:14, padding:"0.62rem 0.68rem", background:"rgba(7,18,33,0.78)" }}>
                           <div style={{ display:"grid", gap:"0.16rem", flex:"1 1 220px" }}>
                             <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.35, fontWeight:600 }}>{goal.summary}</div>
                             {goal.detail && (
@@ -9291,6 +9347,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           </div>
                           {goal.canRemove && (
                             <button
+                              data-testid={`intake-heard-goal-remove-${toTestIdFragment(goal.id)}`}
                               className="btn"
                               onClick={() => removeHeardGoal(goal.id)}
                               disabled={assessing || naturalAnchorSubmitting || confirmBuildSubmitting}
@@ -9305,7 +9362,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                   </div>
                 )}
                 {phase === "clarify" ? (
-                  <div style={{ display:"grid", gap:"0.5rem" }}>
+                  <div data-testid="intake-clarify-step" style={{ display:"grid", gap:"0.5rem" }}>
                     <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>
                       {isMachineAnchorClarification || isStructuredClarification ? "One required detail" : "One targeted clarification"}
                     </div>
@@ -9354,6 +9411,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           return (
                             <div
                               key={anchorCard.anchor_id}
+                              data-testid={isActiveCard ? "intake-anchor-card-active" : "intake-anchor-card-upcoming"}
+                              data-field-id={fieldId}
+                              data-anchor-id={anchorCard.anchor_id}
                               style={{
                                 display:"grid",
                                 gap:"0.55rem",
@@ -9395,6 +9455,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                           return (
                                             <button
                                               key={option.value}
+                                              data-testid={`intake-anchor-choice-${toTestIdFragment(fieldId)}-${toTestIdFragment(option.value)}`}
                                               className="btn"
                                               onClick={() => updateClarificationValue(fieldId, option.value)}
                                               style={{
@@ -9428,6 +9489,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                           return (
                                             <button
                                               key={option.value}
+                                              data-testid={`intake-anchor-date-mode-${toTestIdFragment(option.value)}`}
                                               className="btn"
                                               onClick={() => updateClarificationValue(modeKey, option.value)}
                                               style={{
@@ -9444,6 +9506,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                         })}
                                       </div>
                                       <input
+                                        data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}`}
                                         ref={composerRef}
                                         type={selectedMode === "date" ? "date" : "month"}
                                         value={fieldValue}
@@ -9456,6 +9519,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     <div style={{ display:"grid", gap:"0.5rem" }}>
                                       <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
                                         <input
+                                          data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}`}
                                           ref={composerRef}
                                           type="number"
                                           inputMode="decimal"
@@ -9478,6 +9542,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                               return (
                                                 <button
                                                   key={option.value}
+                                                  data-testid={`intake-anchor-unit-${toTestIdFragment(fieldId)}-${toTestIdFragment(option.value)}`}
                                                   className="btn"
                                                   onClick={() => updateClarificationValue(unitKey, option.value)}
                                                   style={{
@@ -9512,6 +9577,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                           return (
                                             <button
                                               key={option.value}
+                                              data-testid={`intake-anchor-mode-${toTestIdFragment(fieldId)}-${toTestIdFragment(option.value)}`}
                                               className="btn"
                                               onClick={() => updateClarificationValue(`${fieldId}__mode`, option.value)}
                                               style={{
@@ -9529,6 +9595,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       </div>
                                       <div style={{ display:"grid", gridTemplateColumns:String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === "estimated_max" ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap:"0.5rem" }}>
                                         <input
+                                          data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}-weight`}
                                           ref={composerRef}
                                           type="number"
                                           inputMode="decimal"
@@ -9545,6 +9612,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                         />
                                         {String(clarificationValues?.[`${fieldId}__mode`] || "top_set") !== "estimated_max" && (
                                           <input
+                                            data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}-reps`}
                                             type="number"
                                             inputMode="numeric"
                                             min="1"
@@ -9564,6 +9632,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                   )}
                                   {anchorCard.input_type !== "choice_chips" && anchorCard.input_type !== "date_or_month" && anchorCard.input_type !== "number_with_unit" && anchorCard.input_type !== "strength_top_set" && (
                                     <input
+                                      data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}`}
                                       ref={composerRef}
                                       type={anchorCard.input_type === "number" ? "number" : "text"}
                                       inputMode={anchorCard.input_type === "number" ? "decimal" : undefined}
@@ -9607,7 +9676,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     </div>
                                   )}
                                   {anchorCapturePreview?.field_id === fieldId && (
-                                    <div style={{ border:"1px solid rgba(0,194,255,0.2)", borderRadius:14, padding:"0.62rem", background:"rgba(3,20,36,0.72)", display:"grid", gap:"0.22rem" }}>
+                                    <div data-testid="intake-anchor-capture-preview" style={{ border:"1px solid rgba(0,194,255,0.2)", borderRadius:14, padding:"0.62rem", background:"rgba(3,20,36,0.72)", display:"grid", gap:"0.22rem" }}>
                                       <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.1em" }}>HERE'S WHAT I CAPTURED</div>
                                       <div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.45 }}>
                                         {anchorCapturePreview?.captureText || "Pending capture"}
@@ -9642,6 +9711,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     <div style={{ display:"grid", gap:"0.3rem" }}>
                                       <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>OR TYPE IT NATURALLY</div>
                                       <textarea
+                                        data-testid="intake-anchor-natural-input"
                                         value={naturalAnchorDraft}
                                         onChange={(e) => setNaturalAnchorDraft(e.target.value)}
                                         placeholder="Example: my bench is around 185 x 5 right now"
@@ -9654,7 +9724,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     </div>
                                   )}
                                   {clarificationFieldErrors?.[fieldId] && (
-                                    <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[fieldId]}</div>
+                                    <div data-testid="intake-anchor-field-error" style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[fieldId]}</div>
                                   )}
                                 </div>
                               ) : (
@@ -9668,7 +9738,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           );
                         })}
                         {clarificationFormError && (
-                          <div style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
+                          <div data-testid="intake-clarify-form-error" style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
                             {clarificationFormError}
                           </div>
                         )}
@@ -9682,6 +9752,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                 {field.label}{field.required ? " *" : ""}
                               </div>
                               <input
+                                data-testid={`intake-structured-input-${toTestIdFragment(field.key)}`}
                                 ref={index === 0 ? composerRef : null}
                                 type={field.inputType === "number" ? "number" : "text"}
                                 inputMode={field.inputType === "number" ? "decimal" : undefined}
@@ -9707,7 +9778,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           ))}
                         </div>
                         {clarificationFormError && (
-                          <div style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
+                          <div data-testid="intake-clarify-form-error" style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
                             {clarificationFormError}
                           </div>
                         )}
@@ -9724,6 +9795,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
                       <button
+                        data-testid="intake-save-detail"
                         className="btn btn-primary"
                         onClick={submitClarification}
                         disabled={isMachineAnchorClarification
@@ -9736,6 +9808,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       </button>
                       {canEditLastAnchorAnswer && (
                         <button
+                          data-testid="intake-edit-last-answer"
                           className="btn"
                           onClick={editLastAnchorAnswer}
                           style={{ color:"#dbe7f6", borderColor:"#324961" }}
@@ -9744,11 +9817,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </button>
                       )}
                       {!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.required && (
-                        <button className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
+                        <button data-testid="intake-keep-goal" className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
                           Keep this goal
                         </button>
                       )}
-                      <button className="btn" onClick={() => requestAdjustment()} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
+                      <button data-testid="intake-adjust-goal" className="btn" onClick={() => requestAdjustment()} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
                         Adjust this goal
                       </button>
                     </div>
@@ -9756,7 +9829,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                 ) : null}
 
                 {phase === "secondary_goal" ? (
-                  <div style={{ display:"grid", gap:"0.55rem" }}>
+                  <div data-testid="intake-secondary-goal-step" style={{ display:"grid", gap:"0.55rem" }}>
                     <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Anything else?</div>
                     <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingSecondaryGoalPrompt?.prompt || ""}</div>
                     {pendingSecondaryGoalPrompt?.helperText && (
@@ -9787,6 +9860,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         return (
                           <button
                             key={option?.key || option?.label}
+                            data-testid={`intake-secondary-option-${toTestIdFragment(option?.key || option?.label)}`}
                             className={isActive && !isSkipOption ? "btn btn-primary" : "btn"}
                             onClick={() => handleSecondaryGoalQuickOption(option)}
                             style={{
@@ -9807,6 +9881,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           {secondaryGoalEntries.map((goal) => (
                             <button
                               key={goal}
+                              data-testid={`intake-secondary-chip-${toTestIdFragment(goal)}`}
                               className="btn"
                               onClick={() => setSecondaryGoalEntries((prev) => prev.filter((item) => item !== goal))}
                               style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
@@ -9820,6 +9895,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     {showSecondaryGoalCustomInput && (
                       <div style={{ display:"grid", gap:"0.45rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:16, padding:"0.7rem", background:"rgba(8,14,25,0.46)" }}>
                         <textarea
+                          data-testid="intake-secondary-custom-input"
                           ref={composerRef}
                           value={draft}
                           onChange={(e) => setDraft(e.target.value)}
@@ -9829,6 +9905,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         />
                         <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
                           <button
+                            data-testid="intake-secondary-add-custom"
                             className="btn btn-primary"
                             onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.custom })}
                             disabled={!draft.trim()}
@@ -9836,6 +9913,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                             Add custom goal
                           </button>
                           <button
+                            data-testid="intake-secondary-close-custom"
                             className="btn"
                             onClick={() => {
                               setDraft("");
@@ -9850,6 +9928,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
                       <button
+                        data-testid="intake-secondary-continue"
                         className="btn"
                         onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.done })}
                         style={{ color:"#dbe7f6", borderColor:"#324961" }}
@@ -9860,17 +9939,17 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                   </div>
                 ) : null}
 
-                {reviewModel && !isMachineAnchorClarification && (
-                  <div style={{ display:"grid", gap:"0.65rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:18, padding:"0.8rem", background:"rgba(8,14,25,0.58)" }}>
+                {activeReviewModel && !isMachineAnchorClarification && (
+                  <div data-testid="intake-review" style={{ display:"grid", gap:"0.65rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:18, padding:"0.8rem", background:"rgba(8,14,25,0.58)" }}>
                     <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.55rem" }}>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
                         <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>GOAL</div>
-                        <div style={{ fontSize:"0.68rem", color:"#f8fbff", lineHeight:1.35 }}>{displayedPrimaryGoal?.summary || reviewModel.primarySummary || "Goal preview pending"}</div>
+                        <div style={{ fontSize:"0.68rem", color:"#f8fbff", lineHeight:1.35 }}>{displayedPrimaryGoal?.summary || activeReviewModel.primarySummary || "Goal preview pending"}</div>
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                          {reviewModel.goalTypeLabel || "Goal"}
+                          {activeReviewModel.goalTypeLabel || "Goal"}
                         </div>
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          How this looks: {reviewModel.realismLabel}
+                          How this looks: {activeReviewModel.realismLabel}
                         </div>
                         <div style={{ fontSize:"0.5rem", color:confirmationTone, marginTop:"0.14rem", lineHeight:1.5 }}>
                           Where this stands: {confirmationStatusLabel}
@@ -9879,19 +9958,19 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
                         <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>WHAT WE'LL TRACK</div>
                         <div style={{ display:"grid", gap:"0.18rem" }}>
-                          {(displayedTrackingLabels.length ? displayedTrackingLabels : (reviewModel.trackingLabels.length ? reviewModel.trackingLabels : ["First 30-day success definition"])).map((item) => (
+                          {(displayedTrackingLabels.length ? displayedTrackingLabels : (activeReviewModel.trackingLabels.length ? activeReviewModel.trackingLabels : ["First 30-day success definition"])).map((item) => (
                             <div key={item} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{item}</div>
                           ))}
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
                         <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>COACH CHECK</div>
-                        <div style={{ fontSize:"0.54rem", color:reviewModel.gateExplanationText ? confirmationTone : "#8fa5c8", lineHeight:1.55 }}>
-                          {reviewModel.gateExplanationText || "Nothing critical. I have enough to build from here."}
+                        <div style={{ fontSize:"0.54rem", color:activeReviewModel.gateExplanationText ? confirmationTone : "#8fa5c8", lineHeight:1.55 }}>
+                          {activeReviewModel.gateExplanationText || "Nothing critical. I have enough to build from here."}
                         </div>
-                        {(reviewModel.gateFirstBlockAlternatives || []).length > 0 && (
+                        {(activeReviewModel.gateFirstBlockAlternatives || []).length > 0 && (
                           <div style={{ display:"grid", gap:"0.34rem", marginTop:"0.34rem" }}>
-                            {(reviewModel.gateFirstBlockAlternatives || []).map((option) => (
+                            {(activeReviewModel.gateFirstBlockAlternatives || []).map((option) => (
                               <div key={option.key || option.label} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:10, background:"rgba(9,14,24,0.58)", padding:"0.5rem 0.55rem" }}>
                                 <div style={{ fontSize:"0.45rem", color:"#8fa5c8", letterSpacing:"0.1em", marginBottom:"0.14rem" }}>
                                   {String(option.label || "Option").toUpperCase()}
@@ -9901,9 +9980,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                             ))}
                           </div>
                         )}
-                        {(reviewModel.gateSuggestedRevision?.requested_data || []).length > 0 && (
+                        {(activeReviewModel.gateSuggestedRevision?.requested_data || []).length > 0 && (
                           <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.45 }}>
-                            What would change this: {(reviewModel.gateSuggestedRevision?.requested_data || []).join(" - ")}
+                            What would change this: {(activeReviewModel.gateSuggestedRevision?.requested_data || []).join(" - ")}
                           </div>
                         )}
                       </div>
@@ -9915,7 +9994,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         {(goalReviewContract?.lane_sections || []).map((section) => {
                           const goals = Array.isArray(section?.goals) ? section.goals : [];
                           return (
-                            <div key={section.lane_key} style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
+                            <div
+                              key={section.lane_key}
+                              data-testid={`intake-review-lane-${toTestIdFragment(section.lane_key)}`}
+                              style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}
+                            >
                               <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>
                                 {String(section?.title || "").toUpperCase()}
                               </div>
@@ -9928,7 +10011,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                     const isDeferredLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.deferredGoals;
                                     const trackingLabel = isSupportLane ? "What we'll watch" : "What we'll measure";
                                     return (
-                                      <div key={goal.id || goal.summary} style={{ border:`1px solid ${isLeadLane ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.12)"}`, borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
+                                      <div
+                                        key={goal.id || goal.summary}
+                                        data-testid="intake-review-goal-card"
+                                        data-goal-id={goal.id || ""}
+                                        data-goal-role={toTestIdFragment(goal.roleLabel || (isLeadLane ? "Lead" : isMaintainedLane ? "Maintained" : isSupportLane ? "Support (background)" : "Deferred"))}
+                                        style={{ border:`1px solid ${isLeadLane ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.12)"}`, borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}
+                                      >
                                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap" }}>
                                           <div style={{ fontSize:"0.6rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35, flex:"1 1 240px" }}>{goal.summary}</div>
                                           <div style={{ fontSize:"0.46rem", color:isLeadLane ? C.green : isDeferredLane ? C.amber : "#9fb4d3", background:isLeadLane ? `${C.green}14` : isDeferredLane ? `${C.amber}14` : "#162131", border:`1px solid ${isLeadLane ? `${C.green}32` : isDeferredLane ? `${C.amber}32` : "#24344b"}`, padding:"0.16rem 0.4rem", borderRadius:999, letterSpacing:"0.08em", whiteSpace:"nowrap" }}>
@@ -9943,30 +10032,60 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                         </div>
                                         <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.4rem" }}>
                                           {!isLeadLane && (
-                                            <button className="btn" onClick={() => setLeadingGoal(goal.id)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
+                                            <button
+                                              data-testid={`intake-review-action-change-priority-${toTestIdFragment(goal.id || goal.summary)}`}
+                                              className="btn"
+                                              onClick={() => setLeadingGoal(goal.id)}
+                                              style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}
+                                            >
                                               {goalReviewContract?.actions?.changePriority?.label || "Change priority"}
                                             </button>
                                           )}
                                           {!isLeadLane && isMaintainedLane && (
-                                            <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.background)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                            <button
+                                              data-testid={`intake-review-action-support-${toTestIdFragment(goal.id || goal.summary)}`}
+                                              className="btn"
+                                              onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.background)}
+                                              style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
+                                            >
                                               Support in background
                                             </button>
                                           )}
                                           {!isLeadLane && (isSupportLane || isDeferredLane) && (
-                                            <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                            <button
+                                              data-testid={`intake-review-action-maintain-${toTestIdFragment(goal.id || goal.summary)}`}
+                                              className="btn"
+                                              onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)}
+                                              style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
+                                            >
                                               Move to maintain
                                             </button>
                                           )}
                                           {!isLeadLane && !isDeferredLane && (
-                                            <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.deferred)} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
+                                            <button
+                                              data-testid={`intake-review-action-defer-${toTestIdFragment(goal.id || goal.summary)}`}
+                                              className="btn"
+                                              onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.deferred)}
+                                              style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
+                                            >
                                               Defer this
                                             </button>
                                           )}
-                                          <button className="btn" onClick={() => requestAdjustment({ goalSummary: goal.summary, goalId: goal.id })} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                                          <button
+                                            data-testid={`intake-review-action-edit-${toTestIdFragment(goal.id || goal.summary)}`}
+                                            className="btn"
+                                            onClick={() => requestAdjustment({ goalSummary: goal.summary, goalId: goal.id })}
+                                            style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
+                                          >
                                             {goalReviewContract?.actions?.editGoal?.label || "Edit a goal"}
                                           </button>
                                           {!isLeadLane && (
-                                            <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, "removed")} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
+                                            <button
+                                              data-testid={`intake-review-action-drop-${toTestIdFragment(goal.id || goal.summary)}`}
+                                              className="btn"
+                                              onClick={() => updateSecondaryGoalMode(goal.id, "removed")}
+                                              style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
+                                            >
                                               {goalReviewContract?.actions?.dropGoal?.label || "Drop a goal"}
                                             </button>
                                           )}
@@ -9984,7 +10103,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           );
                         })}
                         {goalReviewContract?.tradeoff_statement && (
-                          <div style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
+                          <div data-testid="intake-tradeoff-statement" style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
                             <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>TRADEOFF STATEMENT</div>
                             <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalReviewContract.tradeoff_statement}</div>
                           </div>
@@ -10012,7 +10131,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                 )}
 
                 {phase === "review" ? (
-                  <div style={{ display:"grid", gap:"0.55rem" }}>
+                  <div data-testid="intake-review-actions" style={{ display:"grid", gap:"0.55rem" }}>
                     <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Here’s the direction I’d build from.</div>
                     <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
                       Before you confirm, use the lane cards above to change priority, edit a goal, or drop a goal.
@@ -10023,16 +10142,27 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       </div>
                     )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={finalizePlan} disabled={!confirmCtaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting}>
+                      <button
+                        data-testid="intake-confirm-build"
+                        className="btn btn-primary"
+                        onClick={finalizePlan}
+                        disabled={!confirmCtaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting}
+                      >
                         {goalReviewContract?.actions?.confirm?.label || "Confirm and build my plan"}
                       </button>
-                      <button className="btn" onClick={() => requestAdjustment()} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
+                      <button
+                        data-testid="intake-review-edit-goal"
+                        className="btn"
+                        onClick={() => requestAdjustment()}
+                        style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                      >
                         {goalReviewContract?.actions?.editGoal?.label || "Edit a goal"}
                       </button>
                     </div>
-                    {confirmationState?.status === "warn" && (
-                      <label style={{ display:"flex", gap:"0.45rem", alignItems:"flex-start", fontSize:"0.54rem", color:"#facc15", lineHeight:1.5 }}>
+                    {activeConfirmationState?.status === "warn" && (
+                      <label data-testid="intake-warning-ack" style={{ display:"flex", gap:"0.45rem", alignItems:"flex-start", fontSize:"0.54rem", color:"#facc15", lineHeight:1.5 }}>
                         <input
+                          data-testid="intake-warning-ack-checkbox"
                           type="checkbox"
                           checked={confirmWarningAcknowledged}
                           onChange={(e) => setConfirmWarningAcknowledged(Boolean(e.target.checked))}
@@ -10041,37 +10171,42 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         <span>I understand this is aggressive.</span>
                       </label>
                     )}
-                    {(confirmationState?.status === "block" || confirmationState?.status === "incomplete") && (
-                      <div style={{ display:"grid", gap:"0.45rem" }}>
-                        <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
-                          {confirmBuildError || confirmationState?.reason || "I still need one or two details before I can build this well."}
+                    {(activeConfirmationState?.status === "block" || activeConfirmationState?.status === "incomplete") && (
+                      <div data-testid="intake-confirmation-blocked" style={{ display:"grid", gap:"0.45rem" }}>
+                        <div data-testid="intake-confirmation-message" style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
+                          {confirmBuildError || activeConfirmationState?.reason || "I still need one or two details before I can build this well."}
                         </div>
                         {confirmationNeedsList.length > 0 && (
-                          <div style={{ display:"grid", gap:"0.24rem" }}>
+                          <div data-testid="intake-needs-list" style={{ display:"grid", gap:"0.24rem" }}>
                             <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>WHAT I STILL NEED</div>
                             {confirmationNeedsList.map((item) => (
-                              <div key={item} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                              <div key={item} data-testid="intake-needs-item" style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>
                                 • {item}
                               </div>
                             ))}
                           </div>
                         )}
-                        {confirmationState?.next_required_field && (
+                        {activeConfirmationState?.next_required_field && (
                           <div>
-                            <button className="btn" onClick={jumpToNextRequiredDetail} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
+                            <button
+                              data-testid="intake-go-next-detail"
+                              className="btn"
+                              onClick={jumpToNextRequiredDetail}
+                              style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                            >
                               Go to the next detail
                             </button>
                           </div>
                         )}
                       </div>
                     )}
-                    {confirmationState?.status === "warn" && confirmationState?.reason && (
-                      <div style={{ fontSize:"0.56rem", color:"#facc15", lineHeight:1.55 }}>
-                        {confirmationState.reason}
+                    {activeConfirmationState?.status === "warn" && activeConfirmationState?.reason && (
+                      <div data-testid="intake-confirmation-message" style={{ fontSize:"0.56rem", color:"#facc15", lineHeight:1.55 }}>
+                        {activeConfirmationState.reason}
                       </div>
                     )}
-                    {confirmationState?.status === "proceed" && confirmBuildError && (
-                      <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
+                    {activeConfirmationState?.status === "proceed" && confirmBuildError && (
+                      <div data-testid="intake-confirmation-message" style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
                         {confirmBuildError}
                       </div>
                     )}
@@ -10081,8 +10216,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             )}
 
             {phase === "adjust" && !isCoachStreaming && (
-              <div style={{ display:"grid", gap:"0.5rem" }}>
+              <div data-testid="intake-adjust-step" style={{ display:"grid", gap:"0.5rem" }}>
                 <textarea
+                  data-testid="intake-adjust-input"
                   ref={composerRef}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
@@ -10090,16 +10226,16 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                   rows={3}
                   style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
                 />
-                <button className="btn btn-primary" onClick={submitAdjustment} disabled={!draft.trim()}>
+                <button data-testid="intake-adjust-submit" className="btn btn-primary" onClick={submitAdjustment} disabled={!draft.trim()}>
                   Update this goal
                 </button>
               </div>
             )}
 
             {phase === "building" && (
-              <div style={{ display:"grid", gap:"0.4rem" }}>
+              <div data-testid="intake-building" style={{ display:"grid", gap:"0.4rem" }}>
                 <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1rem", color:"#f8fbff" }}>Building your plan...</div>
-                <div style={{ fontSize:"0.84rem", color:"#9fb4d3" }}>{BUILD_STAGES[buildingStageIndex]}</div>
+                <div data-testid="intake-building-stage" style={{ fontSize:"0.84rem", color:"#9fb4d3" }}>{BUILD_STAGES[buildingStageIndex]}</div>
                 <div style={{ width:"100%", height:6, borderRadius:999, background:"rgba(111,148,198,0.14)", overflow:"hidden" }}>
                   <div style={{ width:`${((buildingStageIndex + 1) / BUILD_STAGES.length) * 100}%`, height:"100%", borderRadius:999, background:"linear-gradient(90deg, #00c2ff, #27f59a)", transition:"width 0.45s ease" }} />
                 </div>
@@ -10695,7 +10831,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     window.history.replaceState({}, "", nextUrl);
   }, []);
   return (
-    <div className="fi">
+    <div className="fi" data-testid="today-tab">
       <div className="card card-subtle">
         <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
         {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:C.green, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
@@ -12027,6 +12163,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       )}
 
       <div
+        data-testid="today-session-card"
         onClick={toggleCard}
         style={{ marginBottom:"0.75rem", background:"#0f172a", border:`1px solid ${cardColor}22`, boxShadow:`0 18px 42px ${cardColor}10`, borderRadius:16, padding:"1rem 1.05rem", cursor:"pointer", transition:"border-color 0.15s", userSelect:"none" }}
       >
@@ -12305,7 +12442,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           <div style={{ marginTop:"0.55rem", display:"grid", gap:"0.4rem" }}>
             <div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.5 }}>{rationaleHeadline}</div>
             {!!rationaleSupport && <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{rationaleSupport}</div>}
-            {!!planBasisHeadline && <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>Plan basis: {planBasisHeadline}</div>}
+            {!!planBasisHeadline && <div data-testid="today-plan-basis" style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>Plan basis: {planBasisHeadline}</div>}
             {!!planBasisSupportLine && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{planBasisSupportLine}</div>}
             {!!planBasisCompromiseLine && <div style={{ fontSize:"0.49rem", color:C.amber, lineHeight:1.45 }}>Compromise: {planBasisCompromiseLine}</div>}
             <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>Recovery: {recoveryPrescriptionLine}</div>
