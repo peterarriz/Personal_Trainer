@@ -20,7 +20,7 @@ This spec documents the current live integration in the existing Personal_Traine
   - persists `personalization.programs`
   - activates and clears Program and Style selections
   - passes program state into the real planner and Today logic
-  - renders active basis, fidelity, adherence, and trust copy in Program, Today, and Coach surfaces
+  - renders active basis, fidelity, adherence, and trust copy in Settings, Program, Today, and Coach surfaces
 - `src/modules-planning.js`
   - `composeGoalNativePlan(...)` is the main week-shaping integration point
   - `buildPlanWeek(...)` carries planning basis into the runtime week
@@ -173,6 +173,31 @@ The Today view can show:
 
 This comes from `planningBasis.todayLine`, `planningBasis.compromiseLine`, and `planningBasis.planBasisExplanation`.
 
+The Today surface should stay concise:
+
+- one basis line by default
+- one change/tradeoff line if needed
+- deeper detail only inside the optional rationale disclosure
+
+## Program Surface Integration
+
+Program is now the read-oriented weekly view, not the management surface.
+
+Program should show:
+
+- current week summary
+- current week sessions
+- near-term future weeks
+- whether the week is adjusted or normal
+
+Program should not be the default place to:
+
+- browse Programs or Styles
+- activate or clear Programs or Styles
+- refine or reprioritize goals
+
+Those controls now live in `Settings > Plan Management`.
+
 ## Coach Integration
 
 Coach now receives the live planning basis through `deterministicCoachPacket(...)`.
@@ -190,6 +215,8 @@ Coach is not allowed to pretend:
 - a weakly sourced inspiration is an exact routine
 - strict fidelity still applies after material drift
 - the current week is literal when the planner has already suspended the template
+
+Coach should explain the active basis when asked, but advanced setup does not belong in the main Coach conversation surface.
 
 ## Adherence And Drift
 
@@ -313,3 +340,4 @@ These items are intentionally not treated as complete:
 3. Activate `Fight-Camp Lean` without a Program and confirm the week keeps goal-driven structure but shifts conditioning and density language.
 4. Drop available days or equipment so a strict Program no longer fits and confirm the UI shows the visible downgrade or suspension explanation.
 5. Open Today and Coach after each change and confirm both explain the active basis in plain English.
+6. Open Program and confirm the week view changes, but the activation controls stay in Settings rather than Program.
