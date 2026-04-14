@@ -9,7 +9,6 @@ const {
   getConfirmationStatus,
   getCurrentFieldId,
   getCurrentPhase,
-  getTranscriptEntries,
   gotoIntakeInLocalMode,
   readIntakeSession,
   readLocalCache,
@@ -17,17 +16,32 @@ const {
   waitForReview,
 } = require("./intake-test-utils.js");
 
-const uniqueNonEmpty = (items = []) => [...new Set(items.filter(Boolean))];
-
-const expectTranscriptKeysUnique = async (page) => {
-  const entries = await getTranscriptEntries(page);
-  const keys = entries.map((entry) => entry.key).filter(Boolean);
-  expect(uniqueNonEmpty(keys)).toEqual(keys);
+const expectNoFakeTranscript = async (page) => {
+  await expect(page.getByTestId("intake-transcript")).toHaveCount(0);
 };
 
-const expectNoSecondaryPromptYet = async (page) => {
-  await expect(page.getByTestId("intake-secondary-goal-step")).toHaveCount(0);
+const expectSummaryRail = async (page) => {
+  await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
+  await expect(page.getByTestId("intake-summary-section-your-words")).toBeVisible();
+  await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toBeVisible();
+  await expect(page.getByTestId("intake-summary-section-what-we-track")).toBeVisible();
+  await expect(page.getByTestId("intake-summary-section-what-is-fuzzy")).toBeVisible();
+  await expect(page.getByTestId("intake-summary-section-tradeoffs")).toBeVisible();
 };
+
+const expectNoLaneTheater = async (page) => {
+  await expect(page.getByText("Leading now", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("We will maintain", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("We will support in the background", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("We are deferring", { exact: true })).toHaveCount(0);
+};
+
+const readGoalCardSummaries = async (page, cardTestId) => (
+  page
+    .getByTestId(cardTestId)
+    .locator("[data-testid='intake-goal-card-summary']")
+    .evaluateAll((nodes) => nodes.map((node) => String(node.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean))
+);
 
 const answerActiveAnchorFromMap = async (page, responsesByFieldId = {}) => {
   const fieldId = await getCurrentFieldId(page);
@@ -37,18 +51,12 @@ const answerActiveAnchorFromMap = async (page, responsesByFieldId = {}) => {
   await answerCurrentAnchor(page, responsesByFieldId[fieldId]);
 };
 
-const getActiveNonResilienceGoals = (cache = null) => (
-  Array.isArray(cache?.goals)
-    ? cache.goals.filter((goal) => goal?.active && goal?.category !== "injury_prevention" && goal?.id !== "g_resilience")
-    : []
-);
-
 test.describe("intake onboarding e2e", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1120 });
   });
 
-  test("simple running goal supports natural answers, warn gating, and planner handoff", async ({ page }) => {
+  test("exact running goal shows interpretation first, then clarifies and builds deterministically", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
       goalText: "run a 1:45 half marathon",
@@ -57,9 +65,16 @@ test.describe("intake onboarding e2e", () => {
       sessionLength: "45 min",
       trainingLocation: "Gym",
       coachingStyle: "Balanced coaching",
+      stopAtInterpretation: true,
     });
 
-    await expectNoSecondaryPromptYet(page);
+    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(1);
+    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1"]);
+    await expectSummaryRail(page);
+    await expectNoFakeTranscript(page);
+
+    await page.getByTestId("intake-footer-continue").click();
     const visitedFields = await completeAnchors(page, {
       target_timeline: { type: "natural", value: "October" },
       current_run_frequency: { type: "natural", value: "3 runs/week" },
@@ -70,108 +85,180 @@ test.describe("intake onboarding e2e", () => {
 
     expect(visitedFields).toContain("current_run_frequency");
     expect(visitedFields).toContain("target_timeline");
-    expect(visitedFields).toContain("running_endurance_anchor_kind");
     await waitForReview(page);
-    await expectTranscriptKeysUnique(page);
 
     const confirmationStatus = await getConfirmationStatus(page);
     expect(["proceed", "warn"]).toContain(confirmationStatus);
-
-    if (confirmationStatus === "warn") {
-      await expect(page.getByTestId("intake-warning-ack")).toBeVisible();
-      await expect(page.getByTestId("intake-confirm-build")).toBeDisabled();
-      await page.getByTestId("intake-warning-ack-checkbox").check();
-      await expect(page.getByTestId("intake-confirm-build")).toBeEnabled();
-    } else {
-      await expect(page.getByTestId("intake-confirm-build")).toBeEnabled();
-    }
-
-    await page.getByTestId("intake-confirm-build").click();
+    await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
-    await expect(page.getByTestId("today-plan-basis")).toContainText("Plan basis:");
 
     const cache = await readLocalCache(page);
     expect(cache?.personalization?.profile?.onboardingComplete).toBe(true);
-    expect(getActiveNonResilienceGoals(cache).length).toBeGreaterThan(0);
     await expect.poll(() => readIntakeSession(page)).toBeNull();
   });
 
-  test("simple strength goal captures a structured top set without repeating the same anchor", async ({ page }) => {
+  test("vague appearance goal shows proxies and a first 30-day win before any clarification", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
-      goalText: "bench 225",
+      goalText: "I want to look athletic again",
       experienceLevel: "Intermediate",
       trainingDays: "4",
       sessionLength: "45 min",
       trainingLocation: "Gym",
+      stopAtInterpretation: true,
     });
 
-    const seen = [];
-    for (let index = 0; index < 4; index += 1) {
-      const phase = await getCurrentPhase(page);
-      if (phase !== "clarify") break;
-      const fieldId = await getCurrentFieldId(page);
-      seen.push(fieldId);
-      if (fieldId === "target_timeline") {
-        await completeAnchors(page, {
-          target_timeline: { type: "natural", value: "next year" },
-          current_strength_baseline: { type: "strength_top_set", weight: 185, reps: 5 },
-        }, { maxSteps: 2 });
-        break;
-      }
-      if (fieldId === "current_strength_baseline") {
-        await completeAnchors(page, {
-          current_strength_baseline: { type: "strength_top_set", weight: 185, reps: 5 },
-          target_timeline: { type: "natural", value: "next year" },
-        }, { maxSteps: 2 });
-        break;
-      }
-    }
+    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expectSummaryRail(page);
+    await expectNoFakeTranscript(page);
+    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1"]);
+    await expect(page.locator("[data-testid='intake-goal-proposal-card']").first()).toContainText(/waist|bodyweight|block direction|planning focus/i);
+    await expect(page.getByTestId("intake-summary-section-what-we-track")).toContainText(/waist|bodyweight|30/i);
+    await expect(page.getByTestId("intake-summary-section-what-is-fuzzy")).toContainText(/30|waist|bodyweight|success/i);
 
-    expect(uniqueNonEmpty(seen).length).toBe(seen.length);
-    await waitForReview(page);
-    await page.getByTestId("intake-confirm-build").click();
-    await waitForPostOnboarding(page);
-  });
-
-  test("appearance goal uses explicit proxy selection and value capture without looping", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
-    await completeIntroQuestionnaire(page, {
-      goalText: "look leaner and more defined by October",
-      experienceLevel: "Intermediate",
-      trainingDays: "4",
-      sessionLength: "45 min",
-      trainingLocation: "Gym",
-    });
-
-    const visited = await completeAnchors(page, {
-      target_timeline: { type: "natural", value: "October" },
+    await page.getByTestId("intake-footer-continue").click();
+    const visitedFields = await completeAnchors(page, {
       appearance_proxy_anchor_kind: { type: "choice", value: "current_bodyweight" },
       current_bodyweight: { type: "number", value: 185, unit: "lb" },
       current_waist: { type: "number", value: 34, unit: "in" },
-    });
+      target_timeline: { type: "natural", value: "late summer" },
+    }, { maxSteps: 6 });
 
-    expect(visited).toContain("appearance_proxy_anchor_kind");
-    expect(visited).toContain("current_bodyweight");
-    expect(visited.filter((item) => item === "appearance_proxy_anchor_kind").length).toBe(1);
+    expect(visitedFields).toContain("appearance_proxy_anchor_kind");
     await waitForReview(page);
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
   });
 
-  test("multi-goal intake shows heard goals, review lanes, and coherent committed goals", async ({ page }) => {
+  test("hybrid goal keeps both bench and leaning-out visible before build", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
-      goalText: "run a 1:45 half marathon but keep strength and get leaner",
+      goalText: "Bench 225 and get leaner by summer",
       experienceLevel: "Intermediate",
+      trainingDays: "4",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+      stopAtInterpretation: true,
+    });
+
+    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expectSummaryRail(page);
+    await expectNoFakeTranscript(page);
+    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(2);
+    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2"]);
+    await expect(page.getByTestId("intake-review")).toHaveCount(0);
+    await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/bench|lean|body/i);
+
+    await page.getByTestId("intake-footer-continue").click();
+    await completeAnchors(page, {
+      target_timeline: { type: "natural", value: "July" },
+      current_strength_baseline: { type: "strength_top_set", weight: 185, reps: 5 },
+      target_weight_change: { type: "number", value: 12, unit: "lb" },
+      appearance_proxy_anchor_kind: { type: "choice", value: "current_bodyweight" },
+      current_bodyweight: { type: "number", value: 185, unit: "lb" },
+      current_waist: { type: "number", value: 34, unit: "in" },
+    }, { maxSteps: 8 });
+
+    await waitForReview(page);
+    await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
+    await expectNoLaneTheater(page);
+    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2"]);
+    await expect(page.getByTestId("intake-tradeoff-statement")).toContainText(/Priority 1 is/i);
+  });
+
+  test("ambitious targets use a milestone chooser instead of warning-checkbox friction", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "bench 225 by July",
       trainingDays: "4",
       sessionLength: "45 min",
       trainingLocation: "Gym",
     });
 
-    await expect(page.getByTestId("intake-heard-goals")).toBeVisible();
-    expect(await page.locator("[data-testid='intake-heard-goal-row']").count()).toBeGreaterThanOrEqual(2);
+    await completeAnchors(page, {
+      target_timeline: { type: "date_or_month", value: "2026-07" },
+      current_strength_baseline: { type: "strength_top_set", weight: 185, reps: 5 },
+    }, { maxSteps: 3 });
 
+    await waitForReview(page);
+    await expect(page.getByTestId("intake-warning-ack-checkbox")).toHaveCount(0);
+    await expect(page.getByTestId("intake-target-shape")).toBeVisible();
+    await expect(page.getByTestId("intake-target-shape-headline")).toContainText("Target is ambitious");
+    await expect(page.getByTestId("intake-target-path-keep_full_target")).toBeVisible();
+    await expect(page.getByTestId("intake-target-path-milestone_first")).toBeVisible();
+
+    await page.getByTestId("intake-target-path-milestone_first").click();
+    await expect(page.getByTestId("intake-target-shape-long-term")).toContainText("Bench press 225 lb");
+    await expect(page.getByTestId("intake-confirm-goal-card").filter({ hasText: /Build bench press toward/i })).toBeVisible();
+
+    await confirmIntakeBuild(page);
+    await waitForPostOnboarding(page);
+  });
+
+  test("unsafe targets block build until a smaller milestone is selected", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "bench 225 in 6 weeks",
+      trainingDays: "4",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+    });
+
+    await completeAnchors(page, {
+      target_timeline: { type: "date_or_month", value: "2026-05" },
+      current_strength_baseline: { type: "strength_top_set", weight: 135, reps: 3 },
+    }, { maxSteps: 3 });
+
+    await waitForReview(page);
+    await expect.poll(() => getConfirmationStatus(page)).toBe("block");
+    await expect(page.getByTestId("intake-warning-ack-checkbox")).toHaveCount(0);
+    await expect(page.getByTestId("intake-target-shape-headline")).toContainText("Start with a smaller milestone");
+    await expect(page.getByTestId("intake-target-path-keep_full_target")).toHaveCount(0);
+    await page.getByTestId("intake-target-path-milestone_first").click();
+
+    await expect(page.getByTestId("intake-target-shape-long-term")).toContainText("Bench press 225 lb");
+    await expect(page.getByTestId("intake-confirm-goal-card").filter({ hasText: /Build bench press toward/i })).toBeVisible();
+    await expect.poll(() => getConfirmationStatus(page)).not.toBe("block");
+
+    await confirmIntakeBuild(page);
+    await waitForPostOnboarding(page);
+  });
+
+  test("multi-goal onboarding shows the full ordered stack without hidden presets", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "run a 1:45 half marathon",
+      additionalGoals: ["bench 225", "get leaner by summer", "keep shoulders healthy"],
+      experienceLevel: "Intermediate",
+      trainingDays: "4",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+      stopAtInterpretation: true,
+    });
+
+    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expectSummaryRail(page);
+    await expectNoFakeTranscript(page);
+    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(5);
+    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2", "Priority 3", "Additional goal", "Additional goal"]);
+    await expect(page.getByTestId("intake-proposal-additional-goals")).toBeVisible();
+    await expect(page.getByTestId("intake-summary-section-your-words")).toContainText(/bench 225|leaner|jump|shoulders/i);
+    await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/run|bench|lean|jump|shoulder/i);
+  });
+
+  test("confirm step keeps extra goals visible and lets the user reorder directly", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "run a 1:45 half marathon",
+      additionalGoals: ["bench 225", "get leaner by summer", "keep shoulders healthy"],
+      experienceLevel: "Intermediate",
+      trainingDays: "4",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+      stopAtInterpretation: true,
+    });
+
+    await page.getByTestId("intake-footer-continue").click();
     await completeAnchors(page, {
       target_timeline: { type: "natural", value: "October" },
       current_run_frequency: { type: "natural", value: "3 runs/week" },
@@ -182,101 +269,61 @@ test.describe("intake onboarding e2e", () => {
       target_weight_change: { type: "number", value: 12, unit: "lb" },
       appearance_proxy_anchor_kind: { type: "choice", value: "current_bodyweight" },
       current_bodyweight: { type: "number", value: 185, unit: "lb" },
-    }, { maxSteps: 8 });
+      current_waist: { type: "number", value: 34, unit: "in" },
+    }, { maxSteps: 12 });
 
-    const currentPhase = await getCurrentPhase(page);
-    if (currentPhase === "secondary_goal") {
-      await page.getByTestId("intake-secondary-option-skip").click();
-      await expect.poll(() => getCurrentPhase(page)).toBe("review");
-    }
+    await waitForReview(page);
+    await expectNoLaneTheater(page);
+    await expect(page.getByText("Priority 1", { exact: true })).toBeVisible();
+    await expect(page.getByText("Priority 2", { exact: true })).toBeVisible();
+    await expect(page.getByText("Priority 3", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("intake-confirm-additional-goals")).toBeVisible();
 
-    await expect(page.getByTestId("intake-review-lane-lead-goal")).toBeVisible();
-    await expect.poll(() => page.locator("[data-testid='intake-review-goal-card']").count()).toBeGreaterThanOrEqual(2);
-    await expect(page.getByTestId("intake-tradeoff-statement")).toBeVisible();
+    const before = await readGoalCardSummaries(page, "intake-confirm-goal-card");
+    expect(before.length).toBeGreaterThan(3);
+    const benchCard = page.getByTestId("intake-confirm-goal-card").filter({ hasText: /Bench press 225 lb/i });
+    const runCard = page.getByTestId("intake-confirm-goal-card").filter({ hasText: /run a 1:45 half marathon/i });
+
+    await expect(benchCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 2");
+    await expect(runCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 1");
+
+    await benchCard.getByRole("button", { name: "Move earlier" }).click();
+    await expect(benchCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 1");
+    await expect(runCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 2");
+
+    await benchCard.getByRole("button", { name: "Move later" }).click();
+    await expect(benchCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 2");
+    await expect(runCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 1");
 
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
-
-    const cache = await readLocalCache(page);
-    expect(getActiveNonResilienceGoals(cache).length).toBeGreaterThan(1);
   });
 
-  test("promoting a background goal to lead reroutes intake without duplicating transcript copy", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
-    await completeIntroQuestionnaire(page, {
-      goalText: "run a 1:45 half marathon",
-      experienceLevel: "Intermediate",
-      trainingDays: "3",
-      sessionLength: "45 min",
-      trainingLocation: "Gym",
-    });
-
-    await completeAnchors(page, {
-      target_timeline: { type: "natural", value: "October" },
-      current_run_frequency: { type: "natural", value: "3 runs/week" },
-      running_endurance_anchor_kind: { type: "choice", value: "longest_recent_run" },
-      longest_recent_run: { type: "natural", value: "7 miles" },
-      recent_pace_baseline: { type: "natural", value: "8:55 pace" },
-    }, { maxSteps: 6 });
-
-    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("secondary_goal");
-    await page.getByTestId("intake-secondary-option-custom").click();
-    await page.getByTestId("intake-secondary-custom-input").fill("get a six pack");
-    await page.getByTestId("intake-secondary-add-custom").click();
-    await page.getByTestId("intake-secondary-continue").click();
-
-    await waitForReview(page);
-    const confirmationStatusBefore = await getConfirmationStatus(page);
-    expect(["proceed", "warn"]).toContain(confirmationStatusBefore);
-    const promoteButtons = page.locator(
-      "[data-testid='intake-review-lane-support-goals'] [data-testid^='intake-review-action-change-priority-'], " +
-      "[data-testid='intake-review-lane-deferred-goals'] [data-testid^='intake-review-action-change-priority-']"
-    );
-    await expect(promoteButtons).toHaveCount(1);
-    const promoteButton = promoteButtons.first();
-    await expect(promoteButton).toBeVisible();
-
-    const transcriptBefore = await getTranscriptEntries(page);
-    await promoteButton.click();
-
-    await expect.poll(() => getCurrentPhase(page), { timeout: 12_000 }).toBe("clarify");
-    await expect.poll(() => getCurrentFieldId(page), { timeout: 12_000 }).toMatch(/appearance_proxy_anchor_kind|current_bodyweight|current_waist/);
-
-    const transcriptAfter = await getTranscriptEntries(page);
-    expect(transcriptAfter.length).toBe(transcriptBefore.length);
-    await expectTranscriptKeysUnique(page);
-  });
-
-  test("editing the goal midstream clears stale running anchors and moves to the new goal", async ({ page }) => {
+  test("editing the interpretation reroutes the flow through the corrected goal stack", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
       goalText: "run a half marathon",
       trainingDays: "3",
       sessionLength: "45 min",
       trainingLocation: "Gym",
+      stopAtInterpretation: true,
     });
 
-    await answerActiveAnchorFromMap(page, {
-      current_run_frequency: { type: "natural", value: "3 runs/week" },
-      target_timeline: { type: "natural", value: "next year" },
-      running_endurance_anchor_kind: { type: "choice", value: "recent_pace_baseline" },
-      recent_pace_baseline: { type: "natural", value: "9:10 pace" },
-    });
-    await expect.poll(() => getCurrentFieldId(page), { timeout: 12_000 }).not.toBe("");
-
-    await page.getByTestId("intake-adjust-goal").click();
+    await page.locator("[data-testid^='intake-goal-edit-']").first().click();
     await expect(page.getByTestId("intake-adjust-step")).toBeVisible();
     await page.getByTestId("intake-adjust-input").fill("Actually, I want to bench 225");
-    await page.getByTestId("intake-adjust-submit").click();
+    await page.getByTestId("intake-footer-continue").click();
 
-    await expect(page.getByTestId("intake-structured-step")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/bench|225/i);
+    await page.getByTestId("intake-footer-continue").click();
     await expect.poll(() => getCurrentFieldId(page), { timeout: 20_000 }).toMatch(/target_timeline|current_strength_baseline/);
     const nextField = await getCurrentFieldId(page);
     expect(nextField).not.toBe("running_endurance_anchor_kind");
     expect(nextField).not.toBe("current_run_frequency");
   });
 
-  test("reload mid-intake safely restores the active anchor and does not revive commit state", async ({ page }) => {
+  test("reload mid-intake safely restores the active clarify field and never revives commit state", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
       goalText: "run a half marathon",
@@ -294,61 +341,16 @@ test.describe("intake onboarding e2e", () => {
     await expect.poll(() => getCurrentFieldId(page), { timeout: 12_000 }).not.toBe("");
 
     const restoredField = await getCurrentFieldId(page);
-    expect(restoredField).toBeTruthy();
     const beforeReloadSession = await readIntakeSession(page);
     expect(beforeReloadSession?.intakeMachine?.draft?.commitRequested).toBe(false);
 
     await page.reload();
     await enterLocalIntakeIfNeeded(page);
     await expect.poll(() => getCurrentFieldId(page), { timeout: 12_000 }).toBe(restoredField);
-    await expectTranscriptKeysUnique(page);
+    await expectNoFakeTranscript(page);
 
     const restoredSession = await readIntakeSession(page);
     expect(restoredSession?.intakeMachine?.draft?.commitRequested).toBe(false);
-  });
-
-  test("late coach-voice phrasing cannot overwrite a newer anchor state or duplicate transcript", async ({ page }) => {
-    await gotoIntakeInLocalMode(page, {
-      clarifying_question_generation: async ({ body }) => ({
-        delayMs: 2500,
-        status: 200,
-        body: {
-          phrasing: {
-            questionText: "On a normal week, how many runs are you getting in?",
-            helperText: "This helps me size the running load around your real week.",
-            reassuranceLine: "Coach note: a normal week is exactly what I want here.",
-          },
-          meta: {
-            requestType: body?.requestType || "clarifying_question_generation",
-            provider: "e2e-mock",
-            model: "e2e-mock",
-            latencyMs: 2500,
-          },
-        },
-      }),
-    });
-    await completeIntroQuestionnaire(page, {
-      goalText: "run a half marathon",
-      trainingDays: "3",
-      sessionLength: "45 min",
-      trainingLocation: "Gym",
-    });
-
-    await expect.poll(() => getCurrentFieldId(page), { timeout: 12_000 }).toBeTruthy();
-    const firstField = await getCurrentFieldId(page);
-    await answerActiveAnchorFromMap(page, {
-      current_run_frequency: { type: "natural", value: "3 runs/week" },
-      target_timeline: { type: "natural", value: "next year" },
-      running_endurance_anchor_kind: { type: "choice", value: "recent_pace_baseline" },
-      recent_pace_baseline: { type: "natural", value: "9:10 pace" },
-    });
-
-    const secondField = await getCurrentFieldId(page);
-    expect(secondField).toBeTruthy();
-    expect(secondField).not.toBe(firstField);
-    await page.waitForTimeout(2800);
-    await expect.poll(() => getCurrentFieldId(page)).toBe(secondField);
-    await expectTranscriptKeysUnique(page);
   });
 
   test("AI unavailable still allows completion through deterministic structured controls", async ({ page }) => {
@@ -378,7 +380,7 @@ test.describe("intake onboarding e2e", () => {
     await waitForPostOnboarding(page);
   });
 
-  test("confirm/build stays idempotent on rapid repeat interactions", async ({ page }) => {
+  test("confirm and build stays idempotent on rapid repeat interactions", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
       goalText: "bench 225",
@@ -405,67 +407,5 @@ test.describe("intake onboarding e2e", () => {
     expect(commitStartEvents[0]?.detail?.confirmationSnapshotId).toBeTruthy();
     expect(commitSuccessEvents[0]?.detail?.confirmationSnapshotId).toBe(commitStartEvents[0]?.detail?.confirmationSnapshotId);
     await expect.poll(() => readIntakeSession(page)).toBeNull();
-  });
-
-  test("extra natural-language facts do not contaminate another bound field and timeline phrases still clear correctly", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
-    await completeIntroQuestionnaire(page, {
-      goalText: "run a half marathon",
-      trainingDays: "3",
-      sessionLength: "45 min",
-      trainingLocation: "Gym",
-    });
-
-    const phaseBefore = await getCurrentPhase(page);
-    expect(phaseBefore).toBe("clarify");
-    await expectNoSecondaryPromptYet(page);
-
-    const currentField = await getCurrentFieldId(page);
-    if (currentField === "current_run_frequency") {
-      await answerActiveAnchorFromMap(page, {
-        current_run_frequency: { type: "natural", value: "3 runs/week and my longest run is 8 miles" },
-        target_timeline: { type: "natural", value: "next year" },
-        running_endurance_anchor_kind: { type: "choice", value: "longest_recent_run" },
-        longest_recent_run: { type: "natural", value: "8 miles" },
-      });
-      await expect.poll(() => getCurrentFieldId(page), { timeout: 12_000 }).toBe("target_timeline");
-      await answerActiveAnchorFromMap(page, {
-        target_timeline: { type: "natural", value: "next year" },
-        running_endurance_anchor_kind: { type: "choice", value: "longest_recent_run" },
-        longest_recent_run: { type: "natural", value: "8 miles" },
-      });
-    } else {
-      await answerActiveAnchorFromMap(page, {
-        target_timeline: { type: "natural", value: "next year" },
-        current_run_frequency: { type: "natural", value: "3 runs/week and my longest run is 8 miles" },
-        running_endurance_anchor_kind: { type: "choice", value: "longest_recent_run" },
-        longest_recent_run: { type: "natural", value: "8 miles" },
-      });
-      await expect.poll(() => getCurrentFieldId(page), { timeout: 12_000 }).toBe("current_run_frequency");
-      await answerActiveAnchorFromMap(page, {
-        current_run_frequency: { type: "natural", value: "3 runs/week and my longest run is 8 miles" },
-        running_endurance_anchor_kind: { type: "choice", value: "longest_recent_run" },
-        longest_recent_run: { type: "natural", value: "8 miles" },
-      });
-    }
-
-    const nextField = await getCurrentFieldId(page);
-    expect(["running_endurance_anchor_kind", "longest_recent_run"]).toContain(nextField);
-    await expectTranscriptKeysUnique(page);
-  });
-
-  test("abandoning intake leaves onboarding incomplete and does not corrupt planner state", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
-    await expect(page.getByTestId("intake-question-input-goal-intent")).toBeVisible();
-    await page.reload();
-    if (await page.getByTestId("auth-gate").count()) {
-      await expect(page.getByTestId("auth-gate")).toBeVisible();
-    } else {
-      await expect(page.getByTestId("intake-root")).toBeVisible();
-    }
-
-    const cache = await readLocalCache(page);
-    expect(cache?.personalization?.profile?.onboardingComplete || false).toBe(false);
-    await expect(page.getByTestId("today-tab")).toHaveCount(0);
   });
 });

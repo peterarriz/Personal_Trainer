@@ -211,7 +211,11 @@ test("review keeps background and later goals visible while planner-facing confi
   assert.equal(review.reviewContract.lead_goal?.summary, review.activeGoals[0]?.summary);
   assert.equal(review.reviewContract.maintained_goals[0]?.summary, review.activeGoals[1]?.summary);
   assert.equal(review.reviewContract.support_goals[0]?.summary, review.backgroundGoals[0]?.summary);
-  assert.match(review.reviewContract.tradeoff_statement, /leads now/i);
+  assert.equal(review.orderedGoalStack.items[0]?.priorityLabel, "Priority 1");
+  assert.equal(review.orderedGoalStack.items[1]?.priorityLabel, "Priority 2");
+  assert.equal(review.orderedGoalStack.items[2]?.priorityLabel, "Priority 3");
+  assert.match(review.reviewContract.tradeoff_statement, /Priority 1 is/i);
+  assert.match(review.reviewContract.tradeoff_statement, /Priority 3 is/i);
   assert.deepEqual(confirmedStack.map((goal) => goal.planningCategory), ["running", "strength"]);
 });
 

@@ -196,3 +196,21 @@ test("Program and Log history copy stays free of internal jargon", async ({ page
   await expect(page.getByText("SAVED WEEK HISTORY")).toBeVisible();
   await expect(page.getByText(/durable\s+PlanWeek|canonical\s+PlanWeek|PlanWeek snapshot/i)).toHaveCount(0);
 });
+
+test("Today keeps one workout surface and Log keeps detailed entry inside Log workout", async ({ page }) => {
+  await openApp(page);
+
+  const todayTab = page.getByTestId("today-tab");
+  await expect(todayTab).toBeVisible();
+  await expect(todayTab.getByTestId("planned-session-plan")).toHaveCount(1);
+  await expect(todayTab.getByText("LOG TODAY", { exact: true })).toHaveCount(1);
+
+  await openTab(page, "app-tab-log");
+  await expect(page.getByTestId("log-tab")).toBeVisible();
+  await expect(page.getByText("Detailed workout log")).toHaveCount(0);
+
+  await page.getByRole("button", { name: /open exercise-by-exercise entry/i }).click();
+  const detailedEntry = page.getByTestId("log-detailed-entry");
+  await expect(detailedEntry).toBeVisible();
+  await expect(detailedEntry.getByTestId("planned-session-plan")).toBeVisible();
+});

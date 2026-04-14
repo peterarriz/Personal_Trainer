@@ -527,6 +527,41 @@ const resolveTargetWindow = ({
     };
   }
 
+  const relativeWeeksMatch = corpus.match(/\b(?:in\s+)?(\d{1,2})\s*(?:week|weeks|wk|wks)\b/i);
+  if (relativeWeeksMatch?.[1]) {
+    return {
+      targetDate: "",
+      targetHorizonWeeks: Math.max(1, Math.min(104, Math.round(Number(relativeWeeksMatch[1])))),
+      isApproximate: true,
+    };
+  }
+
+  const relativeMonthsMatch = corpus.match(/\b(?:in\s+)?(\d{1,2})\s*(?:month|months|mo)\b/i);
+  if (relativeMonthsMatch?.[1]) {
+    return {
+      targetDate: "",
+      targetHorizonWeeks: Math.max(1, Math.min(104, Math.round(Number(relativeMonthsMatch[1]) * 4.35))),
+      isApproximate: true,
+    };
+  }
+
+  const relativeYearsMatch = corpus.match(/\b(?:in\s+)?(\d{1,2})\s*(?:year|years|yr|yrs)\b/i);
+  if (relativeYearsMatch?.[1]) {
+    return {
+      targetDate: "",
+      targetHorizonWeeks: Math.max(1, Math.min(104, Math.round(Number(relativeYearsMatch[1]) * 52))),
+      isApproximate: true,
+    };
+  }
+
+  if (/\bnext year\b/i.test(corpus)) {
+    return {
+      targetDate: "",
+      targetHorizonWeeks: 52,
+      isApproximate: true,
+    };
+  }
+
   const monthMatch = Object.keys(MONTH_INDEX).find((month) => new RegExp(`\\b${month}\\b`, "i").test(corpus));
   if (monthMatch) {
     const safeNow = asDate(now);
@@ -1074,21 +1109,17 @@ export const applyResolvedGoalsToGoalSlots = ({
   goalSlots = [],
 } = {}) => {
   const planningGoals = buildPlanningGoalsFromResolvedGoals({ resolvedGoals });
-  let planningIndex = 0;
-  return (Array.isArray(goalSlots) ? goalSlots : []).map((slot) => {
-    if (slot?.category === "injury_prevention" || slot?.id === "g_resilience") {
-      return {
-        ...slot,
-        active: true,
-      };
-    }
-    const nextGoal = planningGoals[planningIndex];
-    planningIndex += 1;
+  const slots = Array.isArray(goalSlots) ? goalSlots : [];
+  const resilienceSlot = slots.find((slot) => slot?.category === "injury_prevention" || slot?.id === "g_resilience") || null;
+  const planningSlots = slots.filter((slot) => !(slot?.category === "injury_prevention" || slot?.id === "g_resilience"));
+  const assignedGoals = planningSlots.map((slot, index) => {
+    const nextGoal = planningGoals[index];
     if (!nextGoal) {
       return {
         ...slot,
         active: false,
         targetDate: "",
+        targetHorizonWeeks: null,
         measurableTarget: "",
         resolvedGoal: null,
       };
@@ -1097,10 +1128,29 @@ export const applyResolvedGoalsToGoalSlots = ({
       ...slot,
       ...nextGoal,
       id: slot?.id || nextGoal.id,
-      priority: slot?.priority || nextGoal.priority,
+      priority: index + 1,
       active: true,
     };
   });
+  const overflowGoals = planningGoals.slice(planningSlots.length).map((goal, overflowIndex) => ({
+    ...goal,
+    id: `g_additional_${planningSlots.length + overflowIndex + 1}`,
+    priority: planningSlots.length + overflowIndex + 1,
+    active: true,
+  }));
+  const nextGoals = [
+    ...assignedGoals,
+    ...overflowGoals,
+  ];
+  if (!resilienceSlot) return nextGoals;
+  return [
+    ...nextGoals,
+    {
+      ...resilienceSlot,
+      active: true,
+      priority: nextGoals.length + 1,
+    },
+  ];
 };
 
 export const buildGoalStateFromResolvedGoals = ({

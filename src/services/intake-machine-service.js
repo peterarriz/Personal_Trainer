@@ -45,15 +45,55 @@ const normalizeTimestamp = (value = null) => {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
 };
+const asDate = (value = null) => {
+  if (!value) return new Date();
+  if (value instanceof Date) return new Date(value.getTime());
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+const MONTH_INDEX = {
+  january: 0,
+  february: 1,
+  march: 2,
+  april: 3,
+  may: 4,
+  june: 5,
+  july: 6,
+  august: 7,
+  september: 8,
+  october: 9,
+  november: 10,
+  december: 11,
+};
+const SEASON_MONTH_INDEX = {
+  spring: 2,
+  summer: 5,
+  fall: 8,
+  autumn: 8,
+  winter: 11,
+};
+const calculateWeeksUntilDate = ({
+  now = new Date(),
+  targetDate = null,
+} = {}) => {
+  if (!targetDate) return null;
+  const safeNow = asDate(now);
+  const safeTarget = asDate(targetDate);
+  const diffMs = safeTarget.getTime() - safeNow.getTime();
+  if (!Number.isFinite(diffMs) || diffMs <= 0) return 1;
+  return Math.max(1, Math.round(diffMs / (7 * 86400000)));
+};
 
 const normalizeGoalText = (value = "") => sanitizeText(value, 180).toLowerCase();
 const hasOwn = (value, key) => Boolean(value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, key));
 
 const parseFirstWeightLikeNumber = (text = "") => {
   const normalized = String(text || "").toLowerCase();
+  const topSet = normalized.match(/(\d{2,4}(?:\.\d+)?)\s*[x×]\s*\d{1,2}\b/i);
+  if (topSet?.[1]) return Number(topSet[1]);
   const explicit = normalized.match(/(\d{2,3}(?:\.\d+)?)\s*(?:lb|lbs|pounds?)/i);
   if (explicit?.[1]) return Number(explicit[1]);
-  const generic = normalized.match(/\b(\d{2,3}(?:\.\d+)?)\b/);
+  const generic = normalized.match(/\b(\d{2,4}(?:\.\d+)?)\b/);
   return generic?.[1] ? Number(generic[1]) : null;
 };
 
@@ -190,6 +230,111 @@ const readStoredField = (answers = {}, fieldKey = "") => {
   return stored && typeof stored === "object" ? stored : null;
 };
 
+const buildTimelineConfirmationEdits = ({
+  answers = {},
+  now = new Date(),
+} = {}) => {
+  const timelineRecord = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.targetTimeline);
+  const timelineValue = sanitizeText(timelineRecord?.value || timelineRecord?.raw || answers?.timeline_feedback || "", 120);
+  if (!timelineValue) return {};
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(timelineValue)) {
+    return {
+      targetDate: timelineValue,
+      targetHorizonWeeks: calculateWeeksUntilDate({ now, targetDate: timelineValue }),
+    };
+  }
+
+  if (/^\d{4}-\d{2}$/.test(timelineValue)) {
+    const [yearText, monthText] = timelineValue.split("-");
+    const targetDate = new Date(Number(yearText), Math.max(0, Number(monthText) - 1), 1);
+    return {
+      targetHorizonWeeks: calculateWeeksUntilDate({ now, targetDate }),
+    };
+  }
+
+  const lowerTimeline = timelineValue.toLowerCase();
+  const relativeWeeksMatch = lowerTimeline.match(/\b(\d{1,2})\s*(?:week|weeks|wk|wks)\b/);
+  if (relativeWeeksMatch?.[1]) {
+    return {
+      targetHorizonWeeks: Math.max(1, Math.min(104, Math.round(Number(relativeWeeksMatch[1])))),
+    };
+  }
+
+  const relativeMonthsMatch = lowerTimeline.match(/\b(\d{1,2})\s*(?:month|months|mo)\b/);
+  if (relativeMonthsMatch?.[1]) {
+    return {
+      targetHorizonWeeks: Math.max(1, Math.min(104, Math.round(Number(relativeMonthsMatch[1]) * 4.35))),
+    };
+  }
+
+  const relativeYearsMatch = lowerTimeline.match(/\b(\d{1,2})\s*(?:year|years|yr|yrs)\b/);
+  if (relativeYearsMatch?.[1]) {
+    return {
+      targetHorizonWeeks: Math.max(1, Math.min(104, Math.round(Number(relativeYearsMatch[1]) * 52))),
+    };
+  }
+
+  if (/\bnext year\b/i.test(lowerTimeline)) {
+    return {
+      targetHorizonWeeks: 52,
+    };
+  }
+
+  const monthMatch = Object.keys(MONTH_INDEX).find((month) => new RegExp(`\\b${month}\\b`, "i").test(lowerTimeline));
+  if (monthMatch) {
+    const safeNow = asDate(now);
+    let year = safeNow.getFullYear();
+    const monthIndex = MONTH_INDEX[monthMatch];
+    if (monthIndex < safeNow.getMonth()) year += 1;
+    return {
+      targetHorizonWeeks: calculateWeeksUntilDate({ now: safeNow, targetDate: new Date(year, monthIndex, 1) }),
+    };
+  }
+
+  const seasonMatch = Object.keys(SEASON_MONTH_INDEX).find((season) => new RegExp(`\\b${season}\\b`, "i").test(lowerTimeline));
+  if (seasonMatch) {
+    const safeNow = asDate(now);
+    let year = safeNow.getFullYear();
+    const monthIndex = SEASON_MONTH_INDEX[seasonMatch];
+    if (monthIndex < safeNow.getMonth()) year += 1;
+    return {
+      targetHorizonWeeks: calculateWeeksUntilDate({ now: safeNow, targetDate: new Date(year, monthIndex, 1) }),
+    };
+  }
+
+  return {};
+};
+
+const buildIntakeMachineGoalConfirmation = ({
+  answers = {},
+  confirmed = false,
+  source = "intake_machine",
+  now = new Date(),
+} = {}) => ({
+  confirmed,
+  acceptedProposal: true,
+  source: sanitizeText(source, 40) || "intake_machine",
+  edits: buildTimelineConfirmationEdits({ answers, now }),
+});
+
+const buildDeterministicTypedIntakePacket = ({
+  typedIntakePacket = null,
+  rawGoalText = "",
+} = {}) => {
+  const normalizedPacket = typedIntakePacket && typeof typedIntakePacket === "object"
+    ? typedIntakePacket
+    : { version: "2026-04-v1", intent: "intake_interpretation", intake: {} };
+  const intakeContext = normalizedPacket?.intake || normalizedPacket?.intakeContext || {};
+  return {
+    ...normalizedPacket,
+    intake: {
+      ...intakeContext,
+      rawGoalText,
+    },
+  };
+};
+
 const buildAnchorBindingTarget = (anchor = null) => ({
   anchor_id: sanitizeText(anchor?.anchor_id || "", 120),
   field_id: sanitizeText(anchor?.field_id || "", 80),
@@ -259,26 +404,34 @@ const buildConfirmedArbitrationInputs = ({
 } = {}) => {
   const primaryGoalText = sanitizeText(answers?.goal_intent || "", 320);
   const additionalGoalTexts = readAdditionalGoalEntries({ answers });
+  const primaryGoalConfirmation = buildIntakeMachineGoalConfirmation({
+    answers,
+    confirmed: true,
+    source: "confirmed_primary_goal",
+    now,
+  });
   const confirmedPrimaryGoal = primaryGoalText
     ? resolveGoalTranslation({
         rawUserGoalIntent: primaryGoalText,
-        typedIntakePacket: buildArbitrationIntakePacket({
-          typedIntakePacket,
+        typedIntakePacket: buildDeterministicTypedIntakePacket({
+          typedIntakePacket: buildArbitrationIntakePacket({
+            typedIntakePacket,
+            rawGoalText: primaryGoalText,
+          }),
           rawGoalText: primaryGoalText,
         }),
-        explicitUserConfirmation: {
-          confirmed: true,
-          acceptedProposal: true,
-          source: "confirmed_primary_goal",
-        },
+        explicitUserConfirmation: primaryGoalConfirmation,
         now,
       })?.resolvedGoals?.[0] || null
     : null;
   const confirmedAdditionalGoals = additionalGoalTexts.flatMap((goalText) => {
     const resolution = resolveGoalTranslation({
       rawUserGoalIntent: goalText,
-      typedIntakePacket: buildArbitrationIntakePacket({
-        typedIntakePacket,
+      typedIntakePacket: buildDeterministicTypedIntakePacket({
+        typedIntakePacket: buildArbitrationIntakePacket({
+          typedIntakePacket,
+          rawGoalText: goalText,
+        }),
         rawGoalText: goalText,
       }),
       explicitUserConfirmation: {
@@ -1761,22 +1914,21 @@ const buildDeterministicIntakeDraft = ({
     : { version: "2026-04-v1", intent: "intake_interpretation", intake: {} };
   const intakeContext = normalizedPacket?.intake || normalizedPacket?.intakeContext || {};
   const rawGoalText = sanitizeText(intakeContext?.rawGoalText || answers?.goal_intent || "", 320);
-  const typedPacket = {
-    ...normalizedPacket,
-    intake: {
-      ...intakeContext,
-      rawGoalText,
-    },
-  };
+  const typedPacket = buildDeterministicTypedIntakePacket({
+    typedIntakePacket: normalizedPacket,
+    rawGoalText,
+  });
+  const resolvedIntakeContext = typedPacket?.intake || typedPacket?.intakeContext || {};
   const goalResolution = resolveGoalTranslation({
     rawUserGoalIntent: rawGoalText,
     typedIntakePacket: typedPacket,
     aiInterpretationProposal,
-    explicitUserConfirmation: {
+    explicitUserConfirmation: buildIntakeMachineGoalConfirmation({
+      answers,
       confirmed: false,
-      acceptedProposal: true,
       source: "intake_machine",
-    },
+      now,
+    }),
     now,
   });
   const previewCompleteness = deriveIntakeCompletenessState({
@@ -1785,7 +1937,7 @@ const buildDeterministicIntakeDraft = ({
   });
   const previewGoalFeasibility = assessGoalFeasibility({
     resolvedGoals: goalResolution?.resolvedGoals || [],
-    ...buildGoalFeasibilityContextFromIntake(intakeContext),
+    ...buildGoalFeasibilityContextFromIntake(resolvedIntakeContext),
     intakeCompleteness: previewCompleteness,
     now,
   });
@@ -2404,20 +2556,6 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
       }
       const confirmationStatus = sanitizeText(currentDraft?.confirmationState?.status || "", 20).toLowerCase();
       const statusAllowsConfirm = confirmationStatus === "warn" || confirmationStatus === "proceed";
-      if (currentDraft?.confirmationState?.requiresAcknowledgement && !Boolean(event?.payload?.acknowledged_warning)) {
-        return commitTransition({
-          state,
-          event,
-          nextStage: INTAKE_MACHINE_STATES.REVIEW_CONFIRM,
-          patch: {
-            ui: {
-              ...(state.ui || {}),
-              clearReason: "Please confirm that you understand this timeline is aggressive.",
-              currentBindingTarget: null,
-            },
-          },
-        });
-      }
       if (!statusAllowsConfirm || !currentDraft?.confirmationState?.canConfirm) {
         return commitTransition({
           state,

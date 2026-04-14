@@ -11,6 +11,19 @@ const toTestIdFragment = (value = "") => String(value || "")
   .slice(0, 80);
 
 const normalizeText = (value = "") => String(value || "").trim().toLowerCase();
+const normalizeExperienceLevelValue = (value = "") => {
+  const normalized = normalizeText(value);
+  if (normalized === "advanced") return "advanced";
+  if (normalized === "beginner" || normalized === "brand new") return "beginner";
+  return "intermediate";
+};
+const normalizeSessionLengthValue = (value = "") => {
+  const normalized = normalizeText(value);
+  if (normalized.startsWith("20")) return "20";
+  if (normalized.startsWith("30")) return "30";
+  if (normalized.startsWith("60")) return "60+";
+  return "45";
+};
 
 const jsonResponse = ({ status = 200, body = {} } = {}) => ({
   status,
@@ -320,9 +333,10 @@ async function enterLocalIntakeIfNeeded(page) {
   const waitForIntakeSurface = async () => {
     await expect.poll(async () => {
       const visibleStates = await Promise.all([
-        page.getByTestId("intake-question-step").isVisible().catch(() => false),
-        page.getByTestId("intake-structured-step").isVisible().catch(() => false),
-        page.getByTestId("intake-secondary-goal-step").isVisible().catch(() => false),
+        page.getByTestId("intake-goals-step").isVisible().catch(() => false),
+        page.getByTestId("intake-interpretation-step").isVisible().catch(() => false),
+        page.getByTestId("intake-clarify-step").isVisible().catch(() => false),
+        page.getByTestId("intake-confirm-step").isVisible().catch(() => false),
         page.getByTestId("intake-review").isVisible().catch(() => false),
         page.getByTestId("intake-building").isVisible().catch(() => false),
       ]);
@@ -339,6 +353,12 @@ async function enterLocalIntakeIfNeeded(page) {
   if (await authGate.count()) {
     await expect(authGate).toBeVisible();
     await page.getByTestId("continue-local-mode").click();
+    await expect.poll(async () => {
+      const profileVisible = await page.getByTestId("profile-setup-gate").isVisible().catch(() => false);
+      if (profileVisible) return "profile";
+      const intakeVisible = await page.getByTestId("intake-root").isVisible().catch(() => false);
+      return intakeVisible ? "intake" : "";
+    }, { timeout: 12_000 }).toMatch(/profile|intake/);
   }
   const profileGate = page.getByTestId("profile-setup-gate");
   if (await profileGate.count()) {
@@ -352,6 +372,16 @@ async function enterLocalIntakeIfNeeded(page) {
 async function gotoIntakeInLocalMode(page, handlers = {}) {
   await installStorageInstrumentation(page);
   await installIntakeAiMocks(page, handlers);
+  await page.addInitScript((localCacheKey) => {
+    try {
+      if (!window.localStorage.getItem(localCacheKey)) {
+        window.localStorage.setItem(localCacheKey, JSON.stringify({
+          goals: [],
+          personalization: null,
+        }));
+      }
+    } catch {}
+  }, LOCAL_CACHE_KEY);
   await page.goto("/");
   await enterLocalIntakeIfNeeded(page);
 }
@@ -382,6 +412,7 @@ async function getConfirmationStatus(page) {
 
 async function completeIntroQuestionnaire(page, {
   goalText,
+  additionalGoals = [],
   experienceLevel = "Intermediate",
   trainingDays = "3",
   sessionLength = "45 min",
@@ -390,43 +421,60 @@ async function completeIntroQuestionnaire(page, {
   homeEquipmentOther = "",
   injuryText = "",
   injuryImpact = "",
-  skipInjury = true,
   coachingStyle = "Balanced coaching",
+  stopAtInterpretation = false,
 } = {}) {
-  await expect(page.getByTestId("intake-question-input-goal-intent")).toBeVisible();
+  const experienceLevelValue = normalizeExperienceLevelValue(experienceLevel);
+  const sessionLengthValue = normalizeSessionLengthValue(sessionLength);
+  await expect(page.getByTestId("intake-goals-step")).toBeVisible();
   if (String(goalText || "").trim()) {
-    await page.getByTestId("intake-question-input-goal-intent").fill(goalText);
-    await page.getByTestId("intake-question-send").click();
+    await page.getByTestId("intake-goals-primary-input").fill(goalText);
   } else {
-    await page.getByTestId("intake-question-foundation").click();
+    await page.getByTestId("intake-footer-foundation").click();
+    return;
   }
-  await page.getByTestId(`intake-question-option-experience-level-${toTestIdFragment(experienceLevel)}`).click();
-  await page.getByTestId(`intake-question-option-training-days-${toTestIdFragment(trainingDays)}`).click();
-  await page.getByTestId(`intake-question-option-session-length-${toTestIdFragment(sessionLength)}`).click();
-  await page.getByTestId(`intake-question-option-training-location-${toTestIdFragment(trainingLocation)}`).click();
+
+  for (const goal of additionalGoals) {
+    await page.getByTestId("intake-goals-secondary-input").fill(String(goal));
+    await page.getByTestId("intake-goals-add").click();
+  }
+
+  await page.getByTestId(`intake-goals-option-experience-level-${toTestIdFragment(experienceLevelValue)}`).click();
+  await page.getByTestId(`intake-goals-option-training-days-${toTestIdFragment(trainingDays)}`).click();
+  await page.getByTestId(`intake-goals-option-session-length-${toTestIdFragment(sessionLengthValue)}`).click();
+  await page.getByTestId(`intake-goals-option-training-location-${toTestIdFragment(trainingLocation)}`).click();
 
   if (trainingLocation === "Home" || trainingLocation === "Both") {
     for (const option of homeEquipment) {
-      await page.getByTestId(`intake-question-option-home-equipment-${toTestIdFragment(option)}`).click();
+      await page.getByTestId(`intake-goals-option-home-equipment-${toTestIdFragment(option)}`).click();
     }
     if (homeEquipment.includes("Other") && homeEquipmentOther) {
-      await page.getByTestId("intake-question-input-home-equipment-other").fill(homeEquipmentOther);
-    }
-    await page.getByTestId("intake-question-continue").click();
-  }
-
-  if (skipInjury) {
-    await page.getByTestId("intake-question-skip").click();
-  } else {
-    await page.getByTestId("intake-question-input-injury-text").fill(injuryText);
-    await page.getByTestId("intake-question-send").click();
-    if (injuryImpact) {
-      await page.getByTestId(`intake-question-option-injury-impact-${toTestIdFragment(injuryImpact)}`).click();
+      await page.getByTestId("intake-goals-input-home-equipment-other").fill(homeEquipmentOther);
     }
   }
 
-  await page.getByTestId(`intake-question-option-coaching-style-${toTestIdFragment(coachingStyle)}`).click();
-  await expect(page.getByTestId("intake-structured-step")).toBeVisible({ timeout: 20_000 });
+  if (String(injuryText || "").trim()) {
+    await page.getByTestId("intake-goals-input-injury-text").fill(injuryText);
+  }
+  if (injuryImpact) {
+    await page.getByTestId(`intake-goals-option-injury-impact-${toTestIdFragment(injuryImpact)}`).click();
+  }
+
+  await page.getByTestId(`intake-goals-option-coaching-style-${toTestIdFragment(coachingStyle)}`).click();
+  await page.getByTestId("intake-footer-continue").click();
+  await expect(page.getByTestId("intake-interpretation-step")).toBeVisible({ timeout: 20_000 });
+
+  if (stopAtInterpretation) return;
+
+  await page.getByTestId("intake-footer-continue").click();
+  await expect.poll(async () => await getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm/);
+  const phase = await getCurrentPhase(page);
+  if (phase === "clarify") {
+    await expect(page.getByTestId("intake-clarify-step")).toBeVisible();
+  }
+  if (phase === "confirm") {
+    await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
+  }
 }
 
 async function completeProfileSetup(page, overrides = {}) {
@@ -547,6 +595,10 @@ async function answerCurrentAnchor(page, response = {}) {
       }
     }
   } else if (response.type === "number") {
+    const structuredToggle = page.getByTestId("intake-anchor-toggle-structured");
+    if (await structuredToggle.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await structuredToggle.click();
+    }
     await page.getByTestId(`intake-anchor-input-${fieldFragment}`).fill(String(response.value));
     if (response.unit) {
       const unitButton = page.getByTestId(`intake-anchor-unit-${fieldFragment}-${toTestIdFragment(response.unit)}`);
@@ -557,9 +609,17 @@ async function answerCurrentAnchor(page, response = {}) {
   } else if (response.type === "text") {
     await page.getByTestId(`intake-anchor-input-${fieldFragment}`).fill(String(response.value));
   } else if (response.type === "date_or_month") {
+    const structuredToggle = page.getByTestId("intake-anchor-toggle-structured");
+    if (await structuredToggle.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await structuredToggle.click();
+    }
     const input = page.getByTestId(`intake-anchor-input-${fieldFragment}`);
     await input.fill(String(response.value));
   } else if (response.type === "strength_top_set") {
+    const structuredToggle = page.getByTestId("intake-anchor-toggle-structured");
+    if (await structuredToggle.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await structuredToggle.click();
+    }
     if (response.mode === "estimated_max") {
       await page.getByTestId(`intake-anchor-mode-${fieldFragment}-estimated-max`).click();
     }
@@ -571,7 +631,7 @@ async function answerCurrentAnchor(page, response = {}) {
     throw new Error(`Unsupported anchor response type for ${fieldId}: ${response.type || "unknown"}`);
   }
 
-  await page.getByTestId("intake-save-detail").click();
+  await page.getByTestId("intake-footer-continue").click();
 }
 
 async function completeAnchors(page, responsesByFieldId = {}, options = {}) {
@@ -589,14 +649,14 @@ async function completeAnchors(page, responsesByFieldId = {}, options = {}) {
     const before = JSON.stringify({
       phase,
       fieldId,
-      messages: await page.locator("[data-testid='intake-message']").count(),
+      confirmationStatus: await getConfirmationStatus(page),
     });
     visited.push(fieldId);
     await answerCurrentAnchor(page, typeof response === "function" ? await response(page, fieldId) : response);
     await expect.poll(async () => JSON.stringify({
       phase: await getCurrentPhase(page),
       fieldId: await getCurrentFieldId(page),
-      messages: await page.locator("[data-testid='intake-message']").count(),
+      confirmationStatus: await getConfirmationStatus(page),
     }), {
       timeout: 12_000,
     }).not.toBe(before);
@@ -605,25 +665,29 @@ async function completeAnchors(page, responsesByFieldId = {}, options = {}) {
 }
 
 async function waitForReview(page) {
-  const keepGoalButton = page.getByTestId("intake-keep-goal");
-  const continueSecondaryGoalButton = page.getByTestId("intake-secondary-continue");
-  await expect.poll(async () => {
-    const phase = await getCurrentPhase(page);
-    if (phase === "clarify" && await keepGoalButton.count() && await keepGoalButton.isVisible()) {
-      await keepGoalButton.click();
-      return "transitioning";
-    }
-    if (phase === "secondary_goal" && await continueSecondaryGoalButton.count() && await continueSecondaryGoalButton.isVisible()) {
-      await continueSecondaryGoalButton.click();
-      return "transitioning";
-    }
-    return phase;
-  }, { timeout: 20_000 }).toBe("review");
+  await expect.poll(async () => await getCurrentPhase(page), { timeout: 20_000 }).toBe("confirm");
+  await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
   await expect(page.getByTestId("intake-review")).toBeVisible();
 }
 
 async function waitForPostOnboarding(page) {
-  await expect(page.getByTestId("app-root")).toHaveAttribute("data-onboarding-complete", "true", { timeout: 20_000 });
+  await expect.poll(async () => {
+    const appEvents = await getAppEvents(page);
+    const commitEvents = appEvents.filter((entry) => entry?.type === "trainer:intake-commit");
+    const latestCommitEvent = commitEvents.length ? commitEvents[commitEvents.length - 1] : null;
+    const commitPhase = latestCommitEvent?.detail?.phase || "";
+    if (commitPhase === "failure") {
+      return `failure:${latestCommitEvent?.detail?.message || "unknown"}`;
+    }
+    const onboardingComplete = await page.getByTestId("app-root").getAttribute("data-onboarding-complete").catch(() => "");
+    if (onboardingComplete === "true") return "success";
+    if (commitPhase === "success") return "success";
+    if (commitPhase === "start") return "building";
+    return "pending";
+  }, {
+    timeout: 45_000,
+    message: "Expected onboarding to finish after confirming the intake stack.",
+  }).toBe("success");
   await expect(page.getByTestId("app-tab-today")).toBeVisible();
   await page.getByTestId("app-tab-today").click();
   await expect(page.getByTestId("today-session-card")).toBeVisible();
@@ -631,9 +695,6 @@ async function waitForPostOnboarding(page) {
 
 async function confirmIntakeBuild(page, { rapidRepeat = false } = {}) {
   const confirmationStatus = await getConfirmationStatus(page);
-  if (confirmationStatus === "warn" && await page.getByTestId("intake-warning-ack-checkbox").count()) {
-    await page.getByTestId("intake-warning-ack-checkbox").check();
-  }
   if (confirmationStatus === "block" || confirmationStatus === "incomplete") {
     const message = await page.getByTestId("intake-confirmation-message").textContent().catch(() => "");
     throw new Error(`Cannot confirm intake from ${confirmationStatus}: ${String(message || "").trim()}`);
@@ -645,14 +706,6 @@ async function confirmIntakeBuild(page, { rapidRepeat = false } = {}) {
     return;
   }
   await confirmButton.click();
-}
-
-async function getTranscriptEntries(page) {
-  return page.locator("[data-testid='intake-message']").evaluateAll((nodes) => nodes.map((node) => ({
-    key: node.getAttribute("data-message-key") || "",
-    role: node.getAttribute("data-message-role") || "",
-    text: node.textContent || "",
-  })));
 }
 
 async function getStorageOps(page) {
@@ -701,7 +754,6 @@ module.exports = {
   getCurrentQuestionKey,
   getCurrentStage,
   getStorageOps,
-  getTranscriptEntries,
   gotoIntakeInLocalMode,
   readIntakeSession,
   readLocalCache,

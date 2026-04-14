@@ -36,23 +36,29 @@ const resolveRestoredPhase = ({
   intakeMachine = null,
   pendingSecondaryGoalPrompt = null,
 } = {}) => {
+  const normalizedPhase = sanitizeText(phase, 40).toLowerCase();
   const machineStage = sanitizeText(intakeMachine?.stage || "", 80);
   const hasCurrentAnchor = Boolean(
     sanitizeText(intakeMachine?.draft?.missingAnchorsEngine?.currentAnchor?.anchor_id || "", 120)
     && sanitizeText(intakeMachine?.draft?.missingAnchorsEngine?.currentAnchor?.field_id || "", 80)
   );
-  if (sanitizeText(phase, 40) === "adjust") return "adjust";
-  if (machineStage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) return hasCurrentAnchor ? "clarify" : "review";
-  if (pendingSecondaryGoalPrompt && machineStage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM) return "secondary_goal";
+  if (normalizedPhase === "adjust") return "adjust";
+  if (machineStage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) return hasCurrentAnchor ? "clarify" : "confirm";
+  if (normalizedPhase === "interpretation" && machineStage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM) return "interpretation";
   if (
     machineStage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
     || machineStage === INTAKE_MACHINE_STATES.REALISM_GATE
     || machineStage === INTAKE_MACHINE_STATES.GOAL_ARBITRATION
     || machineStage === INTAKE_MACHINE_STATES.COMMIT
   ) {
-    return "review";
+    return "confirm";
   }
-  return "questions";
+  if (normalizedPhase === "confirm" || normalizedPhase === "review" || normalizedPhase === "secondary_goal") {
+    return "confirm";
+  }
+  if (normalizedPhase === "clarify") return "clarify";
+  if (normalizedPhase === "interpretation") return "interpretation";
+  return "goals";
 };
 
 const normalizeIntakeMachineSnapshot = (intakeMachine = null) => {
@@ -105,7 +111,7 @@ export const buildPersistableIntakeSession = ({
   answers = {},
   stepIndex = 0,
   draft = "",
-  phase = "questions",
+  phase = "goals",
   assessmentText = "",
   assessmentBoundary = null,
   assessmentPreview = null,
