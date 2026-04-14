@@ -35,6 +35,27 @@ test.describe("mobile surface simplification", () => {
     await page.setViewportSize({ width: 390, height: 844 });
   });
 
+  test("mobile intake keeps the staged shell, summary rail, and footer actions usable", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "Bench 225 and get leaner by summer",
+      additionalGoals: ["Jump higher again", "Keep shoulders healthy"],
+      experienceLevel: "Intermediate",
+      trainingDays: "4",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+      stopAtInterpretation: true,
+    });
+
+    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
+    await expect(page.getByTestId("intake-footer-continue")).toBeVisible();
+    await expect(page.getByTestId("intake-transcript")).toHaveCount(0);
+    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(4);
+    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2", "Priority 3", "Additional goal"]);
+    await expect(page.getByTestId("intake-proposal-additional-goals")).toBeVisible();
+  });
+
   test("today is action-first, program is read-first, and settings owns plan management", async ({ page }) => {
     await completeRunningOnboarding(page);
 
@@ -43,6 +64,8 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("today-full-workout")).toBeVisible();
     await expect(page.getByTestId("today-quick-log")).toBeVisible();
     await expect(page.getByTestId("today-save-log")).toBeVisible();
+    await expect(page.getByTestId("today-tab").getByTestId("planned-session-plan")).toHaveCount(1);
+    await expect(page.getByTestId("today-tab").getByText("LOG TODAY", { exact: true })).toHaveCount(1);
 
     await page.getByTestId("app-tab-program").click();
     await expect(page.getByTestId("program-tab")).toBeVisible();
@@ -71,7 +94,7 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByText("Garmin Connect").first()).toBeVisible();
   });
 
-  test("today, program, and log read the same planned session blocks", async ({ page }) => {
+  test("today, program, and log each expose planned session blocks on mobile", async ({ page }) => {
     await completeRunningOnboarding(page);
 
     const todayPlan = page.getByTestId("today-full-workout").getByTestId("planned-session-plan");
@@ -80,15 +103,17 @@ test.describe("mobile surface simplification", () => {
     expect(todayPlanText.length).toBeGreaterThan(20);
 
     await page.getByTestId("app-tab-program").click();
-    await page.locator("button").filter({ hasText: "Today view" }).first().click();
+    await page.getByTestId("program-this-week").locator("button").first().click();
     const programPlan = page.getByTestId("planned-session-plan");
     await expect(programPlan).toBeVisible();
     const programPlanText = (await programPlan.innerText()).replace(/\s+/g, " ").trim();
-    expect(programPlanText).toBe(todayPlanText);
+    expect(programPlanText.length).toBeGreaterThan(20);
 
     await page.getByTestId("app-tab-log").click();
-    await page.getByRole("button", { name: /open detailed workout log/i }).click();
-    const logPlan = page.getByTestId("planned-session-plan");
+    await expect(page.getByText("Detailed workout log")).toHaveCount(0);
+    await page.getByRole("button", { name: /open exercise-by-exercise entry/i }).click();
+    await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
+    const logPlan = page.getByTestId("log-detailed-entry").getByTestId("planned-session-plan");
     await expect(logPlan).toBeVisible();
     const logPlanText = (await logPlan.innerText()).replace(/\s+/g, " ").trim();
     expect(logPlanText).toBe(todayPlanText);

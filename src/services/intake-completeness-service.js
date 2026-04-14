@@ -89,9 +89,11 @@ const readFiniteNumber = (value = "") => {
 
 const parseFirstWeightLikeNumber = (text = "") => {
   const normalized = String(text || "").toLowerCase();
+  const topSet = normalized.match(/(\d{2,4}(?:\.\d+)?)\s*[x×]\s*\d{1,2}\b/i);
+  if (topSet?.[1]) return Number(topSet[1]);
   const explicit = normalized.match(/(\d{2,3}(?:\.\d+)?)\s*(?:lb|lbs|pounds?)/i);
   if (explicit?.[1]) return Number(explicit[1]);
-  const generic = normalized.match(/\b(\d{2,3}(?:\.\d+)?)\b/);
+  const generic = normalized.match(/\b(\d{2,4}(?:\.\d+)?)\b/);
   return generic?.[1] ? Number(generic[1]) : null;
 };
 

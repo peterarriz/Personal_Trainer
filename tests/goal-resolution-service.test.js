@@ -152,6 +152,19 @@ test("measurable event goals infer a usable horizon from season language", () =>
   assert.ok(!result.unresolvedGaps.some((gap) => /target race date or horizon/i.test(gap)));
 });
 
+test("strength goals preserve relative week timelines from raw user wording", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "bench 225 in 6 weeks",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "bench 225 in 6 weeks" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals[0].planningCategory, "strength");
+  assert.equal(result.resolvedGoals[0].targetDate, "");
+  assert.equal(result.resolvedGoals[0].targetHorizonWeeks, 6);
+});
+
 test("resolves a fully measurable strength goal into logged-lift planning input", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "bench 225",
@@ -374,4 +387,93 @@ test("resolved goals populate canonical goal slots so planner-facing normalizati
   assert.match(normalized[0].measurableTarget, /Waist circumference|30 days/i);
   assert.equal(normalized[3].category, "injury_prevention");
   assert.equal(normalized[3].active, true);
+});
+
+test("resolved goals can overflow past the legacy slot count while keeping resilience at the end", () => {
+  const overflowResolvedGoals = [
+    {
+      id: "goal_strength_main",
+      summary: "Bench press 225 lb",
+      planningCategory: "strength",
+      goalFamily: "strength",
+      planningPriority: 1,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.fullyMeasurable,
+      primaryMetric: { key: "bench_press_1rm", label: "Bench 1RM", targetValue: "225", unit: "lb" },
+      targetDate: "",
+      targetHorizonWeeks: 12,
+      confidence: "medium",
+      tradeoffs: [],
+      unresolvedGaps: [],
+      first30DaySuccessDefinition: "Complete 8 bench sessions in 30 days.",
+      reviewCadence: "weekly",
+      refinementTrigger: "30_day_resolution_review",
+      confirmedByUser: true,
+    },
+    {
+      id: "goal_body_comp",
+      summary: "Get leaner by summer",
+      planningCategory: "body_comp",
+      goalFamily: "body_comp",
+      planningPriority: 2,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.proxyMeasurable,
+      proxyMetrics: [{ key: "waist", label: "Waist trend", unit: "in" }],
+      targetDate: "",
+      targetHorizonWeeks: 12,
+      confidence: "medium",
+      tradeoffs: [],
+      unresolvedGaps: [],
+      first30DaySuccessDefinition: "Log waist and bodyweight for 30 days.",
+      reviewCadence: "weekly",
+      refinementTrigger: "30_day_resolution_review",
+      confirmedByUser: true,
+    },
+    {
+      id: "goal_running",
+      summary: "Run a half marathon",
+      planningCategory: "running",
+      goalFamily: "performance",
+      planningPriority: 3,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.proxyMeasurable,
+      proxyMetrics: [{ key: "weekly_run_frequency", label: "Weekly run frequency", unit: "sessions" }],
+      targetDate: "",
+      targetHorizonWeeks: 16,
+      confidence: "medium",
+      tradeoffs: [],
+      unresolvedGaps: [],
+      first30DaySuccessDefinition: "Complete 8 aerobic sessions in 30 days.",
+      reviewCadence: "weekly",
+      refinementTrigger: "30_day_resolution_review",
+      confirmedByUser: true,
+    },
+    {
+      id: "goal_extra_power",
+      summary: "Jump higher again",
+      planningCategory: "strength",
+      goalFamily: "athletic_power",
+      planningPriority: 4,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.proxyMeasurable,
+      proxyMetrics: [{ key: "jump_height", label: "Vertical jump", unit: "in" }],
+      targetDate: "",
+      targetHorizonWeeks: 10,
+      confidence: "medium",
+      tradeoffs: [],
+      unresolvedGaps: [],
+      first30DaySuccessDefinition: "Complete 8 lower-body power sessions in 30 days.",
+      reviewCadence: "weekly",
+      refinementTrigger: "30_day_resolution_review",
+      confirmedByUser: true,
+    },
+  ];
+
+  const slottedGoals = applyResolvedGoalsToGoalSlots({
+    resolvedGoals: overflowResolvedGoals,
+    goalSlots: DEFAULT_GOAL_SLOTS,
+  });
+  const normalized = normalizeGoals(slottedGoals);
+
+  assert.equal(normalized.filter((goal) => goal.active && goal.category !== "injury_prevention").length, 4);
+  assert.equal(normalized[3].name, "Jump higher again");
+  assert.equal(normalized[3].priority, 4);
+  assert.equal(normalized[4].id, "g_resilience");
+  assert.equal(normalized[4].priority, 5);
 });

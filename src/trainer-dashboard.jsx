@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, normalizeGoals, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
 import { createAuthStorageModule, buildStorageStatus, classifyStorageError, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
 import { getGoalContext, normalizeActualNutritionLog, resolveNutritionActualLogStoreCompat, compareNutritionPrescriptionToActual, getPlaceRecommendations, buildGroceryBasket, deriveGroceryExecutionSupport, mergeActualNutritionLogUpdate, applyHydrationQuickAdd } from "./modules-nutrition.js";
@@ -103,11 +103,15 @@ import {
   buildIntakeCompletenessPacketContext,
   buildIntakeConfirmationNeedsList,
   canAskSecondaryGoal,
+  buildIntakeMilestoneDecisionModel,
+  buildIntakeSummaryRailModel,
   buildIntakeGoalStackConfirmation,
   buildIntakeGoalStackReviewModel,
   buildIntakeGoalReviewModel,
   buildIntakeSecondaryGoalPrompt,
+  createIntakeMilestoneSelectionRecord,
   deriveIntakeConfirmationState,
+  INTAKE_MILESTONE_PATHS,
   buildRawGoalIntentFromAnswers,
   GOAL_REVIEW_LANE_KEYS,
   GOAL_STACK_ROLES,
@@ -135,6 +139,13 @@ import {
 import {
   buildMetricsBaselinesModel,
 } from "./services/metrics-baselines-service.js";
+import {
+  buildGoalEditorDraft,
+  buildGoalManagementPreview,
+  buildGoalSettingsViewModel,
+  GOAL_ARCHIVE_STATUSES,
+  GOAL_MANAGEMENT_CHANGE_TYPES,
+} from "./services/goal-management-service.js";
 import {
   buildSupportTierModel,
 } from "./services/support-tier-service.js";
@@ -281,7 +292,7 @@ const STRENGTH = {
       { ex:"Dead Bug", sets:"3×12 each side", note:"Low back glued to floor." },
     ],
     hotel: [
-      { ex:"Barbell Bench Press", sets:"5×5 → 4×8", note:"Start at ~135 lbs. Progressive overload weekly." },
+      { ex:"Barbell Bench Press", sets:"5×5 ? 4×8", note:"Start at ~135 lbs. Progressive overload weekly." },
       { ex:"Incline DB Press", sets:"4×10", note:"30-45° angle. Full stretch at bottom." },
       { ex:"Cable Chest Fly", sets:"4×12", note:"Slight forward lean. Squeeze hard at center." },
       { ex:"EZ Bar Curl", sets:"4×10", note:"Strict form. No body english." },
@@ -293,7 +304,7 @@ const STRENGTH = {
   },
   B: {
     home: [
-      { ex:"Push-up Complex (3 rounds)", sets:"Wide×15 → Std×15 → Diamond×12", note:"No rest within round. 90 sec between rounds. This is the abs killer too." },
+      { ex:"Push-up Complex (3 rounds)", sets:"Wide×15 ? Std×15 ? Diamond×12", note:"No rest within round. 90 sec between rounds. This is the abs killer too." },
       { ex:"Band Chest Press (one arm)", sets:"3×12 each", note:"Unilateral press challenges core stability." },
       { ex:"Band Bent-over Row", sets:"4×15", note:"Row to chest. Posture for racing." },
       { ex:"Band Overhead Press", sets:"4×12", note:"Stand on band. Full extension." },
@@ -319,7 +330,7 @@ const STRENGTH = {
 const ACHILLES = [
   { ex:"Eccentric Heel Drop (bilateral wks 1-4, single-leg wks 5+)", sets:"3×15 each leg", note:"The #1 exercise. 4-sec lower. Do EVERY day." },
   { ex:"Calf Stretch (straight leg)", sets:"2×60 sec each", note:"Deep stretch. Hold it." },
-  { ex:"Calf Stretch (bent knee)", sets:"2×60 sec each", note:"Targets soleus → Achilles directly." },
+  { ex:"Calf Stretch (bent knee)", sets:"2×60 sec each", note:"Targets soleus ? Achilles directly." },
   { ex:"Ankle Circles + Alphabet", sets:"1× each ankle", note:"Full mobility." },
   { ex:"Glute Bridge", sets:"3×15", note:"Strong glutes = less Achilles compensation." },
 ];
@@ -2358,6 +2369,7 @@ const extractAppearanceConstraints = (...values) => values
 const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } = {}) => {
   const primaryGoalKey = String(answers.primary_goal || "").trim();
   const primaryGoalLabel = PRIMARY_GOAL_LABELS[primaryGoalKey] || sanitizeIntakeText(String(answers.goal_intent || "").trim()).slice(0, 80) || primaryGoalKey || "General Fitness";
+  const additionalGoalEntries = readAdditionalGoalEntries({ answers });
   const experienceLabel = EXPERIENCE_LEVEL_LABELS[answers.experience_level] || String(answers.experience_level || "").trim();
   const sessionLengthLabel = SESSION_LENGTH_LABELS[answers.session_length] || String(answers.session_length || "").trim();
   const trainingLocation = String(answers.training_location || "").trim();
@@ -2380,10 +2392,9 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
     .map((value) => String(value || "").trim())
     .filter(Boolean)
     .slice(0, 4);
-  const rawGoalText = buildRawGoalIntentFromAnswers({
-    answers,
-    fallbackLabel: primaryGoalLabel,
-  });
+  const rawGoalText = sanitizeIntakeText(String(answers.goal_intent || "").trim())
+    || additionalGoalEntries[0]
+    || primaryGoalLabel;
 
   return {
     input: "Interpret this onboarding intake without writing canonical goal state.",
@@ -2801,6 +2812,118 @@ const DEFAULT_USER_GOAL_PROFILE = {
   constraints: [],
 };
 
+const INTAKE_UI_PHASES = {
+  goals: "goals",
+  interpretation: "interpretation",
+  clarify: "clarify",
+  confirm: "confirm",
+  adjust: "adjust",
+  building: "building",
+};
+
+const INTAKE_STAGE_LABELS = [
+  { key: INTAKE_UI_PHASES.goals, label: "Goals" },
+  { key: INTAKE_UI_PHASES.interpretation, label: "Interpretation" },
+  { key: INTAKE_UI_PHASES.clarify, label: "Clarify" },
+  { key: INTAKE_UI_PHASES.confirm, label: "Confirm" },
+  { key: INTAKE_UI_PHASES.building, label: "Build" },
+];
+
+const GOAL_STACK_PRIORITY_META = [
+  {
+    label: "Priority 1",
+    helper: "Gets the clearest push in this block.",
+    tint: C.green,
+  },
+  {
+    label: "Priority 2",
+    helper: "Preserved while Priority 1 drives most progression.",
+    tint: "#dbe7f6",
+  },
+  {
+    label: "Priority 3",
+    helper: "Still influences exercise selection and tracking where possible.",
+    tint: "#9fb4d3",
+  },
+];
+
+const resolveGoalPriorityCardMeta = (priorityIndex = null) => {
+  const normalizedPriorityIndex = Number.isFinite(Number(priorityIndex))
+    ? Math.max(0, Math.round(Number(priorityIndex)))
+    : null;
+  if (normalizedPriorityIndex !== null && normalizedPriorityIndex < GOAL_STACK_PRIORITY_META.length) {
+    return GOAL_STACK_PRIORITY_META[normalizedPriorityIndex];
+  }
+  return {
+    label: "Additional goal",
+    helper: "Still matters and stays visible even if it does not drive this block directly.",
+    tint: "#9fb4d3",
+  };
+};
+
+const normalizeIntakeGoalEntry = (value = "", maxLength = 180) => sanitizeIntakeText(String(value || "").replace(/\s+/g, " ").trim()).slice(0, maxLength);
+
+const dedupeIntakeGoalEntries = (items = []) => {
+  const seen = new Set();
+  return (Array.isArray(items) ? items : [items])
+    .map((item) => normalizeIntakeGoalEntry(item))
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const INTAKE_MULTI_GOAL_STARTERS = /^(?:get|lose|drop|bench|squat|deadlift|run|look|build|gain|keep|maintain|improve|move|be|become|add|cut|trim|finish|complete|hit|reach)\b/i;
+
+const splitPrimaryGoalEntryIntoStack = (value = "") => {
+  const normalized = normalizeIntakeGoalEntry(value, 320);
+  if (!normalized) {
+    return {
+      primaryGoalText: "",
+      additionalGoals: [],
+    };
+  }
+
+  const clauses = normalized
+    .replace(/\s*&\s*/g, " and ")
+    .split(/\s*[;\n]+\s*|\s*,\s*/)
+    .map((item) => normalizeIntakeGoalEntry(item, 320))
+    .filter(Boolean);
+
+  const extractedGoals = [];
+  clauses.forEach((clause) => {
+    const segments = clause
+      .split(/\s+(?:and|but|plus)\s+/i)
+      .map((item) => normalizeIntakeGoalEntry(item, 320))
+      .filter(Boolean);
+
+    if (segments.length <= 1) {
+      extractedGoals.push(clause);
+      return;
+    }
+
+    let currentSegment = segments[0];
+    segments.slice(1).forEach((segment) => {
+      if (INTAKE_MULTI_GOAL_STARTERS.test(segment)) {
+        extractedGoals.push(currentSegment);
+        currentSegment = segment;
+        return;
+      }
+      currentSegment = normalizeIntakeGoalEntry(`${currentSegment} and ${segment}`, 320);
+    });
+    extractedGoals.push(currentSegment);
+  });
+
+  const orderedGoals = dedupeIntakeGoalEntries(extractedGoals);
+  return {
+    primaryGoalText: orderedGoals[0] || normalized,
+    additionalGoals: orderedGoals.slice(1),
+  };
+};
+
 const DEFAULT_PERSONALIZATION = {
   // Deprecated runtime input. Canonical athlete state is derived in canonical-athlete-service.js.
   userGoalProfile: { ...DEFAULT_USER_GOAL_PROFILE },
@@ -2967,6 +3090,11 @@ const DEFAULT_PERSONALIZATION = {
   planArchives: [],
   goalChangeHistory: [],
   goalReviewHistory: [],
+  goalManagement: {
+    version: 1,
+    archivedGoals: [],
+    history: [],
+  },
   planResetUndo: null,
 };
 
@@ -3029,6 +3157,12 @@ const mergePersonalization = (base, patch) => ({
     },
   },
   coachMemory: { ...base.coachMemory, ...(patch?.coachMemory || {}), wins: patch?.coachMemory?.wins || base.coachMemory.wins, constraints: patch?.coachMemory?.constraints || base.coachMemory.constraints },
+  goalManagement: {
+    ...(base.goalManagement || DEFAULT_PERSONALIZATION.goalManagement),
+    ...(patch?.goalManagement || {}),
+    archivedGoals: patch?.goalManagement?.archivedGoals || (base.goalManagement || DEFAULT_PERSONALIZATION.goalManagement).archivedGoals,
+    history: patch?.goalManagement?.history || (base.goalManagement || DEFAULT_PERSONALIZATION.goalManagement).history,
+  },
   programs: {
     ...(base.programs || createDefaultProgramSelectionState()),
     ...(patch?.programs || {}),
@@ -5885,8 +6019,8 @@ export default function TrainerDashboard() {
   const buildStrengthAdjustmentNotification = async (update, tomorrowKey, currentPhase) => {
     const isUp = /increase|add/.test(String(update?.ruleTriggered || ""));
     const isDown = /decrease/.test(String(update?.ruleTriggered || ""));
-    const icon = isUp ? "↑" : isDown ? "↓" : "→";
-    const summary = `${icon} ${update.exercise}: ${update.oldValue} → ${update.newValue} today`;
+    const icon = isUp ? "?" : isDown ? "?" : "?";
+    const summary = `${icon} ${update.exercise}: ${update.oldValue} ? ${update.newValue} today`;
     const coachPrompt = `Exercise: ${update.exercise}
 Change: ${update.oldValue} -> ${update.newValue}
 Reason: ${String(update.ruleTriggered || "progressive_overload").replaceAll("_", " ")}
@@ -5915,7 +6049,7 @@ Keep it plain and specific.`;
       icon,
       summary,
       inlineNote: summary,
-      note: `${update.exercise}: ${update.oldValue} → ${update.newValue} today`,
+      note: `${update.exercise}: ${update.oldValue} ? ${update.newValue} today`,
       coachLine: (coachLineRaw || "").trim().split("\n")[0] || `${update.exercise} moves ${update.oldValue} to ${update.newValue}.`,
       explanation: (explanationRaw || "").trim() || `${update.exercise} changed from ${update.oldValue} to ${update.newValue} because the last two sessions matched the engine rule ${String(update.ruleTriggered || "progressive_overload").replaceAll("_", " ")}.`,
       reason: update.ruleTriggered,
@@ -6088,11 +6222,11 @@ Keep it plain and specific.`;
         tomorrow.setDate(tomorrow.getDate() + 1);
         const tomorrowKey = toDateKey(tomorrow);
         const primary = updates[0];
-        let oneLine = `${primary.exercise} adjusts ${primary.oldWeight}→${primary.newWeight} lbs tomorrow due to ${String(primary.ruleTriggered || "rule").replaceAll("_"," ")}.`;
+        let oneLine = `${primary.exercise} adjusts ${primary.oldWeight}?${primary.newWeight} lbs tomorrow due to ${String(primary.ruleTriggered || "rule").replaceAll("_"," ")}.`;
         const aiPrompt = `The rules engine has determined this adjustment for tomorrow: ${primary.exercise} moves from ${primary.oldWeight} to ${primary.newWeight} because ${primary.ruleTriggered}. Write one sentence a coach would say mid-workout about this change. Under 15 words. Include specific numbers only. No encouragement language. No "great job." No "you've earned." Sound like you're standing next to them.`;
         const aiLine = await callAnthropic({ system: "You are a concise strength coach notification writer.", user: aiPrompt, maxTokens: 60 });
         if (aiLine) oneLine = aiLine.trim().split("\n")[0];
-        let explain = `Rule trigger: ${primary.ruleTriggered.replaceAll("_"," ")}. Weight ${primary.oldWeight}→${primary.newWeight} lbs; sets ${primary.oldSets}→${primary.newSets}.`;
+        let explain = `Rule trigger: ${primary.ruleTriggered.replaceAll("_"," ")}. Weight ${primary.oldWeight}?${primary.newWeight} lbs; sets ${primary.oldSets}?${primary.newSets}.`;
         const explainPrompt = `Explain in one short paragraph why ${primary.exercise} changed from ${primary.oldWeight} to ${primary.newWeight} lbs and sets ${primary.oldSets} to ${primary.newSets}. Include reps completion trend, feel trend, injury flag (${personalization?.injuryPainState?.level || "none"}), phase (${currentPhase}), and days to goal (${primary.daysToGoal ?? "unknown"}).`;
         const aiExplain = await callAnthropic({ system: "You explain deterministic training-rule outcomes in plain language.", user: explainPrompt, maxTokens: 150 });
         if (aiExplain) explain = aiExplain.trim();
@@ -6104,7 +6238,7 @@ Keep it plain and specific.`;
             ...(personalization?.strengthProgression?.pendingByDate || {}),
             [tomorrowKey]: {
               exercise: primary.exercise,
-              inlineNote: `${primary.newWeight > primary.oldWeight ? "↑" : primary.newWeight < primary.oldWeight ? "↓" : "→"} ${primary.exercise}: ${primary.oldWeight} → ${primary.newWeight} lbs today`,
+              inlineNote: `${primary.newWeight > primary.oldWeight ? "?" : primary.newWeight < primary.oldWeight ? "?" : "?"} ${primary.exercise}: ${primary.oldWeight} ? ${primary.newWeight} lbs today`,
               reason: primary.ruleTriggered,
               note: oneLine,
               explanation: explain,
@@ -6427,7 +6561,7 @@ Keep it plain and specific.`;
   const startFreshPlan = async () => {
     const todayIso = new Date().toISOString().split("T")[0];
     const undoExpiresAt = Date.now() + (7 * 24 * 60 * 60 * 1000);
-    const planArcLabel = `${canonicalGoalState?.planStartDate || "Unknown start"} → ${todayIso}`;
+    const planArcLabel = `${canonicalGoalState?.planStartDate || "Unknown start"} ? ${todayIso}`;
     const archiveEntry = {
       id: `archive_${Date.now()}`,
       archivedAt: new Date().toISOString(),
@@ -7337,6 +7471,186 @@ Keep it plain and specific.`;
     };
   };
 
+  const previewGoalManagementChange = async ({
+    change = null,
+  } = {}) => {
+    if (!change) return null;
+    return buildGoalManagementPreview({
+      goals: goalsModel,
+      personalization,
+      change,
+      now: new Date(),
+    });
+  };
+
+  const applyGoalManagementChange = async ({
+    previewBundle = null,
+  } = {}) => {
+    if (!previewBundle?.nextGoals?.length || !previewBundle?.nextResolvedGoals?.length) {
+      return { ok: false, error: "missing_goal_management_preview" };
+    }
+
+    const todayKeyLocal = new Date().toISOString().split("T")[0];
+    const changeMode = previewBundle?.plannerChangeMode === GOAL_CHANGE_MODES.refineCurrentGoal
+      ? GOAL_CHANGE_MODES.refineCurrentGoal
+      : GOAL_CHANGE_MODES.reprioritizeGoalStack;
+    const nextGoals = normalizeGoals(previewBundle.nextGoals || []);
+    const orderedResolvedGoals = previewBundle.nextResolvedGoals || [];
+    const primaryPlanningGoal = buildPlanningGoalsFromResolvedGoals({ resolvedGoals: orderedResolvedGoals })?.[0] || null;
+    const primaryCategory = primaryPlanningGoal?.category || "general_fitness";
+    const nextPlanStartDate = resolveGoalChangePlanStartDate({
+      mode: changeMode,
+      todayKey: todayKeyLocal,
+      existingPlanStartDate: canonicalGoalState?.planStartDate || todayKeyLocal,
+    });
+    const nextGoalState = buildGoalStateFromResolvedGoals({
+      resolvedGoals: orderedResolvedGoals,
+      planStartDate: nextPlanStartDate,
+    });
+    const archiveEntry = buildGoalChangeArchiveEntry({
+      todayKey: todayKeyLocal,
+      mode: changeMode,
+      rawGoalIntent: previewBundle?.changeLabel || "settings_goal_management_update",
+      currentGoalState: canonicalGoalState,
+      goals: goalsModel,
+      resolvedGoals: orderedResolvedGoals,
+      plannedDayRecords,
+      planWeekRecords,
+      weeklyCheckins,
+      logs,
+    });
+    const previousGoals = (goalsModel || [])
+      .filter((goal) => goal?.active && goal?.category !== "injury_prevention" && goal?.id !== "g_resilience")
+      .sort((a, b) => Number(a?.priority || 99) - Number(b?.priority || 99))
+      .map((goal) => String(goal?.resolvedGoal?.summary || goal?.name || "").trim())
+      .filter(Boolean);
+    const nextGoalSummaries = orderedResolvedGoals.map((goal) => goal?.summary).filter(Boolean);
+    const historyEvent = buildGoalChangeHistoryEvent({
+      todayKey: todayKeyLocal,
+      mode: changeMode,
+      rawGoalIntent: previewBundle?.changeLabel || "settings_goal_management_update",
+      previousGoals,
+      nextGoals: nextGoalSummaries,
+      archivedPlanId: archiveEntry?.id || "",
+    });
+    const nextActivePlanningState = prepareGoalChangeActiveState({
+      mode: changeMode,
+      todayKey: todayKeyLocal,
+      currentWeek,
+      plannedDayRecords,
+      planWeekRecords,
+      weeklyCheckins,
+      weekNotes,
+      planAlerts,
+      paceOverrides,
+      coachPlanAdjustments,
+      defaultCoachPlanAdjustments: DEFAULT_COACH_PLAN_ADJUSTMENTS,
+    });
+    const compatibilityPrimaryGoalKey = primaryCategory === "body_comp"
+      ? "fat_loss"
+      : primaryCategory === "strength"
+      ? "muscle_gain"
+      : primaryCategory === "running"
+      ? "endurance"
+      : "general_fitness";
+    const compatibilityUserProfile = {
+      primary_goal: compatibilityPrimaryGoalKey,
+      experience_level: canonicalUserProfile?.experienceLevel || "beginner",
+      days_per_week: Math.max(2, Number(canonicalUserProfile?.daysPerWeek || 3) || 3),
+      session_length: String(canonicalUserProfile?.sessionLength || "30"),
+      equipment_access: Array.isArray(canonicalUserProfile?.equipmentAccess) ? canonicalUserProfile.equipmentAccess : [],
+      constraints: Array.isArray(canonicalUserProfile?.constraints) ? canonicalUserProfile.constraints : [],
+    };
+    const goalMix = nextGoalSummaries.join(" + ");
+    const nextGoalAlert = {
+      id: `goal_management_${Date.now()}`,
+      type: "info",
+      msg: `${previewBundle?.changeLabel || "Goal update"} confirmed. Planning now follows the active goal stack shown in Settings.`,
+      ts: Date.now(),
+    };
+    const nextPersonalizationBase = mergePersonalization(personalization, {
+      profile: {
+        ...personalization.profile,
+        profileSetupComplete: true,
+        onboardingComplete: true,
+        goalMix,
+      },
+      injuryPainState: (personalization?.injuryPainState?.level || "none") === "none"
+        ? {
+            ...personalization.injuryPainState,
+            notes: "",
+            preserveForPlanning: false,
+            activeModifications: [],
+          }
+        : personalization.injuryPainState,
+      nutritionPreferenceState: {
+        ...(personalization.nutritionPreferenceState || DEFAULT_PERSONALIZATION.nutritionPreferenceState),
+        style: primaryCategory === "body_comp" ? "high-protein fat-loss support" : "high-protein performance",
+      },
+      coachMemory: {
+        ...personalization.coachMemory,
+        lastAdjustment: `${previewBundle?.changeLabel || "Goal update"} ${todayKeyLocal}.`,
+        longTermMemory: [
+          ...(personalization?.coachMemory?.longTermMemory || []),
+          `Settings goal update: ${previewBundle?.changeLabel || "Goal update"}.`,
+          nextGoalSummaries.length ? `Active goals: ${nextGoalSummaries.join(" / ")}` : null,
+          previewBundle?.impactLines?.[0] ? `Plan impact: ${previewBundle.impactLines[0]}` : null,
+        ].filter(Boolean).slice(-40),
+      },
+      planArchives: [archiveEntry, ...(personalization?.planArchives || [])].slice(0, 12),
+      goalChangeHistory: [historyEvent, ...(personalization?.goalChangeHistory || [])].slice(0, 24),
+      goalManagement: previewBundle?.nextGoalManagement || personalization?.goalManagement || DEFAULT_PERSONALIZATION.goalManagement,
+      planResetUndo: null,
+    });
+    const nextPersonalization = withLegacyGoalProfileCompatibility({
+      personalization: nextPersonalizationBase,
+      canonicalAthlete: deriveCanonicalAthleteState({
+        goals: nextGoals,
+        personalization: nextPersonalizationBase,
+        profileDefaults: PROFILE,
+      }),
+      userProfileOverrides: compatibilityUserProfile,
+      goalStateOverrides: nextGoalState,
+    });
+    const nextPlanAlerts = [nextGoalAlert];
+
+    setGoals(nextGoals);
+    setPersonalization(nextPersonalization);
+    setPaceOverrides(nextActivePlanningState.paceOverrides);
+    setWeekNotes(nextActivePlanningState.weekNotes);
+    setPlanAlerts(nextPlanAlerts);
+    setPlannedDayRecords(nextActivePlanningState.plannedDayRecords);
+    setPlanWeekRecords(nextActivePlanningState.planWeekRecords);
+    setWeeklyCheckins(nextActivePlanningState.weeklyCheckins);
+    setCoachPlanAdjustments(nextActivePlanningState.coachPlanAdjustments);
+
+    await persistAll(
+      logs,
+      bodyweights,
+      nextActivePlanningState.paceOverrides,
+      nextActivePlanningState.weekNotes,
+      nextPlanAlerts,
+      nextPersonalization,
+      coachActions,
+      nextActivePlanningState.coachPlanAdjustments,
+      nextGoals,
+      dailyCheckins,
+      nextActivePlanningState.weeklyCheckins,
+      nutritionFavorites,
+      nutritionActualLogs,
+      nextActivePlanningState.plannedDayRecords,
+      nextActivePlanningState.planWeekRecords
+    );
+
+    return {
+      ok: true,
+      archiveEntry,
+      historyEvent,
+      orderedResolvedGoals,
+      nextGoals,
+    };
+  };
+
   const saveGoalReview = async ({
     goalReview = null,
     action = GOAL_REVIEW_RECOMMENDATIONS.keepCurrentGoal,
@@ -7578,7 +7892,7 @@ Keep it plain and specific.`;
           await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
 
-        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} focusSection={settingsFocus} onPersist={async (nextPersonalization) => {
+        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} focusSection={settingsFocus} onPersist={async (nextPersonalization) => {
           setPersonalization(nextPersonalization);
           await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
@@ -7733,9 +8047,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [answers, setAnswers] = useState(() => restoredIntakeSession?.answers || {});
   const [stepIndex, setStepIndex] = useState(() => Math.max(0, Number(restoredIntakeSession?.stepIndex) || 0));
   const [draft, setDraft] = useState(() => String(restoredIntakeSession?.draft || ""));
+  const [extraGoalDraft, setExtraGoalDraft] = useState("");
   const [equipmentSelection, setEquipmentSelection] = useState([]);
   const [equipmentOther, setEquipmentOther] = useState("");
-  const [phase, setPhase] = useState(() => restoredIntakeSession?.phase || "questions");
+  const [phase, setPhase] = useState(() => restoredIntakeSession?.phase || INTAKE_UI_PHASES.goals);
   const [assessmentText, setAssessmentText] = useState(() => String(restoredIntakeSession?.assessmentText || ""));
   const [assessmentBoundary, setAssessmentBoundary] = useState(() => restoredIntakeSession?.assessmentBoundary || { typedIntakePacket: null, aiInterpretationProposal: null, transition_id: "" });
   const [assessmentPreview, setAssessmentPreview] = useState(() => restoredIntakeSession?.assessmentPreview || { goalResolution: null, goalFeasibility: null, arbitration: null, orderedResolvedGoals: [], reviewModel: null });
@@ -7743,7 +8058,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState(() => restoredIntakeSession?.askedClarifyingQuestions || []);
   const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(() => restoredIntakeSession?.pendingClarifyingQuestion || null);
   const [pendingSecondaryGoalPrompt, setPendingSecondaryGoalPrompt] = useState(() => restoredIntakeSession?.pendingSecondaryGoalPrompt || null);
-  const [secondaryGoalEntries, setSecondaryGoalEntries] = useState(() => restoredIntakeSession?.secondaryGoalEntries || []);
+  const [secondaryGoalEntries, setSecondaryGoalEntries] = useState(() => readAdditionalGoalEntries({
+    answers: restoredIntakeSession?.answers || {},
+  }));
   const [showSecondaryGoalCustomInput, setShowSecondaryGoalCustomInput] = useState(() => Boolean(restoredIntakeSession?.showSecondaryGoalCustomInput));
   const [clarificationValues, setClarificationValues] = useState({});
   const [clarificationFieldErrors, setClarificationFieldErrors] = useState({});
@@ -7757,7 +8074,6 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [adjustmentTargetGoal, setAdjustmentTargetGoal] = useState(() => restoredIntakeSession?.adjustmentTargetGoal || null);
   const [confirmBuildError, setConfirmBuildError] = useState("");
   const [confirmBuildSubmitting, setConfirmBuildSubmitting] = useState(false);
-  const [confirmWarningAcknowledged, setConfirmWarningAcknowledged] = useState(false);
   const [assessing, setAssessing] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
@@ -7829,7 +8145,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       messages.length
       || Object.keys(answers || {}).length
       || String(draft || "").trim()
-      || phase !== "questions"
+      || String(extraGoalDraft || "").trim()
+      || phase !== INTAKE_UI_PHASES.goals
       || stepIndex > 0
       || intakeMachine?.stage !== INTAKE_MACHINE_STATES.FREEFORM_GOALS
     );
@@ -7873,6 +8190,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     pendingClarifyingQuestion,
     pendingSecondaryGoalPrompt,
     phase,
+    extraGoalDraft,
     secondaryGoalEntries,
     showSecondaryGoalCustomInput,
     startingFresh,
@@ -7881,7 +8199,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   ]);
 
   useEffect(() => {
-    if (streamTargetId || phase === "building") return;
+    if (streamTargetId || phase === INTAKE_UI_PHASES.building) return;
     const nextStream = messagesRef.current.find((message) => message.role === "coach" && message.displayedText !== message.text);
     if (nextStream) setStreamTargetId(nextStream.id);
   }, [messages, streamTargetId, phase]);
@@ -7987,7 +8305,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   };
 
   useEffect(() => {
-    if (phase !== "clarify" || !activeMachineAnchor?.field_id || !activeMachineAnchor?.anchor_id || !activeAnchorCoachVoiceKey) return;
+    if (phase !== INTAKE_UI_PHASES.clarify || !activeMachineAnchor?.field_id || !activeMachineAnchor?.anchor_id || !activeAnchorCoachVoiceKey) return;
     if (coachVoiceRequestKeysRef.current.has(activeAnchorCoachVoiceKey)) return;
     if (coachVoicePhrasingByAnchorKey?.[activeAnchorCoachVoiceKey]) return;
     coachVoiceRequestKeysRef.current.add(activeAnchorCoachVoiceKey);
@@ -8030,7 +8348,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
 
   useEffect(() => {
     const isStructuredQuestion = isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion);
-    if (phase !== "clarify") {
+    if (phase !== INTAKE_UI_PHASES.clarify) {
       setCurrentAnchorBindingTarget(null);
       setClarificationValues({});
       setClarificationFieldErrors({});
@@ -8100,21 +8418,20 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   }, [phase, activeMachineAnchor?.anchor_id, pendingClarifyingQuestion?.key, pendingClarifyingQuestion?.prompt, answers]);
 
   useEffect(() => {
-    if (phase !== "secondary_goal") return;
-    setSecondaryGoalEntries(readAdditionalGoalEntries({ answers }));
+    const nextGoalEntries = readAdditionalGoalEntries({ answers });
+    setSecondaryGoalEntries((prev) => {
+      const prevSignature = (Array.isArray(prev) ? prev : []).join("|");
+      const nextSignature = nextGoalEntries.join("|");
+      return prevSignature === nextSignature ? prev : nextGoalEntries;
+    });
   }, [phase, answers]);
 
   useEffect(() => {
-    if (phase !== "secondary_goal") {
-      setShowSecondaryGoalCustomInput(false);
-      return;
-    }
     setShowSecondaryGoalCustomInput(false);
-    setDraft("");
-  }, [phase, pendingSecondaryGoalPrompt?.prompt]);
+  }, [phase]);
 
   useEffect(() => {
-    if (phase !== "building") return undefined;
+    if (phase !== INTAKE_UI_PHASES.building) return undefined;
     setBuildingStageIndex(0);
     const interval = setInterval(() => {
       setBuildingStageIndex((prev) => (prev + 1) % BUILD_STAGES.length);
@@ -8158,33 +8475,27 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     : reviewGoals;
   const activeGoalResolution = intakeMachine?.draft?.goalResolution || assessmentPreview?.goalResolution || null;
   const activeGoalFeasibility = intakeMachine?.draft?.goalFeasibility || assessmentPreview?.goalFeasibility || null;
-  const secondaryGoalEligible = useMemo(() => canAskSecondaryGoal({
-    stage: intakeMachine?.stage || "",
+  const activePrimaryResolvedGoal = Array.isArray(activeReviewModel?.activeResolvedGoals) && activeReviewModel.activeResolvedGoals.length
+    ? activeReviewModel.activeResolvedGoals[0]
+    : null;
+  const milestoneDecisionModel = useMemo(() => buildIntakeMilestoneDecisionModel({
     reviewModel: activeReviewModel,
-    confirmationState: activeConfirmationState,
-    answers: intakeMachine?.draft?.answers || answers,
-  }), [
-    intakeMachine?.stage,
-    intakeMachine?.draft?.reviewModel,
-    intakeMachine?.draft?.confirmationState,
-    intakeMachine?.draft?.answers,
-    activeReviewModel,
-    activeConfirmationState,
-    answers,
-  ]);
+    goalFeasibility: activeGoalFeasibility,
+    goalStackConfirmation,
+  }), [activeReviewModel, activeGoalFeasibility, goalStackConfirmation]);
   const confirmationStatusLabel = activeConfirmationState?.status === "incomplete"
     ? "Need one more detail"
     : activeConfirmationState?.status === "block"
-    ? "Needs a safer first step"
+    ? "Start with a smaller milestone"
     : activeConfirmationState?.status === "warn"
-    ? "Ambitious but workable"
+    ? "Target is ambitious"
     : "Ready to build";
   const confirmationHeadline = activeConfirmationState?.status === "incomplete"
     ? "I need one more detail before I build this."
     : activeConfirmationState?.status === "block"
-    ? "I need to tighten this up before I build."
+    ? "Start with a smaller milestone first."
     : activeConfirmationState?.status === "warn"
-    ? "This is aggressive, but I can build for it."
+    ? "Target is ambitious, but still workable."
     : "This looks realistic from where you're starting.";
   const confirmationNeedsList = useMemo(() => {
     return buildIntakeConfirmationNeedsList({
@@ -8198,13 +8509,17 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const confirmCtaEnabled = Boolean(
     confirmationAllowsProceed
     && activeConfirmationState?.canConfirm
-    && (!activeConfirmationState?.requiresAcknowledgement || confirmWarningAcknowledged)
   );
   const confirmationTone = activeConfirmationState?.status === "block" || activeConfirmationState?.status === "incomplete"
     ? C.amber
     : activeConfirmationState?.status === "warn"
-    ? "#facc15"
+    ? "#dbe7f6"
     : "#8fa5c8";
+  const selectedMilestoneLongTermTarget = String(
+    activePrimaryResolvedGoal?.milestonePath?.longTermTargetSummary
+    || milestoneDecisionModel?.longTermTargetSummary
+    || ""
+  ).trim();
 
   useEffect(() => {
     setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
@@ -8213,22 +8528,6 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       goalFeasibility: activeGoalFeasibility,
     }));
   }, [reviewGoalSignature, activeReviewGoals, activeGoalFeasibility]);
-
-  useEffect(() => {
-    setConfirmWarningAcknowledged(false);
-  }, [
-    activeConfirmationState?.status,
-    activeConfirmationState?.reason,
-    activeConfirmationState?.next_required_field,
-    activeReviewModel?.reviewContract?.lead_goal?.id,
-    Array.isArray(activeReviewModel?.reviewContract?.maintained_goals) ? activeReviewModel.reviewContract.maintained_goals.map((goal) => goal?.id || "").join("|") : "",
-  ]);
-
-  useEffect(() => {
-    if (phase !== "secondary_goal" || secondaryGoalEligible) return;
-    setPendingSecondaryGoalPrompt(null);
-    setPhase("review");
-  }, [phase, secondaryGoalEligible]);
 
   const appendCoachMessages = (texts) => {
     const queue = queueCoachTranscriptMessages({
@@ -8314,21 +8613,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     reviewModelOverride = null,
     answersOverride = null,
   } = {}) => {
-    const resolvedMachineState = machineState || intakeMachineRef.current || null;
-    const resolvedReviewModel = reviewModelOverride || resolvedMachineState?.draft?.reviewModel || null;
-    const resolvedAnswers = answersOverride || resolvedMachineState?.draft?.answers || answers;
-    if (!canAskSecondaryGoal({
-      stage: resolvedMachineState?.stage || "",
-      reviewModel: resolvedReviewModel,
-      confirmationState: resolvedMachineState?.draft?.confirmationState || null,
-      answers: resolvedAnswers,
-    })) {
-      return null;
-    }
-    return buildIntakeSecondaryGoalPrompt({
-      reviewModel: resolvedReviewModel,
-      answers: resolvedAnswers,
-    });
+    return null;
   };
   const refreshReviewMachineState = ({
     nextAnswers = answers,
@@ -8368,22 +8653,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     refreshedState = null,
     answersOverride = answers,
   } = {}) => {
-    const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
-      machineState: refreshedState,
-      answersOverride: refreshedState?.draft?.answers || answersOverride,
-    });
     if (refreshedState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
       setPendingSecondaryGoalPrompt(null);
-      setPhase("clarify");
-      return;
-    }
-    if (nextSecondaryGoalPrompt) {
-      setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
-      setPhase("secondary_goal");
+      setPhase(INTAKE_UI_PHASES.clarify);
       return;
     }
     setPendingSecondaryGoalPrompt(null);
-    setPhase("review");
+    setPhase(INTAKE_UI_PHASES.confirm);
   };
   const applyGoalStackConfirmationUpdate = (nextGoalStackConfirmation = null) => {
     setConfirmBuildError("");
@@ -8417,6 +8693,106 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setNaturalAnchorDraft("");
     setAnchorCapturePreview(null);
     return editedState;
+  };
+  const syncGoalStackDraftToAnswers = ({
+    primaryGoalText = answers?.goal_intent || "",
+    additionalGoals = secondaryGoalEntries,
+    preserveFoundation = true,
+  } = {}) => {
+    const derivedGoalStack = splitPrimaryGoalEntryIntoStack(primaryGoalText);
+    const normalizedPrimaryGoal = derivedGoalStack.primaryGoalText;
+    const normalizedAdditionalGoals = dedupeIntakeGoalEntries([
+      ...derivedGoalStack.additionalGoals,
+      ...additionalGoals,
+    ])
+      .filter((goalText) => goalText.toLowerCase() !== normalizedPrimaryGoal.toLowerCase())
+      .slice(0, 5);
+    const nextAnswers = {
+      ...answers,
+      goal_intent: normalizedPrimaryGoal,
+      additional_goals_list: normalizedAdditionalGoals,
+      other_goals: normalizedAdditionalGoals.join(". "),
+      secondary_goal_prompt_answered: normalizedAdditionalGoals.length > 0,
+      ...(preserveFoundation && normalizedPrimaryGoal
+        ? { primary_goal: answers?.primary_goal || "" }
+        : {}),
+    };
+    setAnswers(nextAnswers);
+    setSecondaryGoalEntries(normalizedAdditionalGoals);
+    return nextAnswers;
+  };
+  const addGoalToStack = () => {
+    const cleanGoalText = normalizeIntakeGoalEntry(extraGoalDraft);
+    if (!cleanGoalText) return;
+    const nextAnswers = syncGoalStackDraftToAnswers({
+      primaryGoalText: answers?.goal_intent || "",
+      additionalGoals: [...secondaryGoalEntries, cleanGoalText],
+    });
+    setExtraGoalDraft("");
+    return nextAnswers;
+  };
+  const removeGoalFromStack = (goalText = "") => {
+    const cleanGoalText = normalizeIntakeGoalEntry(goalText);
+    if (!cleanGoalText) return;
+    syncGoalStackDraftToAnswers({
+      primaryGoalText: answers?.goal_intent || "",
+      additionalGoals: secondaryGoalEntries.filter((item) => item.toLowerCase() !== cleanGoalText.toLowerCase()),
+    });
+  };
+  const startFoundationPlanFlow = async () => {
+    const foundationAnswers = {
+      ...syncGoalStackDraftToAnswers({
+        primaryGoalText: "",
+        additionalGoals: [],
+      }),
+      primary_goal: "general_fitness",
+    };
+    setAskedClarifyingQuestions([]);
+    setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
+    await runAssessment({ updatedAnswers: foundationAnswers, askedQuestions: [] });
+  };
+  const submitGoalsStage = async () => {
+    const nextAnswers = syncGoalStackDraftToAnswers({
+      primaryGoalText: answers?.goal_intent || "",
+      additionalGoals: secondaryGoalEntries,
+    });
+    if (!String(nextAnswers?.goal_intent || "").trim() && !(nextAnswers?.additional_goals_list || []).length) return;
+    setAskedClarifyingQuestions([]);
+    setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
+    await runAssessment({ updatedAnswers: nextAnswers, askedQuestions: [] });
+  };
+  const continueFromInterpretation = () => {
+    if (assessing) return;
+    const activeStage = intakeMachineRef.current?.stage || intakeMachine?.stage || "";
+    if (activeStage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
+      setPhase(INTAKE_UI_PHASES.clarify);
+      return;
+    }
+    setPhase(INTAKE_UI_PHASES.confirm);
+  };
+  const reopenLastAnsweredDetail = () => {
+    if (!Array.isArray(intakeMachine?.anchorBindingLog) || intakeMachine.anchorBindingLog.length === 0) {
+      setPhase(INTAKE_UI_PHASES.interpretation);
+      return;
+    }
+    const nextMachineState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_BACK, {
+      edit_last_anchor: true,
+      now: new Date().toISOString(),
+    });
+    syncMachineDraftToIntakeView(nextMachineState);
+    setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
+    setClarificationValues({});
+    setClarificationFieldErrors({});
+    setClarificationFormError("");
+    setNaturalAnchorDraft("");
+    setAnchorCapturePreview(null);
+    setDraft("");
+    setPhase(nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION
+      ? INTAKE_UI_PHASES.clarify
+      : INTAKE_UI_PHASES.confirm);
   };
   const appendUserMessage = (text) => {
     const clean = String(text || "").trim();
@@ -8605,49 +8981,18 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       answers: updatedAnswers,
       goalStackConfirmation,
     });
-    const nextMachineAnchor = interpretedMachineState?.draft?.missingAnchorsEngine?.currentAnchor || null;
-    const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
-      machineState: interpretedMachineState,
-      reviewModelOverride: reviewModelForAssessment,
-      answersOverride: interpretedMachineState?.draft?.answers || updatedAnswers,
-    });
-    const currentTransitionId = interpretedMachineState?.transition_id || intakeMachineRef.current?.transition_id || "";
-    const currentStage = interpretedMachineState?.stage || intakeMachineRef.current?.stage || INTAKE_MACHINE_STATES.GOAL_INTERPRETATION;
+    void reviewModelForAssessment;
     setAssessmentText(cleanTimeline);
-    if (nextMachineAnchor) {
-      setPendingClarifyingQuestion(null);
-      setPendingSecondaryGoalPrompt(null);
-      setPhase("clarify");
-      return;
-    }
-    if (nextSecondaryGoalPrompt) {
-      setPendingClarifyingQuestion(null);
-      setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
-      setPhase("secondary_goal");
-      appendCoachMessages([{
-        text: nextSecondaryGoalPrompt.prompt,
-        message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
-        transition_id: currentTransitionId,
-        stage: currentStage,
-        message_key: buildTranscriptMessageKey({
-          stage: currentStage,
-          transition_id: currentTransitionId,
-          message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
-          topic: "secondary_goal_prompt",
-        }),
-      }]);
-      return;
-    }
     setPendingClarifyingQuestion(null);
     setPendingSecondaryGoalPrompt(null);
-    setPhase("review");
+    setPhase(INTAKE_UI_PHASES.interpretation);
   };
   const runAssessment = async ({
     updatedAnswers = {},
     askedQuestions = [],
   } = {}) => {
     setAssessing(true);
-    setPhase("assessment");
+    setPhase(INTAKE_UI_PHASES.interpretation);
     const requestId = latestAssessmentRequestIdRef.current + 1;
     latestAssessmentRequestIdRef.current = requestId;
     const goalSubmitState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED, {
@@ -8722,7 +9067,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setAdjustmentTargetGoal(cleanGoalSummary ? { id: goalId || "", summary: cleanGoalSummary } : null);
     resetIntakeForGoalEdit(answers);
     appendUserMessage(cleanGoalSummary ? `Edit a goal: ${cleanGoalSummary}` : "Edit a goal");
-    setPhase("adjust");
+    setPhase(INTAKE_UI_PHASES.adjust);
     setDraft("");
     appendCoachMessage(
       cleanGoalSummary
@@ -8813,22 +9158,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           setNaturalAnchorDraft("");
           setAnchorCapturePreview(null);
           setPendingClarifyingQuestion(null);
-          const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
-            machineState: nextMachineState,
-            answersOverride: nextMachineState?.draft?.answers || answers,
-          });
           if (nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
             setPendingSecondaryGoalPrompt(null);
-            setPhase("clarify");
-            return;
-          }
-          if (nextSecondaryGoalPrompt) {
-            setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
-            setPhase("secondary_goal");
+            setPhase(INTAKE_UI_PHASES.clarify);
             return;
           }
           setPendingSecondaryGoalPrompt(null);
-          setPhase("review");
+          setPhase(INTAKE_UI_PHASES.confirm);
           return;
         }
 
@@ -8899,22 +9235,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setNaturalAnchorDraft("");
       setAnchorCapturePreview(null);
       setPendingClarifyingQuestion(null);
-      const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
-        machineState: nextMachineState,
-        answersOverride: nextMachineState?.draft?.answers || answers,
-      });
       if (nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
         setPendingSecondaryGoalPrompt(null);
-        setPhase("clarify");
-        return;
-      }
-      if (nextSecondaryGoalPrompt) {
-        setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
-        setPhase("secondary_goal");
+        setPhase(INTAKE_UI_PHASES.clarify);
         return;
       }
       setPendingSecondaryGoalPrompt(null);
-      setPhase("review");
+      setPhase(INTAKE_UI_PHASES.confirm);
       return;
     }
     const questionSource = String(pendingClarifyingQuestion?.source || "").trim().toLowerCase();
@@ -9073,7 +9400,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setNaturalAnchorDraft("");
     setAnchorCapturePreview(null);
     setDraft("");
-    setPhase("clarify");
+    setPhase(INTAKE_UI_PHASES.clarify);
   };
   const submitSecondaryGoalResponse = async (response = null) => {
     const customText = String(draft || "").trim();
@@ -9138,7 +9465,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setPendingClarifyingQuestion(null);
     if (!outcome.rerunAssessment) {
       setGoalStackConfirmation(outcome.goalStackConfirmation);
-      setPhase("review");
+      setPhase(INTAKE_UI_PHASES.confirm);
       appendCoachMessage(
         isSkipResponse
           ? "Perfect. We'll keep the plan focused on the main goal."
@@ -9171,7 +9498,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (nextAnchor?.field_id) {
       setPendingClarifyingQuestion(null);
       setPendingSecondaryGoalPrompt(null);
-      setPhase("clarify");
+      setPhase(INTAKE_UI_PHASES.clarify);
       return;
     }
     if (refreshedConfirmation?.reason) {
@@ -9185,24 +9512,18 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     const latestConfirmationState = refreshedState?.draft?.confirmationState || activeConfirmationState || null;
     const latestAllowsProceed = latestConfirmationState?.status === "proceed" || latestConfirmationState?.status === "warn";
     const latestCanConfirm = Boolean(latestConfirmationState?.canConfirm);
-    const latestRequiresAcknowledgement = Boolean(latestConfirmationState?.requiresAcknowledgement);
-    const acknowledgementMissing = latestRequiresAcknowledgement && !confirmWarningAcknowledged;
     if ((!latestAllowsProceed || !latestCanConfirm) && latestConfirmationState?.next_required_field) {
       jumpToNextRequiredDetail();
       return;
     }
-    if (!latestAllowsProceed || !latestCanConfirm || acknowledgementMissing) {
-      const blockedReason = acknowledgementMissing
-        ? "Please confirm that you understand this timeline is aggressive."
-        : latestConfirmationState?.reason || "I still need a little more grounded context before I can build your plan.";
-      const blockedTopic = acknowledgementMissing
-        ? "confirm_blocked_acknowledgement"
-        : `confirm_blocked_${String(latestConfirmationState?.next_required_field || latestConfirmationState?.status || "generic").replace(/\W+/g, "_").toLowerCase() || "generic"}`;
+    if (!latestAllowsProceed || !latestCanConfirm) {
+      const blockedReason = latestConfirmationState?.reason || "I still need a little more grounded context before I can build your plan.";
+      const blockedTopic = `confirm_blocked_${String(latestConfirmationState?.next_required_field || latestConfirmationState?.status || "generic").replace(/\W+/g, "_").toLowerCase() || "generic"}`;
       const blockedMessageKey = `review_note:${blockedTopic}`;
       const currentTransitionId = intakeMachineRef.current?.transition_id || refreshedState?.transition_id || "";
       const currentStage = intakeMachineRef.current?.stage || refreshedState?.stage || INTAKE_MACHINE_STATES.REVIEW_CONFIRM;
       setConfirmBuildError(blockedReason);
-      setPhase("review");
+      setPhase(INTAKE_UI_PHASES.confirm);
       appendCoachMessage({
         text: blockedReason,
         message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
@@ -9216,17 +9537,16 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     confirmBuildLockRef.current = true;
     setConfirmBuildSubmitting(true);
     const confirmedState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_CONFIRMED, {
-      acknowledged_warning: confirmWarningAcknowledged,
       now: new Date().toISOString(),
     });
     appendUserMessage("Confirm and build my plan");
     if (confirmedState?.draft?.commitRequested) {
-      setPhase("building");
+      setPhase(INTAKE_UI_PHASES.building);
       return;
     }
     confirmBuildLockRef.current = false;
     setConfirmBuildSubmitting(false);
-    setPhase("review");
+    setPhase(INTAKE_UI_PHASES.confirm);
     setConfirmBuildError(confirmedState?.ui?.clearReason || "I couldn't lock the confirmed goal stack yet.");
   };
   useEffect(() => {
@@ -9235,7 +9555,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!commitValidation.ok || !commitValidation.commitRequest) {
       confirmBuildLockRef.current = false;
       setConfirmBuildSubmitting(false);
-      setPhase("review");
+      setPhase(INTAKE_UI_PHASES.confirm);
       if (commitValidation.reason) setConfirmBuildError(commitValidation.reason);
       return;
     }
@@ -9307,7 +9627,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         confirmBuildLockRef.current = false;
         setConfirmBuildError(failureMessage);
         setConfirmBuildSubmitting(false);
-        setPhase("review");
+        setPhase(INTAKE_UI_PHASES.confirm);
         appendCoachMessage(failureMessage);
       } finally {
         if (activeCommitSnapshotIdRef.current === snapshotId) {
@@ -9334,10 +9654,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     goalStackConfirmation,
   });
   const goalReviewContract = goalStackReview?.reviewContract || activeReviewModel?.reviewContract || null;
+  const orderedGoalStackItems = Array.isArray(goalStackReview?.orderedGoalStack?.items)
+    ? goalStackReview.orderedGoalStack.items
+    : Array.isArray(goalReviewContract?.ordered_goal_stack?.items)
+    ? goalReviewContract.ordered_goal_stack.items
+    : [];
   const heardGoalRows = useMemo(() => {
     const prioritizedGoals = [
-      ...(Array.isArray(goalStackReview?.activeGoals) ? goalStackReview.activeGoals : []),
-      ...(Array.isArray(goalStackReview?.backgroundGoals) ? goalStackReview.backgroundGoals : []),
+      ...orderedGoalStackItems,
     ];
     const seenGoalIds = new Set();
     const rows = prioritizedGoals
@@ -9353,7 +9677,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         id: String(goal?.id || `heard_goal_${index}`).trim(),
         summary: sanitizeIntakeText(goal?.summary || ""),
         detail: joinDisplayParts([
-          index === 0 ? "Leading now" : sanitizeIntakeText(goal?.roleLabel || "Also heard"),
+          sanitizeIntakeText(goal?.priorityLabel || (index < 3 ? `Priority ${index + 1}` : "Additional goal")),
           sanitizeIntakeText(goal?.goalTypeLabel || "Goal"),
         ]),
       }));
@@ -9362,11 +9686,102 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       ...row,
       canRemove,
     }));
-  }, [goalStackReview]);
+  }, [orderedGoalStackItems]);
   const displayedPrimaryGoal = goalReviewContract?.lead_goal || goalStackReview?.activeGoals?.[0] || null;
   const displayedTrackingLabels = Array.from(new Set(
     (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
   ));
+  const intakeSummaryRail = useMemo(() => buildIntakeSummaryRailModel({
+    answers,
+    reviewModel: activeReviewModel,
+    draftPrimaryGoal: answers?.goal_intent || "",
+    draftAdditionalGoals: secondaryGoalEntries,
+  }), [answers, activeReviewModel, secondaryGoalEntries]);
+  const interpretedGoalCards = orderedGoalStackItems.length
+    ? orderedGoalStackItems
+    : Array.isArray(intakeSummaryRail?.interpretedGoals)
+    ? intakeSummaryRail.interpretedGoals
+    : [];
+  const intakeInjuryContext = useMemo(() => buildIntakeInjuryConstraintContext({
+    injuryText: answers?.injury_text,
+    injuryImpact: answers?.injury_impact,
+  }), [answers?.injury_text, answers?.injury_impact]);
+  const trainingLocationValue = String(answers?.training_location || "").trim();
+  const homeEquipmentSelection = Array.isArray(answers?.home_equipment) ? answers.home_equipment : [];
+  const needsHomeEquipment = trainingLocationValue === "Home" || trainingLocationValue === "Both";
+  const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 320);
+  const goalsStageNeeds = [
+    !normalizedGoalText && secondaryGoalEntries.length === 0 && String(answers?.primary_goal || "").trim() !== "general_fitness"
+      ? "Add at least one goal."
+      : "",
+    !answers?.experience_level ? "Pick your training background." : "",
+    !answers?.training_days ? "Pick your training days." : "",
+    !answers?.session_length ? "Pick your session length." : "",
+    !trainingLocationValue ? "Pick where you train." : "",
+    needsHomeEquipment && homeEquipmentSelection.length === 0 && !String(answers?.home_equipment_other || "").trim()
+      ? "Choose your home setup."
+      : "",
+    intakeInjuryContext.hasCurrentIssue && !answers?.injury_impact ? "Pick how the current issue affects training." : "",
+    !answers?.coaching_style ? "Pick a coaching style." : "",
+  ].filter(Boolean);
+  const goalsStageCanContinue = goalsStageNeeds.length === 0;
+  const goalsStageCanStartFoundation = goalsStageNeeds.filter((item) => !/at least one goal/i.test(item)).length === 0;
+  const stageProgressIndex = phase === INTAKE_UI_PHASES.building
+    ? 4
+    : phase === INTAKE_UI_PHASES.confirm
+    ? 3
+    : phase === INTAKE_UI_PHASES.clarify
+    ? 2
+    : phase === INTAKE_UI_PHASES.interpretation || phase === INTAKE_UI_PHASES.adjust
+    ? 1
+    : 0;
+  const updateSimpleAnswer = (fieldKey, value) => {
+    setAnswers((prev) => ({
+      ...prev,
+      [fieldKey]: value,
+    }));
+  };
+  const updateTrainingLocationAnswer = (value) => {
+    setAnswers((prev) => ({
+      ...prev,
+      training_location: value,
+      ...((value === "Home" || value === "Both")
+        ? {}
+        : {
+            home_equipment: [],
+            home_equipment_other: "",
+          }),
+    }));
+  };
+  const toggleHomeEquipmentOption = (option) => {
+    setAnswers((prev) => {
+      const currentSelection = Array.isArray(prev?.home_equipment) ? prev.home_equipment : [];
+      const nextSelection = currentSelection.includes(option)
+        ? currentSelection.filter((item) => item !== option)
+        : [...currentSelection, option];
+      return {
+        ...prev,
+        home_equipment: nextSelection,
+        ...(option === "Other" || nextSelection.includes("Other")
+          ? {}
+          : { home_equipment_other: "" }),
+      };
+    });
+  };
+  const goBackFromClarify = () => {
+    if (Array.isArray(intakeMachine?.anchorBindingLog) && intakeMachine.anchorBindingLog.length > 0) {
+      reopenLastAnsweredDetail();
+      return;
+    }
+    setPhase(INTAKE_UI_PHASES.interpretation);
+  };
+  const goBackFromConfirm = () => {
+    if (Array.isArray(intakeMachine?.anchorBindingLog) && intakeMachine.anchorBindingLog.length > 0) {
+      reopenLastAnsweredDetail();
+      return;
+    }
+    setPhase(INTAKE_UI_PHASES.interpretation);
+  };
   const anchorCollectionViewModel = useMemo(() => buildAnchorCollectionViewModel({
     machineState: intakeMachine,
     maxVisibleCards: 3,
@@ -9377,10 +9792,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     debugMode: intakeDebugMode,
     toggleEnabled: showParseDebug,
   }), [intakeMachine, intakeDebugMode, showParseDebug]);
-  const visibleMachineAnchorCards = phase === "clarify" && anchorCollectionViewModel?.isVisible
+  const visibleMachineAnchorCards = phase === INTAKE_UI_PHASES.clarify && anchorCollectionViewModel?.isVisible
     ? (Array.isArray(anchorCollectionViewModel?.visibleCards) ? anchorCollectionViewModel.visibleCards : [])
     : [];
-  const isMachineAnchorClarification = phase === "clarify" && Boolean(anchorCollectionViewModel?.isVisible);
+  const isMachineAnchorClarification = phase === INTAKE_UI_PHASES.clarify && Boolean(anchorCollectionViewModel?.isVisible);
   const activeAnchorFailureCount = isMachineAnchorClarification
     ? Number(intakeMachine?.anchorFailureCounts?.[activeMachineAnchor?.field_id] || 0)
     : 0;
@@ -9391,7 +9806,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     && Array.isArray(intakeMachine?.anchorBindingLog)
     && intakeMachine.anchorBindingLog.length > 0
   );
-  const isStructuredClarification = isMachineAnchorClarification || (phase === "clarify" && isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion));
+  const isStructuredClarification = isMachineAnchorClarification || (phase === INTAKE_UI_PHASES.clarify && isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion));
   const activeMachineAnchorSubmission = isMachineAnchorClarification ? buildAnchorSubmissionPayload(activeMachineAnchor) : null;
   const clarificationInputFields = isMachineAnchorClarification
     ? []
@@ -9403,39 +9818,34 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   useEffect(() => {
     if (!intakeDebugMode && showParseDebug) setShowParseDebug(false);
   }, [intakeDebugMode, showParseDebug]);
-  const setLeadingGoal = (goalId) => {
-    const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
-      resolvedGoals: reviewGoals,
-      goalFeasibility: assessmentPreview?.goalFeasibility || null,
-      goalStackConfirmation: {
-        ...(goalStackConfirmation || {}),
-        primaryGoalId: goalId,
-        removedGoalIds: (Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []).filter((id) => id !== goalId),
-        rolesByGoalId: {
-          ...(goalStackConfirmation?.rolesByGoalId || {}),
-          [goalId]: GOAL_STACK_ROLES.primary,
-        },
-      },
-    });
-    applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
+  const readPriorityOrderedGoalIds = () => {
+    const currentOrderedGoalIds = Array.isArray(goalStackReview?.orderedGoalIds)
+      ? goalStackReview.orderedGoalIds
+      : Array.isArray(goalStackConfirmation?.orderedGoalIds)
+      ? goalStackConfirmation.orderedGoalIds
+      : interpretedGoalCards.map((goal) => String(goal?.id || "").trim()).filter(Boolean);
+    return currentOrderedGoalIds.filter(Boolean);
   };
-  const updateSecondaryGoalMode = (goalId, mode = GOAL_STACK_ROLES.maintained) => {
-    const removedGoalIds = new Set(Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []);
-    const rolesByGoalId = { ...(goalStackConfirmation?.rolesByGoalId || {}) };
-    if (mode === "removed") {
-      removedGoalIds.add(goalId);
-      delete rolesByGoalId[goalId];
-    } else {
-      removedGoalIds.delete(goalId);
-      rolesByGoalId[goalId] = mode;
-    }
+  const moveGoalInPriorityStack = (goalId, direction = -1) => {
+    const cleanGoalId = String(goalId || "").trim();
+    if (!cleanGoalId) return;
+    const currentOrderedGoalIds = readPriorityOrderedGoalIds();
+    const currentIndex = currentOrderedGoalIds.indexOf(cleanGoalId);
+    if (currentIndex < 0) return;
+    const nextIndex = direction < 0
+      ? Math.max(0, currentIndex - 1)
+      : Math.min(currentOrderedGoalIds.length - 1, currentIndex + 1);
+    if (nextIndex === currentIndex) return;
+    const nextOrderedGoalIds = [...currentOrderedGoalIds];
+    const [movedGoalId] = nextOrderedGoalIds.splice(currentIndex, 1);
+    nextOrderedGoalIds.splice(nextIndex, 0, movedGoalId);
     const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
       resolvedGoals: reviewGoals,
       goalFeasibility: assessmentPreview?.goalFeasibility || null,
       goalStackConfirmation: {
         ...(goalStackConfirmation || {}),
-        removedGoalIds: [...removedGoalIds],
-        rolesByGoalId,
+        orderedGoalIds: nextOrderedGoalIds,
+        removedGoalIds: (Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []).filter((id) => id !== cleanGoalId),
       },
     });
     applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
@@ -9445,15 +9855,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!cleanGoalId || heardGoalRows.length <= 1) return;
     const removedGoalIds = new Set(Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []);
     removedGoalIds.add(cleanGoalId);
-    const rolesByGoalId = { ...(goalStackConfirmation?.rolesByGoalId || {}) };
-    delete rolesByGoalId[cleanGoalId];
     const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
       resolvedGoals: reviewGoals,
       goalFeasibility: assessmentPreview?.goalFeasibility || null,
       goalStackConfirmation: {
         ...(goalStackConfirmation || {}),
+        orderedGoalIds: readPriorityOrderedGoalIds().filter((id) => id !== cleanGoalId),
         removedGoalIds: [...removedGoalIds],
-        rolesByGoalId,
       },
     });
     applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
@@ -9469,6 +9877,796 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     });
     applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
   };
+  const selectMilestonePath = (goalId = "", strategy = INTAKE_MILESTONE_PATHS.keepTarget) => {
+    const cleanGoalId = String(goalId || "").trim();
+    if (!cleanGoalId) return;
+    const nextMilestonePlanByGoalId = {
+      ...(goalStackConfirmation?.milestonePlanByGoalId || {}),
+    };
+    if (strategy === INTAKE_MILESTONE_PATHS.milestoneFirst) {
+      const sourceGoal = (Array.isArray(activeReviewGoals) ? activeReviewGoals : []).find((goal) => String(goal?.id || "").trim() === cleanGoalId)
+        || (Array.isArray(reviewGoals) ? reviewGoals : []).find((goal) => String(goal?.id || "").trim() === cleanGoalId)
+        || null;
+      const goalAssessment = (Array.isArray(activeGoalFeasibility?.goalAssessments) ? activeGoalFeasibility.goalAssessments : []).find((item) => String(item?.goalId || "").trim() === cleanGoalId)
+        || null;
+      const milestoneRecord = createIntakeMilestoneSelectionRecord({
+        goal: sourceGoal,
+        goalAssessment,
+      });
+      if (!milestoneRecord) return;
+      nextMilestonePlanByGoalId[cleanGoalId] = milestoneRecord;
+    } else {
+      delete nextMilestonePlanByGoalId[cleanGoalId];
+    }
+    const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
+      resolvedGoals: activeReviewGoals,
+      goalFeasibility: activeGoalFeasibility || assessmentPreview?.goalFeasibility || null,
+      goalStackConfirmation: {
+        ...(goalStackConfirmation || {}),
+        milestonePlanByGoalId: nextMilestonePlanByGoalId,
+      },
+    });
+    applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
+  };
+  const renderChoiceChips = ({
+    items = [],
+    selectedValue = "",
+    selectedValues = [],
+    onSelect = () => {},
+    testIdPrefix = "intake-chip",
+    multi = false,
+  } = {}) => (
+    <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+      {items.map((item) => {
+        const value = typeof item === "string" ? item : item?.value;
+        const label = typeof item === "string" ? item : item?.label || item?.value || "";
+        const selected = multi
+          ? (Array.isArray(selectedValues) ? selectedValues : []).includes(value)
+          : String(selectedValue || "") === String(value || "");
+        return (
+          <button
+            key={`${testIdPrefix}-${value}`}
+            data-testid={`${testIdPrefix}-${toTestIdFragment(value || label)}`}
+            className={selected ? "btn btn-primary" : "btn"}
+            onClick={() => onSelect(value)}
+            style={{
+              minHeight:44,
+              fontSize:"0.68rem",
+              color:selected ? "#08111d" : "#dbe7f6",
+              borderColor:selected ? "#dbe7f6" : "#324961",
+              background:selected ? "#dbe7f6" : "transparent",
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+  const renderSectionLabel = (eyebrow = "", title = "", supporting = "") => (
+    <div style={{ display:"grid", gap:"0.22rem" }}>
+      {eyebrow ? (
+        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>{eyebrow.toUpperCase()}</div>
+      ) : null}
+      {title ? (
+        <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1.08rem", color:"#f8fbff", lineHeight:1.15 }}>{title}</div>
+      ) : null}
+      {supporting ? (
+        <div style={{ fontSize:"0.6rem", color:"#9fb4d3", lineHeight:1.5 }}>{supporting}</div>
+      ) : null}
+    </div>
+  );
+  const renderGoalCard = (goal = null, { mode = "proposal" } = {}) => {
+    if (!goal) return null;
+    const priorityMeta = resolveGoalPriorityCardMeta(goal?.priorityIndex);
+    const canReorder = Boolean(goal?.id && mode === "confirm");
+    const allowRemoveGoal = Boolean(goal?.id && interpretedGoalCards.length > 1);
+    const canMoveEarlier = canReorder && Number(goal?.priorityIndex || 0) > 0;
+    const canMoveLater = canReorder && Number(goal?.priorityIndex || 0) < interpretedGoalCards.length - 1;
+    return (
+      <div
+        key={`${mode}:${goal.id || goal.summary}`}
+        data-testid={mode === "confirm" ? "intake-confirm-goal-card" : "intake-goal-proposal-card"}
+        data-goal-id={goal.id || ""}
+        style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:18, padding:"0.9rem", background:"rgba(8,14,25,0.78)" }}
+      >
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+          <div style={{ display:"grid", gap:"0.2rem", flex:"1 1 240px" }}>
+            <div data-testid="intake-goal-card-summary" style={{ fontSize:"0.76rem", color:"#f8fbff", lineHeight:1.35, fontWeight:600 }}>{goal.summary}</div>
+            <div style={{ fontSize:"0.52rem", color:"#9fb4d3", lineHeight:1.5 }}>{goal.priorityHelper || priorityMeta.helper}</div>
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+              <div data-testid="intake-goal-card-priority" style={{ fontSize:"0.48rem", color:priorityMeta.tint, border:`1px solid ${priorityMeta.tint}35`, borderRadius:999, padding:"0.18rem 0.44rem", background:`${priorityMeta.tint}14` }}>
+                {goal.priorityLabel || priorityMeta.label}
+              </div>
+              {goal.goalTypeLabel ? (
+                <div style={{ fontSize:"0.48rem", color:"#dbe7f6", border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.18rem 0.44rem", background:"rgba(15,23,42,0.72)" }}>
+                  {goal.goalTypeLabel}
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <button
+            data-testid={`intake-goal-edit-${toTestIdFragment(goal.id || goal.summary)}`}
+            className="btn"
+            onClick={() => requestAdjustment({ goalSummary: goal.summary, goalId: goal.id })}
+            style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
+          >
+            Edit
+          </button>
+        </div>
+        {goal.firstThirtyDayWin ? (
+          <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>
+            First 30 days: {goal.firstThirtyDayWin}
+          </div>
+        ) : null}
+        {goal.trackingLabels?.length ? (
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            {goal.trackingLabels.map((label) => (
+              <div key={`${goal.id || goal.summary}:${label}`} style={{ fontSize:"0.48rem", color:"#9fb4d3", border:"1px solid rgba(111,148,198,0.14)", borderRadius:999, padding:"0.18rem 0.44rem", background:"rgba(15,23,42,0.68)" }}>
+                {label}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {goal.rationale ? (
+          <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.55 }}>{goal.rationale}</div>
+        ) : null}
+        {mode === "proposal" && allowRemoveGoal ? (
+          <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+            <button
+              data-testid={`intake-goal-remove-${toTestIdFragment(goal.id || goal.summary)}`}
+              className="btn"
+              onClick={() => removeHeardGoal(goal.id)}
+              style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
+            >
+              Remove
+            </button>
+          </div>
+        ) : null}
+        {mode === "confirm" && canReorder ? (
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            {canMoveEarlier ? (
+              <button
+                data-testid={`intake-confirm-priority-up-${toTestIdFragment(goal.id || goal.summary)}`}
+                className="btn"
+                onClick={() => moveGoalInPriorityStack(goal.id, -1)}
+                style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}40` }}
+              >
+                Move earlier
+              </button>
+            ) : null}
+            {canMoveLater ? (
+              <button
+                data-testid={`intake-confirm-priority-down-${toTestIdFragment(goal.id || goal.summary)}`}
+                className="btn"
+                onClick={() => moveGoalInPriorityStack(goal.id, 1)}
+                style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
+              >
+                Move later
+              </button>
+            ) : null}
+            {allowRemoveGoal ? (
+              <button
+                data-testid={`intake-confirm-priority-remove-${toTestIdFragment(goal.id || goal.summary)}`}
+                className="btn"
+                onClick={() => removeHeardGoal(goal.id)}
+                style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
+              >
+                Remove
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+  const renderGoalCardStack = (goals = [], { mode = "proposal" } = {}) => {
+    const orderedGoals = Array.isArray(goals) ? goals : [];
+    const priorityGoals = orderedGoals.slice(0, 3);
+    const additionalGoals = orderedGoals.slice(3);
+    return (
+      <div style={{ display:"grid", gap:"0.7rem" }}>
+        {priorityGoals.map((goal) => renderGoalCard(goal, { mode }))}
+        {additionalGoals.length > 0 ? (
+          <div
+            data-testid={mode === "confirm" ? "intake-confirm-additional-goals" : "intake-proposal-additional-goals"}
+            style={{ display:"grid", gap:"0.55rem" }}
+          >
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>ADDITIONAL GOALS THAT STILL MATTER</div>
+            <div style={{ display:"grid", gap:"0.7rem" }}>
+              {additionalGoals.map((goal) => renderGoalCard(goal, { mode }))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+  const renderSummaryRail = () => (
+    <aside data-testid="intake-summary-rail" style={{ display:"grid", gap:"0.65rem", alignContent:"start" }}>
+      {renderSectionLabel("Summary rail", "What we know", "Proposal only until you confirm the stack.")}
+      {intakeSummaryRail.sections.map((section) => (
+        <div
+          key={section.key}
+          data-testid={`intake-summary-section-${toTestIdFragment(section.key)}`}
+          style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:18, padding:"0.8rem", background:"rgba(7,12,21,0.82)" }}
+        >
+          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.35rem" }}>{section.label.toUpperCase()}</div>
+          <div style={{ display:"grid", gap:"0.35rem" }}>
+            {section.items.map((item) => (
+              <div key={`${section.key}:${item}`} style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{item}</div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </aside>
+  );
+  const renderGoalsStage = () => (
+    <div data-testid="intake-goals-step" style={{ display:"grid", gap:"0.95rem" }}>
+      {renderSectionLabel("Stage 1", "Goals", "Add the goals that matter, then set the training reality in one pass.")}
+      <div style={{ display:"grid", gap:"0.6rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+        <label style={{ display:"grid", gap:"0.32rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>MAIN GOAL</div>
+          <textarea
+            data-testid="intake-goals-primary-input"
+            ref={composerRef}
+            value={answers?.goal_intent || ""}
+            onChange={(e) => updateSimpleAnswer("goal_intent", e.target.value)}
+            placeholder="Bench 225. Get leaner by summer. Look athletic again."
+            rows={3}
+            style={{ minHeight:108, resize:"vertical", fontSize:"0.92rem", lineHeight:1.55 }}
+          />
+        </label>
+        <div style={{ display:"grid", gap:"0.42rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>MORE GOALS</div>
+          {secondaryGoalEntries.length > 0 ? (
+            <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+              {secondaryGoalEntries.map((goalText) => (
+                <button
+                  key={goalText}
+                  data-testid={`intake-goals-chip-${toTestIdFragment(goalText)}`}
+                  className="btn"
+                  onClick={() => removeGoalFromStack(goalText)}
+                  style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
+                >
+                  {goalText} x
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>Optional, but direct. Add as many as you need.</div>
+          )}
+          <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
+            <input
+              data-testid="intake-goals-secondary-input"
+              value={extraGoalDraft}
+              onChange={(e) => setExtraGoalDraft(e.target.value)}
+              placeholder="Add another goal"
+            />
+            <button
+              data-testid="intake-goals-add"
+              className="btn"
+              onClick={addGoalToStack}
+              disabled={!normalizeIntakeGoalEntry(extraGoalDraft)}
+              style={{ color:"#dbe7f6", borderColor:"#324961" }}
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      </div>
+      <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+        {renderSectionLabel("Reality check", "Planning inputs", "Short, concrete inputs only.")}
+        <div style={{ display:"grid", gap:"0.7rem" }}>
+          <div style={{ display:"grid", gap:"0.35rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXPERIENCE</div>
+            {renderChoiceChips({
+              items: EXPERIENCE_LEVEL_OPTIONS.map((value) => ({ value, label: EXPERIENCE_LEVEL_LABELS[value] })),
+              selectedValue: answers?.experience_level || "",
+              onSelect: (value) => updateSimpleAnswer("experience_level", value),
+              testIdPrefix: "intake-goals-option-experience-level",
+            })}
+          </div>
+          <div style={{ display:"grid", gap:"0.35rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>TRAINING DAYS</div>
+            {renderChoiceChips({
+              items: ["2", "3", "4", "5", "6+"],
+              selectedValue: answers?.training_days || "",
+              onSelect: (value) => updateSimpleAnswer("training_days", value),
+              testIdPrefix: "intake-goals-option-training-days",
+            })}
+          </div>
+          <div style={{ display:"grid", gap:"0.35rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>SESSION LENGTH</div>
+            {renderChoiceChips({
+              items: SESSION_LENGTH_OPTIONS.map((value) => ({ value, label: SESSION_LENGTH_LABELS[value] })),
+              selectedValue: answers?.session_length || "",
+              onSelect: (value) => updateSimpleAnswer("session_length", value),
+              testIdPrefix: "intake-goals-option-session-length",
+            })}
+          </div>
+          <div style={{ display:"grid", gap:"0.35rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>WHERE YOU TRAIN</div>
+            {renderChoiceChips({
+              items: ["Home", "Gym", "Both", "Varies a lot"],
+              selectedValue: trainingLocationValue,
+              onSelect: (value) => updateTrainingLocationAnswer(value),
+              testIdPrefix: "intake-goals-option-training-location",
+            })}
+          </div>
+          {needsHomeEquipment ? (
+            <div style={{ display:"grid", gap:"0.35rem" }}>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>HOME SETUP</div>
+              {renderChoiceChips({
+                items: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
+                selectedValues: homeEquipmentSelection,
+                onSelect: (value) => toggleHomeEquipmentOption(value),
+                testIdPrefix: "intake-goals-option-home-equipment",
+                multi: true,
+              })}
+              {homeEquipmentSelection.includes("Other") ? (
+                <input
+                  data-testid="intake-goals-input-home-equipment-other"
+                  value={answers?.home_equipment_other || ""}
+                  onChange={(e) => updateSimpleAnswer("home_equipment_other", e.target.value)}
+                  placeholder="Other home setup"
+                />
+              ) : null}
+            </div>
+          ) : null}
+          <div style={{ display:"grid", gap:"0.35rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT ISSUES</div>
+            <textarea
+              data-testid="intake-goals-input-injury-text"
+              value={answers?.injury_text || ""}
+              onChange={(e) => updateSimpleAnswer("injury_text", e.target.value)}
+              placeholder="Optional. Leave blank if nothing needs protection."
+              rows={2}
+              style={{ minHeight:82, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
+            />
+            {intakeInjuryContext.hasCurrentIssue ? renderChoiceChips({
+              items: INTAKE_INJURY_IMPACT_OPTIONS,
+              selectedValue: answers?.injury_impact || "",
+              onSelect: (value) => updateSimpleAnswer("injury_impact", value),
+              testIdPrefix: "intake-goals-option-injury-impact",
+            }) : null}
+          </div>
+          <div style={{ display:"grid", gap:"0.35rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>COACHING STYLE</div>
+            {renderChoiceChips({
+              items: ["Keep me consistent", "Balanced coaching", "Push me (with guardrails)"],
+              selectedValue: answers?.coaching_style || "",
+              onSelect: (value) => updateSimpleAnswer("coaching_style", value),
+              testIdPrefix: "intake-goals-option-coaching-style",
+            })}
+          </div>
+          {goalsStageNeeds.length > 0 ? (
+            <div data-testid="intake-goals-needs" style={{ display:"grid", gap:"0.28rem" }}>
+              {goalsStageNeeds.map((item) => (
+                <div key={item} style={{ fontSize:"0.54rem", color:"#9fb4d3", lineHeight:1.5 }}>{item}</div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+  const renderInterpretationStage = () => (
+    <div data-testid="intake-interpretation-step" style={{ display:"grid", gap:"0.95rem" }}>
+      {renderSectionLabel("Stage 2", "Interpretation", assessing ? "Resolving your goal stack..." : "Review the proposal before we ask for anything else.")}
+      <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(0,194,255,0.18)", borderRadius:20, padding:"1rem", background:"linear-gradient(180deg, rgba(0,194,255,0.08), rgba(8,14,25,0.78))" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>PROPOSAL ONLY</div>
+          <div style={{ fontSize:"0.54rem", color:"#dbe7f6" }}>Nothing becomes canonical until you confirm.</div>
+        </div>
+        <div style={{ fontSize:"0.64rem", color:"#f8fbff", lineHeight:1.55 }}>
+          {assessing
+            ? "Resolving your goals, tradeoffs, and first tracking markers."
+            : assessmentText || "Your proposed direction will land here."}
+        </div>
+      </div>
+      {assessing ? (
+        <div style={{ display:"grid", gap:"0.55rem" }}>
+          {[0, 1].map((index) => (
+            <div key={index} style={{ height:92, borderRadius:18, border:"1px solid rgba(111,148,198,0.12)", background:"linear-gradient(90deg, rgba(15,23,42,0.78), rgba(30,41,59,0.46), rgba(15,23,42,0.78))" }} />
+          ))}
+        </div>
+      ) : interpretedGoalCards.length > 0 ? (
+        renderGoalCardStack(interpretedGoalCards, { mode: "proposal" })
+      ) : (
+        <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:18, padding:"0.95rem", background:"rgba(8,14,25,0.78)", fontSize:"0.6rem", color:"#9fb4d3", lineHeight:1.55 }}>
+          Your interpreted goals will show up here after we resolve the intake draft.
+        </div>
+      )}
+    </div>
+  );
+  const renderClarifyStage = () => (
+    <div data-testid="intake-clarify-step" style={{ display:"grid", gap:"0.95rem" }}>
+      {renderSectionLabel("Stage 3", "Clarify", "Only the details the planner actually needs.")}
+      {heardGoalRows.length > 0 ? (
+        <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+          {heardGoalRows.map((goal) => (
+            <div key={goal.id} style={{ fontSize:"0.5rem", color:"#dbe7f6", border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.22rem 0.5rem", background:"rgba(15,23,42,0.72)" }}>
+              {goal.summary}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+        <div style={{ fontSize:"0.56rem", color:"#f8fbff", lineHeight:1.55 }}>{clarificationPromptText}</div>
+        {clarificationValidationMessage ? (
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>{clarificationValidationMessage}</div>
+        ) : null}
+        {isMachineAnchorClarification ? (
+          <div
+            data-testid="intake-anchor-card-active"
+            data-field-id={activeMachineAnchor?.field_id || ""}
+            data-anchor-id={activeMachineAnchor?.anchor_id || ""}
+            style={{ display:"grid", gap:"0.6rem", border:"1px solid rgba(0,194,255,0.24)", borderRadius:18, padding:"0.85rem", background:"rgba(7,18,33,0.92)" }}
+          >
+            {allowNaturalAnchorMode ? (
+              <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+                <button
+                  data-testid="intake-anchor-toggle-structured"
+                  className={anchorEntryMode === "structured" ? "btn btn-primary" : "btn"}
+                  onClick={() => setAnchorEntryMode("structured")}
+                  style={{ fontSize:"0.5rem", color:anchorEntryMode === "structured" ? "#08111d" : "#dbe7f6", borderColor:anchorEntryMode === "structured" ? "#dbe7f6" : "#324961", background:anchorEntryMode === "structured" ? "#dbe7f6" : "transparent" }}
+                >
+                  Guided
+                </button>
+                <button
+                  data-testid="intake-anchor-toggle-natural"
+                  className={anchorEntryMode === "natural" ? "btn btn-primary" : "btn"}
+                  onClick={() => setAnchorEntryMode("natural")}
+                  style={{ fontSize:"0.5rem", color:anchorEntryMode === "natural" ? "#08111d" : "#dbe7f6", borderColor:anchorEntryMode === "natural" ? "#dbe7f6" : "#324961", background:anchorEntryMode === "natural" ? "#dbe7f6" : "transparent" }}
+                >
+                  In your words
+                </button>
+              </div>
+            ) : null}
+            {anchorEntryMode === "natural" && allowNaturalAnchorMode ? (
+              <textarea
+                data-testid="intake-anchor-natural-input"
+                value={naturalAnchorDraft}
+                onChange={(e) => setNaturalAnchorDraft(e.target.value)}
+                placeholder={activeMachineAnchor?.placeholder || "Type the detail naturally..."}
+                rows={3}
+                style={{ minHeight:88, resize:"vertical", fontSize:"0.88rem", lineHeight:1.55 }}
+              />
+            ) : activeMachineAnchor?.input_type === "choice_chips" ? (
+              renderChoiceChips({
+                items: (Array.isArray(activeMachineAnchor?.options) ? activeMachineAnchor.options : []).map((option) => ({ value: option.value, label: option.label })),
+                selectedValue: clarificationValues?.[activeMachineAnchor?.field_id || ""] || "",
+                onSelect: (value) => updateClarificationValue(activeMachineAnchor.field_id, value),
+                testIdPrefix: `intake-anchor-choice-${toTestIdFragment(activeMachineAnchor?.field_id || "")}`,
+              })
+            ) : activeMachineAnchor?.input_type === "date_or_month" ? (
+              <div style={{ display:"grid", gap:"0.5rem" }}>
+                <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+                  {["month", "date"].map((mode) => (
+                    <button
+                      key={mode}
+                      data-testid={`intake-anchor-mode-${toTestIdFragment(activeMachineAnchor?.field_id || "")}-${toTestIdFragment(mode)}`}
+                      className={String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === mode ? "btn btn-primary" : "btn"}
+                      onClick={() => updateClarificationValue(`${activeMachineAnchor.field_id}__mode`, mode)}
+                      style={{ fontSize:"0.5rem", color:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === mode ? "#08111d" : "#dbe7f6", borderColor:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === mode ? "#dbe7f6" : "#324961", background:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === mode ? "#dbe7f6" : "transparent" }}
+                    >
+                      {mode === "month" ? "Target month" : "Exact date"}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  data-testid={`intake-anchor-input-${toTestIdFragment(activeMachineAnchor?.field_id || "")}`}
+                  type={String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === "date" ? "date" : "month"}
+                  value={clarificationValues?.[activeMachineAnchor?.field_id || ""] || ""}
+                  onChange={(e) => updateClarificationValue(activeMachineAnchor.field_id, e.target.value)}
+                />
+              </div>
+            ) : activeMachineAnchor?.input_type === "number_with_unit" ? (
+              <div style={{ display:"grid", gap:"0.5rem" }}>
+                <input
+                  data-testid={`intake-anchor-input-${toTestIdFragment(activeMachineAnchor?.field_id || "")}`}
+                  type="number"
+                  value={clarificationValues?.[activeMachineAnchor?.field_id || ""] || ""}
+                  onChange={(e) => updateClarificationValue(activeMachineAnchor.field_id, e.target.value)}
+                  placeholder={activeMachineAnchor?.placeholder || ""}
+                />
+                {renderChoiceChips({
+                  items: (Array.isArray(activeMachineAnchor?.unit_options) ? activeMachineAnchor.unit_options : []).map((option) => ({ value: option.value, label: option.label || option.value })),
+                  selectedValue: clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__unit`] || activeMachineAnchor?.unit || "",
+                  onSelect: (value) => updateClarificationValue(`${activeMachineAnchor.field_id}__unit`, value),
+                  testIdPrefix: `intake-anchor-unit-${toTestIdFragment(activeMachineAnchor?.field_id || "")}`,
+                })}
+              </div>
+            ) : activeMachineAnchor?.input_type === "strength_top_set" ? (
+              <div style={{ display:"grid", gap:"0.5rem" }}>
+                <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+                  {[
+                    { value: "top_set", label: "Top set" },
+                    { value: "estimated_max", label: "Estimated max" },
+                  ].map((modeOption) => (
+                    <button
+                      key={modeOption.value}
+                      data-testid={`intake-anchor-mode-${toTestIdFragment(activeMachineAnchor?.field_id || "")}-${toTestIdFragment(modeOption.label)}`}
+                      className={String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "top_set") === modeOption.value ? "btn btn-primary" : "btn"}
+                      onClick={() => updateClarificationValue(`${activeMachineAnchor.field_id}__mode`, modeOption.value)}
+                      style={{ fontSize:"0.5rem", color:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "top_set") === modeOption.value ? "#08111d" : "#dbe7f6", borderColor:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "top_set") === modeOption.value ? "#dbe7f6" : "#324961", background:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "top_set") === modeOption.value ? "#dbe7f6" : "transparent" }}
+                    >
+                      {modeOption.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:"0.5rem" }}>
+                  <input
+                    data-testid={`intake-anchor-input-${toTestIdFragment(activeMachineAnchor?.field_id || "")}-weight`}
+                    type="number"
+                    value={clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__weight`] || ""}
+                    onChange={(e) => updateClarificationValue(`${activeMachineAnchor.field_id}__weight`, e.target.value)}
+                    placeholder="Weight"
+                  />
+                  {String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "top_set") === "estimated_max" ? (
+                    <div />
+                  ) : (
+                    <input
+                      data-testid={`intake-anchor-input-${toTestIdFragment(activeMachineAnchor?.field_id || "")}-reps`}
+                      type="number"
+                      value={clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__reps`] || ""}
+                      onChange={(e) => updateClarificationValue(`${activeMachineAnchor.field_id}__reps`, e.target.value)}
+                      placeholder="Reps"
+                    />
+                  )}
+                </div>
+              </div>
+            ) : (
+              <input
+                data-testid={`intake-anchor-input-${toTestIdFragment(activeMachineAnchor?.field_id || "")}`}
+                value={clarificationValues?.[activeMachineAnchor?.field_id || ""] || ""}
+                onChange={(e) => updateClarificationValue(activeMachineAnchor.field_id, e.target.value)}
+                placeholder={activeMachineAnchor?.placeholder || ""}
+              />
+            )}
+            {anchorCapturePreview?.captureText ? (
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                {anchorCapturePreview.captureText}
+                {anchorCapturePreview.question ? ` ${anchorCapturePreview.question}` : ""}
+              </div>
+            ) : null}
+            {clarificationFieldErrors?.[activeMachineAnchor?.field_id || ""] || clarificationFormError ? (
+              <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.5 }}>
+                {clarificationFieldErrors?.[activeMachineAnchor?.field_id || ""] || clarificationFormError}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div style={{ display:"grid", gap:"0.55rem" }}>
+            <textarea
+              data-testid="intake-clarify-input"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Add the missing detail..."
+              rows={3}
+              style={{ minHeight:92, resize:"vertical", fontSize:"0.88rem", lineHeight:1.55 }}
+            />
+            {clarificationFormError ? (
+              <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.5 }}>{clarificationFormError}</div>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+  const renderConfirmStage = () => (
+    <div data-testid="intake-confirm-step" style={{ display:"grid", gap:"0.95rem" }}>
+      {renderSectionLabel("Stage 4", "Confirm", "Explicit confirmation turns the draft into the canonical goal stack for planning.")}
+      <div data-testid="intake-review" style={{ display:"grid", gap:"0.7rem" }}>
+        <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:18, padding:"0.9rem", background:"rgba(8,14,25,0.78)" }}>
+          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>ORDERED GOAL STACK</div>
+          <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.55 }}>
+            Reorder directly here. Priority 1 gets the clearest push, while lower-priority goals still stay visible and shape the plan where possible.
+          </div>
+        </div>
+        {interpretedGoalCards.length > 0 ? renderGoalCardStack(interpretedGoalCards, { mode: "confirm" }) : null}
+        {goalStackReview.backgroundPriority ? (
+          <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:18, padding:"0.9rem", background:"rgba(8,14,25,0.78)" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
+              <div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.18rem" }}>RECOVERY POSTURE</div>
+                <div style={{ fontSize:"0.62rem", color:"#f8fbff", lineHeight:1.45 }}>{goalStackReview.backgroundPriority.label}</div>
+              </div>
+              <button
+                data-testid="intake-confirm-toggle-recovery"
+                className="btn"
+                onClick={toggleBackgroundPriority}
+                style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
+              >
+                {goalStackReview.backgroundPriority.enabled ? "Let recovery flex" : "Keep recovery protected"}
+              </button>
+            </div>
+            <div style={{ fontSize:"0.54rem", color:"#8fa5c8", marginTop:"0.22rem", lineHeight:1.5 }}>{goalStackReview.backgroundPriority.summary}</div>
+          </div>
+        ) : null}
+        {goalReviewContract?.tradeoff_statement ? (
+          <div data-testid="intake-tradeoff-statement" style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:18, padding:"0.9rem", background:"rgba(8,14,25,0.78)" }}>
+            <div style={{ fontSize:"0.48rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.22rem" }}>TRADEOFFS</div>
+            <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalReviewContract.tradeoff_statement}</div>
+          </div>
+        ) : null}
+        <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:18, padding:"0.9rem", background:"rgba(8,14,25,0.78)", display:"grid", gap:"0.45rem" }}>
+          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CONFIRMATION STATE</div>
+          <div style={{ fontSize:"0.66rem", color:confirmationTone, lineHeight:1.45 }}>{confirmationHeadline}</div>
+          {confirmationNeedsList.length > 0 ? (
+            <div style={{ display:"grid", gap:"0.24rem" }}>
+              {confirmationNeedsList.map((item) => (
+                <div key={item} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{item}</div>
+              ))}
+            </div>
+          ) : null}
+          {milestoneDecisionModel ? (
+            <div data-testid="intake-target-shape" style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:16, padding:"0.75rem", background:"rgba(15,23,42,0.72)", display:"grid", gap:"0.45rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>TARGET SHAPE</div>
+              <div data-testid="intake-target-shape-headline" style={{ fontSize:"0.62rem", color:"#f8fbff", lineHeight:1.45 }}>{milestoneDecisionModel.headline}</div>
+              {milestoneDecisionModel.supportingText ? (
+                <div data-testid="intake-target-shape-supporting" style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>
+                  {milestoneDecisionModel.supportingText}
+                </div>
+              ) : null}
+              {selectedMilestoneLongTermTarget ? (
+                <div data-testid="intake-target-shape-long-term" style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                  Long-term target still matters: {selectedMilestoneLongTermTarget}
+                </div>
+              ) : null}
+              <div style={{ display:"grid", gap:"0.38rem" }}>
+                {(Array.isArray(milestoneDecisionModel.choices) ? milestoneDecisionModel.choices : []).map((choice) => {
+                  const selected = String(milestoneDecisionModel.selectedKey || "") === String(choice?.key || "");
+                  return (
+                    <button
+                      key={choice?.key || choice?.label}
+                      type="button"
+                      data-testid={`intake-target-path-${String(choice?.key || "").trim()}`}
+                      className="btn"
+                      onClick={() => selectMilestonePath(milestoneDecisionModel.goalId, choice?.key || "")}
+                      style={{
+                        display:"grid",
+                        gap:"0.16rem",
+                        textAlign:"left",
+                        padding:"0.7rem 0.75rem",
+                        borderRadius:14,
+                        borderColor:selected ? "#dbe7f6" : "#324961",
+                        background:selected ? "rgba(219,231,246,0.08)" : "transparent",
+                        color:"#dbe7f6",
+                      }}
+                    >
+                      <span style={{ fontSize:"0.56rem", color:selected ? "#f8fbff" : "#dbe7f6", lineHeight:1.45 }}>{choice?.label}</span>
+                      <span style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{choice?.summary}</span>
+                      {selected ? (
+                        <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>CURRENT PATH</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+          {activeConfirmationState?.reason || confirmBuildError ? (
+            <div data-testid="intake-confirmation-message" style={{ fontSize:"0.54rem", color:confirmationTone, lineHeight:1.5 }}>
+              {confirmBuildError || activeConfirmationState?.reason}
+            </div>
+          ) : null}
+          {(activeConfirmationState?.status === "block" || activeConfirmationState?.status === "incomplete") && activeConfirmationState?.next_required_field ? (
+            <div>
+              <button
+                data-testid="intake-go-next-detail"
+                className="btn"
+                onClick={jumpToNextRequiredDetail}
+                style={{ color:"#dbe7f6", borderColor:"#324961" }}
+              >
+                Go to the next detail
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+  const renderAdjustStage = () => (
+    <div data-testid="intake-adjust-step" style={{ display:"grid", gap:"0.95rem" }}>
+      {renderSectionLabel("Correction", "Adjust", adjustmentTargetGoal?.summary ? `Tell me what should change about "${adjustmentTargetGoal.summary}".` : "Tell me what should change.")}
+      <div style={{ display:"grid", gap:"0.6rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+        <textarea
+          data-testid="intake-adjust-input"
+          ref={composerRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={adjustmentTargetGoal?.summary ? `Change "${adjustmentTargetGoal.summary}"...` : "Change the interpretation..."}
+          rows={4}
+          style={{ minHeight:110, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
+        />
+      </div>
+    </div>
+  );
+  const renderBuildingStage = () => (
+    <div data-testid="intake-building" style={{ display:"grid", gap:"0.8rem" }}>
+      {renderSectionLabel("Stage 5", "Build", "Turning the confirmed stack into a deterministic plan.")}
+      <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+        <div style={{ fontSize:"0.9rem", color:"#f8fbff" }}>Building your plan...</div>
+        <div data-testid="intake-building-stage" style={{ fontSize:"0.72rem", color:"#9fb4d3" }}>{BUILD_STAGES[buildingStageIndex]}</div>
+        <div style={{ width:"100%", height:6, borderRadius:999, background:"rgba(111,148,198,0.14)", overflow:"hidden" }}>
+          <div style={{ width:`${((buildingStageIndex + 1) / BUILD_STAGES.length) * 100}%`, height:"100%", borderRadius:999, background:"linear-gradient(90deg, #00c2ff, #27f59a)", transition:"width 0.45s ease" }} />
+        </div>
+      </div>
+    </div>
+  );
+  const renderActiveStage = () => {
+    if (phase === INTAKE_UI_PHASES.building) return renderBuildingStage();
+    if (phase === INTAKE_UI_PHASES.adjust) return renderAdjustStage();
+    if (phase === INTAKE_UI_PHASES.confirm) return renderConfirmStage();
+    if (phase === INTAKE_UI_PHASES.clarify) return renderClarifyStage();
+    if (phase === INTAKE_UI_PHASES.interpretation) return renderInterpretationStage();
+    return renderGoalsStage();
+  };
+  const handleFooterBack = () => {
+    if (phase === INTAKE_UI_PHASES.interpretation) {
+      setPhase(INTAKE_UI_PHASES.goals);
+      return;
+    }
+    if (phase === INTAKE_UI_PHASES.clarify) {
+      goBackFromClarify();
+      return;
+    }
+    if (phase === INTAKE_UI_PHASES.confirm) {
+      goBackFromConfirm();
+      return;
+    }
+    if (phase === INTAKE_UI_PHASES.adjust) {
+      setPhase(activeReviewModel?.orderedResolvedGoals?.length ? INTAKE_UI_PHASES.interpretation : INTAKE_UI_PHASES.goals);
+    }
+  };
+  const handleFooterPrimaryAction = async () => {
+    if (phase === INTAKE_UI_PHASES.goals) {
+      await submitGoalsStage();
+      return;
+    }
+    if (phase === INTAKE_UI_PHASES.interpretation) {
+      continueFromInterpretation();
+      return;
+    }
+    if (phase === INTAKE_UI_PHASES.clarify) {
+      await submitClarification();
+      return;
+    }
+    if (phase === INTAKE_UI_PHASES.confirm) {
+      await finalizePlan();
+      return;
+    }
+    if (phase === INTAKE_UI_PHASES.adjust) {
+      await submitAdjustment();
+    }
+  };
+  const footerPrimaryLabel = phase === INTAKE_UI_PHASES.confirm
+    ? (confirmBuildSubmitting ? "Confirming..." : "Confirm")
+    : phase === INTAKE_UI_PHASES.clarify
+    ? (naturalAnchorSubmitting ? "Capturing..." : "Continue")
+    : phase === INTAKE_UI_PHASES.adjust
+    ? "Update goal"
+    : "Continue";
+  const footerPrimaryDisabled = phase === INTAKE_UI_PHASES.building
+    ? true
+    : phase === INTAKE_UI_PHASES.goals
+    ? !goalsStageCanContinue || assessing
+    : phase === INTAKE_UI_PHASES.interpretation
+    ? assessing || !assessmentBoundary?.typedIntakePacket
+    : phase === INTAKE_UI_PHASES.clarify
+    ? (isMachineAnchorClarification
+      ? !(anchorEntryMode === "natural" ? String(naturalAnchorDraft || "").trim() : activeMachineAnchorSubmission?.raw_text) || naturalAnchorSubmitting
+      : isStructuredClarification
+      ? clarificationInputFields.every((field) => !String(clarificationValues?.[field.key] || "").trim())
+      : !draft.trim())
+    : phase === INTAKE_UI_PHASES.confirm
+    ? !confirmCtaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting
+    : phase === INTAKE_UI_PHASES.adjust
+    ? !draft.trim()
+    : false;
+  const showFooterBack = ![INTAKE_UI_PHASES.goals, INTAKE_UI_PHASES.building].includes(phase);
+  const showFoundationButton = phase === INTAKE_UI_PHASES.goals;
 
   return (
     <div
@@ -9479,1066 +10677,118 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       data-current-field-id={String(activeMachineAnchor?.field_id || "")}
       data-current-anchor-id={String(activeMachineAnchor?.anchor_id || "")}
       data-confirmation-status={String(activeConfirmationState?.status || "")}
-      style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, rgba(0,194,255,0.12), transparent 36%), radial-gradient(110% 110% at 100% 0%, rgba(124,92,255,0.18), transparent 40%), linear-gradient(180deg,#05080f 0%, #0a1322 55%, #0d182b 100%)", padding:"1.25rem 1rem 1.5rem" }}
+      style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, rgba(0,194,255,0.14), transparent 38%), radial-gradient(110% 110% at 100% 0%, rgba(255,138,0,0.12), transparent 36%), linear-gradient(180deg,#05080f 0%, #0a1322 55%, #0d182b 100%)", padding:"clamp(0.9rem, 2.6vw, 1.5rem)" }}
     >
-      <div style={{ width:"100%", maxWidth:860, display:"grid", gridTemplateRows:"auto 1fr", gap:"1rem" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:"0.75rem", color:"#dbe7f6" }}>
-          <div style={{ width:42, height:42, borderRadius:999, display:"grid", placeItems:"center", background:"linear-gradient(135deg,#13243a 0%, #1a3553 100%)", border:"1px solid rgba(111,148,198,0.28)", fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, letterSpacing:"0.08em" }}>
-            PT
+      <div style={{ width:"100%", maxWidth:1180, display:"grid", gap:"1rem", minHeight:"calc(100vh - 2rem)" }}>
+        <div style={{ display:"grid", gap:"0.85rem" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.75rem", alignItems:"center", flexWrap:"wrap" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:"0.75rem", minWidth:0 }}>
+              <div style={{ width:46, height:46, borderRadius:18, display:"grid", placeItems:"center", background:"linear-gradient(135deg, rgba(0,194,255,0.18), rgba(15,23,42,0.92))", border:"1px solid rgba(111,148,198,0.28)", fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, letterSpacing:"0.08em", color:"#f8fbff", flexShrink:0 }}>
+                PT
+              </div>
+              <div style={{ minWidth:0 }}>
+                <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1rem", color:"#f8fbff", letterSpacing:"0.04em" }}>Coach</div>
+                <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                  Stage {Math.min(stageProgressIndex + 1, INTAKE_STAGE_LABELS.length)} of {INTAKE_STAGE_LABELS.length}. Proposal only until you confirm.
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize:"0.56rem", color:"#9fb4d3", lineHeight:1.5, maxWidth:360 }}>
+              Fast for exact goals, still guided when the target is fuzzy.
+            </div>
           </div>
-          <div>
-            <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"0.98rem", letterSpacing:"0.04em", color:"#f8fbff" }}>Coach</div>
-            <div style={{ fontSize:"0.54rem", color:"#8fa5c8", letterSpacing:"0.06em" }}>INTAKE CHAT</div>
+          <div style={{ display:"flex", gap:"0.45rem", overflowX:"auto", paddingBottom:"0.15rem" }}>
+            {INTAKE_STAGE_LABELS.map((stage, index) => {
+              const isActive = index === stageProgressIndex;
+              const isComplete = index < stageProgressIndex;
+              return (
+                <div
+                  key={stage.key}
+                  data-testid={`intake-stage-pill-${toTestIdFragment(stage.label)}`}
+                  style={{
+                    minWidth:112,
+                    padding:"0.65rem 0.75rem",
+                    borderRadius:18,
+                    border:isActive ? "1px solid rgba(0,194,255,0.38)" : "1px solid rgba(111,148,198,0.16)",
+                    background:isActive ? "linear-gradient(180deg, rgba(0,194,255,0.14), rgba(7,12,21,0.92))" : isComplete ? "rgba(12,24,39,0.92)" : "rgba(7,12,21,0.76)",
+                    boxShadow:isActive ? "0 12px 28px rgba(0,194,255,0.1)" : "none",
+                    flexShrink:0,
+                  }}
+                >
+                  <div style={{ fontSize:"0.44rem", color:isActive ? "#b9ecff" : isComplete ? "#9fe8c7" : "#6f94c6", letterSpacing:"0.12em", marginBottom:"0.16rem" }}>
+                    {isComplete ? "DONE" : isActive ? "NOW" : `STEP ${index + 1}`}
+                  </div>
+                  <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.35 }}>{stage.label}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
-        <div style={{ border:"1px solid rgba(111,148,198,0.18)", borderRadius:24, background:"rgba(8,14,25,0.82)", boxShadow:"0 24px 54px rgba(0,0,0,0.36)", minHeight:0, overflow:"hidden", display:"grid", gridTemplateRows:"1fr auto" }}>
-          <div data-testid="intake-transcript" ref={scrollRef} style={{ padding:"1.1rem 1rem 0.8rem", overflowY:"auto", display:"grid", gap:"0.7rem", alignContent:"start" }}>
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                data-testid="intake-message"
-                data-message-role={message.role}
-                data-message-key={String(message.message_key || message.idempotency_key || "")}
-                style={{ justifySelf:message.role === "user" ? "end" : "start", maxWidth:"min(78ch, 88%)" }}
-              >
-                <div style={{
-                  background:message.role === "user" ? "linear-gradient(135deg, rgba(0,194,255,0.22), rgba(0,194,255,0.08))" : "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
-                  border:message.role === "user" ? "1px solid rgba(0,194,255,0.28)" : "1px solid rgba(111,148,198,0.18)",
-                  borderRadius:message.role === "user" ? "18px 18px 6px 18px" : "18px 18px 18px 6px",
-                  padding:"0.78rem 0.9rem",
-                  fontSize:"0.96rem",
-                  lineHeight:1.75,
-                  color:message.role === "user" ? "#e8f8ff" : "#dbe7f6",
-                  whiteSpace:"pre-wrap",
-                  boxShadow:message.role === "user" ? "0 10px 24px rgba(0,194,255,0.08)" : "none",
-                }}>
-                  {message.displayedText}
-                  {message.role === "coach" && message.displayedText !== message.text && <span style={{ opacity:0.7 }}>|</span>}
-                </div>
-              </div>
-            ))}
-            {assessing && (
-              <div data-testid="intake-assessing" style={{ justifySelf:"start", maxWidth:"88%" }}>
-                <div style={{ background:"linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))", border:"1px solid rgba(111,148,198,0.18)", borderRadius:"18px 18px 18px 6px", padding:"0.72rem 0.88rem", fontSize:"0.84rem", color:"#8fa5c8" }}>
-                  Coach is sizing up the timeline...
-                </div>
-              </div>
-            )}
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap:"1rem", alignItems:"start" }}>
+          <section style={{ minWidth:0, display:"grid", gap:"1rem" }}>
+            <div style={{ border:"1px solid rgba(111,148,198,0.18)", borderRadius:28, background:"rgba(8,14,25,0.84)", boxShadow:"0 24px 54px rgba(0,0,0,0.36)", padding:"clamp(1rem, 2.8vw, 1.35rem)", backdropFilter:"blur(16px)" }}>
+              {renderActiveStage()}
+            </div>
+          </section>
+          <div style={{ minWidth:0 }}>
+            <div style={{ position:"sticky", top:"0.9rem", display:"grid", gap:"1rem" }}>
+              {renderSummaryRail()}
+            </div>
           </div>
-          <div style={{ borderTop:"1px solid rgba(111,148,198,0.14)", padding:"0.9rem 1rem 1rem", background:"rgba(7,12,21,0.92)" }}>
-            {phase === "questions" && currentPrompt && !isCoachStreaming && (
-              <div data-testid="intake-question-step" style={{ display:"grid", gap:"0.6rem" }}>
-                {currentPrompt.type === "buttons" && (
-                  <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min(currentPrompt.options.length, 4)}, minmax(0,1fr))`, gap:"0.45rem" }}>
-                    {currentPrompt.options.map((option) => (
-                      <button key={option} data-testid={`intake-question-option-${toTestIdFragment(currentPrompt.key)}-${toTestIdFragment(option)}`} className="btn" onClick={() => submitCurrentAnswer(option)} style={{ minHeight:46, fontSize:"0.68rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                        {option}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {currentPrompt.type === "multiselect" && (
-                  <div style={{ display:"grid", gap:"0.55rem" }}>
-                    <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
-                      {currentPrompt.options.map((option) => {
-                        const selected = equipmentSelection.includes(option);
-                        return (
-                          <button
-                            key={option}
-                            data-testid={`intake-question-option-${toTestIdFragment(currentPrompt.key)}-${toTestIdFragment(option)}`}
-                            className="btn"
-                            onClick={() => setEquipmentSelection((prev) => selected ? prev.filter((item) => item !== option) : [...prev, option])}
-                            style={{ fontSize:"0.64rem", color:selected ? C.green : "#c4d4ec", borderColor:selected ? C.green+"45" : "#324961", background:selected ? "rgba(39,245,154,0.09)" : undefined }}
-                          >
-                            {option}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {equipmentSelection.includes("Other") && (
-                      <input data-testid="intake-question-input-home-equipment-other" ref={composerRef} value={equipmentOther} onChange={(e) => setEquipmentOther(e.target.value)} placeholder="Other home setup" />
-                    )}
-                    <button data-testid="intake-question-continue" className="btn btn-primary" onClick={submitEquipmentAnswer} disabled={equipmentSelection.length === 0 || (equipmentSelection.includes("Other") && !equipmentOther.trim())}>
-                      Continue
-                    </button>
-                  </div>
-                )}
-                {(currentPrompt.type === "text" || currentPrompt.type === "text_optional") && (
-                  <div style={{ display:"grid", gap:"0.5rem" }}>
-                    <textarea
-                      data-testid={`intake-question-input-${toTestIdFragment(currentPrompt.key)}`}
-                      ref={composerRef}
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      placeholder={currentPrompt.placeholder || "Type your response..."}
-                      rows={3}
-                      style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
-                    />
-                    <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button data-testid="intake-question-send" className="btn btn-primary" onClick={() => submitCurrentAnswer(draft)} disabled={!draft.trim()}>
-                        Send
-                      </button>
-                      {currentPrompt.key === "goal_intent" && (
-                        <button data-testid="intake-question-foundation" className="btn" onClick={submitFoundationStart} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
-                          Start with a foundation plan
-                        </button>
-                      )}
-                      {currentPrompt.type === "text_optional" && (
-                        <button data-testid="intake-question-skip" className="btn" onClick={() => submitCurrentAnswer(currentPrompt.skipValue || currentPrompt.skipLabel)} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
-                          {currentPrompt.skipLabel}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+        </div>
 
-            {(phase === "review" || phase === "clarify" || phase === "secondary_goal") && !isCoachStreaming && (
-              <div data-testid="intake-structured-step" style={{ display:"grid", gap:"0.65rem" }}>
-                {heardGoalRows.length > 0 && (
-                  <div data-testid="intake-heard-goals" style={{ border:"1px solid rgba(111,148,198,0.16)", borderRadius:16, padding:"0.78rem 0.84rem", background:"rgba(10,18,32,0.68)", display:"grid", gap:"0.5rem" }}>
-                    <div style={{ display:"grid", gap:"0.18rem" }}>
-                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>HERE'S WHAT I HEARD</div>
-                      <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>
-                        {heardGoalRows.length > 1
-                          ? "If one of these is off, remove it before I ask for the next detail."
-                          : "This is the goal I’m building around right now."}
-                      </div>
-                    </div>
-                    <div style={{ display:"grid", gap:"0.45rem" }}>
-                      {heardGoalRows.map((goal) => (
-                        <div key={goal.id} data-testid="intake-heard-goal-row" data-goal-id={goal.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", border:"1px solid rgba(111,148,198,0.12)", borderRadius:14, padding:"0.62rem 0.68rem", background:"rgba(7,18,33,0.78)" }}>
-                          <div style={{ display:"grid", gap:"0.16rem", flex:"1 1 220px" }}>
-                            <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.35, fontWeight:600 }}>{goal.summary}</div>
-                            {goal.detail && (
-                              <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{goal.detail}</div>
-                            )}
-                          </div>
-                          {goal.canRemove && (
-                            <button
-                              data-testid={`intake-heard-goal-remove-${toTestIdFragment(goal.id)}`}
-                              className="btn"
-                              onClick={() => removeHeardGoal(goal.id)}
-                              disabled={assessing || naturalAnchorSubmitting || confirmBuildSubmitting}
-                              style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
-                            >
-                              Remove
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {phase === "clarify" ? (
-                  <div data-testid="intake-clarify-step" style={{ display:"grid", gap:"0.5rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>
-                      {isMachineAnchorClarification || isStructuredClarification ? "One required detail" : "One targeted clarification"}
-                    </div>
-                    <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{clarificationPromptText}</div>
-                    {!isMachineAnchorClarification && isStructuredClarification && clarificationValidationMessage && (
-                      <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>
-                        {clarificationValidationMessage}
-                      </div>
-                    )}
-                    {isMachineAnchorClarification ? (
-                      <div style={{ display:"grid", gap:"0.65rem" }}>
-                        <div style={{ border:"1px solid rgba(0,194,255,0.18)", borderRadius:18, padding:"0.78rem 0.84rem", background:"linear-gradient(180deg, rgba(0,194,255,0.08), rgba(15,23,42,0.72))" }}>
-                          <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>REQUIRED DETAILS</div>
-                          <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.4 }}>
-                            {anchorCollectionViewModel?.heading || "A few quick details before I lock this in."}
-                          </div>
-                          {anchorCollectionViewModel?.goalSummary && (
-                            <div style={{ fontSize:"0.52rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.5 }}>
-                              Goal: {anchorCollectionViewModel.goalSummary}
-                            </div>
-                          )}
-                          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
-                            {anchorCollectionViewModel?.progressLabel || ""}
-                          </div>
-                          <div style={{ fontSize:"0.49rem", color:"#64748b", marginTop:"0.12rem", lineHeight:1.45 }}>
-                            {anchorCollectionViewModel?.helperText || ""}
-                          </div>
-                        </div>
-                        {visibleMachineAnchorCards.map((anchorCard, index) => {
-                          const isActiveCard = index === 0;
-                          const displayedAnchorCopy = isActiveCard
-                            ? activeAnchorDisplayCopy
-                            : resolveCoachVoiceDisplayCopy({ anchor: anchorCard, phrasing: null });
-                          const fieldId = anchorCard.field_id;
-                          const fieldValue = String(clarificationValues?.[fieldId] || "");
-                          const unitKey = `${fieldId}__unit`;
-                          const modeKey = `${fieldId}__mode`;
-                          const selectedUnit = String(
-                            clarificationValues?.[unitKey]
-                            || anchorCard?.unit
-                            || anchorCard?.unit_options?.[0]?.value
-                            || ""
-                          );
-                          const selectedMode = String(clarificationValues?.[modeKey] || "month");
-                          const selectedChoice = String(clarificationValues?.[fieldId] || "");
-                          return (
-                            <div
-                              key={anchorCard.anchor_id}
-                              data-testid={isActiveCard ? "intake-anchor-card-active" : "intake-anchor-card-upcoming"}
-                              data-field-id={fieldId}
-                              data-anchor-id={anchorCard.anchor_id}
-                              style={{
-                                display:"grid",
-                                gap:"0.55rem",
-                                border:isActiveCard ? "1px solid rgba(0,194,255,0.28)" : "1px solid rgba(111,148,198,0.12)",
-                                borderRadius:18,
-                                padding:"0.8rem",
-                                background:isActiveCard ? "rgba(7,18,33,0.92)" : "rgba(10,18,32,0.6)",
-                                opacity:isActiveCard ? 1 : 0.72,
-                              }}
-                            >
-                              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"baseline" }}>
-                                <div style={{ display:"grid", gap:"0.18rem" }}>
-                                  <div style={{ fontSize:"0.46rem", color:isActiveCard ? "#8fa5c8" : "#64748b", letterSpacing:"0.12em" }}>
-                                    {anchorCard.status_label || (isActiveCard ? "NOW" : "NEXT")}
-                                  </div>
-                                  <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.35 }}>{anchorCard.label}</div>
-                                </div>
-                                <div style={{ fontSize:"0.48rem", color:"#64748b" }}>
-                                  {anchorCard.stack_position || index + 1} / {Math.max(anchorCollectionViewModel?.totalRemaining || visibleMachineAnchorCards.length, 1)}
-                                </div>
-                              </div>
-                              {displayedAnchorCopy?.helperText && (
-                                <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>
-                                  {displayedAnchorCopy.helperText}
-                                </div>
-                              )}
-                              {displayedAnchorCopy?.reassuranceLine && (
-                                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                                  {displayedAnchorCopy.reassuranceLine}
-                                </div>
-                              )}
-                              {isActiveCard ? (
-                                <div style={{ display:"grid", gap:"0.55rem" }}>
-                                  {anchorCard.input_type === "choice_chips" && (
-                                    <div style={{ display:"grid", gap:"0.5rem" }}>
-                                      <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
-                                        {(anchorCard.options || []).map((option) => {
-                                          const selected = selectedChoice === option.value;
-                                          return (
-                                            <button
-                                              key={option.value}
-                                              data-testid={`intake-anchor-choice-${toTestIdFragment(fieldId)}-${toTestIdFragment(option.value)}`}
-                                              className="btn"
-                                              onClick={() => updateClarificationValue(fieldId, option.value)}
-                                              style={{
-                                                minHeight:44,
-                                                fontSize:"0.62rem",
-                                                color:selected ? "#07131f" : "#dbe7f6",
-                                                borderColor:selected ? "rgba(39,245,154,0.45)" : "#324961",
-                                                background:selected ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)",
-                                              }}
-                                            >
-                                              {option.label}
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                      {(anchorCard.options || []).find((option) => option.value === selectedChoice)?.description && (
-                                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                                          {(anchorCard.options || []).find((option) => option.value === selectedChoice)?.description}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                  {anchorEntryMode !== "natural" && anchorCard.input_type === "date_or_month" && (
-                                    <div style={{ display:"grid", gap:"0.5rem" }}>
-                                      <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
-                                        {[
-                                          { value: "month", label: "Target month" },
-                                          { value: "date", label: "Exact date" },
-                                        ].map((option) => {
-                                          const selected = selectedMode === option.value;
-                                          return (
-                                            <button
-                                              key={option.value}
-                                              data-testid={`intake-anchor-date-mode-${toTestIdFragment(option.value)}`}
-                                              className="btn"
-                                              onClick={() => updateClarificationValue(modeKey, option.value)}
-                                              style={{
-                                                minHeight:40,
-                                                fontSize:"0.58rem",
-                                                color:selected ? "#07131f" : "#dbe7f6",
-                                                borderColor:selected ? "rgba(0,194,255,0.45)" : "#324961",
-                                                background:selected ? "linear-gradient(135deg, rgba(0,194,255,0.9), rgba(127,221,255,0.72))" : "rgba(15,23,42,0.72)",
-                                              }}
-                                            >
-                                              {option.label}
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                      <input
-                                        data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}`}
-                                        ref={composerRef}
-                                        type={selectedMode === "date" ? "date" : "month"}
-                                        value={fieldValue}
-                                        onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
-                                        style={{ fontSize:"0.86rem" }}
-                                      />
-                                    </div>
-                                  )}
-                                  {anchorEntryMode !== "natural" && anchorCard.input_type === "number_with_unit" && (
-                                    <div style={{ display:"grid", gap:"0.5rem" }}>
-                                      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
-                                        <input
-                                          data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}`}
-                                          ref={composerRef}
-                                          type="number"
-                                          inputMode="decimal"
-                                          min={Number.isFinite(anchorCard?.validation?.min) ? anchorCard.validation.min : undefined}
-                                          max={Number.isFinite(anchorCard?.validation?.max) ? anchorCard.validation.max : undefined}
-                                          step="any"
-                                          value={fieldValue}
-                                          onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
-                                          placeholder={anchorCard.placeholder || "Add this detail..."}
-                                          style={{
-                                            fontSize:"0.86rem",
-                                            borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
-                                            boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
-                                          }}
-                                        />
-                                        {(anchorCard.unit_options?.length || 0) > 1 ? (
-                                          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                                            {anchorCard.unit_options.map((option) => {
-                                              const selected = selectedUnit === option.value;
-                                              return (
-                                                <button
-                                                  key={option.value}
-                                                  data-testid={`intake-anchor-unit-${toTestIdFragment(fieldId)}-${toTestIdFragment(option.value)}`}
-                                                  className="btn"
-                                                  onClick={() => updateClarificationValue(unitKey, option.value)}
-                                                  style={{
-                                                    minHeight:40,
-                                                    fontSize:"0.56rem",
-                                                    color:selected ? "#07131f" : "#dbe7f6",
-                                                    borderColor:selected ? "rgba(39,245,154,0.45)" : "#324961",
-                                                    background:selected ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)",
-                                                  }}
-                                                >
-                                                  {option.label}
-                                                </button>
-                                              );
-                                            })}
-                                          </div>
-                                        ) : (
-                                          <div style={{ alignSelf:"center", fontSize:"0.56rem", color:"#8fa5c8", padding:"0 0.3rem" }}>
-                                            {anchorCard.unit || anchorCard.unit_options?.[0]?.label || ""}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                  {anchorEntryMode !== "natural" && anchorCard.input_type === "strength_top_set" && (
-                                    <div style={{ display:"grid", gap:"0.5rem" }}>
-                                      <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
-                                        {[
-                                          { value: "top_set", label: "Weight + reps" },
-                                          { value: "estimated_max", label: "Single / estimated max" },
-                                        ].map((option) => {
-                                          const selected = String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === option.value;
-                                          return (
-                                            <button
-                                              key={option.value}
-                                              data-testid={`intake-anchor-mode-${toTestIdFragment(fieldId)}-${toTestIdFragment(option.value)}`}
-                                              className="btn"
-                                              onClick={() => updateClarificationValue(`${fieldId}__mode`, option.value)}
-                                              style={{
-                                                minHeight:40,
-                                                fontSize:"0.58rem",
-                                                color:selected ? "#07131f" : "#dbe7f6",
-                                                borderColor:selected ? "rgba(39,245,154,0.45)" : "#324961",
-                                                background:selected ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)",
-                                              }}
-                                            >
-                                              {option.label}
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                      <div style={{ display:"grid", gridTemplateColumns:String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === "estimated_max" ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap:"0.5rem" }}>
-                                        <input
-                                          data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}-weight`}
-                                          ref={composerRef}
-                                          type="number"
-                                          inputMode="decimal"
-                                          min="1"
-                                          step="any"
-                                          value={clarificationValues?.[`${fieldId}__weight`] || ""}
-                                          onChange={(e) => updateClarificationValue(`${fieldId}__weight`, e.target.value)}
-                                          placeholder="Weight"
-                                          style={{
-                                            fontSize:"0.86rem",
-                                            borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
-                                            boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
-                                          }}
-                                        />
-                                        {String(clarificationValues?.[`${fieldId}__mode`] || "top_set") !== "estimated_max" && (
-                                          <input
-                                            data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}-reps`}
-                                            type="number"
-                                            inputMode="numeric"
-                                            min="1"
-                                            step="1"
-                                            value={clarificationValues?.[`${fieldId}__reps`] || ""}
-                                            onChange={(e) => updateClarificationValue(`${fieldId}__reps`, e.target.value)}
-                                            placeholder="Reps"
-                                            style={{
-                                              fontSize:"0.86rem",
-                                              borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
-                                              boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
-                                            }}
-                                          />
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                  {anchorEntryMode !== "natural" && anchorCard.input_type !== "choice_chips" && anchorCard.input_type !== "date_or_month" && anchorCard.input_type !== "number_with_unit" && anchorCard.input_type !== "strength_top_set" && (
-                                    <input
-                                      data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}`}
-                                      ref={composerRef}
-                                      type={anchorCard.input_type === "number" ? "number" : "text"}
-                                      inputMode={anchorCard.input_type === "number" ? "decimal" : undefined}
-                                      min={Number.isFinite(anchorCard?.validation?.min) ? anchorCard.validation.min : undefined}
-                                      max={Number.isFinite(anchorCard?.validation?.max) ? anchorCard.validation.max : undefined}
-                                      step={anchorCard.input_type === "number" ? "any" : undefined}
-                                      value={fieldValue}
-                                      onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
-                                      placeholder={anchorCard.placeholder || "Add this detail..."}
-                                      style={{
-                                        fontSize:"0.86rem",
-                                        borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
-                                        boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
-                                      }}
-                                    />
-                                  )}
-                                  {anchorCard.helper_text && (
-                                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
-                                      {anchorCard.helper_text}
-                                    </div>
-                                  )}
-                                  {(anchorCard.examples || []).length > 0 && (
-                                    <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                                      {anchorCard.examples.map((example) => (
-                                        <button
-                                          key={example}
-                                          className="btn"
-                                          onClick={() => {
-                                            if (anchorCard.input_type === "choice_chips") return;
-                                            if (anchorCard.input_type === "strength_top_set") {
-                                              applyStrengthStructuredValue(fieldId, parseStrengthTopSetDraft(example));
-                                              return;
-                                            }
-                                            updateClarificationValue(fieldId, example);
-                                          }}
-                                          style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
-                                        >
-                                          {example}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {anchorCapturePreview?.field_id === fieldId && (
-                                    <div data-testid="intake-anchor-capture-preview" style={{ border:"1px solid rgba(0,194,255,0.2)", borderRadius:14, padding:"0.62rem", background:"rgba(3,20,36,0.72)", display:"grid", gap:"0.22rem" }}>
-                                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.1em" }}>HERE'S WHAT I CAPTURED</div>
-                                      <div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.45 }}>
-                                        {anchorCapturePreview?.captureText || "Pending capture"}
-                                      </div>
-                                      {anchorCapturePreview?.question && (
-                                        <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
-                                          {anchorCapturePreview.question}
-                                        </div>
-                                      )}
-                                      {(anchorCapturePreview?.evidenceSpans || []).length > 0 && (
-                                        <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>
-                                          From your reply: {(anchorCapturePreview.evidenceSpans || []).map((item) => item.text).filter(Boolean).join(" • ")}
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                  {anchorCard.input_type === "strength_top_set" && anchorEntryMode !== "natural" ? (
-                                    <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.62rem", background:"rgba(15,23,42,0.5)", display:"grid", gap:"0.18rem" }}>
-                                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.1em" }}>STRUCTURED CAPTURE</div>
-                                      <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
-                                        Use the fields above so I save one clean strength baseline for this lift and nothing else.
-                                      </div>
-                                    </div>
-                                  ) : activeAnchorStrictMode ? (
-                                    <div style={{ border:"1px solid rgba(255,138,0,0.22)", borderRadius:14, padding:"0.62rem", background:"rgba(38,24,7,0.38)", display:"grid", gap:"0.18rem" }}>
-                                      <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.1em" }}>STRICT MODE</div>
-                                      <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
-                                        Two parsing attempts missed. Use the field control above and one of the examples so I bind only this field.
-                                      </div>
-                                    </div>
-                                  ) : allowNaturalAnchorMode ? (
-                                    <div style={{ display:"grid", gap:"0.3rem" }}>
-                                      <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                                        <button
-                                          type="button"
-                                          data-testid="intake-anchor-toggle-structured"
-                                          className="btn"
-                                          onClick={() => setAnchorEntryMode("structured")}
-                                          style={{ fontSize:"0.5rem", color:anchorEntryMode === "structured" ? "#07131f" : "#dbe7f6", borderColor:anchorEntryMode === "structured" ? "rgba(0,194,255,0.42)" : "#324961", background:anchorEntryMode === "structured" ? "linear-gradient(135deg, rgba(0,194,255,0.9), rgba(127,221,255,0.72))" : "rgba(15,23,42,0.72)" }}
-                                        >
-                                          Guided field
-                                        </button>
-                                        <button
-                                          type="button"
-                                          data-testid="intake-anchor-toggle-natural"
-                                          className="btn"
-                                          onClick={() => setAnchorEntryMode("natural")}
-                                          style={{ fontSize:"0.5rem", color:anchorEntryMode === "natural" ? "#07131f" : "#dbe7f6", borderColor:anchorEntryMode === "natural" ? "rgba(39,245,154,0.42)" : "#324961", background:anchorEntryMode === "natural" ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)" }}
-                                        >
-                                          Type instead
-                                        </button>
-                                      </div>
-                                      {anchorEntryMode === "natural" ? (
-                                        <div style={{ display:"grid", gap:"0.3rem" }}>
-                                          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>TYPE THIS DETAIL</div>
-                                          <textarea
-                                            data-testid="intake-anchor-natural-input"
-                                            value={naturalAnchorDraft}
-                                            onChange={(e) => setNaturalAnchorDraft(e.target.value)}
-                                            placeholder={anchorCard.input_type === "date_or_month" ? "Example: October 2026 or May 18, 2027" : "Example: my bench is around 185 x 5 right now"}
-                                            rows={2}
-                                            style={{ minHeight:72, resize:"vertical", fontSize:"0.82rem", lineHeight:1.45 }}
-                                          />
-                                          <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>
-                                            I'll only try to capture this field from your reply. Everything else gets ignored.
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
-                                          Use the guided field above by default. Switch to <b>Type instead</b> only if that is easier.
-                                        </div>
-                                      )}
-                                    </div>
-                                  ) : null}
-                                  {clarificationFieldErrors?.[fieldId] && (
-                                    <div data-testid="intake-anchor-field-error" style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[fieldId]}</div>
-                                  )}
-                                </div>
-                              ) : (
-                                <div style={{ fontSize:"0.5rem", color:"#64748b", lineHeight:1.5 }}>
-                                  {(anchorCard.examples || []).length > 0
-                                    ? `Examples: ${anchorCard.examples.join(" • ")}`
-                                    : anchorCard.helper_text || "This card will open next."}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                        {clarificationFormError && (
-                          <div data-testid="intake-clarify-form-error" style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
-                            {clarificationFormError}
-                          </div>
-                        )}
-                      </div>
-                    ) : isStructuredClarification ? (
-                      <div style={{ display:"grid", gap:"0.55rem" }}>
-                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.55rem" }}>
-                          {clarificationInputFields.map((field, index) => (
-                            <label key={field.key} style={{ display:"grid", gap:"0.24rem" }}>
-                              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>
-                                {field.label}{field.required ? " *" : ""}
-                              </div>
-                              <input
-                                data-testid={`intake-structured-input-${toTestIdFragment(field.key)}`}
-                                ref={index === 0 ? composerRef : null}
-                                type={field.inputType === "number" ? "number" : "text"}
-                                inputMode={field.inputType === "number" ? "decimal" : undefined}
-                                min={Number.isFinite(field.min) ? field.min : undefined}
-                                max={Number.isFinite(field.max) ? field.max : undefined}
-                                step={field.inputType === "number" ? "any" : undefined}
-                                value={clarificationValues?.[field.key] || ""}
-                                onChange={(e) => updateClarificationValue(field.key, e.target.value)}
-                                placeholder={field.placeholder || "Add this detail..."}
-                                style={{
-                                  fontSize:"0.86rem",
-                                  borderColor:clarificationFieldErrors?.[field.key] ? "rgba(255,138,0,0.65)" : undefined,
-                                  boxShadow:clarificationFieldErrors?.[field.key] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
-                                }}
-                              />
-                              {field.helperText && (
-                                <div style={{ fontSize:"0.5rem", color:"#64748b", lineHeight:1.45 }}>{field.helperText}</div>
-                              )}
-                              {clarificationFieldErrors?.[field.key] && (
-                                <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[field.key]}</div>
-                              )}
-                            </label>
-                          ))}
-                        </div>
-                        {clarificationFormError && (
-                          <div data-testid="intake-clarify-form-error" style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
-                            {clarificationFormError}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <textarea
-                        ref={composerRef}
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        placeholder={pendingClarifyingQuestion?.placeholder || "Short answer..."}
-                        rows={3}
-                        style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
-                      />
-                    )}
-                    <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button
-                        data-testid="intake-save-detail"
-                        className="btn btn-primary"
-                        onClick={submitClarification}
-                        disabled={isMachineAnchorClarification
-                          ? !(anchorEntryMode === "natural" ? String(naturalAnchorDraft || "").trim() : activeMachineAnchorSubmission?.raw_text) || naturalAnchorSubmitting
-                          : isStructuredClarification
-                          ? clarificationInputFields.every((field) => !String(clarificationValues?.[field.key] || "").trim())
-                          : !draft.trim()}
-                      >
-                        {naturalAnchorSubmitting ? "Capturing..." : "Save this detail"}
-                      </button>
-                      {canEditLastAnchorAnswer && (
-                        <button
-                          data-testid="intake-edit-last-answer"
-                          className="btn"
-                          onClick={editLastAnchorAnswer}
-                          style={{ color:"#dbe7f6", borderColor:"#324961" }}
-                        >
-                          Edit last answer
-                        </button>
-                      )}
-                      {!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.required && (
-                        <button data-testid="intake-keep-goal" className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
-                          Keep this goal
-                        </button>
-                      )}
-                      <button data-testid="intake-adjust-goal" className="btn" onClick={() => requestAdjustment()} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
-                        Adjust this goal
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {phase === "secondary_goal" ? (
-                  <div data-testid="intake-secondary-goal-step" style={{ display:"grid", gap:"0.55rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Anything else?</div>
-                    <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingSecondaryGoalPrompt?.prompt || ""}</div>
-                    {pendingSecondaryGoalPrompt?.helperText && (
-                      <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.55 }}>{pendingSecondaryGoalPrompt.helperText}</div>
-                    )}
-                    {(pendingSecondaryGoalPrompt?.inferredGoals || []).length > 0 && (
-                      <div style={{ display:"grid", gap:"0.25rem" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>ALREADY HEARD</div>
-                        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                          {pendingSecondaryGoalPrompt.inferredGoals.map((goal) => (
-                            <div key={goal} style={{ fontSize:"0.52rem", color:"#dbe7f6", border:"1px solid rgba(111,148,198,0.18)", borderRadius:999, padding:"0.28rem 0.52rem", background:"rgba(15,23,42,0.72)" }}>
-                              {goal}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
-                      {(Array.isArray(pendingSecondaryGoalPrompt?.quickOptions) ? pendingSecondaryGoalPrompt.quickOptions : []).map((option) => {
-                        const normalizedOptionValue = String(option?.value || "").trim().toLowerCase();
-                        const isSelected = Boolean(
-                          normalizedOptionValue
-                          && secondaryGoalEntries.some((goal) => String(goal || "").trim().toLowerCase() === normalizedOptionValue)
-                        );
-                        const isCustomOption = option?.key === SECONDARY_GOAL_RESPONSE_KEYS.custom;
-                        const isSkipOption = option?.key === SECONDARY_GOAL_RESPONSE_KEYS.skip;
-                        const isActive = isCustomOption ? showSecondaryGoalCustomInput : isSelected;
-                        return (
-                          <button
-                            key={option?.key || option?.label}
-                            data-testid={`intake-secondary-option-${toTestIdFragment(option?.key || option?.label)}`}
-                            className={isActive && !isSkipOption ? "btn btn-primary" : "btn"}
-                            onClick={() => handleSecondaryGoalQuickOption(option)}
-                            style={{
-                              color: isActive && !isSkipOption ? "#08111d" : (isSkipOption ? "#9fb4d3" : "#dbe7f6"),
-                              borderColor: isActive && !isSkipOption ? "#9fb4d3" : "#324961",
-                              background: isActive && !isSkipOption ? "#dbe7f6" : "transparent",
-                            }}
-                          >
-                            {option?.label || ""}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {secondaryGoalEntries.length > 0 && (
-                      <div style={{ display:"grid", gap:"0.3rem" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>YOUR EXTRA GOALS</div>
-                        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                          {secondaryGoalEntries.map((goal) => (
-                            <button
-                              key={goal}
-                              data-testid={`intake-secondary-chip-${toTestIdFragment(goal)}`}
-                              className="btn"
-                              onClick={() => setSecondaryGoalEntries((prev) => prev.filter((item) => item !== goal))}
-                              style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
-                            >
-                              {goal} x
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {showSecondaryGoalCustomInput && (
-                      <div style={{ display:"grid", gap:"0.45rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:16, padding:"0.7rem", background:"rgba(8,14,25,0.46)" }}>
-                        <textarea
-                          data-testid="intake-secondary-custom-input"
-                          ref={composerRef}
-                          value={draft}
-                          onChange={(e) => setDraft(e.target.value)}
-                          placeholder={pendingSecondaryGoalPrompt?.placeholder || "Example: bench 225"}
-                          rows={3}
-                          style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
-                        />
-                        <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                          <button
-                            data-testid="intake-secondary-add-custom"
-                            className="btn btn-primary"
-                            onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.custom })}
-                            disabled={!draft.trim()}
-                          >
-                            Add custom goal
-                          </button>
-                          <button
-                            data-testid="intake-secondary-close-custom"
-                            className="btn"
-                            onClick={() => {
-                              setDraft("");
-                              setShowSecondaryGoalCustomInput(false);
-                            }}
-                            style={{ color:"#9fb4d3", borderColor:"#324961" }}
-                          >
-                            Close
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button
-                        data-testid="intake-secondary-continue"
-                        className="btn"
-                        onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.done })}
-                        style={{ color:"#dbe7f6", borderColor:"#324961" }}
-                      >
-                        {secondaryGoalEntries.length ? "Continue with these goals" : "Continue"}
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-
-                {activeReviewModel && !isMachineAnchorClarification && (
-                  <div data-testid="intake-review" style={{ display:"grid", gap:"0.65rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:18, padding:"0.8rem", background:"rgba(8,14,25,0.58)" }}>
-                    <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.55rem" }}>
-                      <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>GOAL</div>
-                        <div style={{ fontSize:"0.68rem", color:"#f8fbff", lineHeight:1.35 }}>{displayedPrimaryGoal?.summary || activeReviewModel.primarySummary || "Goal preview pending"}</div>
-                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                          {activeReviewModel.goalTypeLabel || "Goal"}
-                        </div>
-                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          How this looks: {activeReviewModel.realismLabel}
-                        </div>
-                        <div style={{ fontSize:"0.5rem", color:confirmationTone, marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Where this stands: {confirmationStatusLabel}
-                        </div>
-                      </div>
-                      <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>WHAT WE'LL TRACK</div>
-                        <div style={{ display:"grid", gap:"0.18rem" }}>
-                          {(displayedTrackingLabels.length ? displayedTrackingLabels : (activeReviewModel.trackingLabels.length ? activeReviewModel.trackingLabels : ["First 30-day success definition"])).map((item) => (
-                            <div key={item} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{item}</div>
-                          ))}
-                        </div>
-                      </div>
-                      <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>COACH CHECK</div>
-                        <div style={{ fontSize:"0.54rem", color:activeReviewModel.gateExplanationText ? confirmationTone : "#8fa5c8", lineHeight:1.55 }}>
-                          {activeReviewModel.gateExplanationText || "Nothing critical. I have enough to build from here."}
-                        </div>
-                        {(activeReviewModel.gateFirstBlockAlternatives || []).length > 0 && (
-                          <div style={{ display:"grid", gap:"0.34rem", marginTop:"0.34rem" }}>
-                            {(activeReviewModel.gateFirstBlockAlternatives || []).map((option) => (
-                              <div key={option.key || option.label} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:10, background:"rgba(9,14,24,0.58)", padding:"0.5rem 0.55rem" }}>
-                                <div style={{ fontSize:"0.45rem", color:"#8fa5c8", letterSpacing:"0.1em", marginBottom:"0.14rem" }}>
-                                  {String(option.label || "Option").toUpperCase()}
-                                </div>
-                                <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>{option.summary}</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {(activeReviewModel.gateSuggestedRevision?.requested_data || []).length > 0 && (
-                          <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.45 }}>
-                            What would change this: {(activeReviewModel.gateSuggestedRevision?.requested_data || []).join(" - ")}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {goalReviewContract && (
-                      <div style={{ display:"grid", gap:"0.55rem" }}>
-                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>REVIEW LANES</div>
-                        {(goalReviewContract?.lane_sections || []).map((section) => {
-                          const goals = Array.isArray(section?.goals) ? section.goals : [];
-                          return (
-                            <div
-                              key={section.lane_key}
-                              data-testid={`intake-review-lane-${toTestIdFragment(section.lane_key)}`}
-                              style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}
-                            >
-                              <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>
-                                {String(section?.title || "").toUpperCase()}
-                              </div>
-                              {goals.length > 0 ? (
-                                <div style={{ display:"grid", gap:"0.36rem" }}>
-                                  {goals.map((goal) => {
-                                    const isLeadLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.leadGoal;
-                                    const isMaintainedLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.maintainedGoals;
-                                    const isSupportLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.supportGoals;
-                                    const isDeferredLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.deferredGoals;
-                                    const trackingLabel = isSupportLane ? "What we'll watch" : "What we'll measure";
-                                    return (
-                                      <div
-                                        key={goal.id || goal.summary}
-                                        data-testid="intake-review-goal-card"
-                                        data-goal-id={goal.id || ""}
-                                        data-goal-role={toTestIdFragment(goal.roleLabel || (isLeadLane ? "Lead" : isMaintainedLane ? "Maintained" : isSupportLane ? "Support (background)" : "Deferred"))}
-                                        style={{ border:`1px solid ${isLeadLane ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.12)"}`, borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}
-                                      >
-                                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap" }}>
-                                          <div style={{ fontSize:"0.6rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35, flex:"1 1 240px" }}>{goal.summary}</div>
-                                          <div style={{ fontSize:"0.46rem", color:isLeadLane ? C.green : isDeferredLane ? C.amber : "#9fb4d3", background:isLeadLane ? `${C.green}14` : isDeferredLane ? `${C.amber}14` : "#162131", border:`1px solid ${isLeadLane ? `${C.green}32` : isDeferredLane ? `${C.amber}32` : "#24344b"}`, padding:"0.16rem 0.4rem", borderRadius:999, letterSpacing:"0.08em", whiteSpace:"nowrap" }}>
-                                            {goal.roleLabel || (isLeadLane ? "Lead" : isMaintainedLane ? "Maintained" : isSupportLane ? "Support (background)" : "Deferred")}
-                                          </div>
-                                        </div>
-                                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
-                                          {goal.rationale || goal.reason || goal.tradeoff || "We'll keep this lane deliberate and explicit."}
-                                        </div>
-                                        <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.45 }}>
-                                          {trackingLabel}: {(goal.trackingLabels?.length ? goal.trackingLabels : [isSupportLane ? "Weekly check-ins" : "First 30-day success definition"]).join(" - ")}
-                                        </div>
-                                        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.4rem" }}>
-                                          {!isLeadLane && (
-                                            <button
-                                              data-testid={`intake-review-action-change-priority-${toTestIdFragment(goal.id || goal.summary)}`}
-                                              className="btn"
-                                              onClick={() => setLeadingGoal(goal.id)}
-                                              style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}
-                                            >
-                                              {goalReviewContract?.actions?.changePriority?.label || "Change priority"}
-                                            </button>
-                                          )}
-                                          {!isLeadLane && isMaintainedLane && (
-                                            <button
-                                              data-testid={`intake-review-action-support-${toTestIdFragment(goal.id || goal.summary)}`}
-                                              className="btn"
-                                              onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.background)}
-                                              style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
-                                            >
-                                              Support in background
-                                            </button>
-                                          )}
-                                          {!isLeadLane && (isSupportLane || isDeferredLane) && (
-                                            <button
-                                              data-testid={`intake-review-action-maintain-${toTestIdFragment(goal.id || goal.summary)}`}
-                                              className="btn"
-                                              onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)}
-                                              style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
-                                            >
-                                              Move to maintain
-                                            </button>
-                                          )}
-                                          {!isLeadLane && !isDeferredLane && (
-                                            <button
-                                              data-testid={`intake-review-action-defer-${toTestIdFragment(goal.id || goal.summary)}`}
-                                              className="btn"
-                                              onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.deferred)}
-                                              style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
-                                            >
-                                              Defer this
-                                            </button>
-                                          )}
-                                          <button
-                                            data-testid={`intake-review-action-edit-${toTestIdFragment(goal.id || goal.summary)}`}
-                                            className="btn"
-                                            onClick={() => requestAdjustment({ goalSummary: goal.summary, goalId: goal.id })}
-                                            style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
-                                          >
-                                            {goalReviewContract?.actions?.editGoal?.label || "Edit a goal"}
-                                          </button>
-                                          {!isLeadLane && (
-                                            <button
-                                              data-testid={`intake-review-action-drop-${toTestIdFragment(goal.id || goal.summary)}`}
-                                              className="btn"
-                                              onClick={() => updateSecondaryGoalMode(goal.id, "removed")}
-                                              style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
-                                            >
-                                              {goalReviewContract?.actions?.dropGoal?.label || "Drop a goal"}
-                                            </button>
-                                          )}
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
-                                  {section?.empty_state || "Nothing is sitting in this lane right now."}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                        {goalReviewContract?.tradeoff_statement && (
-                          <div data-testid="intake-tradeoff-statement" style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>TRADEOFF STATEMENT</div>
-                            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalReviewContract.tradeoff_statement}</div>
-                          </div>
-                        )}
-                        {goalStackReview.backgroundPriority && (
-                          <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)", opacity:goalStackReview.backgroundPriority.enabled ? 1 : 0.72 }}>
-                            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
-                              <div>
-                                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>RECOVERY STAYS PROTECTED</div>
-                                <div style={{ fontSize:"0.58rem", color:"#f8fbff" }}>{goalStackReview.backgroundPriority.label}</div>
-                              </div>
-                              <button className="btn" onClick={toggleBackgroundPriority} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                {goalStackReview.backgroundPriority.enabled ? "Let recovery flex more" : "Keep recovery protected"}
-                              </button>
-                            </div>
-                            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>{goalStackReview.backgroundPriority.summary}</div>
-                            <div style={{ fontSize:"0.5rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.5 }}>
-                              What we'll measure: {(goalStackReview.backgroundPriority.trackingLabels || []).join(" - ")}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {phase === "review" ? (
-                  <div data-testid="intake-review-actions" style={{ display:"grid", gap:"0.55rem" }}>
-                    <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Here’s the direction I’d build from.</div>
-                    <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
-                      Before you confirm, use the lane cards above to change priority, edit a goal, or drop a goal.
-                    </div>
-                    {confirmationHeadline && (
-                      <div style={{ fontSize:"0.56rem", color:confirmationTone, lineHeight:1.55 }}>
-                        {confirmationHeadline}
-                      </div>
-                    )}
-                    <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button
-                        data-testid="intake-confirm-build"
-                        className="btn btn-primary"
-                        onClick={finalizePlan}
-                        disabled={!confirmCtaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting}
-                      >
-                        {goalReviewContract?.actions?.confirm?.label || "Confirm and build my plan"}
-                      </button>
-                      <button
-                        data-testid="intake-review-edit-goal"
-                        className="btn"
-                        onClick={() => requestAdjustment()}
-                        style={{ color:"#dbe7f6", borderColor:"#324961" }}
-                      >
-                        {goalReviewContract?.actions?.editGoal?.label || "Edit a goal"}
-                      </button>
-                    </div>
-                    {activeConfirmationState?.status === "warn" && (
-                      <label data-testid="intake-warning-ack" style={{ display:"flex", gap:"0.45rem", alignItems:"flex-start", fontSize:"0.54rem", color:"#facc15", lineHeight:1.5 }}>
-                        <input
-                          data-testid="intake-warning-ack-checkbox"
-                          type="checkbox"
-                          checked={confirmWarningAcknowledged}
-                          onChange={(e) => setConfirmWarningAcknowledged(Boolean(e.target.checked))}
-                          style={{ marginTop:2 }}
-                        />
-                        <span>I understand this is aggressive.</span>
-                      </label>
-                    )}
-                    {(activeConfirmationState?.status === "block" || activeConfirmationState?.status === "incomplete") && (
-                      <div data-testid="intake-confirmation-blocked" style={{ display:"grid", gap:"0.45rem" }}>
-                        <div data-testid="intake-confirmation-message" style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
-                          {confirmBuildError || activeConfirmationState?.reason || "I still need one or two details before I can build this well."}
-                        </div>
-                        {confirmationNeedsList.length > 0 && (
-                          <div data-testid="intake-needs-list" style={{ display:"grid", gap:"0.24rem" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>WHAT I STILL NEED</div>
-                            {confirmationNeedsList.map((item) => (
-                              <div key={item} data-testid="intake-needs-item" style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>
-                                • {item}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {activeConfirmationState?.next_required_field && (
-                          <div>
-                            <button
-                              data-testid="intake-go-next-detail"
-                              className="btn"
-                              onClick={jumpToNextRequiredDetail}
-                              style={{ color:"#dbe7f6", borderColor:"#324961" }}
-                            >
-                              Go to the next detail
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {activeConfirmationState?.status === "warn" && activeConfirmationState?.reason && (
-                      <div data-testid="intake-confirmation-message" style={{ fontSize:"0.56rem", color:"#facc15", lineHeight:1.55 }}>
-                        {activeConfirmationState.reason}
-                      </div>
-                    )}
-                    {activeConfirmationState?.status === "proceed" && confirmBuildError && (
-                      <div data-testid="intake-confirmation-message" style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
-                        {confirmBuildError}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            )}
-
-            {phase === "adjust" && !isCoachStreaming && (
-              <div data-testid="intake-adjust-step" style={{ display:"grid", gap:"0.5rem" }}>
-                <textarea
-                  data-testid="intake-adjust-input"
-                  ref={composerRef}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  placeholder={adjustmentTargetGoal?.summary ? `Tell me what should change about "${adjustmentTargetGoal.summary}"...` : "Tell me what you want to change..."}
-                  rows={3}
-                  style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
-                />
-                <button data-testid="intake-adjust-submit" className="btn btn-primary" onClick={submitAdjustment} disabled={!draft.trim()}>
-                  Update this goal
+        <div style={{ position:"sticky", bottom:0, paddingBottom:"max(0.2rem, env(safe-area-inset-bottom))" }}>
+          <div style={{ border:"1px solid rgba(111,148,198,0.18)", borderRadius:24, background:"rgba(7,12,21,0.9)", boxShadow:"0 18px 40px rgba(0,0,0,0.28)", backdropFilter:"blur(16px)", padding:"0.85rem 0.95rem", display:"flex", justifyContent:"space-between", gap:"0.75rem", alignItems:"center", flexWrap:"wrap" }}>
+            <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.5, flex:"1 1 240px" }}>
+              {phase === INTAKE_UI_PHASES.goals
+                ? "Add your goals and a few planning realities in one pass."
+                : phase === INTAKE_UI_PHASES.interpretation
+                ? "Check the interpretation before we ask for anything else."
+                : phase === INTAKE_UI_PHASES.clarify
+                ? "Answer only the details that still affect planning."
+                : phase === INTAKE_UI_PHASES.confirm
+                ? "Confirm the resolved stack to make it canonical for planning."
+                : phase === INTAKE_UI_PHASES.building
+                ? "Building from the confirmed goals now."
+                : "Adjust the interpretation, then continue."}
+            </div>
+            <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+              {showFooterBack ? (
+                <button
+                  data-testid="intake-footer-back"
+                  className="btn"
+                  onClick={handleFooterBack}
+                  disabled={confirmBuildSubmitting || naturalAnchorSubmitting}
+                  style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                >
+                  Back
                 </button>
-              </div>
-            )}
-
-            {phase === "building" && (
-              <div data-testid="intake-building" style={{ display:"grid", gap:"0.4rem" }}>
-                <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1rem", color:"#f8fbff" }}>Building your plan...</div>
-                <div data-testid="intake-building-stage" style={{ fontSize:"0.84rem", color:"#9fb4d3" }}>{BUILD_STAGES[buildingStageIndex]}</div>
-                <div style={{ width:"100%", height:6, borderRadius:999, background:"rgba(111,148,198,0.14)", overflow:"hidden" }}>
-                  <div style={{ width:`${((buildingStageIndex + 1) / BUILD_STAGES.length) * 100}%`, height:"100%", borderRadius:999, background:"linear-gradient(90deg, #00c2ff, #27f59a)", transition:"width 0.45s ease" }} />
-                </div>
-              </div>
-            )}
+              ) : null}
+              {showFoundationButton ? (
+                <button
+                  data-testid="intake-footer-foundation"
+                  className="btn"
+                  onClick={startFoundationPlanFlow}
+                  disabled={!goalsStageCanStartFoundation || assessing}
+                  style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                >
+                  Foundation plan
+                </button>
+              ) : null}
+              {phase !== INTAKE_UI_PHASES.building ? (
+                <button
+                  data-testid={phase === INTAKE_UI_PHASES.confirm ? "intake-confirm-build" : "intake-footer-continue"}
+                  className="btn btn-primary"
+                  onClick={handleFooterPrimaryAction}
+                  disabled={footerPrimaryDisabled}
+                >
+                  {phase === INTAKE_UI_PHASES.confirm
+                    ? (confirmBuildSubmitting ? "Confirming..." : "Confirm and build")
+                    : footerPrimaryLabel}
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
@@ -10998,7 +11248,7 @@ function MetricsBaselinesSection({
   );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, storageStatus = null, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], focusSection = "" }) {
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, storageStatus = null, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], focusSection = "" }) {
   const appleHealth = personalization?.connectedDevices?.appleHealth || {};
   const garmin = personalization?.connectedDevices?.garmin || {};
   const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
@@ -11035,6 +11285,15 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const [goalChangeNotice, setGoalChangeNotice] = useState("");
   const [goalChangePreviewing, setGoalChangePreviewing] = useState(false);
   const [goalChangeApplying, setGoalChangeApplying] = useState(false);
+  const [goalManagementNotice, setGoalManagementNotice] = useState("");
+  const [goalManagementError, setGoalManagementError] = useState("");
+  const [goalManagementPreview, setGoalManagementPreview] = useState(null);
+  const [goalManagementBusy, setGoalManagementBusy] = useState(false);
+  const [goalEditorOpen, setGoalEditorOpen] = useState(false);
+  const [goalArchiveOpen, setGoalArchiveOpen] = useState(false);
+  const [goalEditorDraft, setGoalEditorDraft] = useState(null);
+  const [goalArchiveDraft, setGoalArchiveDraft] = useState({ goalId: "", archiveStatus: GOAL_ARCHIVE_STATUSES.archived });
+  const [goalOrderDraftIds, setGoalOrderDraftIds] = useState([]);
   const settings = personalization?.settings || DEFAULT_PERSONALIZATION.settings;
   const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
   const unitSettings = settings?.units || DEFAULT_PERSONALIZATION.settings.units;
@@ -11052,6 +11311,14 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     ? resolveStoredAiApiKey({ safeStorageGet, storageLike: localStorage })
     : "");
   const goals = athleteProfile?.goals || [];
+  const goalSettingsModel = useMemo(
+    () => buildGoalSettingsViewModel({
+      goals,
+      personalization,
+      now: new Date(),
+    }),
+    [goals, personalization]
+  );
   const programsState = useMemo(
     () => normalizeProgramsSelectionState(personalization?.programs || createDefaultProgramSelectionState()),
     [personalization?.programs]
@@ -11103,6 +11370,14 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     }),
     [planComposer, athleteProfile, programsState?.activeProgramInstance, programsState?.activeStyleSelection, programsState?.lastCompatibilityAssessment, activeProgramDefinition, activeStyleDefinition]
   );
+  useEffect(() => {
+    const currentOrder = Array.isArray(goalSettingsModel?.currentGoalOrder) ? goalSettingsModel.currentGoalOrder : [];
+    setGoalOrderDraftIds((existing) => {
+      if (!existing.length) return currentOrder;
+      const same = existing.length === currentOrder.length && existing.every((value, index) => value === currentOrder[index]);
+      return same ? existing : currentOrder;
+    });
+  }, [goalSettingsModel?.currentGoalOrder]);
 
   const patchSettings = async (patch = {}) => {
     const nextIntensityPreference = String(patch?.trainingPreferences?.intensityPreference || "").trim().toLowerCase();
@@ -11591,7 +11866,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       });
       setPersonalization(next);
       await onPersist(next);
-      setLocationMsg(sanitizeDisplayText("Location permission denied. Enable it in iPhone Settings → Privacy & Security → Location Services."));
+      setLocationMsg(sanitizeDisplayText("Location permission denied. Enable it in iPhone Settings ? Privacy & Security ? Location Services."));
     }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 600000 });
   };
   const handleCopyBackup = async () => {
@@ -11868,6 +12143,173 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       setGoalChangeApplying(false);
     }
   };
+  const resolveManagedGoalId = (goal = null) => String(
+    goal?.goalRecordId
+    || goal?.goalManagement?.recordId
+    || goal?.resolvedGoal?.id
+    || goal?.id
+    || ""
+  ).trim();
+  const findCurrentManagedGoal = (goalId = "") => (
+    (goals || []).find((goal) => resolveManagedGoalId(goal) === String(goalId || "").trim()) || null
+  );
+  const findArchivedManagedGoal = (goalId = "") => (
+    (personalization?.goalManagement?.archivedGoals || []).find((goal) => resolveManagedGoalId(goal) === String(goalId || "").trim()) || null
+  );
+  const resetGoalManagementWorkflow = () => {
+    setGoalManagementPreview(null);
+    setGoalManagementError("");
+    setGoalManagementNotice("");
+  };
+  const closeGoalEditor = () => {
+    setGoalEditorOpen(false);
+    setGoalEditorDraft(null);
+    resetGoalManagementWorkflow();
+  };
+  const closeGoalArchive = () => {
+    setGoalArchiveOpen(false);
+    setGoalArchiveDraft({ goalId: "", archiveStatus: GOAL_ARCHIVE_STATUSES.archived });
+    resetGoalManagementWorkflow();
+  };
+  const openGoalEditor = (goalId = "") => {
+    const goal = findCurrentManagedGoal(goalId);
+    if (!goal) return;
+    setGoalEditorDraft(buildGoalEditorDraft({ goal }));
+    setGoalEditorOpen(true);
+    setGoalArchiveOpen(false);
+    resetGoalManagementWorkflow();
+  };
+  const openGoalArchive = (goalId = "") => {
+    const goal = findCurrentManagedGoal(goalId);
+    if (!goal) return;
+    setGoalArchiveDraft({
+      goalId,
+      archiveStatus: GOAL_ARCHIVE_STATUSES.archived,
+    });
+    setGoalArchiveOpen(true);
+    setGoalEditorOpen(false);
+    resetGoalManagementWorkflow();
+  };
+  const moveGoalInSettingsOrder = (goalId = "", direction = -1) => {
+    const cleanGoalId = String(goalId || "").trim();
+    if (!cleanGoalId) return;
+    setGoalOrderDraftIds((current) => {
+      const ids = Array.isArray(current) && current.length
+        ? [...current]
+        : [...(goalSettingsModel?.currentGoalOrder || [])];
+      const currentIndex = ids.indexOf(cleanGoalId);
+      if (currentIndex < 0) return ids;
+      const nextIndex = direction < 0
+        ? Math.max(0, currentIndex - 1)
+        : Math.min(ids.length - 1, currentIndex + 1);
+      if (nextIndex === currentIndex) return ids;
+      const nextIds = [...ids];
+      const [moved] = nextIds.splice(currentIndex, 1);
+      nextIds.splice(nextIndex, 0, moved);
+      return nextIds;
+    });
+    resetGoalManagementWorkflow();
+  };
+  const resetGoalOrderDraft = () => {
+    setGoalOrderDraftIds(goalSettingsModel?.currentGoalOrder || []);
+    resetGoalManagementWorkflow();
+  };
+  const handleGoalManagementPreview = async (change) => {
+    setGoalManagementBusy(true);
+    setGoalManagementError("");
+    setGoalManagementNotice("");
+    try {
+      const preview = await previewGoalManagementChange({ change });
+      if (!preview?.nextGoals?.length) {
+        setGoalManagementError("Preview could not build a clean active goal stack.");
+        setGoalManagementPreview(null);
+        return null;
+      }
+      setGoalManagementPreview(preview);
+      return preview;
+    } catch (error) {
+      setGoalManagementError(error?.message || "Goal preview failed.");
+      setGoalManagementPreview(null);
+      return null;
+    } finally {
+      setGoalManagementBusy(false);
+    }
+  };
+  const handlePreviewGoalReprioritization = async () => {
+    const currentOrder = goalSettingsModel?.currentGoalOrder || [];
+    const draftOrder = Array.isArray(goalOrderDraftIds) ? goalOrderDraftIds : [];
+    if (!draftOrder.length || currentOrder.join("|") === draftOrder.join("|")) {
+      setGoalManagementError("Move at least one goal before previewing impact.");
+      return;
+    }
+    await handleGoalManagementPreview({
+      type: GOAL_MANAGEMENT_CHANGE_TYPES.reprioritize,
+      orderedGoalIds: draftOrder,
+    });
+  };
+  const handlePreviewGoalEdit = async () => {
+    if (!goalEditorDraft?.goalId) {
+      setGoalManagementError("Pick a goal to edit first.");
+      return;
+    }
+    const preview = await handleGoalManagementPreview({
+      type: GOAL_MANAGEMENT_CHANGE_TYPES.edit,
+      goalId: goalEditorDraft.goalId,
+      draft: goalEditorDraft,
+    });
+    if (preview) setGoalEditorOpen(false);
+  };
+  const handlePreviewGoalArchive = async () => {
+    if (!goalArchiveDraft?.goalId) {
+      setGoalManagementError("Pick a goal to move first.");
+      return;
+    }
+    const preview = await handleGoalManagementPreview({
+      type: GOAL_MANAGEMENT_CHANGE_TYPES.archive,
+      goalId: goalArchiveDraft.goalId,
+      archiveStatus: goalArchiveDraft.archiveStatus,
+    });
+    if (preview) setGoalArchiveOpen(false);
+  };
+  const handlePreviewGoalRestore = async (goalId = "") => {
+    const archivedGoal = findArchivedManagedGoal(goalId);
+    if (!archivedGoal) {
+      setGoalManagementError("That archived goal could not be found.");
+      return;
+    }
+    await handleGoalManagementPreview({
+      type: GOAL_MANAGEMENT_CHANGE_TYPES.restore,
+      goalId,
+    });
+  };
+  const handleApplyGoalManagement = async () => {
+    if (!goalManagementPreview?.nextGoals?.length) {
+      setGoalManagementError("Preview impact before confirming this goal change.");
+      return;
+    }
+    setGoalManagementBusy(true);
+    setGoalManagementError("");
+    setGoalManagementNotice("");
+    try {
+      const result = await applyGoalManagementChange({
+        previewBundle: goalManagementPreview,
+      });
+      if (!result?.ok) {
+        setGoalManagementError(result?.error || "Goal update could not be applied.");
+        return;
+      }
+      setGoalManagementNotice(`${goalManagementPreview?.changeLabel || "Goal update"} applied.`);
+      setGoalManagementPreview(null);
+      setGoalEditorOpen(false);
+      setGoalEditorDraft(null);
+      setGoalArchiveOpen(false);
+      setGoalArchiveDraft({ goalId: "", archiveStatus: GOAL_ARCHIVE_STATUSES.archived });
+    } catch (error) {
+      setGoalManagementError(error?.message || "Goal update could not be applied.");
+    } finally {
+      setGoalManagementBusy(false);
+    }
+  };
   const handleReloadCloud = async () => {
     try {
       await onReloadCloudData?.();
@@ -11876,6 +12318,10 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       setSettingsSaveMsg(`Cloud reload failed: ${error?.message || "unknown error"}`);
     }
   };
+  const currentGoalCards = goalSettingsModel?.currentGoals || [];
+  const archivedGoalCards = goalSettingsModel?.archivedGoals || [];
+  const currentGoalOrder = goalSettingsModel?.currentGoalOrder || [];
+  const goalOrderDirty = currentGoalOrder.join("|") !== (Array.isArray(goalOrderDraftIds) ? goalOrderDraftIds : []).join("|");
   return (
     <div className="fi" data-testid="settings-tab" style={{ display:"grid", gap:"0.75rem" }}>
       <div className="card card-subtle">
@@ -12102,6 +12548,173 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 </div>
               </div>
             </details>
+            <div data-testid="settings-goals-management" style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.65rem", display:"grid", gap:"0.55rem" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+                <div style={{ display:"grid", gap:"0.14rem" }}>
+                  <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>GOALS</div>
+                  <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>Manage active, archived, completed, and dropped goals in one place.</div>
+                  <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                    Goal edits stay proposal-only until you preview impact and confirm them. Historical plans and logs never get rewritten.
+                  </div>
+                </div>
+                <div style={{ fontSize:"0.47rem", color:"#8fa5c8", background:"#111827", border:"1px solid #23344d", borderRadius:999, padding:"0.18rem 0.5rem" }}>
+                  {currentGoalCards.length} current • {archivedGoalCards.length} archived
+                </div>
+              </div>
+
+              {(goalManagementError || goalManagementNotice) && (
+                <div style={{ fontSize:"0.5rem", color:goalManagementError ? C.amber : C.green, lineHeight:1.5 }}>
+                  {goalManagementError || goalManagementNotice}
+                </div>
+              )}
+
+              {currentGoalCards.length === 0 ? (
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                  No active user goals are stored yet.
+                </div>
+              ) : (
+                <div style={{ display:"grid", gap:"0.45rem" }}>
+                  {currentGoalCards.map((goalCard, index) => {
+                    const isTop = index === 0;
+                    const isBottom = index === currentGoalCards.length - 1;
+                    return (
+                      <div key={goalCard.id} data-testid={`settings-goal-card-${goalCard.id}`} style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1220", padding:"0.58rem" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+                          <div style={{ display:"grid", gap:"0.14rem", minWidth:0 }}>
+                            <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", alignItems:"center" }}>
+                              <span data-testid="settings-goal-priority-label" style={{ fontSize:"0.46rem", color:C.green, background:C.green+"14", border:`1px solid ${C.green}22`, borderRadius:999, padding:"0.14rem 0.38rem", letterSpacing:"0.08em" }}>{goalCard.priorityLabel}</span>
+                              <span style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#162131", border:"1px solid #23344d", borderRadius:999, padding:"0.14rem 0.38rem" }}>{goalCard.goalTypeLabel}</span>
+                              <span style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#162131", border:"1px solid #23344d", borderRadius:999, padding:"0.14rem 0.38rem" }}>{goalCard.activeVersionLabel}</span>
+                            </div>
+                            <div style={{ fontSize:"0.62rem", color:"#f8fafc", lineHeight:1.38, fontWeight:600 }}>{goalCard.summary}</div>
+                            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                              {goalCard.timingLabel}{goalCard.lastChangedAt ? ` • updated ${new Date(goalCard.lastChangedAt).toLocaleDateString()}` : ""}
+                            </div>
+                            <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                              Track: {goalCard.trackingLabels.length ? goalCard.trackingLabels.join(", ") : "30-day success definition"}
+                            </div>
+                            {goalCard.tradeoff && (
+                              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                                Tradeoff: {goalCard.tradeoff}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
+                            <button data-testid={`settings-goal-move-up-${goalCard.id}`} className="btn" onClick={()=>moveGoalInSettingsOrder(goalCard.id, -1)} disabled={isTop || goalManagementBusy} style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>Up</button>
+                            <button data-testid={`settings-goal-move-down-${goalCard.id}`} className="btn" onClick={()=>moveGoalInSettingsOrder(goalCard.id, 1)} disabled={isBottom || goalManagementBusy} style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>Down</button>
+                            <button data-testid={`settings-goal-edit-${goalCard.id}`} className="btn" onClick={()=>openGoalEditor(goalCard.id)} disabled={goalManagementBusy} style={{ fontSize:"0.47rem", color:C.blue, borderColor:C.blue+"35" }}>Edit</button>
+                            <button data-testid={`settings-goal-archive-${goalCard.id}`} className="btn" onClick={()=>openGoalArchive(goalCard.id)} disabled={goalManagementBusy} style={{ fontSize:"0.47rem", color:C.amber, borderColor:C.amber+"35" }}>Move out</button>
+                          </div>
+                        </div>
+
+                        <details style={{ marginTop:"0.45rem", borderTop:"1px solid #182335", paddingTop:"0.42rem" }}>
+                          <summary style={{ cursor:"pointer", fontSize:"0.49rem", color:"#8fa5c8" }}>Audit details</summary>
+                          <div style={{ display:"grid", gap:"0.42rem", marginTop:"0.42rem" }}>
+                            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.35rem" }}>
+                              {goalCard.fieldRows.map((fieldRow) => (
+                                <div key={fieldRow.field} style={{ border:"1px solid #182335", borderRadius:10, background:"#0f172a", padding:"0.42rem" }}>
+                                  <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{fieldRow.label}</div>
+                                  <div style={{ fontSize:"0.52rem", color:"#e2e8f0", marginTop:"0.14rem", lineHeight:1.45 }}>{fieldRow.value}</div>
+                                  <div style={{ fontSize:"0.46rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{fieldRow.provenanceSummary}</div>
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ display:"grid", gap:"0.24rem" }}>
+                              {goalCard.historyRows.map((row) => (
+                                <div key={row.id} style={{ fontSize:"0.48rem", color:"#9fb2d2", lineHeight:1.5 }}>
+                                  {row.changedAt ? new Date(row.changedAt).toLocaleString() : "Unknown"} • {String(row.changeType || "update").replaceAll("_", " ")} • {row.changedFields.length ? row.changedFields.map((entry) => entry.label).join(", ") : "Captured active version"}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </details>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {goalOrderDirty && (
+                <div data-testid="settings-goals-reorder-bar" style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1220", padding:"0.52rem", display:"grid", gap:"0.36rem" }}>
+                  <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                    Reprioritization is staged. Preview plan impact before you commit the new order.
+                  </div>
+                  <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                    <button data-testid="settings-goals-preview-reorder" className="btn btn-primary" onClick={handlePreviewGoalReprioritization} disabled={goalManagementBusy}>
+                      {goalManagementBusy ? "Previewing..." : "Preview impact"}
+                    </button>
+                    <button data-testid="settings-goals-reset-reorder" className="btn" onClick={resetGoalOrderDraft} disabled={goalManagementBusy} style={{ color:"#dbe7f6", borderColor:"#2b3d55" }}>
+                      Reset order
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {goalManagementPreview?.impactLines?.length > 0 && (
+                <div data-testid="settings-goals-impact-preview" style={{ border:"1px solid #2b3d55", borderRadius:14, background:"#0b1220", padding:"0.7rem", display:"grid", gap:"0.45rem" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
+                    <div style={{ fontSize:"0.56rem", color:"#f8fafc", lineHeight:1.45 }}>{goalManagementPreview.changeLabel || "Preview impact"}</div>
+                    <span style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#162131", border:"1px solid #23344d", borderRadius:999, padding:"0.14rem 0.38rem" }}>Preview only</span>
+                  </div>
+                  <div style={{ display:"grid", gap:"0.2rem" }}>
+                    {goalManagementPreview.impactLines.map((line, index) => (
+                      <div key={`${goalManagementPreview.changeType}_${index}`} style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.55 }}>{line}</div>
+                    ))}
+                  </div>
+                  {goalManagementPreview.changedFields?.length > 0 && (
+                    <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                      Changing: {goalManagementPreview.changedFields.map((entry) => entry.label).join(", ")}
+                    </div>
+                  )}
+                  <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                    {goalManagementPreview.explicitHistoryNote}
+                  </div>
+                  <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                    <button data-testid="settings-goals-confirm-preview" className="btn" onClick={handleApplyGoalManagement} disabled={goalManagementBusy} style={{ color:C.green, borderColor:C.green+"35" }}>
+                      {goalManagementBusy ? "Applying..." : "Confirm goal change"}
+                    </button>
+                    <button data-testid="settings-goals-cancel-preview" className="btn" onClick={resetGoalManagementWorkflow} disabled={goalManagementBusy} style={{ color:"#dbe7f6", borderColor:"#2b3d55" }}>
+                      Discard preview
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <details data-testid="settings-goals-archived" style={{ borderTop:"1px solid #182335", paddingTop:"0.45rem" }}>
+                <summary data-testid="settings-goals-archived-toggle" style={{ cursor:"pointer", fontSize:"0.52rem", color:"#dbe7f6" }}>Archived, completed, and dropped goals</summary>
+                <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+                  {archivedGoalCards.length === 0 ? (
+                    <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>No archived goals yet.</div>
+                  ) : archivedGoalCards.map((goalCard) => (
+                    <div key={goalCard.id} data-testid={`settings-archived-goal-${goalCard.id}`} style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1220", padding:"0.52rem", display:"grid", gap:"0.24rem" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+                        <div>
+                          <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", alignItems:"center" }}>
+                            <span style={{ fontSize:"0.46rem", color:"#f59e0b", background:"#f59e0b14", border:"1px solid #f59e0b22", borderRadius:999, padding:"0.14rem 0.38rem", letterSpacing:"0.08em" }}>{String(goalCard.status || "archived").replaceAll("_", " ")}</span>
+                            <span style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#162131", border:"1px solid #23344d", borderRadius:999, padding:"0.14rem 0.38rem" }}>{goalCard.activeVersionLabel}</span>
+                          </div>
+                          <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45, marginTop:"0.14rem" }}>{goalCard.summary}</div>
+                          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5, marginTop:"0.12rem" }}>{goalCard.timingLabel}</div>
+                        </div>
+                        <button data-testid={`settings-goal-restore-${goalCard.id}`} className="btn" onClick={()=>handlePreviewGoalRestore(goalCard.id)} disabled={goalManagementBusy} style={{ fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>
+                          Restore
+                        </button>
+                      </div>
+                      <details>
+                        <summary style={{ cursor:"pointer", fontSize:"0.48rem", color:"#8fa5c8" }}>Audit details</summary>
+                        <div style={{ display:"grid", gap:"0.24rem", marginTop:"0.35rem" }}>
+                          {goalCard.historyRows.map((row) => (
+                            <div key={row.id} style={{ fontSize:"0.48rem", color:"#9fb2d2", lineHeight:1.5 }}>
+                              {row.changedAt ? new Date(row.changedAt).toLocaleString() : "Unknown"} • {String(row.changeType || "update").replaceAll("_", " ")} • {row.changedFields.length ? row.changedFields.map((entry) => entry.label).join(", ") : "Captured version"}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </div>
             <details>
               <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Goal changes</summary>
               <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
@@ -12249,6 +12862,127 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         </div>
       </div>
 
+      {goalEditorOpen && goalEditorDraft && (
+        <div onClick={closeGoalEditor} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:65, padding:"1rem" }}>
+          <div onClick={(event)=>event.stopPropagation()} className="card card-soft" data-testid="settings-goal-editor" style={{ width:"100%", maxWidth:620, borderColor:"#30455f", background:"#0f172a", display:"grid", gap:"0.5rem" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>EDIT GOAL</div>
+              <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>Refine the active goal, then preview plan impact before it becomes canonical.</div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
+              <label style={{ display:"grid", gap:"0.12rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Goal summary</span>
+                <input data-testid="settings-goal-editor-summary" value={goalEditorDraft.summary || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, summary: e.target.value }))} placeholder="Bench press 225 lb" />
+              </label>
+              <label style={{ display:"grid", gap:"0.12rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Goal focus</span>
+                <select data-testid="settings-goal-editor-category" value={goalEditorDraft.planningCategory || "general_fitness"} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, planningCategory: e.target.value }))}>
+                  <option value="running">Running</option>
+                  <option value="strength">Strength</option>
+                  <option value="body_comp">Body composition</option>
+                  <option value="general_fitness">General fitness</option>
+                </select>
+              </label>
+              <label style={{ display:"grid", gap:"0.12rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Target metric</span>
+                <input data-testid="settings-goal-editor-primary-metric-label" value={goalEditorDraft.primaryMetricLabel || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, primaryMetricLabel: e.target.value }))} placeholder="Bench 1RM" />
+              </label>
+              <label style={{ display:"grid", gap:"0.12rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Target value</span>
+                <input data-testid="settings-goal-editor-primary-metric-target" value={goalEditorDraft.primaryMetricTargetValue || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, primaryMetricTargetValue: e.target.value }))} placeholder="225" />
+              </label>
+              <label style={{ display:"grid", gap:"0.12rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Metric unit</span>
+                <input data-testid="settings-goal-editor-primary-metric-unit" value={goalEditorDraft.primaryMetricUnit || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, primaryMetricUnit: e.target.value }))} placeholder="lb" />
+              </label>
+              <label style={{ display:"grid", gap:"0.12rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Proxy tracking</span>
+                <input data-testid="settings-goal-editor-proxies" value={(goalEditorDraft.proxyMetrics || []).map((metric) => metric.label).join(", ")} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, proxyMetrics: String(e.target.value || "").split(",").map((item) => item.trim()).filter(Boolean).map((label) => ({ label, unit: "" })) }))} placeholder="Waist, bodyweight trend, progress photos" />
+              </label>
+            </div>
+            <div style={{ display:"grid", gap:"0.24rem" }}>
+              <div style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Timing</div>
+              <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                {[["open_ended","Open-ended"],["target_horizon","Target horizon"],["exact_date","Exact date"]].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className="btn"
+                    data-testid={`settings-goal-editor-timing-${value}`}
+                    onClick={()=>setGoalEditorDraft((current) => ({ ...current, timingMode: value }))}
+                    style={{
+                      fontSize:"0.47rem",
+                      color:goalEditorDraft.timingMode === value ? "#0f172a" : "#dbe7f6",
+                      background:goalEditorDraft.timingMode === value ? "#dbe7f6" : "transparent",
+                      borderColor:goalEditorDraft.timingMode === value ? "#dbe7f6" : "#2b3d55",
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {goalEditorDraft.timingMode === "target_horizon" && (
+                <label style={{ display:"grid", gap:"0.12rem" }}>
+                  <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Target horizon in weeks</span>
+                  <input data-testid="settings-goal-editor-horizon" type="number" min="1" max="104" value={goalEditorDraft.targetHorizonWeeks || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, targetHorizonWeeks: e.target.value }))} placeholder="12" />
+                </label>
+              )}
+              {goalEditorDraft.timingMode === "exact_date" && (
+                <label style={{ display:"grid", gap:"0.12rem" }}>
+                  <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Exact date</span>
+                  <input data-testid="settings-goal-editor-date" type="date" value={goalEditorDraft.targetDate || ""} onChange={(e)=>setGoalEditorDraft((current) => ({ ...current, targetDate: e.target.value }))} />
+                </label>
+              )}
+            </div>
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+              <button data-testid="settings-goal-editor-preview" className="btn btn-primary" onClick={handlePreviewGoalEdit} disabled={goalManagementBusy}>
+                {goalManagementBusy ? "Previewing..." : "Preview impact"}
+              </button>
+              <button className="btn" onClick={closeGoalEditor} disabled={goalManagementBusy} style={{ color:"#dbe7f6", borderColor:"#2b3d55" }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {goalArchiveOpen && (
+        <div onClick={closeGoalArchive} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:65, padding:"1rem" }}>
+          <div onClick={(event)=>event.stopPropagation()} className="card card-soft" data-testid="settings-goal-archive-sheet" style={{ width:"100%", maxWidth:520, borderColor:"#30455f", background:"#0f172a", display:"grid", gap:"0.5rem" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>MOVE GOAL OUT</div>
+              <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>Choose how this goal should leave the active stack.</div>
+            </div>
+            <div style={{ display:"grid", gap:"0.24rem" }}>
+              {[GOAL_ARCHIVE_STATUSES.archived, GOAL_ARCHIVE_STATUSES.completed, GOAL_ARCHIVE_STATUSES.dropped].map((status) => {
+                const selected = goalArchiveDraft.archiveStatus === status;
+                return (
+                  <button
+                    key={status}
+                    type="button"
+                    className="btn"
+                    data-testid={`settings-goal-archive-status-${status}`}
+                    onClick={()=>setGoalArchiveDraft((current) => ({ ...current, archiveStatus: status }))}
+                    style={{
+                      justifyContent:"flex-start",
+                      color:selected ? "#0f172a" : "#dbe7f6",
+                      background:selected ? "#dbe7f6" : "transparent",
+                      borderColor:selected ? "#dbe7f6" : "#2b3d55",
+                    }}
+                  >
+                    {String(status).replaceAll("_", " ")}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+              <button data-testid="settings-goal-archive-preview" className="btn btn-primary" onClick={handlePreviewGoalArchive} disabled={goalManagementBusy}>
+                {goalManagementBusy ? "Previewing..." : "Preview impact"}
+              </button>
+              <button className="btn" onClick={closeGoalArchive} disabled={goalManagementBusy} style={{ color:"#dbe7f6", borderColor:"#2b3d55" }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {connectOpen && (
         <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
           <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
@@ -12384,7 +13118,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                     </button>
                   </div>
                   <div style={{ marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
-                    {sanitizeDisplayText(`iPhone path: Settings → Privacy & Security → Health → ${PRODUCT_BRAND.name} → Allow all categories.`)}
+                    {sanitizeDisplayText(`iPhone path: Settings ? Privacy & Security ? Health ? ${PRODUCT_BRAND.name} ? Allow all categories.`)}
                   </div>
                 </>
               ) : (
@@ -12435,7 +13169,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             <div style={{ fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.6 }}>{locationIntegration.summary}</div>
             <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Request location permission</button>
             <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
-              {sanitizeDisplayText(`iPhone path: Settings → Privacy & Security → Location Services → ${PRODUCT_BRAND.name} → While Using App.`)}
+              {sanitizeDisplayText(`iPhone path: Settings ? Privacy & Security ? Location Services ? ${PRODUCT_BRAND.name} ? While Using App.`)}
             </div>
             {!!locationMsg && <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#cbd5e1" }}>{locationMsg}</div>}
           </div>
@@ -12760,7 +13494,7 @@ function OnboardingCoachLegacy({ onComplete }) {
           </div>
           <div style={{ fontSize:"0.53rem", color:"#9fb2d2", lineHeight:1.7 }}>
             {sanitizeDisplayText("Step 1: Open Garmin Connect app")}<br />
-            {sanitizeDisplayText("Step 2: Tap your profile photo → Settings → Connected Apps → Apple Health → Enable All")}<br />
+            {sanitizeDisplayText("Step 2: Tap your profile photo ? Settings ? Connected Apps ? Apple Health ? Enable All")}<br />
             {sanitizeDisplayText("Step 3: Come back here and tap \"Check Connection\"")}
           </div>
           <div style={{ marginTop:"0.45rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
@@ -12795,7 +13529,7 @@ function OnboardingCoachLegacy({ onComplete }) {
               : "Not connected yet."}
           </div>
           <div style={{ marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 }}>
-            {sanitizeDisplayText(`iPhone permission path: Settings → Privacy & Security → Health → ${PRODUCT_BRAND.name} (or browser app) → Allow all categories.`)}
+            {sanitizeDisplayText(`iPhone permission path: Settings ? Privacy & Security ? Health ? ${PRODUCT_BRAND.name} (or browser app) ? Allow all categories.`)}
           </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
           {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
@@ -12817,7 +13551,7 @@ function OnboardingCoachLegacy({ onComplete }) {
               sanitizeDisplayText(lastGarminActivity?.type || ""),
             ])}
           </div>
-          <a href="#" onClick={(e)=>{ e.preventDefault(); setConnectOpen(true); }} style={{ display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue }}>{sanitizeDisplayText("How to sync Garmin → Apple Health")}</a>
+          <a href="#" onClick={(e)=>{ e.preventDefault(); setConnectOpen(true); }} style={{ display:"inline-block", marginTop:"0.18rem", fontSize:"0.5rem", color:C.blue }}>{sanitizeDisplayText("How to sync Garmin ? Apple Health")}</a>
           {!!garminMsg && <div style={{ marginTop:"0.2rem", fontSize:"0.52rem", color:"#cbd5e1" }}>{garminMsg}</div>}
         </div>
 
@@ -13082,9 +13816,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     time: environmentSelection?.time || "unknown",
     mode: environmentSelection?.mode || "Unknown",
     scope: "today",
-  });
-  const [cardExpanded, setCardExpanded] = useState(() => {
-    try { return sessionStorage.getItem("card_" + todayKey) === "1"; } catch { return false; }
   });
   const [showInjuryPanel, setShowInjuryPanel] = useState(false);
   const [strengthInputs, setStrengthInputs] = useState({});
@@ -13426,7 +14157,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     if (activeStrengthAdjustment) {
       const oldW = Number(activeStrengthAdjustment?.oldWeight || 0);
       const newW = Number(activeStrengthAdjustment?.newWeight || 0);
-      const icon = newW > oldW ? "↑" : newW < oldW ? "↓" : "!";
+      const icon = newW > oldW ? "?" : newW < oldW ? "?" : "!";
       cards.push({
         id: activeStrengthAdjustment?.id || `strength_${todayKey}_${activeStrengthAdjustment?.exercise || "session"}`,
         icon,
@@ -13503,12 +14234,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     } finally {
       setCoachAdjustmentLoading(false);
     }
-  };
-
-  const toggleCard = () => {
-    const next = !cardExpanded;
-    setCardExpanded(next);
-    try { sessionStorage.setItem("card_" + todayKey, next ? "1" : "0"); } catch {}
   };
 
   // Coach context lines (formerly in "More context" dropdown)
@@ -13603,12 +14328,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
   const showStorageBanner = !authError
     && storageStatus?.mode === "local"
     && storageStatus?.reason !== STORAGE_STATUS_REASONS.transient;
-  const todaySessionMeta = [
-    displayRun?.t || (hasStrength ? `Strength ${strSess}` : sanitizeStatusLabel(displayWorkout?.type, "session")),
-    displayRun?.d || displayWorkout?.strengthDuration || "",
-    displayRun ? `${runPace}/mi` : sanitizeDisplayText(displayWorkout?.intensityGuidance || ""),
-    hasStrength ? strengthSetupLabel : "",
-  ].filter(Boolean);
   const handleSaveTodayQuickCheckin = async () => {
     if (checkin.status === "not_logged" || checkinSaving) return;
     setCheckinSaving(true);
@@ -13682,16 +14401,20 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       <div data-testid="today-session-card" className="card card-strong card-hero" style={{ borderColor:cardColor+"30" }}>
         <div style={{ display:"grid", gap:"0.28rem" }}>
           <div className="sect-title" style={{ color:cardColor, marginBottom:0 }}>TODAY</div>
-          <div style={{ fontSize:"1rem", color:"#f8fafc", lineHeight:1.25 }}>{displayWorkout?.label || "Rest day"}</div>
           <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
-            {todaySessionMeta.map((item) => (
-              <span key={item} style={{ fontSize:"0.46rem", color:"#dbe7f6", background:"#132033", padding:"0.14rem 0.38rem", borderRadius:999 }}>
-                {item}
-              </span>
-            ))}
             <span style={{ fontSize:"0.46rem", color:readinessTone, background:readinessTone+"15", padding:"0.14rem 0.38rem", borderRadius:999 }}>
               {readinessBadgeLabel}
             </span>
+            {injuryBadge && (
+              <button
+                type="button"
+                className="btn"
+                onClick={()=>setShowInjuryPanel((current) => !current)}
+                style={{ fontSize:"0.46rem", color:injuryBadge.color, background:injuryBadge.color+"15", borderColor:injuryBadge.color+"24", padding:"0.14rem 0.38rem", borderRadius:999 }}
+              >
+                {injuryBadge.label}
+              </button>
+            )}
           </div>
           {showTransientSyncLine && (
             <div data-testid="today-sync-status" style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
@@ -13699,7 +14422,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
             </div>
           )}
           <div style={{ fontSize:"0.55rem", color:"#dbe7f6", lineHeight:1.5 }}>
-            {successHeadline}
+            Quick status, actions, and save state for today. The workout card below is the full plan.
           </div>
           {!!todayChangeLine && (
             <div data-testid="today-change-summary" style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
@@ -13795,27 +14518,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       </div>
 
       <details className="card">
-        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Why today?</summary>
-        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
-          <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{rationaleHeadline}</div>
-          {!!rationaleSupport && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{rationaleSupport}</div>}
-          {!!planBasisHeadline && <div data-testid="today-plan-basis-detail" style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>Plan basis: {planBasisHeadline}</div>}
-          {!!planBasisSupportLine && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{planBasisSupportLine}</div>}
-          {!!planBasisCompromiseLine && <div style={{ fontSize:"0.49rem", color:C.amber, lineHeight:1.45 }}>Tradeoff: {planBasisCompromiseLine}</div>}
-          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Recovery: {recoveryPrescriptionLine}</div>
-          {!!programBlockLine && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Current block: {programBlockLine}</div>}
-          <PlannedSessionDetailCard
-            session={{
-              day: "Today",
-              title: displayWorkout?.label || "Today's session",
-              summary: todayPrescriptionSummary,
-            }}
-            accentColor={cardColor}
-          />
-        </div>
-      </details>
-
-      <details className="card">
         <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Adjust today</summary>
         <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
           <div style={{ display:"grid", gap:"0.18rem" }}>
@@ -13898,198 +14600,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           Garmin data has been unavailable for over 48 hours. Using Apple Health fallback.
         </div>
       )}
-
-      <div
-        data-testid="today-session-card"
-        onClick={toggleCard}
-        style={{ marginBottom:"0.75rem", background:"#0f172a", border:`1px solid ${cardColor}22`, boxShadow:`0 18px 42px ${cardColor}10`, borderRadius:16, padding:"1rem 1.05rem", cursor:"pointer", transition:"border-color 0.15s", userSelect:"none" }}
-      >
-        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:"0.6rem", marginBottom:"0.7rem" }}>
-          <div style={{ display:"grid", gap:"0.22rem", minWidth:0 }}>
-            <div style={{ fontSize:"1.32rem", color:"#f8fafc", fontWeight:650, lineHeight:1.15 }}>{displayWorkout?.label || "Rest Day"}</div>
-            <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.55 }}>
-              {displayRun?.t || (hasStrength ? `Strength ${strSess}` : displayWorkout?.type?.replaceAll("-", " ") || "Session")}
-              {displayWorkout?.strengthDuration ? ` - ${displayWorkout.strengthDuration}` : ""}
-              {displayRun?.d ? ` - ${displayRun.d}` : ""}
-            </div>
-          </div>
-          <span style={{ fontSize:"0.72rem", color:"#475569", transform: cardExpanded ? "rotate(180deg)" : "rotate(0deg)", transition:"transform 0.2s", paddingTop:"0.15rem" }}>v</span>
-        </div>
-        <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.7rem", flexWrap:"wrap" }}>
-          <span style={{ fontSize:"0.48rem", color:cardColor, background:cardColor+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500, letterSpacing:"0.04em" }}>
-            {displayWorkout?.type?.replace(/[+-]/g," + ").toUpperCase() || "REST"}
-          </span>
-          {currentProgramBlock?.dominantEmphasis?.label && (
-            <span style={{ fontSize:"0.48rem", color:"#dbeafe", background:"#1d3557", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
-              {currentProgramBlock.dominantEmphasis.label}
-            </span>
-          )}
-          {livePlanningBasis?.activeProgramName && (
-            <span style={{ fontSize:"0.48rem", color:"#dbe7f6", background:"#132033", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
-              {livePlanningBasis.activeProgramName}
-            </span>
-          )}
-          {livePlanningBasis?.activeStyleName && (
-            <span style={{ fontSize:"0.48rem", color:"#c7d8ee", background:"#15263f", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
-              {livePlanningBasis.activeStyleName}
-            </span>
-          )}
-          {planBasisModeLabel && (
-            <span style={{ fontSize:"0.48rem", color:"#f8fafc", background:"#23344e", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
-              {planBasisModeLabel}
-            </span>
-          )}
-          <span style={{ fontSize:"0.48rem", color:readinessTone, background:readinessTone+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:600, letterSpacing:"0.04em" }}>
-            {readinessBadgeLabel}
-          </span>
-          <span onClick={e=>{ e.stopPropagation(); setEnvDraft({ equipment: environmentSelection?.equipment || "unknown", equipmentItems: Array.isArray(environmentSelection?.equipmentItems) ? environmentSelection.equipmentItems.join(", ") : "", time: environmentSelection?.time || "unknown", mode: environmentSelection?.mode || "Unknown", scope: "today" }); setShowEnvEditor(true); }} style={{ fontSize:"0.48rem", color:"#94a3b8", background:"#1e293b", padding:"0.15rem 0.45rem", borderRadius:6, cursor:"pointer" }}>
-            {equipmentLabel} - {timeLabel}
-          </span>
-          {injuryBadge && (
-            <span onClick={e=>{ e.stopPropagation(); setShowInjuryPanel(p=>!p); }} style={{ fontSize:"0.48rem", color:injuryBadge.color, background:injuryBadge.color+"15", padding:"0.15rem 0.45rem", borderRadius:6, cursor:"pointer" }}>
-              {injuryBadge.label}
-            </span>
-          )}
-          {displayWorkout?.modifierBadge && (
-            <span style={{ fontSize:"0.48rem", color:C.amber, background:C.amber+"15", padding:"0.15rem 0.45rem", borderRadius:6 }}>
-              {displayWorkout.modifierBadge}
-            </span>
-          )}
-          {displayWorkout?.variantBadge && (
-            <span style={{ fontSize:"0.48rem", color:C.green, background:C.green+"15", padding:"0.15rem 0.45rem", borderRadius:6 }}>
-              {displayWorkout?.variantBadge}
-            </span>
-          )}
-        </div>
-        {displayRun && (
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.6rem", marginBottom: hasStrength ? "0.35rem" : 0 }}>
-            <div>
-              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>WHAT</div>
-              <div className="mono" style={{ fontSize:"0.82rem", color:runColor, fontWeight:600 }}>{displayRun.d}</div>
-            </div>
-            <div>
-              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>HOW HARD</div>
-              <div className="mono" style={{ fontSize:"0.82rem", color:runColor, fontWeight:600 }}>{runPace}/mi</div>
-            </div>
-            <div>
-              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>SESSION</div>
-              <div style={{ fontSize:"0.82rem", color:runColor, fontWeight:600 }}>{displayRun.t}</div>
-            </div>
-          </div>
-        )}
-        {hasStrength && !displayRun && (
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.6rem" }}>
-            <div>
-              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>WHAT</div>
-              <div style={{ fontSize:"0.82rem", color:C.blue, fontWeight:600 }}>Strength {strSess}</div>
-            </div>
-            <div>
-              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>HOW HARD</div>
-              <div style={{ fontSize:"0.82rem", color:C.blue, fontWeight:600 }}>{displayWorkout?.intensityGuidance || "Controlled"}</div>
-            </div>
-            <div>
-              <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>SETUP</div>
-              <div className="mono" style={{ fontSize:"0.82rem", color:C.blue, fontWeight:600 }}>{strengthSetupLabel}</div>
-            </div>
-          </div>
-        )}
-        {hasStrength && displayRun && (
-          <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.45rem" }}>
-            + Strength {strSess} ({strengthSetupLabel}) - {displayWorkout?.strengthDuration || "20-30 min"}
-          </div>
-        )}
-
-        {cardExpanded && (
-          <div style={{ marginTop:"0.75rem", borderTop:"1px solid #1e293b", paddingTop:"0.75rem" }} onClick={e => e.stopPropagation()}>
-            <div style={{ marginBottom:"0.75rem" }}>
-              <PlannedSessionDetailCard
-                session={{
-                  day: "Today",
-                  title: displayWorkout?.label || "Today's session",
-                  summary: todayPrescriptionSummary,
-                }}
-                accentColor={cardColor}
-              />
-            </div>
-            {displayRun && (
-              <div style={{ marginBottom: hasStrength ? "0.85rem" : 0 }}>
-                <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>RUN</div>
-                <div style={{ fontSize:"0.62rem", color:"#cbd5e1", lineHeight:1.65 }}>
-                  {displayRun.t} - {displayRun.d} at {runPace}/mi
-                </div>
-                {displayWorkout?.environmentNote && <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" }}>{displayWorkout.environmentNote}</div>}
-              </div>
-            )}
-
-            {hasStrength && (
-              <div style={{ marginBottom: hasPrehab ? "0.85rem" : 0 }}>
-                <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>STRENGTH {strSess} - {String(strengthSetupLabel || "Home").toUpperCase()}</div>
-                <div style={{ display:"grid", gap:"0.3rem" }}>
-                  {strExercises.map((ex, i) => (
-                    <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.5rem", padding:"0.35rem 0", borderBottom: i < strExercises.length - 1 ? "1px solid #1e293b20" : "none" }}>
-                      {(() => {
-                        const key = normalizeExerciseKey(ex?.ex || "");
-                        const prescription = personalization?.strengthProgression?.prescriptions?.[key] || {};
-                        const mode = prescription?.mode || inferExerciseMode(ex?.ex || "");
-                        const prescriptionBadge = mode === "bodyweight"
-                          ? `${prescription?.sets || parseSetCount(ex?.sets)}x${prescription?.reps || parseRepTarget(ex?.sets)}`
-                          : mode === "band" && prescription?.bandTension
-                          ? `${prescription.bandTension} - ${prescription?.sets || parseSetCount(ex?.sets)} sets`
-                          : prescription?.workingWeight
-                          ? `${prescription?.workingWeight} lb - ${prescription?.sets || parseSetCount(ex?.sets)} sets`
-                          : ex.sets;
-                        return (
-                          <>
-                            <div>
-                              <div style={{ fontSize:"0.6rem", color:"#e2e8f0", fontWeight:500 }}>{ex.ex}</div>
-                              <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.1rem" }}>{ex.note}</div>
-                            </div>
-                            <div className="mono" style={{ fontSize:"0.58rem", color:C.blue, fontWeight:500, whiteSpace:"nowrap", alignSelf:"center" }}>{prescriptionBadge}</div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* Prehab section */}
-            {hasPrehab && (
-              <div>
-                <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>{String(activeIssueContext?.area || "Durability").toUpperCase()} SUPPORT</div>
-                <div style={{ display:"grid", gap:"0.3rem" }}>
-                  {prehabExercises.map((ex, i) => (
-                    <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.5rem", padding:"0.35rem 0", borderBottom: i < ACHILLES.length - 1 ? "1px solid #1e293b20" : "none" }}>
-                      <div>
-                        <div style={{ fontSize:"0.6rem", color:"#e2e8f0", fontWeight:500 }}>{ex.ex}</div>
-                        <div style={{ fontSize:"0.5rem", color:"#64748b", marginTop:"0.1rem" }}>{ex.note}</div>
-                      </div>
-                      <div className="mono" style={{ fontSize:"0.58rem", color:C.green, fontWeight:500, whiteSpace:"nowrap", alignSelf:"center" }}>{ex.sets}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {displayWorkout?.recoveryRecommendation && !readinessInfluence?.recoveryLine && (
-              <div style={{ marginTop:"0.55rem", fontSize:"0.54rem", color:readinessTone }}>
-                Recovery recommendation: {displayWorkout.recoveryRecommendation}
-              </div>
-            )}
-
-            {/* Optional secondary */}
-            {(displayWorkout?.optionalSecondary || planComposer?.aestheticAllocation?.active) && (
-              <div style={{ marginTop:"0.6rem", fontSize:"0.56rem", color:"#cbd5e1" }}>
-                + {displayWorkout?.optionalSecondary || "Optional: 10 min core"}
-              </div>
-            )}
-            {!!advancedVolumeFinisher && <div style={{ marginTop:"0.45rem", fontSize:"0.54rem", color:C.green }}>{advancedVolumeFinisher}</div>}
-            {!!developingVolumeGuardrail && <div style={{ marginTop:"0.45rem", fontSize:"0.54rem", color:C.amber }}>{developingVolumeGuardrail}</div>}
-            {displayWorkout?.compressionWhy && <div style={{ marginTop:"0.55rem", fontSize:"0.54rem", color:C.green }}>{displayWorkout.compressionWhy}</div>}
-            {displayWorkout?.extendedFinisher && <div style={{ marginTop:"0.55rem", fontSize:"0.54rem", color:C.blue }}>{displayWorkout.extendedFinisher}</div>}
-          </div>
-        )}
-      </div>
 
       <div className="card card-soft" style={{ marginBottom:"0.8rem", borderColor:contextStatusTone+"30", background:"rgba(8,14,25,0.82)" }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"flex-start", flexWrap:"wrap" }}>
@@ -14190,51 +14700,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           </div>
         </details>
       </div>
-
-
-      <div style={{ fontSize:"0.5rem", color:"#475569", letterSpacing:"0.14em", marginBottom:"0.45rem", marginTop:"0.1rem" }}>PRIMARY ACTIONS</div>
-
-      {/* Session modify buttons */}
-      <div style={{ marginBottom:"0.75rem", display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.4rem", background:"#0f141d", borderRadius:10, padding:"0.7rem 0.85rem" }}>
-        <button className="btn" onClick={()=>setSessionVariant(v=>v === "short" ? "standard" : "short")} style={{ fontSize:"0.5rem", color: sessionVariant === "short" ? "#0f172a" : C.green, background: sessionVariant === "short" ? C.green : "transparent", borderColor:C.green+"30", fontWeight: sessionVariant === "short" ? 600 : 400 }}>{sessionVariant === "short" ? "Shortened to 20 min" : "Shorten to 20 min"}</button>
-        <button className="btn" onClick={()=>setSessionVariant(v=>v === "extended" ? "standard" : "extended")} style={{ fontSize:"0.5rem", color: sessionVariant === "extended" ? "#0f172a" : C.amber, background: sessionVariant === "extended" ? C.amber : "transparent", borderColor:C.amber+"35", fontWeight: sessionVariant === "extended" ? 600 : 400 }}>{sessionVariant === "extended" ? "Extended (+15 min)" : "Extend session (+15 min)"}</button>
-        <button className="btn" onClick={async ()=>{
-          if (tomorrowHasSession) { setShiftChoiceOpen(true); return; }
-          const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
-          setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
-        }} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"30" }}>Move to tomorrow</button>
-        <button className="btn" onClick={()=>setSessionVariant("standard")} style={{ fontSize:"0.5rem", color:"#64748b", borderColor:"#334155", opacity: sessionVariant === "standard" ? 0.35 : 1 }} disabled={sessionVariant === "standard"}>Reset to default</button>
-      </div>
-      {sessionVariant !== "standard" && (
-        <div style={{ marginTop:"-0.4rem", marginBottom:"0.65rem", fontSize:"0.5rem", color: sessionVariant === "short" ? C.green : C.amber, paddingLeft:"0.15rem" }}>
-          Session modified: {sessionVariant === "short" ? "shortened to ~20 min" : "extended by ~15 min"}. Tap card above to see updated plan.
-        </div>
-      )}
-      {shiftChoiceOpen && (
-        <div className="card card-soft" style={{ marginTop:"-0.3rem", marginBottom:"0.65rem", borderColor:"#314560", display:"grid", gap:"0.35rem" }}>
-          <div style={{ fontSize:"0.54rem", color:"#cbd5e1" }}>Tomorrow already has a session. How should this move work?</div>
-          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-            <button className="btn" onClick={async ()=>{
-              const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
-              setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
-              setShiftChoiceOpen(false);
-            }} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>Replace tomorrow session</button>
-            <button className="btn" onClick={async ()=>{
-              const undo = await shiftTodayWorkout({ daysForward: 1, mode: "add_second" });
-              setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
-              setShiftChoiceOpen(false);
-            }} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"35" }}>Add as second session</button>
-            <button className="btn" onClick={()=>setShiftChoiceOpen(false)} style={{ fontSize:"0.52rem" }}>Cancel</button>
-          </div>
-        </div>
-      )}
-      {shiftUndo && (
-        <div className="card card-soft" style={{ marginTop:"-0.3rem", marginBottom:"0.65rem", borderColor:C.amber+"35", display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center" }}>
-          <div style={{ fontSize:"0.54rem", color:"#dbe7f6" }}>Session moved. Undo available for 60s.</div>
-          <button className="btn" onClick={async ()=>{ await restoreShiftTodayWorkout(shiftUndo); setShiftUndo(null); }} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Undo</button>
-        </div>
-      )}
-
       {/* Proactive nudge */}
       {primaryTrigger && (
         <div style={{ marginBottom:"0.65rem", display:"grid", gap:"0.3rem" }}>
@@ -14271,166 +14736,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>{injuryLevel.replaceAll("_"," ")} · {injuryRule.why}</div>
         </div>
       )}
-
-      <div className="card card-soft" style={{ marginBottom:"0.75rem", borderColor:C.green+"25", background:"#0d1410" }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:"0.5rem", marginBottom:"0.45rem" }}>
-          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>LOG TODAY</div>
-          <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>compact check-in</div>
-        </div>
-        {garminConnected && garminReadinessScore !== null && (
-          <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginBottom:"0.35rem" }}>
-            Garmin readiness {garminReadinessScore}/100 is primary today. Sliders are optional confirmation.
-          </div>
-        )}
-        <div style={{ display:"grid", gap:"0.35rem" }}>
-          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-            {CHECKIN_STATUS_OPTIONS.map(opt => (
-              <button key={opt.key} className="btn" onClick={()=>setCheckin(c=>({ ...c, status: opt.key }))} style={{ fontSize:"0.52rem", color:checkin.status===opt.key?C.green:"#64748b", borderColor:checkin.status===opt.key?C.green+"40":"#1e293b" }}>{opt.label}</button>
-            ))}
-          </div>
-          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-            {CHECKIN_FEEL_OPTIONS.map(opt => (
-              <button key={opt.key} className="btn" onClick={()=>setCheckin(c=>({ ...c, sessionFeel: opt.key }))} style={{ fontSize:"0.52rem", color:checkin.sessionFeel===opt.key?C.blue:"#64748b", borderColor:checkin.sessionFeel===opt.key?C.blue+"40":"#1e293b" }}>{opt.label}</button>
-            ))}
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 120px auto", gap:"0.35rem" }}>
-            <input value={checkin.note || ""} onChange={e=>setCheckin(c=>({ ...c, note: e.target.value }))} placeholder="Optional note" />
-            <input type="number" step="0.1" value={checkin.bodyweight || ""} onChange={e=>setCheckin(c=>({ ...c, bodyweight: e.target.value }))} placeholder="BW" />
-            <button className="btn btn-primary" disabled={checkin.status === "not_logged" || checkinSaving} onClick={async ()=>{
-              if (checkin.status === "not_logged" || checkinSaving) return;
-              setCheckinSaving(true);
-              setCheckinAck("");
-              try {
-                setTodayDataError("");
-                const parsed = parseMicroCheckin(checkin.note || "");
-                const basePayload = parsed ? { ...checkin, ...parsed } : { ...checkin };
-                const readinessUpdate = deriveReadinessAdjustedCheckin(basePayload);
-                const strengthPerformance = hasStrength
-                  ? Object.values(strengthInputs || {})
-                      .map((row) => ({
-                        ...row,
-                        weightUsed: row?.bodyweightOnly || row?.bandTension ? null : toFiniteNumber(row?.weightUsed ?? row?.actualWeight, null),
-                        actualWeight: row?.bodyweightOnly || row?.bandTension ? null : toFiniteNumber(row?.actualWeight ?? row?.weightUsed, null),
-                        repsCompleted: Number(row?.repsCompleted || row?.actualReps || 0),
-                        actualReps: Number(row?.actualReps || row?.repsCompleted || 0),
-                        actualSets: Number(row?.actualSets || row?.prescribedSets || 0),
-                        prescribedWeight: row?.bodyweightOnly || row?.bandTension ? null : toFiniteNumber(row?.prescribedWeight ?? row?.weightUsed, null),
-                      }))
-                      .filter((row) => row.exercise && Number(row.actualReps || 0) > 0 && Number(row.actualSets || 0) > 0 && (row.bodyweightOnly || row.bandTension || row.actualWeight !== null))
-                      .map((row) => {
-                        const denominator = Math.max(1, Number(row.prescribedSets || 1) * Number(row.prescribedReps || 1));
-                        return {
-                          ...row,
-                          completionRatio: Number((((Number(row.actualReps || 0) * Number(row.actualSets || 0)) / denominator)).toFixed(2)),
-                          sessionFeelScore: mapSessionFeelToScore(basePayload?.sessionFeel || "about_right"),
-                          feelThisSession: mapSessionFeelToScore(basePayload?.sessionFeel || "about_right"),
-                        };
-                      })
-                  : [];
-                const payload = {
-                  ...basePayload,
-                  ...(readinessUpdate.adjusted || {}),
-                  readiness: readinessUpdate.readiness || basePayload.readiness || DEFAULT_DAILY_CHECKIN.readiness,
-                  strengthPerformance,
-                };
-                await saveDailyCheckin(todayKey, payload);
-                setCheckinAck(readinessUpdate.readinessFilled ? "Saved. Readiness captured for quiet coach adjustment." : "Saved.");
-                const daysToRaceNow = Math.max(0, Math.ceil((new Date("2026-07-19T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24)));
-                const skipDecision = (payload.status === "skipped" && todayIsQuality)
-                  ? buildSkippedQualityDecision({
-                      skippedSessionType: todayWorkout?.run?.t || todayWorkout?.label || todayWorkout?.type || "quality session",
-                      dayOfWeek: todayDay,
-                      remainingSessions: remainingQualitySessions,
-                      daysToRace: daysToRaceNow,
-                      weekType: phase,
-                      tomorrowSessionType: tomorrowWorkout?.run?.t || tomorrowWorkout?.label || tomorrowWorkout?.type || "",
-                    })
-                  : null;
-                setPostSaveInsight(skipDecision || buildCheckinReadSummary({
-                  checkin: payload,
-                  todayWorkout,
-                  environmentSelection,
-                  momentum,
-                  recentWorkoutCount: completed7,
-                }));
-                if (checkin.bodyweight && !Number.isNaN(parseFloat(checkin.bodyweight))) {
-                  const entry = { date: todayKey, w: parseFloat(checkin.bodyweight) };
-                  const nextBW = [...bodyweights.filter(b => b.date !== todayKey), entry].sort((a,b) => a.date.localeCompare(b.date));
-                  await saveBodyweights(nextBW);
-                }
-              } catch (e) {
-                setCheckinAck("");
-                setTodayDataError("Save did not finish. Try again. If it still fails, refresh once and retry; your local data stays available.");
-              } finally {
-                setCheckinSaving(false);
-              }
-            }} style={{ fontSize:"0.55rem", opacity: (checkin.status === "not_logged" || checkinSaving) ? 0.4 : 1 }}>{checkinSaving ? "SAVING..." : "SAVE"}</button>
-          </div>
-          <div style={{ display:"grid", gap:"0.28rem", marginTop:"0.1rem", borderTop:"1px solid #1e293b", paddingTop:"0.35rem" }}>
-            <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Recovery actuals</div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.3rem" }}>
-              <input
-                type="number"
-                step="0.5"
-                value={checkin?.actualRecovery?.sleepHours || ""}
-                onChange={e=>setCheckin(c=>({ ...c, actualRecovery: { ...(c?.actualRecovery || {}), sleepHours: e.target.value } }))}
-                placeholder="Sleep hrs"
-              />
-              <input
-                type="number"
-                step="1"
-                value={checkin?.actualRecovery?.mobilityMinutes || ""}
-                onChange={e=>setCheckin(c=>({ ...c, actualRecovery: { ...(c?.actualRecovery || {}), mobilityMinutes: e.target.value } }))}
-                placeholder="Mobility min"
-              />
-              <input
-                type="number"
-                step="1"
-                value={checkin?.actualRecovery?.tissueWorkMinutes || ""}
-                onChange={e=>setCheckin(c=>({ ...c, actualRecovery: { ...(c?.actualRecovery || {}), tissueWorkMinutes: e.target.value } }))}
-                placeholder="Tissue work"
-              />
-              <button
-                className="btn"
-                onClick={()=>setCheckin(c=>({ ...c, actualRecovery: { ...(c?.actualRecovery || {}), painProtocolCompleted: !c?.actualRecovery?.painProtocolCompleted } }))}
-                style={{ fontSize:"0.5rem", color:checkin?.actualRecovery?.painProtocolCompleted ? C.green : "#64748b", borderColor:checkin?.actualRecovery?.painProtocolCompleted ? C.green+"35" : "#1e293b" }}
-              >
-                {checkin?.actualRecovery?.painProtocolCompleted ? "Pain protocol done" : "Pain protocol"}
-              </button>
-            </div>
-          </div>
-          {checkinAck && <div role="status" style={{ fontSize:"0.54rem", color:C.green }}>{checkinAck}</div>}
-          {hasStrength && (
-            <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.2rem", borderTop:"1px solid #1e293b", paddingTop:"0.35rem" }}>
-              <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Strength performance (for automatic load adjustment)</div>
-              {strExercises.slice(0, 6).map((ex) => {
-                const key = normalizeExerciseKey(ex?.ex || "");
-                const row = strengthInputs?.[key] || {};
-                const mode = row?.mode || inferExerciseMode(ex?.ex || "");
-                return (
-                  <div key={key} style={{ display:"grid", gridTemplateColumns:"1fr 78px 62px 74px", gap:"0.3rem", alignItems:"center" }}>
-                    <div style={{ fontSize:"0.5rem", color:"#cbd5e1", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{ex.ex}</div>
-                    {mode === "band" ? (
-                      <select value={row.bandTension || ""} onChange={e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], bandTension: e.target.value } }))}>
-                        <option value="">Band</option>
-                        {BAND_TENSION_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
-                      </select>
-                    ) : mode === "bodyweight" ? (
-                      <div style={{ fontSize:"0.5rem", color:"#8fa5c8", textAlign:"center" }}>BW</div>
-                    ) : (
-                      <input type="number" step="2.5" placeholder="lb" value={row.weightUsed || ""} onChange={e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], weightUsed: e.target.value, actualWeight: e.target.value } }))} />
-                    )}
-                    <input type="number" placeholder="sets" value={row.actualSets || ""} onChange={e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], actualSets: e.target.value } }))} />
-                    <input type="number" placeholder="reps" value={row.repsCompleted || ""} onChange={e=>setStrengthInputs(prev => ({ ...prev, [key]: { ...prev[key], repsCompleted: e.target.value, actualReps: e.target.value } }))} />
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {todayDataError && <div role="alert" style={{ fontSize:"0.54rem", color:C.amber }}>{todayDataError}</div>}
-          {postSaveInsight && <div style={{ fontSize:"0.54rem", color:C.amber, whiteSpace:"pre-wrap", lineHeight:1.6 }}>{postSaveInsight}</div>}
-        </div>
-      </div>
 
       {/* CONTEXT */}
       <div style={{ display:"none" }}>CONTEXT</div>
@@ -15780,9 +16085,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
               {supportTierModel?.shortLabel || "Support tier"}{metricsBaselinesModel?.missingCards?.length ? ` • ${metricsBaselinesModel.missingCards.length} anchor${metricsBaselinesModel.missingCards.length === 1 ? "" : "s"} missing` : ""}
             </div>
             <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
-              {metricsBaselinesModel?.missingCards?.[0]
-                ? `${metricsBaselinesModel.missingCards[0].label} is still missing, so the planner is staying conservative there.`
-                : supportTierModel?.honestyLine || "The current planning lane has enough anchors to stay more specific."}
+              {supportTierModel?.honestyLine || "The current planning lane has enough anchors to stay more specific."}
             </div>
           </div>
         </div>
@@ -17311,7 +17614,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
             {quickCapture.saveActionLabel}
           </button>
           <button className="btn" onClick={()=>setDetailedOpen((value) => !value)} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b4765" }}>
-            {detailedOpen ? "Hide detailed workout log" : "Open detailed workout log"}
+            {detailedOpen ? "Hide exercise-by-exercise entry" : "Open exercise-by-exercise entry"}
           </button>
         </div>
         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
@@ -17346,40 +17649,199 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
             )}
           </div>
         </details>
-      </div>
-
-      <details className="card" open={detailedOpen} onToggle={e=>setDetailedOpen(e.currentTarget.open)}>
-        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Detailed workout log</summary>
-        <div style={{ marginTop:"0.45rem", display:"grid", gap:"0.55rem" }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem" }}>
-            <input type="date" value={detailed.date} onChange={e=>setDetailed(buildDetailedDraft(e.target.value, logs?.[e.target.value] || {}))} />
-            <input value={detailed.sessionLabel || ""} onChange={e=>setDetailed({ ...detailed, sessionLabel:e.target.value })} placeholder="Workout label" />
-          </div>
-          {(detailed.prescribedLabel || detailed.sessionType) && (
-            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
-              Planned: {detailed.prescribedLabel || sanitizeStatusLabel(detailed.sessionType)}
+        {detailedOpen && (
+          <div data-testid="log-detailed-entry" style={{ display:"grid", gap:"0.55rem", marginTop:"0.55rem", paddingTop:"0.55rem", borderTop:"1px solid #1e293b" }}>
+            <div style={{ display:"grid", gap:"0.18rem" }}>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>Exercise-by-exercise entry</div>
+              <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                This stays inside Log workout and writes actuals against the same planned session shown on Today and Program.
+              </div>
             </div>
-          )}
-          {!!detailed?.plannedSummary && (
-            <PlannedSessionDetailCard
-              session={{
-                day: detailed.date === today ? "Today" : detailed.date,
-                title: detailed.plannedSummary?.sessionLabel || detailed.prescribedLabel || detailed.sessionLabel || "Planned session",
-                summary: detailed.plannedSummary,
-              }}
-              accentColor={C.blue}
-            />
-          )}
-          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
-            Planned and actual stay separate. This form is seeded from the same stored workout shown on Today and Program.
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem" }}>
+              <input type="date" value={detailed.date} onChange={e=>setDetailed(buildDetailedDraft(e.target.value, logs?.[e.target.value] || {}))} />
+              <input value={detailed.sessionLabel || ""} onChange={e=>setDetailed({ ...detailed, sessionLabel:e.target.value })} placeholder="Workout label" />
+            </div>
+            {(detailed.prescribedLabel || detailed.sessionType) && (
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                Planned: {detailed.prescribedLabel || sanitizeStatusLabel(detailed.sessionType)}
+              </div>
+            )}
+            {!!detailed?.plannedSummary && (
+              <PlannedSessionDetailCard
+                session={{
+                  day: detailed.date === today ? "Today" : detailed.date,
+                  title: detailed.plannedSummary?.sessionLabel || detailed.prescribedLabel || detailed.sessionLabel || "Planned session",
+                  summary: detailed.plannedSummary,
+                }}
+                accentColor={C.blue}
+              />
+            )}
+            {!!detailed.sections?.run?.enabled && (
+              <div style={{ display:"grid", gap:"0.35rem", borderTop:"1px solid #1e293b", paddingTop:"0.45rem" }}>
+                <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Run actuals</div>
+                {(detailed.run?.purpose || detailed.run?.structure) && (
+                  <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5 }}>
+                    {joinDisplayParts([detailed.run?.purpose, detailed.run?.structure])}
+                  </div>
+                )}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.35rem" }}>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={detailed.run?.distance || ""}
+                    onChange={e=>setDetailed({
+                      ...detailed,
+                      run: { ...(detailed.run || {}), enabled: true, distance: e.target.value },
+                    })}
+                    placeholder="Distance"
+                  />
+                  <input
+                    value={detailed.run?.duration || ""}
+                    onChange={e=>setDetailed({
+                      ...detailed,
+                      run: { ...(detailed.run || {}), enabled: true, duration: e.target.value },
+                    })}
+                    placeholder="Duration"
+                  />
+                  <input
+                    value={detailed.run?.pace || ""}
+                    onChange={e=>setDetailed({
+                      ...detailed,
+                      run: { ...(detailed.run || {}), enabled: true, pace: e.target.value },
+                    })}
+                    placeholder="Pace"
+                  />
+                  <select value={detailed.feel} onChange={e=>setDetailed({ ...detailed, feel:e.target.value })}>
+                    {[1,2,3,4,5].map(n=><option key={n} value={String(n)}>{joinDisplayParts([String(n), FEEL_LABELS[String(n)]?.title])}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+            {!!detailed.sections?.strength?.enabled && (
+              <div style={{ display:"grid", gap:"0.4rem", borderTop:"1px solid #1e293b", paddingTop:"0.45rem" }}>
+                <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>
+                  {detailed.strength?.hasPrescribedStructure ? "Exercise actuals" : "Exercise actuals (generic fallback)"}
+                </div>
+                {!!detailed.substitutionSupport?.allowed && (
+                  <div style={{ fontSize:"0.48rem", color:"#94a3b8", lineHeight:1.45 }}>
+                    Keep the planned exercise name to log as prescribed, or type over it to log a substitution. Planned and actual stay separate.
+                  </div>
+                )}
+                {(detailed.strength?.rows || []).length > 0 ? (
+                  <div style={{ display:"grid", gap:"0.35rem" }}>
+                    {(detailed.strength?.rows || []).map((row, index) => {
+                      const mode = row?.mode || inferExerciseMode(row?.exercise || row?.prescribedExercise || "");
+                      const prescribedLine = joinDisplayParts([
+                        row?.prescribedExercise || "",
+                        row?.prescribedSetsText ? `${row.prescribedSetsText} sets` : "",
+                        row?.prescribedRepsText || "",
+                        row?.prescribedWeight ? `${row.prescribedWeight} lb` : row?.bodyweightOnly ? "BW" : "",
+                      ]);
+                      const substituted = normalizeExerciseKey(row?.exercise || "") !== normalizeExerciseKey(row?.prescribedExercise || "");
+                      return (
+                        <div key={`${row?.key || "exercise"}_${index}`} style={{ display:"grid", gap:"0.3rem", padding:"0.45rem", border:"1px solid #1e293b", borderRadius:8, background:"#0f172a" }}>
+                          <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.35rem", alignItems:"center" }}>
+                            <input
+                              value={row?.exercise || ""}
+                              onChange={e=>updateStrengthRow(index, { exercise: e.target.value })}
+                              placeholder="Exercise"
+                            />
+                            <div style={{ display:"flex", gap:"0.22rem", alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
+                              {!substituted && !!row?.prescribedExercise && (
+                                <span style={{ fontSize:"0.45rem", color:"#8fa5c8", border:"1px solid #334155", borderRadius:999, padding:"0.05rem 0.35rem" }}>Using planned</span>
+                              )}
+                              {substituted && (
+                                <span style={{ fontSize:"0.45rem", color:C.amber, border:`1px solid ${C.amber}35`, borderRadius:999, padding:"0.05rem 0.35rem" }}>Substitution</span>
+                              )}
+                              {!!row?.canResetToPrescribed && (
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  onClick={()=>updateStrengthRow(index, { exercise: row?.prescribedExercise || "" })}
+                                  style={{ fontSize:"0.44rem", padding:"0.14rem 0.36rem" }}
+                                >
+                                  Use planned
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          {prescribedLine && (
+                            <div style={{ fontSize:"0.48rem", color:"#94a3b8", lineHeight:1.45 }}>
+                              Planned: {prescribedLine}
+                            </div>
+                          )}
+                          <div style={{ display:"grid", gridTemplateColumns:"minmax(90px,1fr) 90px 90px", gap:"0.35rem" }}>
+                            {mode === "band" ? (
+                              <select value={row?.bandTension || ""} onChange={e=>updateStrengthRow(index, { bandTension: e.target.value, mode: "band" })}>
+                                <option value="">Band</option>
+                                {BAND_TENSION_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+                              </select>
+                            ) : mode === "bodyweight" ? (
+                              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid #1e293b", borderRadius:8, minHeight:34 }}>BW</div>
+                            ) : (
+                              <input
+                                type="number"
+                                step="2.5"
+                                value={row?.actualWeight || ""}
+                                onChange={e=>updateStrengthRow(index, { actualWeight: e.target.value, mode: "weighted" })}
+                                placeholder="Weight"
+                              />
+                            )}
+                            <input
+                              type="number"
+                              value={row?.actualSets || ""}
+                              onChange={e=>updateStrengthRow(index, { actualSets: e.target.value })}
+                              placeholder="Sets"
+                            />
+                            <input
+                              type="number"
+                              value={row?.actualReps || ""}
+                              onChange={e=>updateStrengthRow(index, { actualReps: e.target.value })}
+                              placeholder="Reps"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5 }}>
+                    No exercise-by-exercise prescription was stored for this day. Use the quick entry above for a generic workout log.
+                  </div>
+                )}
+              </div>
+            )}
+            {!!detailed.sections?.generic?.enabled && (
+              <div style={{ display:"grid", gap:"0.35rem", borderTop:"1px solid #1e293b", paddingTop:"0.45rem" }}>
+                <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Generic workout fallback</div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+                  <input
+                    value={detailed.generic?.reps || ""}
+                    onChange={e=>setDetailed({
+                      ...detailed,
+                      generic: { ...(detailed.generic || {}), visible: true, reps: e.target.value },
+                    })}
+                    placeholder="Reps"
+                  />
+                  <input
+                    value={detailed.generic?.weight || ""}
+                    onChange={e=>setDetailed({
+                      ...detailed,
+                      generic: { ...(detailed.generic || {}), visible: true, weight: e.target.value },
+                    })}
+                    placeholder="Weight"
+                  />
+                </div>
+              </div>
+            )}
+            <div style={{ display:"grid", gridTemplateColumns:"120px 1fr", gap:"0.35rem" }}>
+              <input value={detailed.location || ""} onChange={e=>setDetailed({ ...detailed, location:e.target.value })} placeholder="Location" />
+              <input value={detailed.notes || ""} onChange={e=>setDetailed({ ...detailed, notes:e.target.value })} placeholder="Notes" />
+            </div>
+            <button className="btn btn-primary" onClick={saveDetailed} style={{ width:"fit-content", fontSize:"0.52rem" }}>Save workout log</button>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"120px 1fr", gap:"0.35rem" }}>
-            <input value={detailed.location || ""} onChange={e=>setDetailed({ ...detailed, location:e.target.value })} placeholder="Location" />
-            <input value={detailed.notes || ""} onChange={e=>setDetailed({ ...detailed, notes:e.target.value })} placeholder="Notes" />
-          </div>
-          <button className="btn btn-primary" onClick={saveDetailed} style={{ width:"fit-content", fontSize:"0.52rem" }}>Save workout log</button>
-        </div>
-      </details>
+        )}
+      </div>
 
       <details className="card">
         <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Planned vs actual review</summary>
@@ -18444,7 +18906,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
                 <div key={`${supp.name}_${i}`} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
                   <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.35rem", alignItems:"center" }}>
                     <button className="btn" onClick={()=>toggleSupplementTaken(supp.name)} style={{ width:24, minWidth:24, height:24, padding:0, borderColor:"#2d435f", color:supplementTaken?.[supp.name] ? C.green : "#64748b", background:"transparent", fontSize:"0.62rem" }}>
-                      {supplementTaken?.[supp.name] ? "✓" : ""}
+                      {supplementTaken?.[supp.name] ? "?" : ""}
                     </button>
                     <div>
                       <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>{supp.name}</div>
@@ -18666,7 +19128,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
                 <div key={`${supp.name}_${i}`} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
                   <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.35rem", alignItems:"center" }}>
                     <button className="btn" onClick={()=>toggleSupplementTaken(supp.name)} style={{ width:24, minWidth:24, height:24, padding:0, borderColor:"#2d435f", color:supplementTaken?.[supp.name] ? C.green : "#64748b", background:"transparent", fontSize:"0.62rem" }}>
-                      {supplementTaken?.[supp.name] ? "✓" : ""}
+                      {supplementTaken?.[supp.name] ? "?" : ""}
                     </button>
                     <div>
                       <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>{supp.name}</div>

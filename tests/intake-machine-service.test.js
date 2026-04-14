@@ -179,6 +179,185 @@ const buildConfirmableStrengthReviewState = () => {
   });
 };
 
+const buildWarnedRunningReviewState = () => {
+  let nextState = createIntakeMachineState();
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_warn_run_goal_submit",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "run a 1:45 half marathon",
+      },
+      now: TEST_NOW,
+    },
+  });
+  nextState = intakeReducer(nextState, buildInterpretationEvent({
+    event_id: "evt_warn_run_goal_interpreted",
+    answers: {
+      goal_intent: "run a 1:45 half marathon",
+    },
+    rawGoalText: "run a 1:45 half marathon",
+  }));
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_warn_run_timeline_answered",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "June",
+      answer_value: "June",
+    }),
+  });
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_warn_run_frequency_answered",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "3 runs/week",
+      answer_value: "3 runs/week",
+    }),
+  });
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_warn_run_benchmark_choice",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "Longest recent run",
+      answer_value: "longest_recent_run",
+    }),
+  });
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_warn_run_long_run_answered",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "7 miles",
+      answer_value: "7 miles",
+    }),
+  });
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_warn_run_pace_answered",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "8:55 pace",
+      answer_value: "8:55 pace",
+    }),
+  });
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_warn_run_realism",
+    type: INTAKE_MACHINE_EVENTS.REALISM_RESULT,
+    timestamp: TEST_NOW,
+    payload: {
+      now: TEST_NOW,
+    },
+  });
+  return intakeReducer(nextState, {
+    event_id: "evt_warn_run_arbitration",
+    type: INTAKE_MACHINE_EVENTS.ARBITRATION_RESULT,
+    timestamp: TEST_NOW,
+    payload: {
+      now: TEST_NOW,
+    },
+  });
+};
+
+test("exact strength goal transitions into anchor collection with a deterministic strength baseline field", () => {
+  let nextState = createIntakeMachineState();
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_exact_strength_goal_submit",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "bench 225",
+      },
+      now: TEST_NOW,
+    },
+  });
+  nextState = intakeReducer(nextState, buildInterpretationEvent({
+    event_id: "evt_exact_strength_goal_interpreted",
+    answers: {
+      goal_intent: "bench 225",
+    },
+    rawGoalText: "bench 225",
+  }));
+
+  assert.equal(nextState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.field_id, "current_strength_baseline");
+  assert.equal(nextState.draft.orderedResolvedGoals.length, 1);
+});
+
+test("vague appearance goal transitions into anchor collection with proxy selection first", () => {
+  const nextState = buildAppearanceAnchorState();
+
+  assert.equal(nextState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.field_id, "appearance_proxy_anchor_kind");
+  assert.ok(nextState.draft.orderedResolvedGoals.some((goal) => /athletic|lean|defined|body/i.test(goal?.summary || "")));
+});
+
+test("hybrid goal interpretation keeps more than one resolved goal before confirmation", () => {
+  let nextState = createIntakeMachineState();
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_hybrid_goal_submit",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "become a hybrid athlete",
+      },
+      now: TEST_NOW,
+    },
+  });
+  nextState = intakeReducer(nextState, buildInterpretationEvent({
+    event_id: "evt_hybrid_goal_interpreted",
+    answers: {
+      goal_intent: "become a hybrid athlete",
+    },
+    rawGoalText: "become a hybrid athlete",
+  }));
+
+  assert.ok(nextState.draft.orderedResolvedGoals.length >= 2);
+  assert.equal(nextState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+  assert.ok(nextState.draft.missingAnchorsEngine.currentAnchor?.field_id);
+});
+
+test("explicit multi-goal interpretation preserves the full resolved stack before confirmation", () => {
+  let nextState = createIntakeMachineState();
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_multi_goal_submit",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "run a 1:45 half marathon",
+        additional_goals_list: ["bench 225", "get leaner"],
+        other_goals: "bench 225. get leaner",
+      },
+      now: TEST_NOW,
+    },
+  });
+  nextState = intakeReducer(nextState, buildInterpretationEvent({
+    event_id: "evt_multi_goal_interpreted",
+    answers: {
+      goal_intent: "run a 1:45 half marathon",
+      additional_goals_list: ["bench 225", "get leaner"],
+      other_goals: "bench 225. get leaner",
+    },
+    rawGoalText: "run a 1:45 half marathon. bench 225. get leaner",
+  }));
+
+  assert.ok(nextState.draft.orderedResolvedGoals.length >= 2);
+  assert.ok(nextState.draft.orderedResolvedGoals.some((goal) => /run|half marathon/i.test(goal?.summary || "")));
+  assert.ok(nextState.draft.orderedResolvedGoals.some((goal) => /bench|lean|body/i.test(goal?.summary || "")));
+  assert.ok([INTAKE_MACHINE_STATES.ANCHOR_COLLECTION, INTAKE_MACHINE_STATES.REVIEW_CONFIRM].includes(nextState.stage));
+});
+
 test("replaying the same intake event log ends in the same state and missing anchors", () => {
   const events = [
     {
@@ -994,6 +1173,146 @@ test("replayed intake keeps confirmation disabled when feasibility blocks the go
   assert.equal(finalState.draft.confirmationState.canConfirm, false);
 });
 
+test("structured strength baseline keeps ambitious lift targets in warning territory instead of defaulting to proceed", () => {
+  const goalSubmittedEvent = {
+    event_id: "evt_strength_warn_goal_submit",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "bench 225 by July",
+      },
+      now: TEST_NOW,
+    },
+  };
+  const interpretationEvent = buildInterpretationEvent({
+    event_id: "evt_strength_warn_interpreted",
+    answers: {
+      goal_intent: "bench 225 by July",
+    },
+    rawGoalText: "bench 225 by July",
+  });
+
+  let strengthState = intakeReducer(createIntakeMachineState(), goalSubmittedEvent);
+  strengthState = intakeReducer(strengthState, interpretationEvent);
+  const baselineAnchor = strengthState.draft.missingAnchorsEngine.currentAnchor;
+
+  const finalState = replayIntakeMachineEvents({
+    initialState: createIntakeMachineState(),
+    events: [
+      goalSubmittedEvent,
+      interpretationEvent,
+      {
+        event_id: "evt_strength_warn_baseline",
+        type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+        timestamp: TEST_NOW,
+        payload: buildAnchorAnsweredPayload({
+          anchor: baselineAnchor,
+          raw_text: "185 x 5",
+          answer_value: {
+            weight: 185,
+            reps: 5,
+            raw: "185 x 5",
+          },
+        }),
+      },
+      {
+        event_id: "evt_strength_warn_realism",
+        type: INTAKE_MACHINE_EVENTS.REALISM_RESULT,
+        timestamp: TEST_NOW,
+        payload: {
+          now: TEST_NOW,
+        },
+      },
+      {
+        event_id: "evt_strength_warn_arbitration",
+        type: INTAKE_MACHINE_EVENTS.ARBITRATION_RESULT,
+        timestamp: TEST_NOW,
+        payload: {
+          now: TEST_NOW,
+        },
+      },
+    ],
+  });
+
+  assert.equal(finalState.stage, INTAKE_MACHINE_STATES.REVIEW_CONFIRM);
+  assert.equal(finalState.draft.goalResolution.resolvedGoals[0].targetHorizonWeeks, 12);
+  assert.equal(finalState.draft.intakeCompleteness.facts.currentStrengthBaseline.weight, 185);
+  assert.equal(finalState.draft.goalFeasibility.confirmationAction, "warn");
+  assert.equal(finalState.draft.confirmationState.status, "warn");
+  assert.equal(finalState.draft.confirmationState.canConfirm, true);
+});
+
+test("relative-week strength targets block once a structured baseline shows the jump is too aggressive", () => {
+  const goalSubmittedEvent = {
+    event_id: "evt_strength_relative_goal_submit",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "bench 225 in 6 weeks",
+      },
+      now: TEST_NOW,
+    },
+  };
+  const interpretationEvent = buildInterpretationEvent({
+    event_id: "evt_strength_relative_interpreted",
+    answers: {
+      goal_intent: "bench 225 in 6 weeks",
+    },
+    rawGoalText: "bench 225 in 6 weeks",
+  });
+
+  let strengthState = intakeReducer(createIntakeMachineState(), goalSubmittedEvent);
+  strengthState = intakeReducer(strengthState, interpretationEvent);
+  const baselineAnchor = strengthState.draft.missingAnchorsEngine.currentAnchor;
+
+  const finalState = replayIntakeMachineEvents({
+    initialState: createIntakeMachineState(),
+    events: [
+      goalSubmittedEvent,
+      interpretationEvent,
+      {
+        event_id: "evt_strength_relative_baseline",
+        type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+        timestamp: TEST_NOW,
+        payload: buildAnchorAnsweredPayload({
+          anchor: baselineAnchor,
+          raw_text: "135 x 3",
+          answer_value: {
+            weight: 135,
+            reps: 3,
+            raw: "135 x 3",
+          },
+        }),
+      },
+      {
+        event_id: "evt_strength_relative_realism",
+        type: INTAKE_MACHINE_EVENTS.REALISM_RESULT,
+        timestamp: TEST_NOW,
+        payload: {
+          now: TEST_NOW,
+        },
+      },
+      {
+        event_id: "evt_strength_relative_arbitration",
+        type: INTAKE_MACHINE_EVENTS.ARBITRATION_RESULT,
+        timestamp: TEST_NOW,
+        payload: {
+          now: TEST_NOW,
+        },
+      },
+    ],
+  });
+
+  assert.equal(finalState.stage, INTAKE_MACHINE_STATES.REVIEW_CONFIRM);
+  assert.equal(finalState.draft.goalResolution.resolvedGoals[0].targetHorizonWeeks, 6);
+  assert.equal(finalState.draft.intakeCompleteness.facts.currentStrengthBaseline.weight, 135);
+  assert.equal(finalState.draft.goalFeasibility.confirmationAction, "block");
+  assert.equal(finalState.draft.confirmationState.status, "block");
+  assert.equal(finalState.draft.confirmationState.canConfirm, false);
+});
+
 test("confirmed intake requests a single canonical commit snapshot and ignores duplicate confirm events", () => {
   const reviewState = buildConfirmableStrengthReviewState();
   const reviewEvents = reviewState.eventLog.map((entry) => ({
@@ -1043,6 +1362,31 @@ test("confirmed intake requests a single canonical commit snapshot and ignores d
   });
 
   assert.equal(duplicateConfirmState, committedState);
+});
+
+test("non-blocked intake can commit without a separate acknowledgement event", () => {
+  const reviewState = buildWarnedRunningReviewState();
+
+  assert.equal(reviewState.stage, INTAKE_MACHINE_STATES.REVIEW_CONFIRM);
+  assert.ok(["warn", "proceed"].includes(reviewState.draft.confirmationState.status));
+  assert.equal(reviewState.draft.confirmationState.canConfirm, true);
+  assert.equal(reviewState.draft.confirmationState.requiresAcknowledgement, false);
+
+  const committedState = intakeReducer(reviewState, {
+    event_id: "evt_warn_run_confirm",
+    type: INTAKE_MACHINE_EVENTS.USER_CONFIRMED,
+    timestamp: TEST_NOW,
+    payload: {
+      now: TEST_NOW,
+    },
+  });
+
+  assert.equal(committedState.stage, INTAKE_MACHINE_STATES.COMMIT);
+  assert.equal(committedState.draft.commitRequested, true);
+  assert.equal(
+    validateIntakeCommitRequest(committedState.draft.commitRequest).ok,
+    true
+  );
 });
 
 test("successful commit consumption clears the pending request and records the committed snapshot", () => {

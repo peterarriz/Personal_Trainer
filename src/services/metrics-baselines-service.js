@@ -264,8 +264,6 @@ export const buildPlanningBaselineInfluence = ({
   const runRow = getLatestDateValue(personalization?.manualProgressInputs?.benchmarks?.run_results || []) || inferRunBenchmarkFromLogs(logs);
   const swimRow = getLatestDateValue(personalization?.manualProgressInputs?.metrics?.swim_benchmark || []);
   const jumpRow = getLatestDateValue(personalization?.manualProgressInputs?.metrics?.vertical_jump || []);
-  const lowConfidenceMessages = model.missingCards.map((card) => `${card.label} is still missing, so the planner stays conservative there.`);
-
   const strengthLevel = !signals.hasStrength
     ? ""
     : !liftRow?.weight
@@ -318,7 +316,7 @@ export const buildPlanningBaselineInfluence = ({
         ? `${cardsById.power_benchmark.value} is anchoring jump exposure.`
         : "",
     ]),
-    lowConfidenceMessages,
+    lowConfidenceMessages: [],
     strength: {
       level: strengthLevel,
       benchmark: clonePlainValue(liftRow),
@@ -406,8 +404,6 @@ export const applyPlanningBaselineInfluence = ({
   });
 
   if (influence?.summaryLines?.length) summaryLines.push(...influence.summaryLines);
-  if (influence?.lowConfidenceMessages?.length) summaryLines.push(...influence.lowConfidenceMessages);
-
   return {
     dayTemplates: next,
     summaryLines: dedupeStrings(summaryLines).slice(0, 4),

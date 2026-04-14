@@ -30,6 +30,470 @@ const dedupeStrings = (items = []) => {
     });
 };
 
+const hasFiniteNumericValue = (value) => Number.isFinite(Number(value));
+const roundToNearestFive = (value) => Math.round(Number(value || 0) / 5) * 5;
+const clampPositiveInteger = (value, fallback = null) => (
+  hasFiniteNumericValue(value)
+    ? Math.max(1, Math.round(Number(value)))
+    : fallback
+);
+
+const cloneMetric = (metric = null) => (
+  metric && typeof metric === "object"
+    ? { ...metric }
+    : null
+);
+
+const cloneMetricList = (metrics = []) => (
+  toArray(metrics)
+    .filter(Boolean)
+    .map((metric) => (metric && typeof metric === "object" ? { ...metric } : metric))
+);
+
+const normalizeMetricKey = (label = "") => (
+  sanitizeText(label, 80)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+);
+
+const buildMilestoneTargetLine = ({
+  prefix = "",
+  detail = "",
+  suffix = "",
+} = {}) => sanitizeText([prefix, detail, suffix].filter(Boolean).join(" ").replace(/\s+/g, " "), 220);
+
+export const INTAKE_MILESTONE_PATHS = {
+  keepTarget: "keep_full_target",
+  milestoneFirst: "milestone_first",
+};
+
+const INTAKE_MILESTONE_PATH_VALUES = new Set(Object.values(INTAKE_MILESTONE_PATHS));
+
+const parseRunningMilestoneTargets = (text = "") => {
+  const cleanText = sanitizeText(text, 320);
+  const runsMatch = cleanText.match(/(\d+)\s+runs?\s+per\s+week/i);
+  const milesMatch = cleanText.match(/around\s+(\d+)\s+miles?/i);
+  return {
+    runsPerWeek: runsMatch ? Number(runsMatch[1]) : null,
+    longRunMiles: milesMatch ? Number(milesMatch[1]) : null,
+  };
+};
+
+const parseStrengthMilestoneTargets = (text = "") => {
+  const cleanText = sanitizeText(text, 320);
+  const rangeMatch = cleanText.match(/from\s+about\s+(\d{2,4})\s+toward\s+(\d{2,4})/i);
+  if (rangeMatch) {
+    return {
+      baselineWeight: Number(rangeMatch[1]),
+      towardWeight: Number(rangeMatch[2]),
+    };
+  }
+  const towardMatch = cleanText.match(/toward\s+(\d{2,4})/i);
+  const smallerThanMatch = cleanText.match(/smaller\s+milestone\s+than\s+(\d{2,4})/i);
+  return {
+    baselineWeight: null,
+    towardWeight: towardMatch ? Number(towardMatch[1]) : smallerThanMatch ? Number(smallerThanMatch[1]) : null,
+  };
+};
+
+const buildRunningMilestoneShape = ({
+  goal = null,
+  suggestedRevision = null,
+  goalAssessment = null,
+} = {}) => {
+  const firstBlockTarget = sanitizeText(suggestedRevision?.first_block_target || "", 260);
+  const { runsPerWeek, longRunMiles } = parseRunningMilestoneTargets(firstBlockTarget);
+  const metric = longRunMiles
+    ? {
+        key: "long_run_distance",
+        label: "Long run distance",
+        unit: "miles",
+        kind: "primary",
+        targetValue: String(longRunMiles),
+      }
+    : cloneMetric(goal?.primaryMetric);
+  const proxyMetrics = dedupeStrings([
+    runsPerWeek ? "Weekly run frequency" : "",
+    ...cloneMetricList(goal?.proxyMetrics).map((item) => item?.label || ""),
+  ]).map((label) => ({
+    key: normalizeMetricKey(label),
+    label,
+    unit: /frequency/i.test(label) ? "sessions" : "",
+    kind: "proxy",
+  }));
+  return {
+    summary: runsPerWeek && longRunMiles
+      ? `Build to ${runsPerWeek} runs/week and a repeatable ${longRunMiles}-mile long run`
+      : longRunMiles
+      ? `Build to a repeatable ${longRunMiles}-mile long run`
+      : "Build a stronger running base first",
+    planningCategory: "running",
+    goalFamily: sanitizeText(goal?.goalFamily || "performance", 40).toLowerCase() || "performance",
+    primaryMetric: metric,
+    proxyMetrics,
+    targetHorizonWeeks: clampPositiveInteger(suggestedRevision?.suggested_target_horizon_weeks, 6),
+    first30DaySuccessDefinition: firstBlockTarget || "Build repeatable weekly running rhythm before you push the full race target again.",
+    reviewCadence: "biweekly",
+    refinementTrigger: "milestone_reached_or_base_block_complete",
+  };
+};
+
+const buildStrengthMilestoneShape = ({
+  goal = null,
+  suggestedRevision = null,
+  goalAssessment = null,
+} = {}) => {
+  const firstBlockTarget = sanitizeText(suggestedRevision?.first_block_target || "", 260);
+  const { baselineWeight, towardWeight } = parseStrengthMilestoneTargets(firstBlockTarget);
+  const originalTarget = Number(goal?.primaryMetric?.targetValue);
+  let milestoneWeight = towardWeight;
+  if (!hasFiniteNumericValue(milestoneWeight) && hasFiniteNumericValue(originalTarget)) {
+    milestoneWeight = Math.max(5, Number(originalTarget) - 20);
+  }
+  if (hasFiniteNumericValue(baselineWeight) && hasFiniteNumericValue(milestoneWeight)) {
+    let safeWeight = Number(milestoneWeight);
+    while (safeWeight > Number(baselineWeight) && (safeWeight / Number(baselineWeight)) >= 1.2) {
+      safeWeight -= 5;
+    }
+    if ((safeWeight - Number(baselineWeight)) >= 35) {
+      safeWeight = Number(baselineWeight) + 30;
+    }
+    milestoneWeight = roundToNearestFive(Math.max(Number(baselineWeight) + 10, safeWeight));
+  }
+  const metricLabel = sanitizeText(goal?.primaryMetric?.label || "Main lift", 80) || "Main lift";
+  const unit = sanitizeText(goal?.primaryMetric?.unit || "lb", 16) || "lb";
+  let targetHorizonWeeks = clampPositiveInteger(
+    goalAssessment?.minimumRealisticHorizonWeeks || suggestedRevision?.suggested_target_horizon_weeks,
+    10
+  );
+  if (hasFiniteNumericValue(baselineWeight) && hasFiniteNumericValue(milestoneWeight) && targetHorizonWeeks <= 12 && (Number(milestoneWeight) / Number(baselineWeight)) >= 1.2) {
+    targetHorizonWeeks = 14;
+  }
+  return {
+    summary: hasFiniteNumericValue(milestoneWeight)
+      ? `Build ${metricLabel} toward ${milestoneWeight} ${unit}`
+      : `Build ${metricLabel} with repeatable top sets`,
+    planningCategory: "strength",
+    goalFamily: sanitizeText(goal?.goalFamily || "strength", 40).toLowerCase() || "strength",
+    primaryMetric: hasFiniteNumericValue(milestoneWeight)
+      ? {
+          ...(cloneMetric(goal?.primaryMetric) || {}),
+          key: sanitizeText(goal?.primaryMetric?.key || normalizeMetricKey(metricLabel), 80),
+          label: metricLabel,
+          unit,
+          kind: "primary",
+          targetValue: String(milestoneWeight),
+        }
+      : cloneMetric(goal?.primaryMetric),
+    proxyMetrics: cloneMetricList(goal?.proxyMetrics),
+    targetHorizonWeeks,
+    first30DaySuccessDefinition: firstBlockTarget || "Build repeatable top-set quality before you push the full number again.",
+    reviewCadence: "biweekly",
+    refinementTrigger: "milestone_reached_or_top_set_stall",
+  };
+};
+
+const buildBodyCompMilestoneShape = ({
+  goal = null,
+  suggestedRevision = null,
+} = {}) => ({
+  summary: "Lock in a steady cut pace and a truthful weekly trend",
+  planningCategory: "general_fitness",
+  goalFamily: sanitizeText(goal?.goalFamily || "body_comp", 40).toLowerCase() || "body_comp",
+  primaryMetric: null,
+  proxyMetrics: dedupeStrings([
+    ...cloneMetricList(goal?.proxyMetrics).map((item) => item?.label || ""),
+    "Bodyweight trend",
+    "Waist trend",
+  ]).map((label) => ({
+    key: normalizeMetricKey(label),
+    label,
+    unit: /waist/i.test(label) ? "in" : /bodyweight/i.test(label) ? "lb" : "",
+    kind: "proxy",
+  })),
+  targetHorizonWeeks: clampPositiveInteger(suggestedRevision?.suggested_target_horizon_weeks, 6),
+  first30DaySuccessDefinition: sanitizeText(
+    suggestedRevision?.first_block_target || "Track a weekly bodyweight and waist trend while you establish a steadier cut pace.",
+    220
+  ),
+  reviewCadence: "weekly",
+  refinementTrigger: "four_week_trend_review",
+});
+
+const buildPowerMilestoneShape = ({
+  goal = null,
+  suggestedRevision = null,
+} = {}) => ({
+  summary: "Build lower-body power and retest the jump benchmark",
+  planningCategory: sanitizeText(goal?.planningCategory || "strength", 40).toLowerCase() || "strength",
+  goalFamily: sanitizeText(goal?.goalFamily || "athletic_power", 40).toLowerCase() || "athletic_power",
+  primaryMetric: {
+    key: "jump_retest",
+    label: "Jump retest",
+    unit: "",
+    kind: "primary",
+    targetValue: "retest",
+  },
+  proxyMetrics: cloneMetricList(goal?.proxyMetrics),
+  targetHorizonWeeks: clampPositiveInteger(suggestedRevision?.suggested_target_horizon_weeks, 6),
+  first30DaySuccessDefinition: sanitizeText(
+    suggestedRevision?.first_block_target || "Use the first block to build power and then retest the jump benchmark.",
+    220
+  ),
+  reviewCadence: "biweekly",
+  refinementTrigger: "power_retest_due",
+});
+
+const buildGenericMilestoneShape = ({
+  goal = null,
+  suggestedRevision = null,
+} = {}) => ({
+  summary: sanitizeText(
+    suggestedRevision?.first_block_target
+    || suggestedRevision?.summary
+    || `Build a smaller first milestone before you push ${goal?.summary || "the full target"} again.`,
+    120
+  ),
+  planningCategory: sanitizeText(goal?.planningCategory || "general_fitness", 40).toLowerCase() || "general_fitness",
+  goalFamily: sanitizeText(goal?.goalFamily || "general_fitness", 40).toLowerCase() || "general_fitness",
+  primaryMetric: cloneMetric(goal?.primaryMetric),
+  proxyMetrics: cloneMetricList(goal?.proxyMetrics),
+  targetHorizonWeeks: clampPositiveInteger(suggestedRevision?.suggested_target_horizon_weeks, goal?.targetHorizonWeeks || 6),
+  first30DaySuccessDefinition: sanitizeText(
+    suggestedRevision?.first_block_target || suggestedRevision?.summary || goal?.first30DaySuccessDefinition || "",
+    220
+  ),
+  reviewCadence: sanitizeText(goal?.reviewCadence || "weekly", 40),
+  refinementTrigger: "milestone_reached_or_review_due",
+});
+
+const buildMilestoneGoalShape = ({
+  goal = null,
+  goalAssessment = null,
+} = {}) => {
+  const suggestedRevision = goalAssessment?.suggested_revision || {};
+  const revisionKind = sanitizeText(suggestedRevision?.kind || "", 80).toLowerCase();
+  if (revisionKind === "build_running_base") {
+    return buildRunningMilestoneShape({ goal, suggestedRevision, goalAssessment });
+  }
+  if (revisionKind === "scaled_strength_block" || revisionKind === "anchor_strength_baseline") {
+    return buildStrengthMilestoneShape({ goal, suggestedRevision, goalAssessment });
+  }
+  if (revisionKind === "steady_body_comp_block") {
+    return buildBodyCompMilestoneShape({ goal, suggestedRevision, goalAssessment });
+  }
+  if (revisionKind === "power_retest_block") {
+    return buildPowerMilestoneShape({ goal, suggestedRevision, goalAssessment });
+  }
+  return buildGenericMilestoneShape({ goal, suggestedRevision, goalAssessment });
+};
+
+const sanitizeMilestoneSelectionRecord = (record = null, goalId = "") => {
+  if (!record || typeof record !== "object") return null;
+  const strategy = sanitizeText(record?.strategy || "", 40).toLowerCase();
+  if (!INTAKE_MILESTONE_PATH_VALUES.has(strategy)) return null;
+  const normalizedGoalId = sanitizeText(goalId || record?.goalId || "", 120);
+  if (!normalizedGoalId) return null;
+  return {
+    strategy,
+    goalId: normalizedGoalId,
+    sourceStatus: sanitizeText(record?.sourceStatus || "", 40).toLowerCase(),
+    sourceReason: sanitizeText(record?.sourceReason || "", 220),
+    longTermTargetSummary: sanitizeText(record?.longTermTargetSummary || "", 160),
+    firstBlockTarget: sanitizeText(record?.firstBlockTarget || "", 260),
+    recommendedRevisionSummary: sanitizeText(record?.recommendedRevisionSummary || "", 240),
+    milestoneSummary: sanitizeText(record?.milestoneSummary || "", 160),
+    milestonePlanningCategory: sanitizeText(record?.milestonePlanningCategory || "", 40).toLowerCase(),
+    milestoneGoalFamily: sanitizeText(record?.milestoneGoalFamily || "", 40).toLowerCase(),
+    milestonePrimaryMetric: cloneMetric(record?.milestonePrimaryMetric),
+    milestoneProxyMetrics: cloneMetricList(record?.milestoneProxyMetrics),
+    milestoneTargetHorizonWeeks: clampPositiveInteger(record?.milestoneTargetHorizonWeeks, null),
+    milestoneFirst30DaySuccessDefinition: sanitizeText(record?.milestoneFirst30DaySuccessDefinition || "", 220),
+    milestoneReviewCadence: sanitizeText(record?.milestoneReviewCadence || "", 40),
+    milestoneRefinementTrigger: sanitizeText(record?.milestoneRefinementTrigger || "", 80),
+  };
+};
+
+export const createIntakeMilestoneSelectionRecord = ({
+  goal = null,
+  goalAssessment = null,
+} = {}) => {
+  const cleanGoalId = sanitizeText(goal?.id || goalAssessment?.goalId || "", 120);
+  if (!cleanGoalId || !goalAssessment?.suggested_revision) return null;
+  const milestoneShape = buildMilestoneGoalShape({ goal, goalAssessment });
+  return sanitizeMilestoneSelectionRecord({
+    strategy: INTAKE_MILESTONE_PATHS.milestoneFirst,
+    goalId: cleanGoalId,
+    sourceStatus: goalAssessment?.realismStatus || goalAssessment?.status || "",
+    sourceReason: goalAssessment?.targetValidationReason || goalAssessment?.warningReasons?.[0] || goalAssessment?.blockingReasons?.[0] || "",
+    longTermTargetSummary: goal?.summary || goalAssessment?.goalSummary || "",
+    firstBlockTarget: goalAssessment?.suggested_revision?.first_block_target || "",
+    recommendedRevisionSummary: goalAssessment?.recommendedRevisionSummary || goalAssessment?.suggested_revision?.summary || "",
+    milestoneSummary: milestoneShape.summary,
+    milestonePlanningCategory: milestoneShape.planningCategory,
+    milestoneGoalFamily: milestoneShape.goalFamily,
+    milestonePrimaryMetric: milestoneShape.primaryMetric,
+    milestoneProxyMetrics: milestoneShape.proxyMetrics,
+    milestoneTargetHorizonWeeks: milestoneShape.targetHorizonWeeks,
+    milestoneFirst30DaySuccessDefinition: milestoneShape.first30DaySuccessDefinition,
+    milestoneReviewCadence: milestoneShape.reviewCadence,
+    milestoneRefinementTrigger: milestoneShape.refinementTrigger,
+  }, cleanGoalId);
+};
+
+const resolveMilestoneSelectionByGoalId = ({
+  goalStackConfirmation = null,
+  availableGoalIds = [],
+} = {}) => {
+  const availableIds = new Set(toArray(availableGoalIds).map((item) => sanitizeText(item, 120)).filter(Boolean));
+  return Object.fromEntries(
+    Object.entries(goalStackConfirmation?.milestonePlanByGoalId || {})
+      .map(([goalId, record]) => [sanitizeText(goalId, 120), sanitizeMilestoneSelectionRecord(record, goalId)])
+      .filter(([goalId, record]) => goalId && record && availableIds.has(goalId) && record.strategy === INTAKE_MILESTONE_PATHS.milestoneFirst)
+  );
+};
+
+const applyMilestoneSelectionToGoal = ({
+  goal = null,
+  selection = null,
+} = {}) => {
+  if (!goal || selection?.strategy !== INTAKE_MILESTONE_PATHS.milestoneFirst) return goal;
+  return {
+    ...goal,
+    summary: selection.milestoneSummary || goal.summary,
+    planningCategory: selection.milestonePlanningCategory || goal.planningCategory,
+    goalFamily: selection.milestoneGoalFamily || goal.goalFamily,
+    primaryMetric: cloneMetric(selection.milestonePrimaryMetric) || null,
+    proxyMetrics: cloneMetricList(selection.milestoneProxyMetrics),
+    targetDate: "",
+    targetHorizonWeeks: clampPositiveInteger(selection.milestoneTargetHorizonWeeks, goal?.targetHorizonWeeks || null),
+    first30DaySuccessDefinition: selection.milestoneFirst30DaySuccessDefinition || goal.first30DaySuccessDefinition,
+    reviewCadence: selection.milestoneReviewCadence || goal.reviewCadence,
+    refinementTrigger: selection.milestoneRefinementTrigger || goal.refinementTrigger,
+    milestonePath: {
+      strategy: selection.strategy,
+      longTermTargetSummary: selection.longTermTargetSummary,
+      firstBlockTarget: selection.firstBlockTarget,
+      recommendedRevisionSummary: selection.recommendedRevisionSummary,
+      sourceStatus: selection.sourceStatus,
+      sourceReason: selection.sourceReason,
+    },
+  };
+};
+
+export const applyIntakeMilestoneSelections = ({
+  resolvedGoals = [],
+  goalStackConfirmation = null,
+} = {}) => {
+  const safeGoals = Array.isArray(resolvedGoals) ? resolvedGoals.filter(Boolean) : [];
+  const milestoneSelectionsByGoalId = resolveMilestoneSelectionByGoalId({
+    goalStackConfirmation,
+    availableGoalIds: safeGoals.map((goal) => goal?.id),
+  });
+  return safeGoals.map((goal) => applyMilestoneSelectionToGoal({
+    goal,
+    selection: milestoneSelectionsByGoalId[sanitizeText(goal?.id || "", 120)] || null,
+  }));
+};
+
+export const buildIntakeMilestoneDecisionModel = ({
+  reviewModel = null,
+  goalFeasibility = null,
+  goalStackConfirmation = null,
+} = {}) => {
+  const activeGoals = toArray(reviewModel?.activeResolvedGoals);
+  const orderedGoals = toArray(reviewModel?.orderedResolvedGoals);
+  const focusGoal = activeGoals[0] || orderedGoals[0] || null;
+  const goalId = sanitizeText(focusGoal?.id || "", 120);
+  if (!goalId) return null;
+  const selectedPlan = sanitizeMilestoneSelectionRecord(
+    goalStackConfirmation?.milestonePlanByGoalId?.[goalId] || null,
+    goalId
+  );
+  const goalAssessment = toArray(goalFeasibility?.goalAssessments).find((item) => sanitizeText(item?.goalId || "", 120) === goalId) || null;
+  const confirmationAction = sanitizeText(reviewModel?.confirmationAction || goalFeasibility?.confirmationAction || "", 20).toLowerCase();
+  const sourceReason = sanitizeText(
+    goalAssessment?.targetValidationReason
+    || reviewModel?.warningReasons?.[0]
+    || reviewModel?.blockingReasons?.[0]
+    || reviewModel?.gateReasons?.[0]?.summary
+    || "",
+    220
+  );
+  const keepTargetChoice = {
+    key: INTAKE_MILESTONE_PATHS.keepTarget,
+    label: "Keep the full target and progress conservatively",
+    summary: sanitizeDisplayLine(
+      selectedPlan?.longTermTargetSummary
+        ? `Keep ${selectedPlan.longTermTargetSummary} as the long-term target and build it conservatively.`
+        : focusGoal?.summary
+        ? `Keep ${focusGoal.summary} as the long-term target and build it conservatively.`
+        : "Keep the full target and build it conservatively from here.",
+      220
+    ),
+  };
+  const milestoneChoice = {
+    key: INTAKE_MILESTONE_PATHS.milestoneFirst,
+    label: "Start with a smaller milestone",
+    summary: sanitizeDisplayLine(
+      selectedPlan?.firstBlockTarget
+      || goalAssessment?.suggested_revision?.first_block_target
+      || reviewModel?.gateSuggestedRevision?.first_block_target
+      || reviewModel?.recommendedRevisionSummary
+      || "Use the first block to lock in a smaller milestone before you push the full target again.",
+      240
+    ),
+  };
+
+  if (selectedPlan?.strategy === INTAKE_MILESTONE_PATHS.milestoneFirst) {
+    return {
+      state: "selected",
+      goalId,
+      headline: "Start with a smaller milestone",
+      supportingText: sanitizeDisplayLine(
+        selectedPlan.recommendedRevisionSummary || selectedPlan.firstBlockTarget || "The first block now locks in a smaller milestone before you push the long-term target again.",
+        220
+      ),
+      longTermTargetSummary: sanitizeDisplayLine(selectedPlan.longTermTargetSummary || "", 160),
+      selectedKey: INTAKE_MILESTONE_PATHS.milestoneFirst,
+      choices: [keepTargetChoice, milestoneChoice],
+    };
+  }
+
+  if (confirmationAction === "warn") {
+    return {
+      state: "warn",
+      goalId,
+      headline: "Target is ambitious",
+      supportingText: sanitizeDisplayLine(
+        sourceReason || "You can keep the full target, or start with a smaller milestone and tighten the first block.",
+        220
+      ),
+      longTermTargetSummary: "",
+      selectedKey: INTAKE_MILESTONE_PATHS.keepTarget,
+      choices: [keepTargetChoice, milestoneChoice],
+    };
+  }
+
+  if (confirmationAction === "block") {
+    return {
+      state: "block",
+      goalId,
+      headline: "Start with a smaller milestone",
+      supportingText: sanitizeDisplayLine(
+        sourceReason || milestoneChoice.summary || "This target needs a safer first step before I build it.",
+        220
+      ),
+      longTermTargetSummary: sanitizeDisplayLine(focusGoal?.summary || "", 160),
+      selectedKey: "",
+      choices: [milestoneChoice],
+    };
+  }
+
+  return null;
+};
+
 const PRIMARY_GOAL_KEY_BY_CATEGORY = {
   body_comp: "fat_loss",
   strength: "muscle_gain",
@@ -151,20 +615,20 @@ export const GOAL_REVIEW_LANE_KEYS = {
 
 const GOAL_REVIEW_LANE_META = {
   [GOAL_REVIEW_LANE_KEYS.leadGoal]: {
-    title: "Leading now",
-    emptyState: "No lead goal is selected yet.",
+    title: "Priority 1",
+    emptyState: "No Priority 1 goal is selected yet.",
   },
   [GOAL_REVIEW_LANE_KEYS.maintainedGoals]: {
-    title: "We will maintain",
-    emptyState: "Nothing else needs active maintenance right now.",
+    title: "Priority 2",
+    emptyState: "No Priority 2 goal is selected yet.",
   },
   [GOAL_REVIEW_LANE_KEYS.supportGoals]: {
-    title: "We will support in the background",
-    emptyState: "No support-only goals are sitting in the background right now.",
+    title: "Priority 3",
+    emptyState: "No Priority 3 goal is selected yet.",
   },
   [GOAL_REVIEW_LANE_KEYS.deferredGoals]: {
-    title: "We are deferring",
-    emptyState: "Nothing is being deferred right now.",
+    title: "Additional goals that still matter",
+    emptyState: "No additional goals are sitting below the top priorities right now.",
   },
 };
 
@@ -175,7 +639,7 @@ const GOAL_REVIEW_ACTIONS = {
   },
   changePriority: {
     key: "change_priority",
-    label: "Change priority",
+    label: "Reorder goals",
   },
   editGoal: {
     key: "edit_goal",
@@ -185,6 +649,28 @@ const GOAL_REVIEW_ACTIONS = {
     key: "drop_goal",
     label: "Drop a goal",
   },
+};
+
+const ORDERED_GOAL_STACK_PRIORITY_LABELS = ["Priority 1", "Priority 2", "Priority 3"];
+const ORDERED_GOAL_STACK_ADDITIONAL_LABEL = "Additional goals that still matter";
+
+const buildOrderedGoalPriorityLabel = (priorityIndex = null) => (
+  Number.isFinite(Number(priorityIndex)) && Number(priorityIndex) >= 0 && Number(priorityIndex) < ORDERED_GOAL_STACK_PRIORITY_LABELS.length
+    ? ORDERED_GOAL_STACK_PRIORITY_LABELS[Number(priorityIndex)]
+    : "Additional goal"
+);
+
+const buildOrderedGoalPrioritySectionLabel = (priorityIndex = null) => (
+  Number.isFinite(Number(priorityIndex)) && Number(priorityIndex) >= 0 && Number(priorityIndex) < ORDERED_GOAL_STACK_PRIORITY_LABELS.length
+    ? ORDERED_GOAL_STACK_PRIORITY_LABELS[Number(priorityIndex)]
+    : ORDERED_GOAL_STACK_ADDITIONAL_LABEL
+);
+
+const buildOrderedGoalPriorityHelper = (priorityIndex = null) => {
+  if (Number(priorityIndex) === 0) return "Gets the clearest push in this block.";
+  if (Number(priorityIndex) === 1) return "Preserved while Priority 1 drives most progression.";
+  if (Number(priorityIndex) === 2) return "Still influences exercise selection and tracking where possible.";
+  return "Still matters and stays visible even if it does not drive this block directly.";
 };
 
 const normalizeGoalAdjustmentText = (value = "") => {
@@ -322,6 +808,59 @@ const formatGoalSummaryList = (items = []) => {
   return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
 };
 
+const orderGoalsByGoalIds = ({
+  goals = [],
+  orderedGoalIds = [],
+} = {}) => {
+  const cleanGoals = toArray(goals).filter(Boolean);
+  const goalsById = new Map(
+    cleanGoals
+      .filter((goal) => goal?.id)
+      .map((goal) => [sanitizeText(goal.id, 120), goal])
+  );
+  const ordered = [];
+  const seen = new Set();
+  toArray(orderedGoalIds).forEach((goalId) => {
+    const cleanGoalId = sanitizeText(goalId, 120);
+    const goal = cleanGoalId ? goalsById.get(cleanGoalId) : null;
+    if (!goal || seen.has(cleanGoalId)) return;
+    seen.add(cleanGoalId);
+    ordered.push(goal);
+  });
+  cleanGoals.forEach((goal) => {
+    const cleanGoalId = sanitizeText(goal?.id || "", 120);
+    if (cleanGoalId && seen.has(cleanGoalId)) return;
+    if (cleanGoalId) seen.add(cleanGoalId);
+    ordered.push(goal);
+  });
+  return ordered;
+};
+
+const buildLegacyPriorityOrderIds = ({
+  orderedGoals = [],
+  goalStackConfirmation = null,
+} = {}) => {
+  const explicitPrimaryId = sanitizeText(goalStackConfirmation?.primaryGoalId || "", 120);
+  const explicitRolesByGoalId = Object.fromEntries(
+    Object.entries(goalStackConfirmation?.rolesByGoalId || {})
+      .map(([goalId, role]) => [sanitizeText(goalId, 120), sanitizeText(role, 40).toLowerCase()])
+      .filter(([goalId, role]) => goalId && Object.values(GOAL_STACK_ROLES).includes(role))
+  );
+  const pickIdsByRole = (targetRole = "") => (
+    toArray(orderedGoals)
+      .map((goal) => sanitizeText(goal?.id || "", 120))
+      .filter((goalId) => goalId && explicitRolesByGoalId[goalId] === targetRole)
+  );
+  return dedupeStrings([
+    explicitPrimaryId,
+    ...pickIdsByRole(GOAL_STACK_ROLES.primary),
+    ...pickIdsByRole(GOAL_STACK_ROLES.maintained),
+    ...pickIdsByRole(GOAL_STACK_ROLES.background),
+    ...pickIdsByRole(GOAL_STACK_ROLES.deferred),
+    ...toArray(orderedGoals).map((goal) => sanitizeText(goal?.id || "", 120)),
+  ]);
+};
+
 export const buildDeterministicAnchorPromptText = ({
   fieldId = "",
   prompt = "",
@@ -352,10 +891,10 @@ const buildGoalConfirmationReadiness = ({
   ));
   const blockingIssues = [];
   if (!leadGoalConfirmed) {
-    blockingIssues.push("Pick the goal that should lead right now.");
+    blockingIssues.push("Set the order so Priority 1 is clear.");
   }
   if (maintainedGoals.length > 0 && !maintainedGoalsConfirmed) {
-    blockingIssues.push("Confirm which extra goal should stay in maintenance.");
+    blockingIssues.push("Confirm the order of the top goals before building.");
   }
   return {
     leadGoalConfirmed,
@@ -408,22 +947,33 @@ const buildPlainNeedItem = ({
   return cleanLabel || cleanQuestion;
 };
 
-const buildGoalReviewEntry = ({ goal = {}, role = GOAL_STACK_ROLES.deferred } = {}) => {
+const buildGoalReviewEntry = ({
+  goal = {},
+  role = GOAL_STACK_ROLES.deferred,
+  priorityIndex = null,
+} = {}) => {
   const trackingLabels = buildPerGoalTrackingLabels(goal);
   const tradeoff = sanitizeText(goal?.tradeoffs?.[0] || "", 180);
   const reason = sanitizeText(goal?.goalArbitrationReason || "", 220);
+  const normalizedPriorityIndex = Number.isFinite(Number(priorityIndex))
+    ? Math.max(0, Math.round(Number(priorityIndex)))
+    : null;
   const fallbackRationale = role === GOAL_STACK_ROLES.primary
-    ? "This sets the direction for the current block."
+    ? "Priority 1 gets the clearest push in this block."
     : role === GOAL_STACK_ROLES.maintained
-    ? "This stays in maintenance range while the lead goal gets the clearest push."
+    ? "Priority 2 is preserved while Priority 1 drives most progression."
     : role === GOAL_STACK_ROLES.background
-    ? "This stays present in the background without competing with the lead goal."
-    : "This is intentionally parked for a later block so the current plan can stay coherent.";
+    ? "Lower-priority goals still influence exercise selection and tracking where possible."
+    : "This stays visible for later blocks without overloading the current one.";
   return {
     id: goal?.id,
     summary: sanitizeDisplayLine(goal?.summary || "", 160),
     role,
     roleLabel: sanitizeDisplayLine(GOAL_STACK_ROLE_LABELS[role] || "Goal", 80),
+    priorityIndex: normalizedPriorityIndex,
+    priorityLabel: sanitizeDisplayLine(buildOrderedGoalPriorityLabel(normalizedPriorityIndex), 80),
+    prioritySectionLabel: sanitizeDisplayLine(buildOrderedGoalPrioritySectionLabel(normalizedPriorityIndex), 120),
+    priorityHelper: sanitizeDisplayLine(buildOrderedGoalPriorityHelper(normalizedPriorityIndex), 220),
     planningPriority: Number(goal?.planningPriority || 0) || null,
     targetDate: sanitizeText(goal?.targetDate || "", 24),
     targetHorizonWeeks: Number.isFinite(Number(goal?.targetHorizonWeeks)) ? Number(goal.targetHorizonWeeks) : null,
@@ -468,29 +1018,73 @@ const buildLeadPriorityBasis = ({ leadGoal = null, goalFeasibility = null } = {}
 };
 
 const buildReviewTradeoffStatement = ({
-  leadGoal = null,
-  maintainedGoals = [],
-  supportGoals = [],
-  deferredGoals = [],
+  orderedGoals = [],
   goalFeasibility = null,
   primaryTradeoff = "",
 } = {}) => {
-  if (!leadGoal?.summary) return "";
-  const firstSentence = `${leadGoal.summary} leads now because ${buildLeadPriorityBasis({ leadGoal, goalFeasibility })}.`;
-  const clauses = [];
-  const maintainedSummary = formatGoalSummaryList(maintainedGoals);
-  const supportSummary = formatGoalSummaryList(supportGoals);
-  const deferredSummary = formatGoalSummaryList(deferredGoals);
-  if (maintainedSummary) clauses.push(`${maintainedSummary} ${maintainedGoals.length === 1 ? "stays" : "stay"} maintained`);
-  if (supportSummary) clauses.push(`${supportSummary} ${supportGoals.length === 1 ? "stays" : "stay"} in the background`);
-  if (deferredSummary) clauses.push(`${deferredSummary} ${deferredGoals.length === 1 ? "is" : "are"} deferred until a later block`);
-  if (clauses.length > 0) {
-    return sanitizeDisplayLine(`${firstSentence} ${sentenceCase(clauses.join(", "))} so the plan does not try to push every lane at once.`, 320);
+  const visibleGoals = toArray(orderedGoals).filter(Boolean);
+  const priorityOneGoal = visibleGoals[0] || null;
+  if (!priorityOneGoal?.summary) return "";
+  const lines = [
+    `Priority 1 is ${priorityOneGoal.summary}. It gets the clearest push because ${buildLeadPriorityBasis({ leadGoal: priorityOneGoal, goalFeasibility })}.`,
+  ];
+  if (visibleGoals[1]?.summary) {
+    lines.push(`Priority 2 is ${visibleGoals[1].summary}. It is preserved while Priority 1 drives most progression.`);
+  }
+  if (visibleGoals[2]?.summary) {
+    lines.push(`Priority 3 is ${visibleGoals[2].summary}. Lower-priority goals still influence exercise selection and tracking where possible.`);
+  }
+  const additionalSummary = formatGoalSummaryList(visibleGoals.slice(3));
+  if (additionalSummary) {
+    lines.push(`${additionalSummary} ${visibleGoals.slice(3).length === 1 ? "stays" : "stay"} visible as additional goals that still matter. They can still influence exercise selection and tracking where possible.`);
   }
   if (primaryTradeoff) {
-    return sanitizeDisplayLine(`${firstSentence} ${sentenceCase(primaryTradeoff).replace(/[.]+$/g, "")}.`, 320);
+    lines.push(`${sentenceCase(primaryTradeoff).replace(/[.]+$/g, "")}.`);
   }
-  return sanitizeDisplayLine(firstSentence, 320);
+  return sanitizeDisplayLine(lines.join(" "), 360);
+};
+
+const buildOrderedGoalStackContract = ({
+  orderedGoals = [],
+} = {}) => {
+  const items = toArray(orderedGoals).map((goal, index) => ({
+    ...goal,
+    priorityIndex: index,
+    priorityLabel: sanitizeDisplayLine(goal?.priorityLabel || buildOrderedGoalPriorityLabel(index), 80),
+    prioritySectionLabel: sanitizeDisplayLine(goal?.prioritySectionLabel || buildOrderedGoalPrioritySectionLabel(index), 120),
+    priorityHelper: sanitizeDisplayLine(goal?.priorityHelper || buildOrderedGoalPriorityHelper(index), 220),
+  }));
+  return {
+    items,
+    top_priorities: items.slice(0, 3),
+    additional_goals: items.slice(3),
+    sections: [
+      {
+        key: "priority_1",
+        title: "Priority 1",
+        empty_state: "Choose what should be Priority 1.",
+        goals: items[0] ? [items[0]] : [],
+      },
+      {
+        key: "priority_2",
+        title: "Priority 2",
+        empty_state: "Priority 2 stays visible without taking over the block.",
+        goals: items[1] ? [items[1]] : [],
+      },
+      {
+        key: "priority_3",
+        title: "Priority 3",
+        empty_state: "Priority 3 can still shape the plan when it fits.",
+        goals: items[2] ? [items[2]] : [],
+      },
+      {
+        key: "additional_goals",
+        title: ORDERED_GOAL_STACK_ADDITIONAL_LABEL,
+        empty_state: "No additional goals are sitting below the top three right now.",
+        goals: items.slice(3),
+      },
+    ],
+  };
 };
 
 const buildGoalReviewContract = ({
@@ -498,49 +1092,23 @@ const buildGoalReviewContract = ({
   maintainedGoals = [],
   supportGoals = [],
   deferredGoals = [],
+  orderedGoals = [],
   goalFeasibility = null,
   primaryTradeoff = "",
 } = {}) => {
-  const laneSections = [
-    {
-      lane_key: GOAL_REVIEW_LANE_KEYS.leadGoal,
-      title: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.leadGoal].title,
-      empty_state: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.leadGoal].emptyState,
-      goals: leadGoal ? [leadGoal] : [],
-    },
-    {
-      lane_key: GOAL_REVIEW_LANE_KEYS.maintainedGoals,
-      title: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.maintainedGoals].title,
-      empty_state: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.maintainedGoals].emptyState,
-      goals: maintainedGoals,
-    },
-    {
-      lane_key: GOAL_REVIEW_LANE_KEYS.supportGoals,
-      title: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.supportGoals].title,
-      empty_state: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.supportGoals].emptyState,
-      goals: supportGoals,
-    },
-    {
-      lane_key: GOAL_REVIEW_LANE_KEYS.deferredGoals,
-      title: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.deferredGoals].title,
-      empty_state: GOAL_REVIEW_LANE_META[GOAL_REVIEW_LANE_KEYS.deferredGoals].emptyState,
-      goals: deferredGoals,
-    },
-  ];
+  const orderedGoalStack = buildOrderedGoalStackContract({ orderedGoals });
   return {
     lead_goal: leadGoal,
     maintained_goals: maintainedGoals,
     support_goals: supportGoals,
     deferred_goals: deferredGoals,
+    ordered_goal_stack: orderedGoalStack,
     tradeoff_statement: buildReviewTradeoffStatement({
-      leadGoal,
-      maintainedGoals,
-      supportGoals,
-      deferredGoals,
+      orderedGoals: orderedGoalStack.items,
       goalFeasibility,
       primaryTradeoff,
     }),
-    lane_sections: laneSections,
+    lane_sections: orderedGoalStack.sections,
     actions: {
       confirm: { ...GOAL_REVIEW_ACTIONS.confirm },
       changePriority: { ...GOAL_REVIEW_ACTIONS.changePriority },
@@ -604,59 +1172,112 @@ export const buildIntakeGoalStackConfirmation = ({
 } = {}) => {
   const orderedGoals = sortGoalsByPriority(resolvedGoals);
   const availableIds = new Set(orderedGoals.map((goal) => sanitizeText(goal?.id || "", 120)).filter(Boolean));
-  const defaultRolesByGoalId = {};
-  orderedGoals.forEach((goal, index) => {
-    if (!goal?.id) return;
-    const defaultRole = sanitizeText(goal?.goalArbitrationRole || (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained), 40).toLowerCase();
-    defaultRolesByGoalId[goal.id] = Object.values(GOAL_STACK_ROLES).includes(defaultRole)
-      ? defaultRole
-      : (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained);
+  const removedGoalIds = dedupeStrings(toArray(goalStackConfirmation?.removedGoalIds || []))
+    .filter((id) => availableIds.has(id));
+  const milestonePlanByGoalId = resolveMilestoneSelectionByGoalId({
+    goalStackConfirmation,
+    availableGoalIds: [...availableIds],
   });
-  const explicitRolesByGoalId = Object.fromEntries(
-    Object.entries(goalStackConfirmation?.rolesByGoalId || {})
-      .map(([goalId, role]) => [sanitizeText(goalId, 120), sanitizeText(role, 40).toLowerCase()])
-      .filter(([goalId, role]) => goalId && availableIds.has(goalId) && Object.values(GOAL_STACK_ROLES).includes(role))
+  const explicitOrderedGoalIds = dedupeStrings(toArray(goalStackConfirmation?.orderedGoalIds || []))
+    .filter((id) => availableIds.has(id) && !removedGoalIds.includes(id));
+  if (explicitOrderedGoalIds.length === 0) {
+    const defaultRolesByGoalId = {};
+    orderedGoals.forEach((goal, index) => {
+      if (!goal?.id) return;
+      const defaultRole = sanitizeText(goal?.goalArbitrationRole || (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained), 40).toLowerCase();
+      defaultRolesByGoalId[goal.id] = Object.values(GOAL_STACK_ROLES).includes(defaultRole)
+        ? defaultRole
+        : (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained);
+    });
+    const explicitRolesByGoalId = Object.fromEntries(
+      Object.entries(goalStackConfirmation?.rolesByGoalId || {})
+        .map(([goalId, role]) => [sanitizeText(goalId, 120), sanitizeText(role, 40).toLowerCase()])
+        .filter(([goalId, role]) => goalId && availableIds.has(goalId) && Object.values(GOAL_STACK_ROLES).includes(role))
+    );
+    const requestedRolesByGoalId = {
+      ...defaultRolesByGoalId,
+      ...explicitRolesByGoalId,
+    };
+    const activeGoals = orderedGoals.filter((goal) => !removedGoalIds.includes(goal.id));
+    const rolePrimaryId = activeGoals.find((goal) => requestedRolesByGoalId[goal?.id] === GOAL_STACK_ROLES.primary)?.id;
+    const fallbackPrimaryId = sanitizeText(rolePrimaryId || activeGoals[0]?.id || orderedGoals[0]?.id || "", 120);
+    const explicitPrimaryId = sanitizeText(goalStackConfirmation?.primaryGoalId || "", 120);
+    const primaryGoalId = activeGoals.some((goal) => goal.id === explicitPrimaryId)
+      ? explicitPrimaryId
+      : fallbackPrimaryId;
+    const rolesByGoalId = {};
+    orderedGoals.forEach((goal, index) => {
+      if (!goal?.id) return;
+      if (removedGoalIds.includes(goal.id)) {
+        rolesByGoalId[goal.id] = GOAL_STACK_ROLES.deferred;
+        return;
+      }
+      const requestedRole = requestedRolesByGoalId[goal.id] || defaultRolesByGoalId[goal.id] || GOAL_STACK_ROLES.maintained;
+      const isPrimary = goal.id === primaryGoalId || (!primaryGoalId && index === 0);
+      rolesByGoalId[goal.id] = isPrimary
+        ? GOAL_STACK_ROLES.primary
+        : requestedRole === GOAL_STACK_ROLES.background
+        ? GOAL_STACK_ROLES.background
+        : requestedRole === GOAL_STACK_ROLES.deferred
+        ? GOAL_STACK_ROLES.deferred
+        : GOAL_STACK_ROLES.maintained;
+    });
+    const relevantBackgroundPriority = isResiliencePriorityRelevant({ resolvedGoals: orderedGoals, goalFeasibility });
+    return {
+      primaryGoalId,
+      orderedGoalIds: buildLegacyPriorityOrderIds({
+        orderedGoals,
+        goalStackConfirmation: {
+          primaryGoalId,
+          rolesByGoalId,
+        },
+      }).filter((id) => availableIds.has(id) && !removedGoalIds.includes(id)),
+      removedGoalIds,
+      rolesByGoalId,
+      milestonePlanByGoalId,
+      keepResiliencePriority: relevantBackgroundPriority
+        ? goalStackConfirmation?.keepResiliencePriority !== false
+        : false,
+    };
+  }
+  const fallbackOrderedGoalIds = buildLegacyPriorityOrderIds({
+    orderedGoals,
+    goalStackConfirmation,
+  }).filter((id) => availableIds.has(id) && !removedGoalIds.includes(id));
+  const orderedGoalIds = dedupeStrings([
+    ...(explicitOrderedGoalIds.length ? explicitOrderedGoalIds : fallbackOrderedGoalIds),
+    ...orderedGoals.map((goal) => sanitizeText(goal?.id || "", 120)),
+  ]).filter((id) => availableIds.has(id) && !removedGoalIds.includes(id));
+  const primaryGoalId = orderedGoalIds[0] || sanitizeText(
+    orderedGoals.find((goal) => !removedGoalIds.includes(goal?.id))?.id || "",
+    120
   );
-  const requestedRolesByGoalId = {
-    ...defaultRolesByGoalId,
-    ...explicitRolesByGoalId,
-  };
-  const removedGoalIds = dedupeStrings([
-    ...toArray(goalStackConfirmation?.removedGoalIds || []),
-    ...Object.entries(requestedRolesByGoalId)
-      .filter(([, role]) => role === GOAL_STACK_ROLES.deferred)
-      .map(([goalId]) => goalId),
-  ]).filter((id) => availableIds.has(id));
-  const activeGoals = orderedGoals.filter((goal) => !removedGoalIds.includes(goal.id));
-  const rolePrimaryId = activeGoals.find((goal) => requestedRolesByGoalId[goal?.id] === GOAL_STACK_ROLES.primary)?.id;
-  const fallbackPrimaryId = sanitizeText(rolePrimaryId || activeGoals[0]?.id || orderedGoals[0]?.id || "", 120);
-  const explicitPrimaryId = sanitizeText(goalStackConfirmation?.primaryGoalId || "", 120);
-  const primaryGoalId = activeGoals.some((goal) => goal.id === explicitPrimaryId)
-    ? explicitPrimaryId
-    : fallbackPrimaryId;
+  const normalizedOrderedGoalIds = orderedGoalIds;
   const rolesByGoalId = {};
-  orderedGoals.forEach((goal, index) => {
+  orderedGoals.forEach((goal) => {
     if (!goal?.id) return;
-    if (removedGoalIds.includes(goal.id)) {
-      rolesByGoalId[goal.id] = GOAL_STACK_ROLES.deferred;
+    const goalId = sanitizeText(goal.id, 120);
+    if (removedGoalIds.includes(goalId)) {
+      rolesByGoalId[goalId] = GOAL_STACK_ROLES.deferred;
       return;
     }
-    const requestedRole = requestedRolesByGoalId[goal.id] || defaultRolesByGoalId[goal.id] || GOAL_STACK_ROLES.maintained;
-    const isPrimary = goal.id === primaryGoalId || (!primaryGoalId && index === 0);
-    rolesByGoalId[goal.id] = isPrimary
+    const priorityIndex = normalizedOrderedGoalIds.indexOf(goalId);
+    rolesByGoalId[goalId] = priorityIndex === 0
       ? GOAL_STACK_ROLES.primary
-      : requestedRole === GOAL_STACK_ROLES.background
+      : priorityIndex === 1
+      ? GOAL_STACK_ROLES.maintained
+      : priorityIndex === 2
       ? GOAL_STACK_ROLES.background
-      : requestedRole === GOAL_STACK_ROLES.deferred
-      ? GOAL_STACK_ROLES.deferred
-      : GOAL_STACK_ROLES.maintained;
+      : GOAL_STACK_ROLES.deferred;
   });
   const relevantBackgroundPriority = isResiliencePriorityRelevant({ resolvedGoals: orderedGoals, goalFeasibility });
 
   return {
     primaryGoalId,
+    orderedGoalIds: normalizedOrderedGoalIds,
     removedGoalIds,
     rolesByGoalId,
+    milestonePlanByGoalId,
     keepResiliencePriority: relevantBackgroundPriority
       ? goalStackConfirmation?.keepResiliencePriority !== false
       : false,
@@ -668,7 +1289,14 @@ export const applyIntakeGoalStackConfirmation = ({
   goalStackConfirmation = null,
   goalFeasibility = null,
 } = {}) => {
-  const orderedGoals = sortGoalsByPriority(resolvedGoals);
+  const milestoneAdjustedGoals = applyIntakeMilestoneSelections({
+    resolvedGoals: sortGoalsByPriority(resolvedGoals),
+    goalStackConfirmation,
+  });
+  const orderedGoals = orderGoalsByGoalIds({
+    goals: milestoneAdjustedGoals,
+    orderedGoalIds: toArray(goalStackConfirmation?.orderedGoalIds || []),
+  });
   const confirmation = buildIntakeGoalStackConfirmation({
     resolvedGoals: orderedGoals,
     goalStackConfirmation,
@@ -698,74 +1326,49 @@ export const buildIntakeGoalStackReviewModel = ({
   goalFeasibility = null,
   goalStackConfirmation = null,
 } = {}) => {
+  const milestoneAdjustedGoals = applyIntakeMilestoneSelections({
+    resolvedGoals: sortGoalsByPriority(resolvedGoals),
+    goalStackConfirmation,
+  });
   const confirmation = buildIntakeGoalStackConfirmation({
-    resolvedGoals,
+    resolvedGoals: milestoneAdjustedGoals,
     goalStackConfirmation,
     goalFeasibility,
   });
-  const orderedGoals = sortGoalsByPriority(resolvedGoals);
-  const roleForGoal = (goal = {}, index = 0) => {
-    if (!goal?.id) return index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained;
-    return confirmation.rolesByGoalId?.[goal.id]
-      || sanitizeText(goal?.goalArbitrationRole || "", 40).toLowerCase()
-      || (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained);
-  };
-  const requestedPrimaryId = sanitizeText(confirmation.primaryGoalId || "", 120);
-  const defaultPrimaryId = sanitizeText(
-    requestedPrimaryId
-      || orderedGoals.find((goal, index) => roleForGoal(goal, index) === GOAL_STACK_ROLES.primary)?.id
-      || orderedGoals.find((goal, index) => roleForGoal(goal, index) !== GOAL_STACK_ROLES.deferred)?.id
-      || orderedGoals[0]?.id
-      || "",
-    120
-  );
-  const classifiedGoals = orderedGoals.map((goal, index) => {
-    const requestedRole = roleForGoal(goal, index);
-    const normalizedRole = goal?.id === defaultPrimaryId
-      ? GOAL_STACK_ROLES.primary
-      : requestedRole === GOAL_STACK_ROLES.primary
-      ? GOAL_STACK_ROLES.maintained
-      : requestedRole;
-    return {
-      goal,
-      role: normalizedRole,
-    };
+  const orderedGoals = orderGoalsByGoalIds({
+    goals: milestoneAdjustedGoals,
+    orderedGoalIds: confirmation?.orderedGoalIds || [],
   });
   const seenGoalIds = new Set();
   const seenFingerprints = new Set();
   const dedupedGoals = [];
-  const pushUniqueGoal = (entry = null) => {
-    if (!entry?.goal) return;
-    const goalId = sanitizeText(entry.goal?.id || "", 120);
-    const fingerprint = buildGoalStackFingerprint(entry.goal);
+  orderedGoals.forEach((goal, index) => {
+    if (!goal) return;
+    const goalId = sanitizeText(goal?.id || "", 120);
+    if (goalId && confirmation.removedGoalIds.includes(goalId)) return;
+    const fingerprint = buildGoalStackFingerprint(goal);
     if ((goalId && seenGoalIds.has(goalId)) || (fingerprint && seenFingerprints.has(fingerprint))) return;
     if (goalId) seenGoalIds.add(goalId);
     if (fingerprint) seenFingerprints.add(fingerprint);
-    dedupedGoals.push(entry);
-  };
-  pushUniqueGoal(classifiedGoals.find((entry) => entry?.goal?.id === defaultPrimaryId) || null);
-  classifiedGoals
-    .filter((entry) => entry?.goal?.id !== defaultPrimaryId && entry?.role === GOAL_STACK_ROLES.maintained)
-    .forEach(pushUniqueGoal);
-  classifiedGoals
-    .filter((entry) => entry?.role === GOAL_STACK_ROLES.background)
-    .forEach(pushUniqueGoal);
-  classifiedGoals
-    .filter((entry) => entry?.role === GOAL_STACK_ROLES.deferred)
-    .forEach(pushUniqueGoal);
-  if (!dedupedGoals.length && classifiedGoals[0]) {
-    pushUniqueGoal({
-      goal: classifiedGoals[0].goal,
-      role: GOAL_STACK_ROLES.primary,
+    dedupedGoals.push({
+      goal,
+      role: confirmation.rolesByGoalId?.[goalId]
+        || sanitizeText(goal?.goalArbitrationRole || "", 40).toLowerCase()
+        || (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained),
     });
-  }
-  const confirmedGoals = dedupedGoals.filter((entry) => (
+  });
+  const prioritizedGoalReviews = dedupedGoals.map((entry, index) => buildGoalReviewEntry({
+    goal: entry.goal,
+    role: entry.role,
+    priorityIndex: index,
+  }));
+  const confirmedGoals = prioritizedGoalReviews.filter((entry) => (
     entry.role === GOAL_STACK_ROLES.primary || entry.role === GOAL_STACK_ROLES.maintained
   ));
-  const backgroundGoals = dedupedGoals.filter((entry) => entry.role === GOAL_STACK_ROLES.background);
-  const deferredGoals = dedupedGoals.filter((entry) => entry.role === GOAL_STACK_ROLES.deferred);
   const primaryTradeoff = dedupeStrings([
-    ...confirmedGoals.flatMap((entry) => entry?.goal?.tradeoffs || []),
+    ...dedupedGoals
+      .filter((entry) => entry?.role === GOAL_STACK_ROLES.primary || entry?.role === GOAL_STACK_ROLES.maintained)
+      .flatMap((entry) => entry?.goal?.tradeoffs || []),
     ...(goalResolution?.tradeoffs || []),
   ])[0] || "";
   const backgroundPriority = isResiliencePriorityRelevant({ resolvedGoals: orderedGoals, goalFeasibility })
@@ -773,42 +1376,57 @@ export const buildIntakeGoalStackReviewModel = ({
         enabled: confirmation.keepResiliencePriority !== false,
         label: "Recovery stays protected",
         summary: confirmedGoals.length >= 2
-          ? "We’ll still protect recovery so you can push the main goal without the week falling apart."
-          : "We’ll keep recovery in a good place while the lead goal gets most of the attention.",
+          ? "We'll still protect recovery so Priority 1 can push without the week falling apart."
+          : "We'll keep recovery in a good place while Priority 1 gets most of the attention.",
         trackingLabels: ["Session completion", "Readiness", "Recovery drift"],
       }
     : null;
-  const leadGoal = confirmedGoals.find((entry) => entry.role === GOAL_STACK_ROLES.primary)?.goal || null;
-  const leadGoalReview = leadGoal ? buildGoalReviewEntry({ goal: leadGoal, role: GOAL_STACK_ROLES.primary }) : null;
+  const leadGoalReview = confirmedGoals.find((entry) => entry.role === GOAL_STACK_ROLES.primary)
+    || prioritizedGoalReviews[0]
+    || null;
   const maintainedGoalReviews = confirmedGoals
-    .filter((entry) => entry.role === GOAL_STACK_ROLES.maintained)
-    .map((entry) => buildGoalReviewEntry({ goal: entry.goal, role: GOAL_STACK_ROLES.maintained }));
-  const supportGoalReviews = backgroundGoals
-    .map((entry) => buildGoalReviewEntry({ goal: entry.goal, role: GOAL_STACK_ROLES.background }));
-  const deferredGoalReviews = deferredGoals
-    .map((entry) => buildGoalReviewEntry({ goal: entry.goal, role: GOAL_STACK_ROLES.deferred }));
+    .filter((entry) => entry.role === GOAL_STACK_ROLES.maintained);
+  const supportGoalReviews = prioritizedGoalReviews
+    .filter((entry) => entry.role === GOAL_STACK_ROLES.background);
+  const deferredGoalReviews = prioritizedGoalReviews
+    .filter((entry) => entry.role === GOAL_STACK_ROLES.deferred);
+  const removedGoalReviews = orderGoalsByGoalIds({
+    goals: milestoneAdjustedGoals,
+    orderedGoalIds: toArray(goalStackConfirmation?.orderedGoalIds || confirmation?.orderedGoalIds || []),
+  })
+    .filter((goal) => confirmation.removedGoalIds.includes(sanitizeText(goal?.id || "", 120)))
+    .map((goal) => buildGoalReviewEntry({
+      goal,
+      role: GOAL_STACK_ROLES.deferred,
+    }));
+  const orderedGoalStack = buildOrderedGoalStackContract({
+    orderedGoals: prioritizedGoalReviews,
+  });
   const reviewContract = buildGoalReviewContract({
     leadGoal: leadGoalReview,
     maintainedGoals: maintainedGoalReviews,
     supportGoals: supportGoalReviews,
     deferredGoals: deferredGoalReviews,
+    orderedGoals: orderedGoalStack.items,
     goalFeasibility,
     primaryTradeoff,
   });
 
   return {
     confirmation,
-    primaryGoalId: defaultPrimaryId,
-    activeGoalIds: confirmedGoals.map((entry) => entry?.goal?.id).filter(Boolean),
-    backgroundGoalIds: backgroundGoals.map((entry) => entry?.goal?.id).filter(Boolean),
-    deferredGoalIds: deferredGoals.map((entry) => entry?.goal?.id).filter(Boolean),
+    primaryGoalId: leadGoalReview?.id || confirmation.primaryGoalId || "",
+    orderedGoalIds: orderedGoalStack.items.map((entry) => entry?.id).filter(Boolean),
+    orderedGoalStack,
+    activeGoalIds: confirmedGoals.map((entry) => entry?.id).filter(Boolean),
+    backgroundGoalIds: supportGoalReviews.map((entry) => entry?.id).filter(Boolean),
+    deferredGoalIds: deferredGoalReviews.map((entry) => entry?.id).filter(Boolean),
     activeGoals: [leadGoalReview, ...maintainedGoalReviews].filter(Boolean),
     leadGoal: leadGoalReview,
     maintainedGoals: maintainedGoalReviews,
     supportGoals: supportGoalReviews,
     backgroundGoals: supportGoalReviews,
     deferredGoals: deferredGoalReviews,
-    removedGoals: deferredGoalReviews,
+    removedGoals: removedGoalReviews,
     primaryTradeoff,
     tradeoffStatement: reviewContract.tradeoff_statement,
     backgroundPriority,
@@ -1100,6 +1718,9 @@ const sanitizeIntakeReviewModelDisplayCopy = (reviewModel = null) => {
           ...item,
           summary: sanitizeDisplayLine(item?.summary || "", 160),
           roleLabel: sanitizeDisplayLine(item?.roleLabel || "", 80),
+          priorityLabel: sanitizeDisplayLine(item?.priorityLabel || "", 80),
+          prioritySectionLabel: sanitizeDisplayLine(item?.prioritySectionLabel || "", 120),
+          priorityHelper: sanitizeDisplayLine(item?.priorityHelper || "", 220),
           measurabilityLabel: sanitizeDisplayLine(item?.measurabilityLabel || "", 80),
           trackingLabels: sanitizeDisplayList(item?.trackingLabels, 160),
           tradeoff: sanitizeDisplayLine(item?.tradeoff || "", 180),
@@ -1126,6 +1747,15 @@ const sanitizeIntakeReviewModelDisplayCopy = (reviewModel = null) => {
           maintained_goals: toArray(reviewContract?.maintained_goals).map(sanitizeReviewEntry),
           support_goals: toArray(reviewContract?.support_goals).map(sanitizeReviewEntry),
           deferred_goals: toArray(reviewContract?.deferred_goals).map(sanitizeReviewEntry),
+          ordered_goal_stack: reviewContract?.ordered_goal_stack
+            ? {
+                ...(reviewContract.ordered_goal_stack || {}),
+                items: toArray(reviewContract?.ordered_goal_stack?.items).map(sanitizeReviewEntry),
+                top_priorities: toArray(reviewContract?.ordered_goal_stack?.top_priorities).map(sanitizeReviewEntry),
+                additional_goals: toArray(reviewContract?.ordered_goal_stack?.additional_goals).map(sanitizeReviewEntry),
+                sections: toArray(reviewContract?.ordered_goal_stack?.sections).map(sanitizeLaneSection),
+              }
+            : reviewContract?.ordered_goal_stack,
           tradeoff_statement: sanitizeDisplayLine(reviewContract?.tradeoff_statement || "", 320),
           lane_sections: toArray(reviewContract?.lane_sections).map(sanitizeLaneSection),
         }
@@ -1173,6 +1803,16 @@ const sanitizeIntakeReviewModelDisplayCopy = (reviewModel = null) => {
     goalStackReview: reviewModel?.goalStackReview
       ? {
           ...(reviewModel.goalStackReview || {}),
+          orderedGoalIds: sanitizeDisplayList(reviewModel?.goalStackReview?.orderedGoalIds, 120),
+          orderedGoalStack: reviewModel?.goalStackReview?.orderedGoalStack
+            ? {
+                ...(reviewModel.goalStackReview.orderedGoalStack || {}),
+                items: toArray(reviewModel?.goalStackReview?.orderedGoalStack?.items).map(sanitizeReviewEntry),
+                top_priorities: toArray(reviewModel?.goalStackReview?.orderedGoalStack?.top_priorities).map(sanitizeReviewEntry),
+                additional_goals: toArray(reviewModel?.goalStackReview?.orderedGoalStack?.additional_goals).map(sanitizeReviewEntry),
+                sections: toArray(reviewModel?.goalStackReview?.orderedGoalStack?.sections).map(sanitizeLaneSection),
+              }
+            : reviewModel?.goalStackReview?.orderedGoalStack,
           activeGoals: toArray(reviewModel?.goalStackReview?.activeGoals).map(sanitizeReviewEntry),
           leadGoal: sanitizeReviewEntry(reviewModel?.goalStackReview?.leadGoal),
           maintainedGoals: toArray(reviewModel?.goalStackReview?.maintainedGoals).map(sanitizeReviewEntry),
@@ -1197,6 +1837,116 @@ const sanitizeIntakeReviewModelDisplayCopy = (reviewModel = null) => {
   };
 };
 
+const buildStageRoleLabel = ({
+  role = "",
+  priorityIndex = null,
+} = {}) => {
+  if (Number.isFinite(Number(priorityIndex))) return buildOrderedGoalPriorityLabel(priorityIndex);
+  const normalizedRole = sanitizeText(role, 40).toLowerCase();
+  if (normalizedRole === GOAL_STACK_ROLES.primary) return "Priority 1";
+  if (normalizedRole === GOAL_STACK_ROLES.maintained) return "Priority 2";
+  if (normalizedRole === GOAL_STACK_ROLES.background) return "Priority 3";
+  if (normalizedRole === GOAL_STACK_ROLES.deferred) return "Additional goal";
+  return "Goal stack";
+};
+
+const buildSummaryRailGoalRows = (reviewModel = null) => {
+  const orderedResolvedGoals = toArray(reviewModel?.orderedResolvedGoals);
+  const goalById = new Map(
+    orderedResolvedGoals
+      .filter((goal) => goal?.id)
+      .map((goal) => [goal.id, goal])
+  );
+  const rows = [];
+  const seen = new Set();
+  const pushGoal = ({
+    goal = null,
+    role = "",
+    summary = "",
+    reason = "",
+    tradeoff = "",
+    trackingLabels = [],
+    priorityIndex = null,
+    priorityLabel = "",
+  } = {}) => {
+    const goalId = sanitizeText(goal?.id || "", 120);
+    const cleanSummary = sanitizeText(summary || goal?.summary || "", 160);
+    const dedupeKey = goalId || cleanSummary.toLowerCase();
+    if (!dedupeKey || seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    const sourceGoal = goalId ? (goalById.get(goalId) || goal) : goal;
+    const normalizedPriorityIndex = Number.isFinite(Number(priorityIndex))
+      ? Math.max(0, Math.round(Number(priorityIndex)))
+      : null;
+    rows.push({
+      id: goalId,
+      summary: sanitizeDisplayLine(cleanSummary, 160),
+      role: sanitizeText(role || goal?.intakeConfirmedRole || goal?.goalArbitrationRole || "", 40).toLowerCase(),
+      roleLabel: sanitizeDisplayLine(
+        priorityLabel || buildStageRoleLabel({
+          role: role || goal?.intakeConfirmedRole || goal?.goalArbitrationRole || "",
+          priorityIndex: normalizedPriorityIndex,
+        }),
+        80
+      ),
+      priorityIndex: normalizedPriorityIndex,
+      priorityLabel: sanitizeDisplayLine(priorityLabel || buildOrderedGoalPriorityLabel(normalizedPriorityIndex), 80),
+      goalTypeLabel: sanitizeDisplayLine(buildPlainGoalTypeLabel(sourceGoal, sourceGoal?.goalFamily || ""), 80),
+      trackingLabels: sanitizeDisplayList([
+        ...toArray(trackingLabels),
+        sourceGoal?.primaryMetric?.label || "",
+        ...toArray(sourceGoal?.proxyMetrics).map((metric) => metric?.label || ""),
+      ], 160),
+      firstThirtyDayWin: sanitizeDisplayLine(sourceGoal?.first30DaySuccessDefinition || "", 220),
+      rationale: sanitizeDisplayLine(reason || goal?.goalArbitrationReason || "", 220),
+      tradeoff: sanitizeDisplayLine(tradeoff || sourceGoal?.tradeoffs?.[0] || "", 220),
+    });
+  };
+
+  const orderedStackItems = toArray(reviewModel?.goalStackReview?.orderedGoalStack?.items);
+  if (orderedStackItems.length > 0) {
+    orderedStackItems.forEach((goal, index) => {
+      pushGoal({
+        goal,
+        role: goal?.role || "",
+        summary: goal?.summary || "",
+        reason: goal?.rationale || goal?.reason || "",
+        tradeoff: goal?.tradeoff || "",
+        trackingLabels: goal?.trackingLabels || [],
+        priorityIndex: goal?.priorityIndex ?? index,
+        priorityLabel: goal?.priorityLabel || "",
+      });
+    });
+    return rows;
+  }
+
+  [
+    ...toArray(reviewModel?.goalStackReview?.activeGoals).map((goal, index) => ({ goal, role: goal?.role, priorityIndex: index })),
+    ...toArray(reviewModel?.goalStackReview?.backgroundGoals).map((goal, index) => ({ goal, role: goal?.role, priorityIndex: index + 2 })),
+    ...toArray(reviewModel?.goalStackReview?.deferredGoals).map((goal, index) => ({ goal, role: goal?.role, priorityIndex: index + 3 })),
+  ].forEach((entry) => {
+    pushGoal({
+      goal: entry?.goal || null,
+      role: entry?.role || entry?.goal?.role || "",
+      summary: entry?.goal?.summary || "",
+      reason: entry?.goal?.rationale || entry?.goal?.reason || "",
+      tradeoff: entry?.goal?.tradeoff || "",
+      trackingLabels: entry?.goal?.trackingLabels || [],
+      priorityIndex: entry?.priorityIndex ?? null,
+    });
+  });
+
+  orderedResolvedGoals.forEach((goal, index) => {
+    pushGoal({
+      goal,
+      role: goal?.intakeConfirmedRole || goal?.goalArbitrationRole || (index === 0 ? GOAL_STACK_ROLES.primary : GOAL_STACK_ROLES.maintained),
+      priorityIndex: index,
+    });
+  });
+
+  return rows;
+};
+
 export const buildIntakeGoalReviewModel = ({
   goalResolution = null,
   orderedResolvedGoals = [],
@@ -1209,6 +1959,10 @@ export const buildIntakeGoalReviewModel = ({
   const candidateResolvedGoals = Array.isArray(orderedResolvedGoals) && orderedResolvedGoals.length
     ? orderedResolvedGoals
     : (Array.isArray(goalResolution?.resolvedGoals) ? goalResolution.resolvedGoals : []);
+  const milestoneAdjustedCandidateGoals = applyIntakeMilestoneSelections({
+    resolvedGoals: candidateResolvedGoals,
+    goalStackConfirmation,
+  });
   const goalStackReview = buildIntakeGoalStackReviewModel({
     resolvedGoals: candidateResolvedGoals,
     goalResolution,
@@ -1220,7 +1974,7 @@ export const buildIntakeGoalReviewModel = ({
     goalStackConfirmation,
   });
   const resolvedGoalById = new Map(
-    candidateResolvedGoals
+    milestoneAdjustedCandidateGoals
       .filter((goal) => goal?.id)
       .map((goal) => [goal.id, goal])
   );
@@ -1238,8 +1992,8 @@ export const buildIntakeGoalReviewModel = ({
         return role === GOAL_STACK_ROLES.primary || role === GOAL_STACK_ROLES.maintained;
       });
   const activeResolvedGoals = stackActiveResolvedGoals.length ? stackActiveResolvedGoals : fallbackActiveResolvedGoals;
-  const resolvedGoals = activeResolvedGoals.length ? activeResolvedGoals : candidateResolvedGoals;
-  const primaryGoal = resolvedGoalById.get(goalStackReview?.primaryGoalId || "") || activeResolvedGoals[0] || candidateResolvedGoals[0] || null;
+  const resolvedGoals = activeResolvedGoals.length ? activeResolvedGoals : milestoneAdjustedCandidateGoals;
+  const primaryGoal = resolvedGoalById.get(goalStackReview?.primaryGoalId || "") || activeResolvedGoals[0] || milestoneAdjustedCandidateGoals[0] || null;
   const completeness = deriveIntakeCompletenessState({
     resolvedGoals: activeResolvedGoals.length ? activeResolvedGoals : resolvedGoals,
     answers,
@@ -1360,13 +2114,123 @@ export const buildIntakeGoalReviewModel = ({
     clarifyingQuestions,
     nextQuestions,
     completeness,
-    orderedResolvedGoals: candidateResolvedGoals,
+    orderedResolvedGoals: milestoneAdjustedCandidateGoals,
     activeResolvedGoals,
     goalStackReview,
     reviewContract: goalStackReview?.reviewContract || null,
     tradeoffStatement: sanitizeText(goalStackReview?.tradeoffStatement || goalStackReview?.reviewContract?.tradeoff_statement || "", 320),
     isPlannerReady: Boolean(primaryGoal) && (gateStatus === "ready" || gateStatus === "warn"),
   });
+};
+
+export const buildIntakeSummaryRailModel = ({
+  answers = {},
+  reviewModel = null,
+  draftPrimaryGoal = "",
+  draftAdditionalGoals = [],
+} = {}) => {
+  const yourWords = dedupeStrings([
+    sanitizeText(draftPrimaryGoal || answers?.goal_intent || "", 220),
+    ...toArray(draftAdditionalGoals).map((item) => sanitizeText(item, 180)),
+    ...readAdditionalGoalEntries({ answers }),
+  ]).slice(0, 6);
+  const interpretedGoals = buildSummaryRailGoalRows(reviewModel);
+  const resolvedGoalById = new Map(
+    toArray(reviewModel?.orderedResolvedGoals)
+      .filter((goal) => goal?.id)
+      .map((goal) => [goal.id, goal])
+  );
+  const trackingItems = dedupeStrings([
+    ...toArray(reviewModel?.trackingLabels),
+    ...interpretedGoals.flatMap((goal) => {
+      const sourceGoal = goal?.id ? resolvedGoalById.get(goal.id) : null;
+      return [
+        ...toArray(goal?.trackingLabels),
+        sourceGoal?.first30DaySuccessDefinition || "",
+      ];
+    }),
+  ]).slice(0, 6);
+  const fuzzyItems = dedupeStrings([
+    ...toArray(reviewModel?.completeness?.missingRequired).map((item) => buildPlainNeedItem({
+      label: item?.label,
+      question: item?.question?.prompt || item?.question || "",
+    })),
+    ...toArray(reviewModel?.unresolvedItems),
+    ...toArray(reviewModel?.clarifyingQuestions),
+  ]).slice(0, 5);
+  const tradeoffItems = dedupeStrings([
+    sanitizeText(reviewModel?.goalStackReview?.tradeoffStatement || reviewModel?.tradeoffStatement || "", 320),
+    sanitizeText(reviewModel?.tradeoffSummary || "", 220),
+    ...interpretedGoals.map((goal) => sanitizeText(goal?.tradeoff || "", 180)),
+  ]).slice(0, 4);
+
+  return {
+    yourWords: sanitizeDisplayList(
+      yourWords.length ? yourWords : ["Add at least one goal."],
+      180
+    ),
+    interpretedGoals,
+    trackingItems: sanitizeDisplayList(
+      trackingItems.length ? trackingItems : ["We will propose the first tracking markers after interpretation."],
+      180
+    ),
+    fuzzyItems: sanitizeDisplayList(
+      fuzzyItems.length ? fuzzyItems : ["No open gaps once the stack is confirmed."],
+      180
+    ),
+    tradeoffItems: sanitizeDisplayList(
+      tradeoffItems.length ? tradeoffItems : ["Tradeoffs will show up here before anything becomes canonical."],
+      220
+    ),
+    sections: [
+      {
+        key: "your_words",
+        label: "Your words",
+        items: sanitizeDisplayList(
+          yourWords.length ? yourWords : ["Add at least one goal."],
+          180
+        ),
+      },
+      {
+        key: "interpreted_goals",
+        label: "Interpreted goals",
+        items: sanitizeDisplayList(
+          interpretedGoals.length
+            ? interpretedGoals.map((goal) => (
+                `${goal.priorityLabel || goal.roleLabel ? `${goal.priorityLabel || goal.roleLabel}: ` : ""}${goal.summary}${goal.goalTypeLabel ? ` - ${goal.goalTypeLabel}` : ""}`
+              ))
+            : (yourWords.length
+              ? ["We will resolve your goal stack after you continue."]
+              : ["Your interpreted goals will show up here."]),
+          220
+        ),
+      },
+      {
+        key: "what_we_track",
+        label: "What we will track",
+        items: sanitizeDisplayList(
+          trackingItems.length ? trackingItems : ["We will propose the first tracking markers after interpretation."],
+          180
+        ),
+      },
+      {
+        key: "what_is_fuzzy",
+        label: "What is still fuzzy",
+        items: sanitizeDisplayList(
+          fuzzyItems.length ? fuzzyItems : ["No open gaps once the stack is confirmed."],
+          180
+        ),
+      },
+      {
+        key: "tradeoffs",
+        label: "Tradeoffs",
+        items: sanitizeDisplayList(
+          tradeoffItems.length ? tradeoffItems : ["Tradeoffs will show up here before anything becomes canonical."],
+          220
+        ),
+      },
+    ],
+  };
 };
 
 export const deriveIntakeConfirmationState = ({
@@ -1399,7 +2263,7 @@ export const deriveIntakeConfirmationState = ({
   if (!primaryGoal) {
     return {
       status: INTAKE_CONFIRMATION_STATUSES.block,
-      reason: sanitizeDisplayLine("Pick the goal that should lead right now.", 140),
+      reason: sanitizeDisplayLine("Set the goal order so Priority 1 is clear.", 140),
       next_required_field: null,
       canConfirm: false,
       requiresAcknowledgement: false,
@@ -1435,7 +2299,7 @@ export const deriveIntakeConfirmationState = ({
         recommendedRevisionSummary,
         gateReasons[0],
         gateExplanationText,
-      ]) || "This goal needs a safer first step before I build it.", 220),
+      ]) || "Start with a smaller milestone before I build this.", 220),
       next_required_field: nextRequiredFieldId,
       canConfirm: false,
       requiresAcknowledgement: false,
@@ -1451,10 +2315,10 @@ export const deriveIntakeConfirmationState = ({
         gateExplanationText,
         tradeoffSummary,
         reviewModel?.gateLabel,
-      ]) || "This is aggressive for the timeline you picked.", 220),
+      ]) || "Target is ambitious, but still workable from here.", 220),
       next_required_field: null,
       canConfirm: true,
-      requiresAcknowledgement: true,
+      requiresAcknowledgement: false,
     };
   }
 

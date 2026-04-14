@@ -90,3 +90,26 @@ test("manual running benchmark expands easy and long-run sizing beyond conservat
   assert.equal(overlay.dayTemplates[6].run.d, "60-80 min");
   assert.ok(overlay.summaryLines.some((line) => /anchoring run volume/i.test(line)));
 });
+
+test("missing benchmarks do not emit reader-facing still-missing baseline sentences", () => {
+  const goals = normalizeGoals([
+    { id: "g1", name: "Bench 225", category: "strength", active: true, priority: 1 },
+  ]);
+
+  const influence = buildPlanningBaselineInfluence({
+    goals,
+    personalization: {},
+    logs: {},
+    bodyweights: [],
+  });
+
+  const overlay = applyPlanningBaselineInfluence({
+    dayTemplates: {
+      1: { type: "strength+prehab", label: "Full-Body Strength A" },
+    },
+    influence,
+  });
+
+  assert.deepEqual(influence.lowConfidenceMessages, []);
+  assert.ok(!overlay.summaryLines.some((line) => /still missing/i.test(line)));
+});
