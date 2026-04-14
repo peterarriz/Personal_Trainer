@@ -1,0 +1,198 @@
+const { test, expect } = require("@playwright/test");
+
+require("sucrase/register");
+
+const {
+  buildPersistedTrainerPayload,
+  DEFAULT_COACH_PLAN_ADJUSTMENTS,
+  DEFAULT_NUTRITION_FAVORITES,
+} = require("../src/services/persistence-adapter-service.js");
+
+const AUTH_CACHE_KEY = "trainer_auth_session_v1";
+const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
+
+const buildSeedState = () => {
+  const todayKey = new Date().toISOString().split("T")[0];
+  return {
+    authSession: {
+      access_token: "test-access-token",
+      refresh_token: "test-refresh-token",
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      user: {
+        id: "00000000-0000-0000-0000-000000000001",
+        email: "tester@example.com",
+      },
+    },
+    persistedPayload: buildPersistedTrainerPayload({
+      runtimeState: {
+        bodyweights: [{ date: todayKey, w: 186 }],
+        personalization: {
+          profile: {
+            name: "Taylor",
+            age: 32,
+            weight: 186,
+            height: "6'0\"",
+            onboardingComplete: true,
+          },
+          settings: {
+            appearance: { theme: "System" },
+          },
+          connectedDevices: {},
+          localFoodContext: {
+            city: "Chicago",
+            groceryOptions: ["Trader Joe's"],
+          },
+        },
+        coachPlanAdjustments: DEFAULT_COACH_PLAN_ADJUSTMENTS,
+        nutritionFavorites: DEFAULT_NUTRITION_FAVORITES,
+      },
+    }),
+  };
+};
+
+const seedAppState = async (page) => {
+  const seedState = buildSeedState();
+  await page.addInitScript((seed) => {
+    const lockedAuthSession = JSON.stringify(seed.authSession);
+    const lockedCachePayload = JSON.stringify(seed.persistedPayload);
+    window.localStorage.setItem("trainer_auth_session_v1", lockedAuthSession);
+    window.localStorage.setItem("trainer_local_cache_v4", lockedCachePayload);
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function patchedSetItem(key, value) {
+      if (key === "trainer_auth_session_v1") {
+        return originalSetItem.call(this, key, lockedAuthSession);
+      }
+      if (key === "trainer_local_cache_v4") {
+        return originalSetItem.call(this, key, lockedCachePayload);
+      }
+      return originalSetItem.call(this, key, value);
+    };
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input?.url || "";
+      if (/example\.supabase\.co/i.test(url)) {
+        if (/\/rest\/v1\//i.test(url)) {
+          return new Response(JSON.stringify({ message: "stubbed integration failure" }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (/\/auth\/v1\/logout/i.test(url)) {
+          return new Response("", { status: 204 });
+        }
+        return new Response(JSON.stringify({ message: "stubbed auth response" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return originalFetch(input, init);
+    };
+  }, seedState);
+};
+
+const openApp = async (page) => {
+  await seedAppState(page);
+  await page.goto(`/?e2e=${Date.now()}`);
+  await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
+  await expect(page.getByTestId("app-tab-nutrition")).toBeVisible();
+  const skipAppleHealth = page.getByRole("button", { name: "Skip for now" });
+  await skipAppleHealth.waitFor({ state: "visible", timeout: 1500 }).catch(() => null);
+  if (await skipAppleHealth.isVisible().catch(() => false)) {
+    await skipAppleHealth.click({ force: true });
+    await expect(skipAppleHealth).toBeHidden();
+  }
+};
+
+const openSettings = async (page) => {
+  await page.getByRole("button", { name: "Open settings" }).click({ force: true });
+};
+
+const openTab = async (page, testId) => {
+  await page.getByTestId(testId).click({ force: true });
+};
+
+const getHydrationButton = (page) => page.locator(".card").filter({ hasText: "HYDRATION / SUPPLEMENT" }).getByRole("button").first();
+
+const readHydrationNumbers = async (page) => {
+  const text = await getHydrationButton(page).innerText();
+  const match = text.match(/(\d+)\s+oz logged[\s\S]*?(?:Target|Suggested)\s+(\d+)\s+oz/i);
+  if (!match) {
+    throw new Error(`Could not parse hydration text: ${text}`);
+  }
+  return {
+    loggedOz: Number(match[1]),
+    targetOz: Number(match[2]),
+  };
+};
+
+test("Settings account controls show visible feedback and sign-out result", async ({ page }) => {
+  await openApp(page);
+  await openSettings(page);
+
+  const accountSection = page.getByTestId("settings-account-section");
+  await expect(accountSection.getByText("Account & sync")).toBeVisible();
+  await expect(accountSection.getByText("Signed in as tester@example.com")).toBeVisible();
+  await expect(accountSection.getByText(/Cloud sync:/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Reload cloud data" }).click();
+  await expect(page.getByText(/Reloaded cloud data|Cloud reload failed:/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByText("ACCOUNT ACCESS")).toBeVisible();
+});
+
+test("Nutrition hydration logging stays usable across and above target", async ({ page }) => {
+  await openApp(page);
+  await openTab(page, "app-tab-nutrition");
+  await expect(page.getByText("TODAY'S NUTRITION TARGET")).toBeVisible();
+
+  const before = await readHydrationNumbers(page);
+  for (let index = 0; index < 12; index += 1) {
+    const current = await readHydrationNumbers(page);
+    if (current.loggedOz > current.targetOz) break;
+    await getHydrationButton(page).click();
+    await expect.poll(async () => (await readHydrationNumbers(page)).loggedOz).toBeGreaterThan(current.loggedOz);
+  }
+  const after = await readHydrationNumbers(page);
+
+  expect(after.loggedOz).toBeGreaterThan(before.loggedOz);
+  expect(after.loggedOz).toBeGreaterThan(after.targetOz);
+  await expect(page.getByText(/Target \d+ oz|Suggested \d+ oz/)).toBeVisible();
+});
+
+test("Nutrition hides supplement checklist until a stored plan exists", async ({ page }) => {
+  await openApp(page);
+  await openTab(page, "app-tab-nutrition");
+  await expect(page.getByText("TODAY'S NUTRITION TARGET")).toBeVisible();
+
+  const hydrationCard = page.locator(".card").filter({ hasText: "HYDRATION / SUPPLEMENT" });
+  await expect(hydrationCard.getByText("No supplement checklist is shown until a stored supplement plan is attached to today.")).toBeVisible();
+  await expect(hydrationCard.getByRole("button", { name: "Why" })).toHaveCount(0);
+});
+
+test("Coach keeps only applied-action surfaces visible", async ({ page }) => {
+  await openApp(page);
+  await openTab(page, "app-tab-coach");
+
+  await expect(page.getByText("TODAY'S CALL")).toBeVisible();
+  await expect(page.getByText("Recommendations stay separate from your plan until you apply one.").first()).toBeVisible();
+  await expect(page.getByText("Helpful?")).toHaveCount(0);
+  await expect(page.getByText("MEMORY / SETTINGS")).toHaveCount(0);
+
+  const suggestedActionsCard = page.locator(".card").filter({ hasText: "SUGGESTED ACTIONS" });
+  await suggestedActionsCard.getByRole("button").first().click();
+  await expect(page.getByText(/Decision applied\. Execute this version today\.|Staying with the full plan\. Execute cleanly and log it\./).first()).toBeVisible();
+});
+
+test("Program and Log history copy stays free of internal jargon", async ({ page }) => {
+  await openApp(page);
+
+  await openTab(page, "app-tab-program");
+  await expect(page.getByText("CURRENT WEEK DETAIL")).toBeVisible();
+  await expect(page.getByText("COMMITTED WEEK HISTORY")).toHaveCount(0);
+  await expect(page.getByText(/durable\s+PlanWeek|canonical\s+PlanWeek|PlanWeek snapshot/i)).toHaveCount(0);
+
+  await openTab(page, "app-tab-log");
+  await expect(page.getByText("SAVED WEEK HISTORY")).toBeVisible();
+  await expect(page.getByText(/durable\s+PlanWeek|canonical\s+PlanWeek|PlanWeek snapshot/i)).toHaveCount(0);
+});
