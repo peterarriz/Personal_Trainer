@@ -151,6 +151,7 @@ test("summary rail keeps exact multi-goal intent visible before build", () => {
         planningCategory: "strength",
         goalFamily: "strength",
         goalArbitrationRole: GOAL_STACK_ROLES.primary,
+        targetHorizonWeeks: 16,
         primaryMetric: { label: "Bench 1RM" },
         first30DaySuccessDefinition: "Build a repeatable bench progression.",
       },
@@ -160,6 +161,7 @@ test("summary rail keeps exact multi-goal intent visible before build", () => {
         planningCategory: "body_comp",
         goalFamily: "appearance",
         goalArbitrationRole: GOAL_STACK_ROLES.maintained,
+        targetDate: "2026-07-01",
         proxyMetrics: [{ label: "Waist trend" }],
         first30DaySuccessDefinition: "Tighten food consistency for the first 30 days.",
       },
@@ -193,6 +195,9 @@ test("summary rail keeps exact multi-goal intent visible before build", () => {
   assert.ok(summaryRail.interpretedGoals.length >= 2);
   assert.ok(summaryRail.interpretedGoals.some((goal) => /bench|225/i.test(goal.summary)));
   assert.ok(summaryRail.interpretedGoals.some((goal) => /lean|fat|body/i.test(goal.summary)));
+  assert.ok(summaryRail.interpretedGoals.some((goal) => /target horizon/i.test(goal.timingLabel || "")));
+  assert.ok(summaryRail.interpretedGoals.some((goal) => /target date/i.test(goal.timingLabel || "")));
+  assert.ok(summaryRail.sections.find((section) => section.label === "Interpreted goals")?.items.some((item) => /target horizon|target date/i.test(item)));
   assert.ok(summaryRail.tradeoffItems.length >= 1);
 });
 

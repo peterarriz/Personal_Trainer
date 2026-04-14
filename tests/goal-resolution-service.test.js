@@ -165,6 +165,26 @@ test("strength goals preserve relative week timelines from raw user wording", ()
   assert.equal(result.resolvedGoals[0].targetHorizonWeeks, 6);
 });
 
+test("explicit open-ended confirmation clears timing without forcing a date or horizon", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "get leaner",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "get leaner" }),
+    explicitUserConfirmation: {
+      confirmed: true,
+      acceptedProposal: true,
+      source: "intake_machine",
+      edits: {
+        openEnded: true,
+        targetDate: "open_ended",
+      },
+    },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals[0].targetDate, "");
+  assert.equal(result.resolvedGoals[0].targetHorizonWeeks, null);
+});
+
 test("resolves a fully measurable strength goal into logged-lift planning input", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "bench 225",
@@ -329,6 +349,26 @@ test("mixed lose-fat-but-keep-strength intent resolves into body-comp plus stren
   assert.equal(result.resolvedGoals[1].summary, "Keep strength while the primary goal leads");
   assert.ok(result.tradeoffs.some((item) => /fat loss may limit strength/i.test(item)));
   assert.equal(result.planningGoals[1].tracking.mode, "logged_lifts");
+});
+
+test("explicit strength plus leaning-out phrasing resolves into separate goals in mention order", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "Bench 225 and get leaner by summer",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "Bench 225 and get leaner by summer",
+      timingConstraints: ["summer"],
+      appearanceConstraints: ["leaner"],
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals.length, 2);
+  assert.equal(result.resolvedGoals[0].planningCategory, "strength");
+  assert.equal(result.resolvedGoals[0].primaryMetric.key, "bench_press_weight");
+  assert.equal(result.resolvedGoals[1].planningCategory, "body_comp");
+  assert.match(result.resolvedGoals[1].summary, /lean/i);
+  assert.ok(result.tradeoffs.some((item) => /fat loss may limit strength/i.test(item)));
 });
 
 test("running plus maintained strength stays run-led and event-specific when explicitly expressed", () => {

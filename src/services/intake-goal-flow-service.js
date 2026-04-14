@@ -8,6 +8,7 @@ import {
   INTAKE_COMPLETENESS_QUESTION_KEYS,
   isCompletenessClarificationNote,
 } from "./intake-completeness-service.js";
+import { buildGoalTimingPresentation } from "./goal-timing-service.js";
 import { sanitizeDisplayCopy } from "./text-format-service.js";
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
@@ -958,6 +959,7 @@ const buildGoalReviewEntry = ({
   const normalizedPriorityIndex = Number.isFinite(Number(priorityIndex))
     ? Math.max(0, Math.round(Number(priorityIndex)))
     : null;
+  const timing = buildGoalTimingPresentation(goal);
   const fallbackRationale = role === GOAL_STACK_ROLES.primary
     ? "Priority 1 gets the clearest push in this block."
     : role === GOAL_STACK_ROLES.maintained
@@ -977,6 +979,8 @@ const buildGoalReviewEntry = ({
     planningPriority: Number(goal?.planningPriority || 0) || null,
     targetDate: sanitizeText(goal?.targetDate || "", 24),
     targetHorizonWeeks: Number.isFinite(Number(goal?.targetHorizonWeeks)) ? Number(goal.targetHorizonWeeks) : null,
+    timingLabel: sanitizeDisplayLine(timing.label, 120),
+    timingDetail: sanitizeDisplayLine(timing.detail, 220),
     primaryMetric: goal?.primaryMetric || null,
     arbitrationConfirmedPrimary: Boolean(goal?.arbitrationConfirmedPrimary),
     measurabilityLabel: sanitizeDisplayLine(MEASURABILITY_LABELS[goal?.measurabilityTier] || "Goal", 80),
@@ -1892,6 +1896,8 @@ const buildSummaryRailGoalRows = (reviewModel = null) => {
       priorityIndex: normalizedPriorityIndex,
       priorityLabel: sanitizeDisplayLine(priorityLabel || buildOrderedGoalPriorityLabel(normalizedPriorityIndex), 80),
       goalTypeLabel: sanitizeDisplayLine(buildPlainGoalTypeLabel(sourceGoal, sourceGoal?.goalFamily || ""), 80),
+      timingLabel: sanitizeDisplayLine(buildGoalTimingPresentation(sourceGoal).label, 120),
+      timingDetail: sanitizeDisplayLine(buildGoalTimingPresentation(sourceGoal).detail, 220),
       trackingLabels: sanitizeDisplayList([
         ...toArray(trackingLabels),
         sourceGoal?.primaryMetric?.label || "",
@@ -2197,7 +2203,7 @@ export const buildIntakeSummaryRailModel = ({
         items: sanitizeDisplayList(
           interpretedGoals.length
             ? interpretedGoals.map((goal) => (
-                `${goal.priorityLabel || goal.roleLabel ? `${goal.priorityLabel || goal.roleLabel}: ` : ""}${goal.summary}${goal.goalTypeLabel ? ` - ${goal.goalTypeLabel}` : ""}`
+                `${goal.priorityLabel || goal.roleLabel ? `${goal.priorityLabel || goal.roleLabel}: ` : ""}${goal.summary}${goal.goalTypeLabel ? ` - ${goal.goalTypeLabel}` : ""}${goal.timingLabel ? ` - ${goal.timingLabel}` : ""}`
               ))
             : (yourWords.length
               ? ["We will resolve your goal stack after you continue."]

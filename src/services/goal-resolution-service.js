@@ -1,5 +1,6 @@
 import { dedupeStrings } from "../utils/collection-utils.js";
 import { buildGoalCapabilityPacket } from "./goal-capability-resolution-service.js";
+import { isOpenEndedTimingValue } from "./goal-timing-service.js";
 
 export const GOAL_MEASURABILITY_TIERS = {
   fullyMeasurable: "fully_measurable",
@@ -171,6 +172,7 @@ const normalizeUserConfirmation = (confirmation = {}) => ({
     targetHorizonWeeks: hasFiniteNumericValue(confirmation?.edits?.targetHorizonWeeks ?? confirmation?.targetHorizonWeeks)
       ? Math.max(1, Math.min(104, Math.round(Number(confirmation.edits?.targetHorizonWeeks ?? confirmation?.targetHorizonWeeks))))
       : null,
+    openEnded: Boolean(confirmation?.edits?.openEnded || isOpenEndedTimingValue(confirmation?.edits?.targetDate || "") || isOpenEndedTimingValue(confirmation?.targetDate || "")),
     confidence: sanitizeText(confirmation?.edits?.confidence || confirmation?.confidence || "", 20).toLowerCase(),
     tradeoffs: dedupeStrings(toArray(confirmation?.edits?.tradeoffs || confirmation?.tradeoffs).map((item) => sanitizeText(item, 140))).slice(0, 4),
     unresolvedGaps: dedupeStrings(toArray(confirmation?.edits?.unresolvedGaps || confirmation?.unresolvedGaps).map((item) => sanitizeText(item, 180))).slice(0, 4),
@@ -206,11 +208,18 @@ const detectSignals = (text = "") => {
   const corpus = sanitizeText(text, 1200).toLowerCase();
   const runningTokens = "(run|marathon|half marathon|10k|5k|race|pace|endurance|aerobic)";
   const strengthTokens = "(bench|squat|deadlift|overhead press|ohp|strength|lift|lifting|upper body)";
+  const bodyCompTokens = "(lose fat|fat loss|cut|lean|leaner|get lean|get leaner|drop weight|lose weight|six pack|look athletic|physique|appearance)";
   const mixedConnector = "(and|plus|while|but|without losing|without giving up|while keeping|while maintaining)";
   const explicitRunningStrengthMixPattern = new RegExp(
     `(?:${runningTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${strengthTokens})|(?:${strengthTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${runningTokens})`,
     "i"
   );
+  const explicitStrengthBodyCompMixPattern = new RegExp(
+    `(?:${strengthTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${bodyCompTokens})|(?:${bodyCompTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${strengthTokens})`,
+    "i"
+  );
+  const strengthMentionIndex = corpus.search(/\b(bench|squat|deadlift|overhead press|ohp|strength|lift|lifting)\b/i);
+  const bodyCompMentionIndex = corpus.search(/\b(lose fat|fat loss|cut|lean|leaner|get lean|get leaner|drop weight|lose weight|six pack|look athletic|physique|appearance)\b/i);
   return {
     hasRunning: /(run|marathon|half marathon|10k|5k|race|pace|endurance|aerobic)/i.test(corpus),
     hasSwimming: /(swim|swimming|pool|open water|laps?|freestyle|backstroke|breaststroke|butterfly)/i.test(corpus),
@@ -229,6 +238,9 @@ const detectSignals = (text = "") => {
     hasHybrid: /\bhybrid athlete\b|\bhybrid\b/i.test(corpus),
     hasKeepStrength: /(keep strength|maintain strength|keep my strength|hold strength)/i.test(corpus),
     hasExplicitRunningStrengthMix: explicitRunningStrengthMixPattern.test(corpus),
+    hasExplicitStrengthBodyCompMix: explicitStrengthBodyCompMixPattern.test(corpus),
+    strengthMentionIndex,
+    bodyCompMentionIndex,
     hasMalformedBmiPercent: /(?:\bbmi\b[\s\S]{0,18}\b\d{1,2}(?:\.\d+)?\s*%)|(?:\b\d{1,2}(?:\.\d+)?\s*%\b[\s\S]{0,18}\bbmi\b)/i.test(corpus),
     hasReEntry: /(back in shape|get back in shape|again|feel like myself again|return to form)/i.test(corpus),
     raw: corpus,
@@ -504,6 +516,9 @@ const resolveTargetWindow = ({
   confirmation = {},
   now = new Date(),
 } = {}) => {
+  if (confirmation?.edits?.openEnded) {
+    return { targetDate: "", targetHorizonWeeks: null, isApproximate: false };
+  }
   const explicitDate = sanitizeText(confirmation?.edits?.targetDate || "", 24);
   if (/^\d{4}-\d{2}-\d{2}$/.test(explicitDate)) {
     return { targetDate: explicitDate, targetHorizonWeeks: confirmation?.edits?.targetHorizonWeeks || null, isApproximate: false };
@@ -610,6 +625,7 @@ const inferGoalFamily = ({
     signals.hasHybrid
     || (signals.hasFatLoss && signals.hasKeepStrength)
     || signals.hasExplicitRunningStrengthMix
+    || signals.hasExplicitStrengthBodyCompMix
   );
   if (confirmation?.edits?.goalFamily && Object.values(GOAL_FAMILIES).includes(confirmation.edits.goalFamily)) {
     return confirmation.edits.goalFamily;
@@ -758,7 +774,7 @@ const buildSummary = ({
   if (goalFamily === GOAL_FAMILIES.appearance && /\bsix pack\b/i.test(rawText)) {
     return targetWindow?.targetHorizonWeeks ? "Improve midsection definition by the target window" : "Improve midsection definition";
   }
-  if ((goalFamily === GOAL_FAMILIES.appearance || goalFamily === GOAL_FAMILIES.bodyComp) && /\bget lean\b/i.test(rawText)) {
+  if ((goalFamily === GOAL_FAMILIES.appearance || goalFamily === GOAL_FAMILIES.bodyComp) && /\bget lean(?:er)?\b/i.test(rawText)) {
     return targetWindow?.targetHorizonWeeks ? "Get leaner within the current time window" : "Get leaner";
   }
   if (goalFamily === GOAL_FAMILIES.appearance && /\blook athletic again\b/i.test(rawText)) {
@@ -808,7 +824,7 @@ const buildTradeoffs = ({ goalFamily = GOAL_FAMILIES.generalFitness, variant = "
   if (goalFamily === GOAL_FAMILIES.hybrid && variant === "hybrid_strength") {
     heuristicTradeoffs.push("Strength progression must stay compatible with the aerobic workload in the same week.");
   }
-  if (variant === "body_comp_primary_with_strength_retention" || (signals.hasFatLoss && signals.hasKeepStrength)) {
+  if (variant === "body_comp_primary_with_strength_retention" || (signals.hasFatLoss && signals.hasStrength)) {
     heuristicTradeoffs.push("Aggressive fat loss may limit strength progression and recovery quality.");
   }
   if (goalFamily === GOAL_FAMILIES.athleticPower) {
@@ -1033,6 +1049,20 @@ const buildGoalBlueprints = ({
   goalFamily = GOAL_FAMILIES.generalFitness,
   signals = {},
 } = {}) => {
+  if (signals.hasExplicitStrengthBodyCompMix) {
+    const strengthLeads = Number.isFinite(signals.strengthMentionIndex)
+      && signals.strengthMentionIndex >= 0
+      && (!Number.isFinite(signals.bodyCompMentionIndex) || signals.bodyCompMentionIndex < 0 || signals.strengthMentionIndex <= signals.bodyCompMentionIndex);
+    return strengthLeads
+      ? [
+          { goalFamily: GOAL_FAMILIES.strength, planningCategory: "strength", priority: 1, variant: "strength_primary" },
+          { goalFamily: GOAL_FAMILIES.bodyComp, planningCategory: "body_comp", priority: 2, variant: "body_comp_secondary" },
+        ]
+      : [
+          { goalFamily: GOAL_FAMILIES.bodyComp, planningCategory: "body_comp", priority: 1, variant: "body_comp_primary_with_strength_retention" },
+          { goalFamily: GOAL_FAMILIES.strength, planningCategory: "strength", priority: 2, variant: "strength_maintenance" },
+        ];
+  }
   if ((signals.hasFatLoss && signals.hasKeepStrength) || (goalFamily === GOAL_FAMILIES.hybrid && signals.hasFatLoss && signals.hasStrength)) {
     return [
       { goalFamily: GOAL_FAMILIES.bodyComp, planningCategory: "body_comp", priority: 1, variant: "body_comp_primary_with_strength_retention" },

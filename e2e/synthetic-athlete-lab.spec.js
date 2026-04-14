@@ -1,0 +1,50 @@
+const { test, expect } = require("@playwright/test");
+const {
+  completeAnchors,
+  completeIntroQuestionnaire,
+  confirmIntakeBuild,
+  getCurrentFieldId,
+  gotoIntakeInLocalMode,
+  waitForPostOnboarding,
+  waitForReview,
+} = require("./intake-test-utils.js");
+
+test.describe("synthetic athlete browser probe", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1120 });
+  });
+
+  test("obese beginner flow keeps baseline capture inline and trust-critical surfaces discoverable after build", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "learn how to work out without getting hurt",
+      experienceLevel: "Beginner",
+      trainingDays: "3",
+      sessionLength: "30 min",
+      trainingLocation: "Gym",
+      coachingStyle: "Balanced coaching",
+    });
+
+    await expect.poll(() => getCurrentFieldId(page), { timeout: 20_000 }).toBe("starting_capacity_anchor");
+    await completeAnchors(page, {
+      starting_capacity_anchor: { type: "choice", value: "10_easy_minutes" },
+    }, { maxSteps: 3 });
+
+    await waitForReview(page);
+    await expect(page.getByTestId("intake-summary-section-what-is-fuzzy")).toContainText(/30-day|baseline|consistency/i);
+    await confirmIntakeBuild(page);
+    await waitForPostOnboarding(page);
+
+    await page.getByTestId("app-tab-settings").click();
+    await page.getByTestId("settings-surface-plan").click();
+    await expect(page.getByTestId("settings-goals-management")).toBeVisible();
+    await expect(page.getByTestId("settings-metrics-baselines")).toBeVisible();
+    await page.getByTestId("settings-metrics-baselines").click();
+    await expect(page.getByTestId("metrics-baselines-section")).toContainText(/why it matters|provenance|captured/i);
+
+    await page.getByTestId("app-tab-coach").click();
+    await page.getByTestId("coach-mode-button-ask_anything").click();
+    await expect(page.getByTestId("coach-mode-panel-ask_anything")).toBeVisible();
+    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Advisory|AI advisory is off/i);
+  });
+});

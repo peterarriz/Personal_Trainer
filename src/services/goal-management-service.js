@@ -8,6 +8,11 @@ import {
   normalizeStructuredProvenance,
   PROVENANCE_ACTORS,
 } from "./provenance-service.js";
+import {
+  buildGoalTimingPresentation,
+  buildTimingModeHelpText,
+  formatGoalDateLabel,
+} from "./goal-timing-service.js";
 import { dedupeStrings } from "../utils/collection-utils.js";
 
 export const GOAL_MANAGEMENT_VERSION = 1;
@@ -102,14 +107,6 @@ const slugify = (value = "", fallback = "goal") => {
   return cleaned || fallback;
 };
 
-const formatDateLabel = (value = "") => {
-  const raw = sanitizeText(value, 24);
-  if (!raw) return "";
-  const date = new Date(`${raw}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return raw;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-};
-
 const toIsoTimestamp = (value = Date.now()) => {
   const date = value instanceof Date ? value : new Date(value);
   return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
@@ -182,14 +179,6 @@ const buildTrackingLabels = (goal = {}) => dedupeStrings([
   ...normalizeProxyMetrics(goal?.proxyMetrics || goal?.resolvedGoal?.proxyMetrics || []).map((metric) => metric.label),
 ]).slice(0, 5);
 
-const buildTimingSummary = (goal = {}) => {
-  const targetDate = sanitizeText(goal?.targetDate || goal?.resolvedGoal?.targetDate || "", 24);
-  const targetHorizonWeeks = normalizeInteger(goal?.targetHorizonWeeks ?? goal?.resolvedGoal?.targetHorizonWeeks, null);
-  if (targetDate) return `Exact date: ${formatDateLabel(targetDate)}`;
-  if (targetHorizonWeeks) return `${targetHorizonWeeks}-week horizon`;
-  return "Open-ended";
-};
-
 const buildGoalSnapshot = (goal = null) => {
   const resolvedGoal = goal?.resolvedGoal || {};
   const summary = sanitizeText(resolvedGoal?.summary || goal?.name || "", 160);
@@ -220,8 +209,8 @@ const buildGoalSnapshot = (goal = null) => {
 
 const formatSnapshotFieldValue = (field = "", value = null) => {
   if (field === "planningPriority") return Number.isFinite(Number(value)) ? `Priority ${Number(value)}` : "Unordered";
-  if (field === "targetDate") return value ? formatDateLabel(value) : "No exact date";
-  if (field === "targetHorizonWeeks") return Number.isFinite(Number(value)) ? `${Number(value)} weeks` : "No horizon";
+  if (field === "targetDate") return value ? formatGoalDateLabel(value) : "No exact date";
+  if (field === "targetHorizonWeeks") return Number.isFinite(Number(value)) ? `About ${Number(value)} weeks` : "No horizon";
   if (field === "openEnded") return value ? "Open-ended" : "Not open-ended";
   if (field === "primaryMetric") {
     const metric = normalizeMetric(value, "primary");
@@ -620,6 +609,7 @@ const buildGoalCardModel = ({
   goal = null,
   priorityLabel = "",
   fallbackPriorityLabel = "",
+  now = new Date(),
 } = {}) => {
   const managedGoal = ensureManagedGoal(goal);
   const activeVersion = managedGoal?.goalManagement?.versions?.find((version) => version?.versionId === managedGoal?.goalManagement?.activeVersionId)
@@ -627,6 +617,7 @@ const buildGoalCardModel = ({
     || null;
   const snapshot = activeVersion?.snapshot || buildGoalSnapshot(managedGoal);
   const currentFieldProvenance = activeVersion?.fieldProvenance || {};
+  const timing = buildGoalTimingPresentation(managedGoal, { now });
   return {
     id: resolveRecordId(managedGoal),
     runtimeId: sanitizeText(managedGoal?.id || "", 140),
@@ -635,7 +626,8 @@ const buildGoalCardModel = ({
     priority: normalizeInteger(managedGoal?.priority, null),
     priorityLabel: priorityLabel || fallbackPriorityLabel || (managedGoal?.priority <= 3 ? `Priority ${managedGoal.priority}` : "Additional goal"),
     goalTypeLabel: GOAL_TYPE_LABELS[snapshot.goalFamily] || GOAL_TYPE_LABELS[snapshot.planningCategory] || "Goal",
-    timingLabel: buildTimingSummary(managedGoal),
+    timingLabel: timing.label,
+    timingDetail: timing.detail,
     trackingLabels: buildTrackingLabels(managedGoal),
     tradeoff: sanitizeText((managedGoal?.tradeoffs || managedGoal?.resolvedGoal?.tradeoffs || [])[0] || "", 180),
     fuzzyLine: sanitizeText((managedGoal?.unresolvedGaps || managedGoal?.resolvedGoal?.unresolvedGaps || [])[0] || "", 180),
@@ -697,18 +689,9 @@ const buildImpactLines = ({
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.restore && subjectGoal?.name) {
     lines.push(`${subjectGoal.name} returns to the active stack and starts influencing plan decisions again.`);
   }
-  if (changedFields.some((entry) => entry.field === "targetDate")) {
-    const targetDate = sanitizeText(subjectGoal?.resolvedGoal?.targetDate || subjectGoal?.targetDate || "", 24);
-    lines.push(targetDate ? `This goal now uses a hard date of ${formatDateLabel(targetDate)}.` : "This goal no longer uses a hard deadline.");
-  }
-  if (changedFields.some((entry) => entry.field === "targetHorizonWeeks")) {
-    const targetHorizonWeeks = normalizeInteger(subjectGoal?.resolvedGoal?.targetHorizonWeeks ?? subjectGoal?.targetHorizonWeeks, null);
-    if (targetHorizonWeeks) lines.push(`This goal now uses a ${targetHorizonWeeks}-week horizon.`);
-  }
-  if (changedFields.some((entry) => entry.field === "openEnded")) {
-    const isOpenEnded = !sanitizeText(subjectGoal?.resolvedGoal?.targetDate || subjectGoal?.targetDate || "", 24)
-      && !normalizeInteger(subjectGoal?.resolvedGoal?.targetHorizonWeeks ?? subjectGoal?.targetHorizonWeeks, null);
-    if (isOpenEnded) lines.push("This goal is open-ended now, so the planner will guide steady progression without a fake finish line.");
+  if (changedFields.some((entry) => ["targetDate", "targetHorizonWeeks", "openEnded"].includes(entry.field))) {
+    const timing = buildGoalTimingPresentation(subjectGoal);
+    lines.push(`Timing now: ${timing.label}. ${timing.detail}`);
   }
   if (changedFields.some((entry) => entry.field === "primaryMetric" || entry.field === "proxyMetrics")) {
     const trackingLabels = buildTrackingLabels(subjectGoal);
@@ -765,11 +748,13 @@ export const buildGoalSettingsViewModel = ({
       goal,
       priorityLabel: priorityLabelsById[resolveRecordId(goal)],
       fallbackPriorityLabel: index < 3 ? `Priority ${index + 1}` : "Additional goal",
+      now,
     })),
     archivedGoals: archivedGoals.map((goal) => buildGoalCardModel({
       goal,
       priorityLabel: sanitizeText(goal?.status || "archived", 80),
       fallbackPriorityLabel: sanitizeText(goal?.status || "archived", 80),
+      now,
     })),
     currentGoalOrder: activeGoals.map((goal) => resolveRecordId(goal)),
     tradeoffStatement: sanitizeText(reviewModel?.tradeoffStatement || reviewModel?.reviewContract?.tradeoff_statement || "", 220),
@@ -789,6 +774,7 @@ export const buildGoalSettingsViewModel = ({
 export const buildGoalEditorDraft = ({ goal = null } = {}) => {
   const managedGoal = ensureManagedGoal(goal);
   const snapshot = buildGoalSnapshot(managedGoal);
+  const timingMode = snapshot.targetDate ? "exact_date" : snapshot.targetHorizonWeeks ? "target_horizon" : "open_ended";
   return {
     goalId: resolveRecordId(managedGoal || {}, 0),
     summary: snapshot.summary,
@@ -801,7 +787,8 @@ export const buildGoalEditorDraft = ({ goal = null } = {}) => {
       label: metric.label,
       unit: metric.unit,
     })),
-    timingMode: snapshot.targetDate ? "exact_date" : snapshot.targetHorizonWeeks ? "target_horizon" : "open_ended",
+    timingMode,
+    timingHelperText: buildTimingModeHelpText({ timingMode }),
     targetDate: snapshot.targetDate,
     targetHorizonWeeks: snapshot.targetHorizonWeeks ? String(snapshot.targetHorizonWeeks) : "",
     status: sanitizeText(managedGoal?.status || "active", 40).toLowerCase() || "active",

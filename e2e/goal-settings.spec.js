@@ -88,6 +88,7 @@ const buildSeedState = () => ({
           category: "strength",
           goalFamily: "strength",
           priority: 2,
+          targetHorizonWeeks: 16,
           primaryMetric: { key: "bench_press_weight", label: "Bench 1RM", targetValue: "225", unit: "lb" },
         }),
         buildGoal({
@@ -114,13 +115,19 @@ const buildSeedState = () => ({
       personalization: {
         profile: {
           name: "Taylor",
+          timezone: "America/Chicago",
+          birthYear: 1994,
           age: 32,
           weight: 188,
+          bodyweight: 188,
           height: "6'0\"",
+          trainingAgeYears: 3,
           onboardingComplete: true,
           profileSetupComplete: true,
         },
         settings: {
+          units: { weight: "lbs", height: "ft_in", distance: "miles" },
+          trainingPreferences: { intensityPreference: "Standard", defaultEnvironment: "Gym" },
           appearance: { theme: "System" },
         },
         goalManagement: {
@@ -138,8 +145,20 @@ const buildSeedState = () => ({
 const seedAppState = async (page) => {
   const seedState = buildSeedState();
   await page.addInitScript((seed) => {
-    window.localStorage.setItem("trainer_auth_session_v1", JSON.stringify(seed.authSession));
-    window.localStorage.setItem("trainer_local_cache_v4", JSON.stringify(seed.persistedPayload));
+    const lockedAuthSession = JSON.stringify(seed.authSession);
+    const lockedCachePayload = JSON.stringify(seed.persistedPayload);
+    window.localStorage.setItem("trainer_auth_session_v1", lockedAuthSession);
+    window.localStorage.setItem("trainer_local_cache_v4", lockedCachePayload);
+    const originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function patchedSetItem(key, value) {
+      if (key === "trainer_auth_session_v1") {
+        return originalSetItem.call(this, key, lockedAuthSession);
+      }
+      if (key === "trainer_local_cache_v4") {
+        return originalSetItem.call(this, key, lockedCachePayload);
+      }
+      return originalSetItem.call(this, key, value);
+    };
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input?.url || "";
@@ -176,6 +195,8 @@ const openGoalManagement = async (page) => {
 test("Settings goals management reprioritizes with preview before commit", async ({ page }) => {
   await openGoalManagement(page);
 
+  await expect(page.getByTestId("settings-goal-card-goal_bench_record")).toContainText("Target horizon: about 16 weeks");
+
   await page.getByTestId("settings-goal-move-up-goal_bench_record").click();
   await page.getByTestId("settings-goals-preview-reorder").click();
   await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("Bench press 225 lb moves into Priority 1");
@@ -188,11 +209,14 @@ test("Settings goals management reprioritizes with preview before commit", async
 test("Settings goals management edits a dated goal into an open-ended goal with preview", async ({ page }) => {
   await openGoalManagement(page);
 
+  await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toContainText("Target date:");
+
   await page.getByTestId("settings-goal-edit-goal_cut_record").click();
   await expect(page.getByTestId("settings-goal-editor")).toBeVisible();
   await page.getByTestId("settings-goal-editor-timing-open_ended").click();
   await page.getByTestId("settings-goal-editor-preview").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("open-ended");
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("Open-ended");
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("next 3 months");
   await page.getByTestId("settings-goals-confirm-preview").click();
 
   await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toContainText("Open-ended");

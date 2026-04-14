@@ -24,11 +24,11 @@ export const SYNTHETIC_ATHLETE_PERSONAS = [
   makePersona({
     id: "novice_obese_beginner",
     name: "Maya",
-    ageRange: "35-44",
+    ageRange: "42-42",
     trainingAgeYears: 0,
-    goalIntents: ["lose fat and build consistency"],
+    goalIntents: ["learn how to work out without getting hurt", "lose 20 pounds"],
     supportTierExpectation: "tier_1",
-    bodyCompContext: "obese beginner with low confidence and high fatigue",
+    bodyCompContext: "morbidly obese beginner with low confidence, high fatigue, and no exact timeline",
     strengthContext: "deconditioned",
     enduranceContext: "walking only",
     equipmentReality: "apartment gym and treadmill",
@@ -42,7 +42,7 @@ export const SYNTHETIC_ATHLETE_PERSONAS = [
     equipmentAccess: "mixed",
     sessionLength: "30",
     preferredIntensity: "Conservative",
-    baselineMetrics: { bodyweight: 248, waist: 46 },
+    baselineMetrics: { bodyweight: 288, waist: 52, startingCapacity: "10_easy_minutes" },
   }),
   makePersona({
     id: "detrained_returner",

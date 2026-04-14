@@ -103,11 +103,30 @@ test.describe("mobile surface simplification", () => {
     expect(todayPlanText.length).toBeGreaterThan(20);
 
     await page.getByTestId("app-tab-program").click();
-    await page.getByTestId("program-this-week").locator("button").first().click();
-    const programPlan = page.getByTestId("planned-session-plan");
+    const programThisWeek = page.getByTestId("program-this-week");
+    const currentRows = programThisWeek.locator("[data-testid^='program-this-week-session-item-']");
+    expect(await currentRows.count()).toBeGreaterThan(1);
+    const firstRow = currentRows.nth(0);
+    const secondRow = currentRows.nth(1);
+    const firstButton = firstRow.locator("[data-testid^='program-this-week-session-button-']");
+    const secondButton = secondRow.locator("[data-testid^='program-this-week-session-button-']");
+
+    await firstButton.click();
+    await expect(firstButton).toHaveAttribute("aria-expanded", "true");
+    await expect(firstRow.getByTestId("planned-session-plan")).toBeVisible();
+    await expect(secondRow.getByTestId("planned-session-plan")).toHaveCount(0);
+
+    await secondButton.click();
+    await expect(firstButton).toHaveAttribute("aria-expanded", "false");
+    await expect(secondButton).toHaveAttribute("aria-expanded", "true");
+    await expect(firstRow.getByTestId("planned-session-plan")).toHaveCount(0);
+    const programPlan = secondRow.getByTestId("planned-session-plan");
     await expect(programPlan).toBeVisible();
     const programPlanText = (await programPlan.innerText()).replace(/\s+/g, " ").trim();
     expect(programPlanText.length).toBeGreaterThan(20);
+
+    await secondButton.click();
+    await expect(programThisWeek.getByTestId("planned-session-plan")).toHaveCount(0);
 
     await page.getByTestId("app-tab-log").click();
     await expect(page.getByText("Detailed workout log")).toHaveCount(0);
@@ -156,22 +175,19 @@ test.describe("mobile surface simplification", () => {
 
     await page.getByTestId("app-tab-coach").click();
     await expect(page.getByTestId("coach-tab")).toBeVisible();
-    await expect(page.getByTestId("coach-primary-entry")).toBeVisible();
-    await expect(page.getByText("Open advanced settings")).not.toBeVisible();
+    await expect(page.getByTestId("coach-mode-switcher")).toBeVisible();
+    await expect(page.getByTestId("coach-mode-panel-today_week")).toBeVisible();
     await expect(page.getByPlaceholder("Anthropic key (optional)").first()).not.toBeVisible();
     await expect(page.getByPlaceholder("Failure patterns").first()).not.toBeVisible();
 
-    const coachPrimaryEntry = page.getByTestId("coach-primary-entry");
-    const latestAssistantMessage = () => coachPrimaryEntry.locator('[data-testid="coach-message"][data-message-role="assistant"]').last();
-    await page.getByText("I'm traveling today").click();
-    await expect(latestAssistantMessage()).toContainText(/Travel day: keep/i);
-    await expect(latestAssistantMessage()).toContainText(/travel-ready session/i);
-    const travelReply = await latestAssistantMessage().innerText();
+    const headline = page.getByTestId("coach-today-headline");
+    await page.getByTestId("coach-today-prompt-i-m-traveling-today").click();
+    await expect(headline).toContainText(/travel|lowest-friction/i);
+    const travelReply = await headline.innerText();
 
-    await page.getByText("I slept badly").click();
-    await expect.poll(async () => (await latestAssistantMessage().innerText()).trim()).not.toBe(travelReply.trim());
-    await expect(latestAssistantMessage()).toContainText(/recovery|sleep|readiness|condense/i);
-    await expect(latestAssistantMessage()).not.toContainText(/travel-ready session/i);
+    await page.getByTestId("coach-today-prompt-my-achilles-feels-tight").click();
+    await expect.poll(async () => (await headline.innerText()).trim()).not.toBe(travelReply.trim());
+    await expect(headline).toContainText(/protect|pain|irritated/i);
   });
 
   test("missing metrics route straight into baselines from Program", async ({ page }) => {

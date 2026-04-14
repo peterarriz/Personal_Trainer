@@ -40,6 +40,99 @@ const stripPlanWeekStorageMetadata = (planWeek = null) => {
   return next;
 };
 
+const formatWeekReviewLabel = (value = "", fallback = "Unknown") => {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  const spaced = raw.replaceAll("_", " ").replaceAll("-", " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+};
+
+const buildPersistedPlanWeekStory = ({
+  plannedSessionCount = 0,
+  loggedSessionCount = 0,
+  weeklyCheckin = null,
+  focus = "",
+  summary = "",
+  isCurrentWeek = false,
+} = {}) => {
+  const plannedCount = Number(plannedSessionCount || 0);
+  const loggedCount = Number(loggedSessionCount || 0);
+  const ratio = plannedCount > 0 ? loggedCount / plannedCount : 1;
+  const lowEnergy = Number(weeklyCheckin?.energy || 0) > 0 && Number(weeklyCheckin?.energy || 0) <= 2;
+  const highStress = Number(weeklyCheckin?.stress || 0) >= 4;
+  const lowConfidence = Number(weeklyCheckin?.confidence || 0) > 0 && Number(weeklyCheckin?.confidence || 0) <= 2;
+
+  let classificationKey = "match";
+  let classificationLabel = "Match";
+  let toneKey = "match";
+
+  if (isCurrentWeek && loggedCount < plannedCount) {
+    classificationKey = "pending";
+    classificationLabel = "In progress";
+    toneKey = "missing";
+  } else if (plannedCount > 0 && ratio < 0.5) {
+    classificationKey = "changed";
+    classificationLabel = "Changed";
+    toneKey = "changed";
+  } else if (plannedCount > 0 && ratio < 1) {
+    classificationKey = "partial";
+    classificationLabel = "Partial";
+    toneKey = "partial";
+  }
+
+  const plannedSummary = plannedCount > 0
+    ? `Planned ${plannedCount} training session${plannedCount === 1 ? "" : "s"}${focus ? ` around ${focus.toLowerCase()}` : ""}.`
+    : "No training sessions were planned in this saved week.";
+
+  let actualSummary = "";
+  if (plannedCount === 0) {
+    actualSummary = loggedCount > 0
+      ? `Logged ${loggedCount} session${loggedCount === 1 ? "" : "s"} in an otherwise quiet week.`
+      : "No training sessions were logged.";
+  } else if (isCurrentWeek && loggedCount === 0) {
+    actualSummary = "No sessions are logged yet in this week snapshot.";
+  } else if (loggedCount >= plannedCount) {
+    actualSummary = `Logged ${loggedCount} session${loggedCount === 1 ? "" : "s"} against ${plannedCount} planned.`;
+  } else {
+    actualSummary = `Logged ${loggedCount} of ${plannedCount} planned session${plannedCount === 1 ? "" : "s"}.`;
+  }
+
+  let whatMattered = focus || summary || "Consistency across the week mattered most.";
+  if (lowEnergy || highStress) {
+    whatMattered = "Low energy or higher stress shaped this week more than the planned progression target.";
+  } else if (lowConfidence) {
+    whatMattered = "Confidence dipped, so predictability mattered more than ambition this week.";
+  } else if (classificationKey === "match") {
+    whatMattered = "The saved week and the logged work stayed closely aligned.";
+  } else if (classificationKey === "partial") {
+    whatMattered = "Some planned work landed, but real-life context mattered more than perfect completion.";
+  } else if (classificationKey === "changed") {
+    whatMattered = "What actually happened this week matters more than the original weekly draft.";
+  }
+
+  let nextEffect = "The next week can keep its intended progression.";
+  if (isCurrentWeek) {
+    nextEffect = "Use the remaining days to stay on intent instead of forcing make-up volume.";
+  } else if (lowEnergy || highStress) {
+    nextEffect = "Keep the next week conservative until energy and stress settle.";
+  } else if (classificationKey === "partial") {
+    nextEffect = "The next week should respect the completed work and avoid cramming missed sessions.";
+  } else if (classificationKey === "changed") {
+    nextEffect = "The next week should adapt to what actually happened rather than chase the old script.";
+  }
+
+  return {
+    classificationKey,
+    classificationLabel,
+    toneKey,
+    plannedSummary,
+    actualSummary,
+    whatMattered,
+    nextEffect,
+    statusLabel: formatWeekReviewLabel(isCurrentWeek ? "in_progress" : classificationKey, classificationLabel),
+  };
+};
+
 export const buildPersistedPlanWeekKey = ({
   weekKey = "",
   planWeek = null,
@@ -268,6 +361,16 @@ export const buildPersistedPlanWeekReview = ({
     return actualType && !["rest", "recovery"].includes(actualType);
   }).length;
   const fallbackWeeklyCheckin = weeklyCheckins?.[String(normalizedRecord?.absoluteWeek || normalizedRecord?.weekNumber || "")] || null;
+  const resolvedWeeklyCheckin = clonePlanWeekValue(normalizedRecord?.weeklyCheckin || fallbackWeeklyCheckin || null);
+  const isCurrentWeek = Number(currentWeek || 0) > 0 && Number(normalizedRecord?.absoluteWeek || 0) === Number(currentWeek || 0);
+  const story = buildPersistedPlanWeekStory({
+    plannedSessionCount,
+    loggedSessionCount,
+    weeklyCheckin: resolvedWeeklyCheckin,
+    focus: planWeek?.weeklyIntent?.focus || planWeek?.focus || "",
+    summary: normalizedRecord.summary || planWeek?.summary || "",
+    isCurrentWeek,
+  });
   return {
     weekKey: normalizedRecord.weekKey,
     weekNumber: normalizedRecord.weekNumber,
@@ -281,10 +384,11 @@ export const buildPersistedPlanWeekReview = ({
     focus: planWeek?.weeklyIntent?.focus || planWeek?.focus || "",
     plannedSessionCount,
     loggedSessionCount,
-    weeklyCheckin: clonePlanWeekValue(normalizedRecord?.weeklyCheckin || fallbackWeeklyCheckin || null),
+    weeklyCheckin: resolvedWeeklyCheckin,
     commitment: normalizedRecord.commitment,
     durability: normalizedRecord.durability,
-    isCurrentWeek: Number(currentWeek || 0) > 0 && Number(normalizedRecord?.absoluteWeek || 0) === Number(currentWeek || 0),
+    isCurrentWeek,
+    story,
     planWeek,
   };
 };
