@@ -1,4 +1,7 @@
 import { dedupeStrings } from "../utils/collection-utils.js";
+import { BASELINE_METRIC_KEYS } from "./intake-baseline-service.js";
+import { describeProvenanceRecord } from "./provenance-service.js";
+import { buildSupportTierModel, SUPPORT_TIER_LEVELS } from "./support-tier-service.js";
 
 const sanitizeText = (value = "", maxLength = 180) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 
@@ -20,6 +23,71 @@ const getLatestDateValue = (rows = []) => [...(Array.isArray(rows) ? rows : [])]
   .filter((row) => String(row?.date || "").trim())
   .sort((a, b) => String(b?.date || "").localeCompare(String(a?.date || "")))[0] || null;
 
+const toDateLabel = (value = "") => {
+  const raw = sanitizeText(value, 24);
+  if (!raw) return "";
+  const parsed = new Date(`${raw}T12:00:00`);
+  return Number.isNaN(parsed.getTime())
+    ? raw
+    : parsed.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+};
+
+const getDateSortValue = (value = "") => {
+  const raw = sanitizeText(value, 24);
+  if (!raw) return "";
+  return raw;
+};
+
+const pickLatestRow = (...rows) => (
+  rows
+    .flat()
+    .filter(Boolean)
+    .sort((left, right) => (
+      getDateSortValue(right?.date || "").localeCompare(getDateSortValue(left?.date || ""))
+      || (normalizeSource(right?.source || "") === "user_override" ? 1 : 0) - (normalizeSource(left?.source || "") === "user_override" ? 1 : 0)
+    ))[0] || null
+);
+
+const buildProfileWeightFallbackRow = (personalization = {}) => {
+  const weight = toNumber(personalization?.profile?.weight, null);
+  if (!Number.isFinite(weight) || weight <= 0) return null;
+  return {
+    date: "",
+    value: weight,
+    unit: sanitizeText(personalization?.settings?.units?.weight || "lb", 12) || "lb",
+    source: personalization?.profile?.profileSetupComplete ? "user_override" : "intake_derived",
+    provenance: null,
+    note: "",
+  };
+};
+
+const buildLogBodyweightRow = (bodyweights = []) => {
+  const latest = Array.isArray(bodyweights) && bodyweights.length ? bodyweights[bodyweights.length - 1] : null;
+  const value = toNumber(latest?.w ?? latest?.weight, null);
+  if (!latest?.date || !Number.isFinite(value) || value <= 0) return null;
+  return {
+    date: sanitizeText(latest.date, 24),
+    value,
+    unit: "lb",
+    source: "log_inferred",
+    provenance: null,
+    note: "",
+  };
+};
+
+const buildProvenanceSummary = ({
+  row = null,
+  source = "placeholder",
+  fallback = "",
+} = {}) => {
+  if (row?.provenance) return describeProvenanceRecord(row.provenance, fallback);
+  const normalizedSource = normalizeSource(source);
+  if (normalizedSource === "log_inferred") return fallback || "Pulled from recent logs.";
+  if (normalizedSource === "user_override") return fallback || "Saved explicitly by you.";
+  if (normalizedSource === "intake_derived") return fallback || "Captured during intake.";
+  return fallback || "No strong provenance is attached yet.";
+};
+
 const detectGoalSignals = (goals = []) => {
   const activeGoals = (Array.isArray(goals) ? goals : []).filter((goal) => goal?.active !== false);
   const text = activeGoals.map((goal) => sanitizeText(goal?.resolvedGoal?.summary || goal?.name || "", 180).toLowerCase()).join(" ");
@@ -31,6 +99,7 @@ const detectGoalSignals = (goals = []) => {
     hasBodyComp: activeGoals.some((goal) => goal?.category === "body_comp") || /\b(fat loss|recomp|lean|waist|physique|look athletic)\b/.test(text),
     hasSwim: /\b(swim|swimming|pool|open water)\b/.test(text),
     hasPower: activeGoals.some((goal) => goal?.resolvedGoal?.goalFamily === "athletic_power") || /\b(vertical|jump|dunk|explosive|power)\b/.test(text),
+    hasReEntry: activeGoals.some((goal) => goal?.resolvedGoal?.goalFamily === "re_entry") || /\b(back in shape|again|return to training|rebuild|starting over)\b/.test(text),
   };
 };
 
@@ -91,6 +160,11 @@ const buildMetricCard = ({
   source = "placeholder",
   planningImpact = "",
   missing = false,
+  requiredNow = false,
+  whyItMatters = "",
+  missingImpact = "",
+  provenanceSummary = "",
+  lastUpdatedLabel = "",
 } = {}) => ({
   id,
   label,
@@ -100,6 +174,11 @@ const buildMetricCard = ({
   sourceLabel: describeSource(source),
   planningImpact,
   missing: Boolean(missing),
+  requiredNow: Boolean(requiredNow),
+  whyItMatters: sanitizeText(whyItMatters, 220),
+  missingImpact: sanitizeText(missingImpact, 220),
+  provenanceSummary: sanitizeText(provenanceSummary, 220),
+  lastUpdatedLabel: sanitizeText(lastUpdatedLabel, 80),
 });
 
 export const buildMetricsBaselinesModel = ({
@@ -112,24 +191,59 @@ export const buildMetricsBaselinesModel = ({
   const goalSignals = detectGoalSignals(goals);
   const manualInputs = personalization?.manualProgressInputs || {};
   const trainingContext = athleteProfile?.trainingContext || personalization?.trainingContext || {};
-  const latestBodyweight = bodyweights?.length
-    ? bodyweights[bodyweights.length - 1]
-    : null;
+  const supportTier = buildSupportTierModel({
+    goals,
+    domainAdapterId: athleteProfile?.primaryGoal?.resolvedGoal?.primaryDomain || athleteProfile?.goalCapabilityStack?.primary?.primaryDomain || "",
+    goalCapabilityStack: athleteProfile?.goalCapabilityStack || null,
+  });
+  const latestBodyweight = pickLatestRow(
+    buildLogBodyweightRow(bodyweights),
+    getLatestDateValue(manualInputs?.measurements?.[BASELINE_METRIC_KEYS.bodyweightBaseline] || []),
+    buildProfileWeightFallbackRow(personalization)
+  );
   const latestWaist = getLatestDateValue(manualInputs?.measurements?.waist_circumference || []);
   const latestLiftBenchmark = getLatestDateValue(manualInputs?.benchmarks?.lift_results || []) || inferLiftBenchmarkFromLogs(logs);
   const latestRunBenchmark = getLatestDateValue(manualInputs?.benchmarks?.run_results || []) || inferRunBenchmarkFromLogs(logs);
   const latestSwimBenchmark = getLatestDateValue(manualInputs?.metrics?.swim_benchmark || []);
+  const latestSwimReality = getLatestDateValue(manualInputs?.metrics?.[BASELINE_METRIC_KEYS.swimAccessReality] || []);
+  const latestStartingCapacity = getLatestDateValue(manualInputs?.metrics?.[BASELINE_METRIC_KEYS.startingCapacity] || []);
   const latestJumpBenchmark = getLatestDateValue(manualInputs?.metrics?.vertical_jump || []);
   const cards = [];
+  const requiredNowCopy = supportTier.id === SUPPORT_TIER_LEVELS.tier3
+    ? "Needed to keep the first block safe and repeatable."
+    : supportTier.id === SUPPORT_TIER_LEVELS.tier2
+    ? "Needed to keep the first block credible."
+    : "Needed for a tighter first plan.";
 
   cards.push(buildMetricCard({
     id: "bodyweight",
     label: "Current bodyweight",
-    value: latestBodyweight?.w ? `${Number(latestBodyweight.w).toFixed(1)} lb` : personalization?.profile?.weight ? `${Number(personalization.profile.weight).toFixed(1)} ${personalization?.settings?.units?.weight || "lb"}` : "Missing",
-    detail: latestBodyweight?.date ? `Last captured ${latestBodyweight.date}` : "Add a current bodyweight so nutrition and body-composition guidance stay grounded.",
-    source: latestBodyweight?.w ? "log_inferred" : personalization?.profile?.weight ? (personalization?.profile?.profileSetupComplete ? "user_override" : "intake_derived") : "placeholder",
+    value: Number.isFinite(latestBodyweight?.value)
+      ? `${Number(latestBodyweight.value).toFixed(1)} ${latestBodyweight?.unit || personalization?.settings?.units?.weight || "lb"}`
+      : "Missing",
+    detail: latestBodyweight?.date
+      ? `Last captured ${toDateLabel(latestBodyweight.date)}`
+      : "Add a current bodyweight so nutrition and body-composition guidance stay grounded.",
+    source: latestBodyweight?.source || "placeholder",
     planningImpact: "Can shift nutrition targets and body-composition pacing.",
-    missing: !(latestBodyweight?.w || personalization?.profile?.weight),
+    missing: !Number.isFinite(latestBodyweight?.value),
+    requiredNow: goalSignals.hasBodyComp && !goalSignals.activeGoals.some((goal) => goal?.resolvedGoal?.goalFamily === "appearance"),
+    whyItMatters: "Bodyweight gives the planner a concrete starting point for pacing, recovery cost, and body-composition expectations.",
+    missingImpact: goalSignals.hasBodyComp
+      ? "Without it, body-composition pacing stays more conservative and less specific."
+      : "Without it, nutrition guidance leans on broader defaults.",
+    provenanceSummary: buildProvenanceSummary({
+      row: latestBodyweight,
+      source: latestBodyweight?.source || "placeholder",
+      fallback: latestBodyweight?.source === "log_inferred"
+        ? "Pulled from recent bodyweight logs."
+        : latestBodyweight?.source === "intake_derived"
+        ? "Captured during intake."
+        : latestBodyweight?.source === "user_override"
+        ? "Saved explicitly by you."
+        : "No current bodyweight baseline is saved yet.",
+    }),
+    lastUpdatedLabel: latestBodyweight?.date ? toDateLabel(latestBodyweight.date) : "",
   }));
 
   if (goalSignals.hasBodyComp) {
@@ -137,10 +251,19 @@ export const buildMetricsBaselinesModel = ({
       id: "waist",
       label: "Waist proxy",
       value: latestWaist?.value ? `${Number(latestWaist.value).toFixed(1)} in` : "Missing",
-      detail: latestWaist?.date ? `Last captured ${latestWaist.date}` : "Useful when appearance goals need a non-scale proxy.",
+      detail: latestWaist?.date ? `Last captured ${toDateLabel(latestWaist.date)}` : "Useful when appearance goals need a non-scale proxy.",
       source: latestWaist?.source || (latestWaist?.value ? "user_override" : "placeholder"),
       planningImpact: "Improves body-composition progress tracking without restarting intake.",
       missing: !latestWaist?.value,
+      requiredNow: false,
+      whyItMatters: "Waist is a stable visual-change proxy when scale weight is noisy or misleading.",
+      missingImpact: "Without it, visual progress depends more on bodyweight trend and check-ins.",
+      provenanceSummary: buildProvenanceSummary({
+        row: latestWaist,
+        source: latestWaist?.source || "placeholder",
+        fallback: latestWaist?.value ? "Saved explicitly by you." : "No waist proxy is saved yet.",
+      }),
+      lastUpdatedLabel: latestWaist?.date ? toDateLabel(latestWaist.date) : "",
     }));
   }
 
@@ -156,11 +279,24 @@ export const buildMetricsBaselinesModel = ({
           ]).join(" • ")
         : "Missing",
       detail: latestLiftBenchmark?.date
-        ? `Last captured ${latestLiftBenchmark.date}`
+        ? `Last captured ${toDateLabel(latestLiftBenchmark.date)}`
         : "Add one recent top set so strength work is sized to a real baseline instead of a generic foundation posture.",
       source: latestLiftBenchmark?.source || (latestLiftBenchmark?.weight ? "log_inferred" : "placeholder"),
       planningImpact: "Can change strength session labels, dose, and loading posture.",
       missing: !latestLiftBenchmark?.weight,
+      requiredNow: true,
+      whyItMatters: "A real top set or recent lift benchmark is what lets the planner progress strength instead of hedging.",
+      missingImpact: "Without it, strength work stays technique-first and more conservative.",
+      provenanceSummary: buildProvenanceSummary({
+        row: latestLiftBenchmark,
+        source: latestLiftBenchmark?.source || "placeholder",
+        fallback: latestLiftBenchmark?.weight
+          ? latestLiftBenchmark?.source === "log_inferred"
+            ? "Inferred from recent strength logs."
+            : "Saved explicitly by you."
+          : "No current lift benchmark is saved yet.",
+      }),
+      lastUpdatedLabel: latestLiftBenchmark?.date ? toDateLabel(latestLiftBenchmark.date) : "",
     }));
   }
 
@@ -176,11 +312,24 @@ export const buildMetricsBaselinesModel = ({
           ]).join(" • ") || "Recent running anchor"
         : "Missing",
       detail: latestRunBenchmark?.date
-        ? `Last captured ${latestRunBenchmark.date}`
+        ? `Last captured ${toDateLabel(latestRunBenchmark.date)}`
         : "Add a recent run result or pace anchor so long-run sizing stops leaning on generic defaults.",
       source: latestRunBenchmark?.source || (latestRunBenchmark ? "log_inferred" : "placeholder"),
       planningImpact: "Can change easy-run and long-run sizing.",
       missing: !latestRunBenchmark,
+      requiredNow: true,
+      whyItMatters: "A recent run anchor tells the planner what your aerobic engine actually looks like right now.",
+      missingImpact: "Without it, run volume stays on broader foundation defaults.",
+      provenanceSummary: buildProvenanceSummary({
+        row: latestRunBenchmark,
+        source: latestRunBenchmark?.source || "placeholder",
+        fallback: latestRunBenchmark
+          ? latestRunBenchmark?.source === "log_inferred"
+            ? "Inferred from recent running logs."
+            : "Saved explicitly by you."
+          : "No recent run anchor is saved yet.",
+      }),
+      lastUpdatedLabel: latestRunBenchmark?.date ? toDateLabel(latestRunBenchmark.date) : "",
     }));
   }
 
@@ -190,17 +339,69 @@ export const buildMetricsBaselinesModel = ({
       label: "Recent swim anchor",
       value: latestSwimBenchmark
         ? dedupeStrings([
-            latestSwimBenchmark.distance ? `${latestSwimBenchmark.distance} yd` : "",
+            latestSwimBenchmark.distance ? `${latestSwimBenchmark.distance} ${latestSwimBenchmark.distanceUnit || "yd"}` : "",
             latestSwimBenchmark.duration ? `${latestSwimBenchmark.duration}` : "",
             latestSwimBenchmark.note || "",
           ]).join(" • ") || "Recent swim anchor"
         : "Missing",
       detail: latestSwimBenchmark?.date
-        ? `Last captured ${latestSwimBenchmark.date}`
+        ? `Last captured ${toDateLabel(latestSwimBenchmark.date)}`
         : "Add one swim distance or time anchor so swim volume stays honest.",
       source: latestSwimBenchmark?.source || (latestSwimBenchmark ? "user_override" : "placeholder"),
       planningImpact: "Can change swim session volume and technique-vs-conditioning bias.",
       missing: !latestSwimBenchmark,
+      requiredNow: true,
+      whyItMatters: "A recent swim anchor keeps the swim block from pretending you are either fresher or fitter than you are.",
+      missingImpact: "Without it, swim work stays more conservative and technique-biased.",
+      provenanceSummary: buildProvenanceSummary({
+        row: latestSwimBenchmark,
+        source: latestSwimBenchmark?.source || "placeholder",
+        fallback: latestSwimBenchmark ? "Saved as your current swim anchor." : "No current swim anchor is saved yet.",
+      }),
+      lastUpdatedLabel: latestSwimBenchmark?.date ? toDateLabel(latestSwimBenchmark.date) : "",
+    }));
+    cards.push(buildMetricCard({
+      id: "swim_access_reality",
+      label: "Pool / open-water reality",
+      value: latestSwimReality?.label || latestSwimReality?.value?.replaceAll("_", " ") || "Missing",
+      detail: latestSwimReality?.date
+        ? `Last captured ${toDateLabel(latestSwimReality.date)}`
+        : "Confirm whether the goal is mostly pool, open water, or both right now.",
+      source: latestSwimReality?.source || (latestSwimReality?.value ? "user_override" : "placeholder"),
+      planningImpact: "Can change session structure, technique emphasis, and realism of the first swim block.",
+      missing: !latestSwimReality?.value,
+      requiredNow: true,
+      whyItMatters: "Pool structure and open-water reality create very different early swim plans.",
+      missingImpact: "Without it, the swim block assumes the broadest safe setup and stays less specific.",
+      provenanceSummary: buildProvenanceSummary({
+        row: latestSwimReality,
+        source: latestSwimReality?.source || "placeholder",
+        fallback: latestSwimReality?.value ? "Saved as your current swim environment reality." : "No swim environment reality is saved yet.",
+      }),
+      lastUpdatedLabel: latestSwimReality?.date ? toDateLabel(latestSwimReality.date) : "",
+    }));
+  }
+
+  if (goalSignals.hasReEntry) {
+    cards.push(buildMetricCard({
+      id: "starting_capacity",
+      label: "Safe starting capacity",
+      value: latestStartingCapacity?.label || latestStartingCapacity?.value?.replaceAll("_", " ") || "Missing",
+      detail: latestStartingCapacity?.date
+        ? `Last captured ${toDateLabel(latestStartingCapacity.date)}`
+        : "Save what feels repeatable right now so the first block starts where you actually are.",
+      source: latestStartingCapacity?.source || (latestStartingCapacity?.value ? "user_override" : "placeholder"),
+      planningImpact: "Sets how short, steady, or ambitious the opening block can be.",
+      missing: !latestStartingCapacity?.value,
+      requiredNow: true,
+      whyItMatters: "For re-entry goals, safe repeatable capacity matters more than advanced performance metrics.",
+      missingImpact: "Without it, the first block stays shorter and more cautious on purpose.",
+      provenanceSummary: buildProvenanceSummary({
+        row: latestStartingCapacity,
+        source: latestStartingCapacity?.source || "placeholder",
+        fallback: latestStartingCapacity?.value ? "Saved as your current safe starting capacity." : "No safe starting capacity is saved yet.",
+      }),
+      lastUpdatedLabel: latestStartingCapacity?.date ? toDateLabel(latestStartingCapacity.date) : "",
     }));
   }
 
@@ -215,11 +416,20 @@ export const buildMetricsBaselinesModel = ({
           ]).join(" • ") || "Jump anchor"
         : "Missing",
       detail: latestJumpBenchmark?.date
-        ? `Last captured ${latestJumpBenchmark.date}`
+        ? `Last captured ${toDateLabel(latestJumpBenchmark.date)}`
         : "Add one jump, rim-touch, or dunk anchor so plyometric dosing stays believable.",
       source: latestJumpBenchmark?.source || (latestJumpBenchmark ? "user_override" : "placeholder"),
       planningImpact: "Can change power-session dose and progression posture.",
       missing: !latestJumpBenchmark,
+      requiredNow: false,
+      whyItMatters: "A jump anchor helps the planner scale power work to your actual starting point.",
+      missingImpact: "Without it, power work stays more conservative.",
+      provenanceSummary: buildProvenanceSummary({
+        row: latestJumpBenchmark,
+        source: latestJumpBenchmark?.source || "placeholder",
+        fallback: latestJumpBenchmark ? "Saved as your current jump anchor." : "No jump anchor is saved yet.",
+      }),
+      lastUpdatedLabel: latestJumpBenchmark?.date ? toDateLabel(latestJumpBenchmark.date) : "",
     }));
   }
 
@@ -237,12 +447,20 @@ export const buildMetricsBaselinesModel = ({
     source: trainingContext?.environment?.source || trainingContext?.equipmentAccess?.source || "placeholder",
     planningImpact: "Can swap session families and shorten or expand prescriptions safely.",
     missing: !trainingContext?.environment?.confirmed || !trainingContext?.equipmentAccess?.confirmed,
+    requiredNow: false,
+    whyItMatters: "Environment and equipment reality determine which session shapes are actually usable this week.",
+    missingImpact: "Without it, the plan leans on broader substitutions.",
+    provenanceSummary: trainingContext?.environment?.confirmed || trainingContext?.equipmentAccess?.confirmed
+      ? "Saved from your training setup."
+      : "Training environment is still low-confidence.",
   }));
 
   return {
     cards,
     missingCards: cards.filter((card) => card.missing),
-    lowConfidenceCount: cards.filter((card) => card.source === "placeholder").length,
+    lowConfidenceCount: cards.filter((card) => card.source === "placeholder" || (card.missing && card.requiredNow)).length,
+    supportTier,
+    requiredNowCopy,
   };
 };
 
@@ -263,6 +481,8 @@ export const buildPlanningBaselineInfluence = ({
   const liftRow = getLatestDateValue(personalization?.manualProgressInputs?.benchmarks?.lift_results || []) || inferLiftBenchmarkFromLogs(logs);
   const runRow = getLatestDateValue(personalization?.manualProgressInputs?.benchmarks?.run_results || []) || inferRunBenchmarkFromLogs(logs);
   const swimRow = getLatestDateValue(personalization?.manualProgressInputs?.metrics?.swim_benchmark || []);
+  const swimRealityRow = getLatestDateValue(personalization?.manualProgressInputs?.metrics?.[BASELINE_METRIC_KEYS.swimAccessReality] || []);
+  const startingCapacityRow = getLatestDateValue(personalization?.manualProgressInputs?.metrics?.[BASELINE_METRIC_KEYS.startingCapacity] || []);
   const jumpRow = getLatestDateValue(personalization?.manualProgressInputs?.metrics?.vertical_jump || []);
   const strengthLevel = !signals.hasStrength
     ? ""
@@ -299,6 +519,29 @@ export const buildPlanningBaselineInfluence = ({
     : Number(jumpRow.value || 0) >= 24
     ? "progression"
     : "foundation";
+  const safeStartLevel = !signals.hasReEntry
+    ? ""
+    : sanitizeText(startingCapacityRow?.value || "", 80).toLowerCase();
+  const lowConfidenceMessages = dedupeStrings([
+    cardsById.lift_benchmark?.missing && cardsById.lift_benchmark?.requiredNow
+      ? "Strength work is staying technique-first until you add a recent lift anchor."
+      : "",
+    cardsById.run_benchmark?.missing && cardsById.run_benchmark?.requiredNow
+      ? "Run volume is staying conservative until you add a recent run anchor."
+      : "",
+    cardsById.swim_benchmark?.missing && cardsById.swim_benchmark?.requiredNow
+      ? "Swim work is staying conservative until you add a recent swim anchor."
+      : "",
+    cardsById.swim_access_reality?.missing && cardsById.swim_access_reality?.requiredNow
+      ? "Swim structure is staying broad until you confirm whether this is mostly pool, open water, or both."
+      : "",
+    cardsById.starting_capacity?.missing && cardsById.starting_capacity?.requiredNow
+      ? "The first block stays shorter and more cautious until you confirm what feels repeatable right now."
+      : "",
+    cardsById.bodyweight?.missing && cardsById.bodyweight?.requiredNow
+      ? "Body-composition pacing is staying conservative until you add a current bodyweight."
+      : "",
+  ]);
 
   return {
     model,
@@ -312,11 +555,17 @@ export const buildPlanningBaselineInfluence = ({
       swimLevel && cardsById.swim_benchmark && !cardsById.swim_benchmark.missing
         ? `${cardsById.swim_benchmark.value} is anchoring swim volume.`
         : "",
+      swimRealityRow?.value && !cardsById.swim_access_reality?.missing
+        ? `${cardsById.swim_access_reality.value} is shaping swim structure.`
+        : "",
+      safeStartLevel && !cardsById.starting_capacity?.missing
+        ? `${cardsById.starting_capacity.value} is shaping the starting block.`
+        : "",
       powerLevel && cardsById.power_benchmark && !cardsById.power_benchmark.missing
         ? `${cardsById.power_benchmark.value} is anchoring jump exposure.`
         : "",
     ]),
-    lowConfidenceMessages: [],
+    lowConfidenceMessages,
     strength: {
       level: strengthLevel,
       benchmark: clonePlainValue(liftRow),
@@ -328,10 +577,15 @@ export const buildPlanningBaselineInfluence = ({
     swimming: {
       level: swimLevel,
       benchmark: clonePlainValue(swimRow),
+      reality: clonePlainValue(swimRealityRow),
     },
     power: {
       level: powerLevel,
       benchmark: clonePlainValue(jumpRow),
+    },
+    safeStart: {
+      level: safeStartLevel,
+      anchor: clonePlainValue(startingCapacityRow),
     },
   };
 };
@@ -391,6 +645,20 @@ export const applyPlanningBaselineInfluence = ({
         session.swim = { ...(session.swim || {}), d: "35-45 min" };
       } else if (influence.swimming.level === "endurance_build") {
         session.swim = { ...(session.swim || {}), d: "45-60 min" };
+      }
+      if (influence?.swimming?.reality?.value === "open_water") {
+        session.swim = { ...(session.swim || {}), focus: session.swim?.focus || "Open-water rhythm + pacing" };
+      } else if (influence?.swimming?.reality?.value === "pool") {
+        session.swim = { ...(session.swim || {}), focus: session.swim?.focus || "Pool structure + repeatable pacing" };
+      }
+    }
+
+    if (influence?.safeStart?.level && ["conditioning", "easy-run", "aerobic-base", "walk", "general_aerobic"].includes(String(session?.type || "").toLowerCase())) {
+      if (influence.safeStart.level === "walk_only") {
+        session.label = /walk/i.test(String(session.label || "")) ? session.label : `Walk ${session.label || "Session"}`;
+        session.intensityGuidance = "Keep this easy enough to repeat without strain.";
+      } else if (influence.safeStart.level === "10_easy_minutes") {
+        session.intensityGuidance = "Keep this in a short, easy, repeatable range.";
       }
     }
 

@@ -133,6 +133,41 @@ test("vague appearance-goal completeness asks for a proxy anchor without forcing
   ]);
 });
 
+test("swim-goal completeness asks for a recent swim anchor and water reality together", () => {
+  const state = deriveIntakeCompletenessState({
+    resolvedGoals: buildResolvedGoals("swim a mile in open water"),
+    answers: {},
+  });
+
+  assert.equal(state.isComplete, false);
+  assert.deepEqual(state.missingRequired.map((item) => item.key), [
+    INTAKE_COMPLETENESS_QUESTION_KEYS.swimBaseline,
+  ]);
+  assert.match(state.nextQuestions[0].prompt, /recent swim anchor/i);
+  assert.equal(state.nextQuestions[0].expectedValueType, INTAKE_COMPLETENESS_VALUE_TYPES.swimBaseline);
+  assert.deepEqual(state.nextQuestions[0].inputFields.map((field) => field.key), [
+    "recent_swim_anchor",
+    "swim_access_reality",
+  ]);
+});
+
+test("re-entry completeness asks for safe starting capacity instead of advanced metrics", () => {
+  const state = deriveIntakeCompletenessState({
+    resolvedGoals: buildResolvedGoals("get back in shape"),
+    answers: {},
+  });
+
+  assert.equal(state.isComplete, false);
+  assert.deepEqual(state.missingRequired.map((item) => item.key), [
+    INTAKE_COMPLETENESS_QUESTION_KEYS.startingCapacity,
+  ]);
+  assert.match(state.nextQuestions[0].prompt, /repeatable right now/i);
+  assert.equal(state.nextQuestions[0].expectedValueType, INTAKE_COMPLETENESS_VALUE_TYPES.startingCapacity);
+  assert.deepEqual(state.nextQuestions[0].inputFields.map((field) => field.key), [
+    "starting_capacity_anchor",
+  ]);
+});
+
 test("multi-goal completeness keeps primary needs first and still asks for maintained strength baseline", () => {
   const resolvedGoals = buildResolvedGoals("lose fat but keep strength");
   const state = deriveIntakeCompletenessState({
@@ -383,6 +418,44 @@ test("structured appearance proxy follow-up accepts waist without contaminating 
   assert.equal(validation.isValid, true);
   assert.equal(answered.answers.intake_completeness.fields.current_waist.value, 35);
   assert.equal(answered.answers.intake_completeness.fields.current_bodyweight, undefined);
+  assert.ok(!state.missingRequired.some((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor));
+});
+
+test("structured appearance proxy follow-up allows explicit defer-for-now handling", () => {
+  const resolvedGoals = buildResolvedGoals("look athletic again", {
+    appearanceConstraints: ["look athletic again"],
+  });
+  const question = deriveIntakeCompletenessState({
+    resolvedGoals,
+    answers: {},
+  }).nextQuestions[0];
+  const validation = validateIntakeCompletenessAnswer({
+    question,
+    answerValues: {
+      current_bodyweight: "",
+      current_waist: "",
+      appearance_proxy_plan: "skip_for_now",
+    },
+  });
+  const answered = applyIntakeCompletenessAnswer({
+    answers: {},
+    question,
+    answerValues: {
+      current_bodyweight: "",
+      current_waist: "",
+      appearance_proxy_plan: "skip_for_now",
+    },
+  });
+  const state = deriveIntakeCompletenessState({
+    resolvedGoals,
+    answers: answered.answers,
+  });
+
+  assert.equal(validation.isValid, true);
+  assert.match(validation.summaryText, /skip/i);
+  assert.equal(answered.answers.intake_completeness.fields.appearance_proxy_plan.value, "skip_for_now");
+  assert.equal(answered.answers.intake_completeness.fields.current_bodyweight, undefined);
+  assert.equal(answered.answers.intake_completeness.fields.current_waist, undefined);
   assert.ok(!state.missingRequired.some((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor));
 });
 

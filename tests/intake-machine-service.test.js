@@ -126,6 +126,50 @@ const buildAppearanceAnchorState = () => {
   }));
 };
 
+const buildSwimAnchorState = () => {
+  let nextState = createIntakeMachineState();
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_swim_goal_submit",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "swim a mile in open water",
+      },
+      now: TEST_NOW,
+    },
+  });
+  return intakeReducer(nextState, buildInterpretationEvent({
+    event_id: "evt_swim_goal_interpreted",
+    answers: {
+      goal_intent: "swim a mile in open water",
+    },
+    rawGoalText: "swim a mile in open water",
+  }));
+};
+
+const buildReEntryAnchorState = () => {
+  let nextState = createIntakeMachineState();
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_reentry_goal_submit",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "get back in shape",
+      },
+      now: TEST_NOW,
+    },
+  });
+  return intakeReducer(nextState, buildInterpretationEvent({
+    event_id: "evt_reentry_goal_interpreted",
+    answers: {
+      goal_intent: "get back in shape",
+    },
+    rawGoalText: "get back in shape",
+  }));
+};
+
 const buildConfirmableStrengthReviewState = () => {
   let nextState = createIntakeMachineState();
   nextState = intakeReducer(nextState, {
@@ -299,6 +343,38 @@ test("vague appearance goal transitions into anchor collection with proxy select
   assert.equal(nextState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
   assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.field_id, "appearance_proxy_anchor_kind");
   assert.ok(nextState.draft.orderedResolvedGoals.some((goal) => /athletic|lean|defined|body/i.test(goal?.summary || "")));
+});
+
+test("swim goal transitions into inline swim anchors before review", () => {
+  let nextState = buildSwimAnchorState();
+
+  assert.equal(nextState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.field_id, "recent_swim_anchor");
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.input_type, "text");
+  assert.match(nextState.draft.missingAnchorsEngine.currentAnchor.why_it_matters, /first block honest/i);
+
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_swim_anchor_answered",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "1000 yd in 22:30",
+      answer_value: "1000 yd in 22:30",
+    }),
+  });
+
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.field_id, "swim_access_reality");
+  assert.equal(nextState.draft.answers.intake_completeness.fields.recent_swim_anchor.raw, "1000 yd in 22:30");
+});
+
+test("re-entry goal asks for safe starting capacity first", () => {
+  const nextState = buildReEntryAnchorState();
+
+  assert.equal(nextState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.field_id, "starting_capacity_anchor");
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.input_type, "choice_chips");
+  assert.match(nextState.draft.missingAnchorsEngine.currentAnchor.why_it_matters, /safe starting dose/i);
 });
 
 test("hybrid goal interpretation keeps more than one resolved goal before confirmation", () => {
@@ -1057,6 +1133,41 @@ test("appearance proxy flow asks for a proxy choice first and then clears only t
   assert.equal(appearanceState.draft.answers.intake_completeness.fields.current_waist.value, 35);
   assert.equal(appearanceState.draft.answers.intake_completeness.fields.current_bodyweight, undefined);
   assert.notEqual(appearanceState.draft.missingAnchorsEngine.currentAnchor?.field_id, "appearance_proxy_anchor_kind");
+});
+
+test("appearance proxy skip path stores defer-for-now and user-back clears it cleanly", () => {
+  let appearanceState = buildAppearanceAnchorState();
+
+  appearanceState = intakeReducer(appearanceState, {
+    event_id: "evt_appearance_proxy_skip",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: appearanceState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "Skip for now",
+      answer_value: {
+        value: "skip_for_now",
+        raw: "Skip for now",
+      },
+    }),
+  });
+
+  assert.equal(appearanceState.draft.answers.intake_completeness.fields.appearance_proxy_plan.value, "skip_for_now");
+  assert.notEqual(appearanceState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+
+  appearanceState = intakeReducer(appearanceState, {
+    event_id: "evt_appearance_proxy_skip_back",
+    type: INTAKE_MACHINE_EVENTS.USER_BACK,
+    timestamp: TEST_NOW,
+    payload: {
+      edit_last_anchor: true,
+      now: TEST_NOW,
+    },
+  });
+
+  assert.equal(appearanceState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+  assert.equal(appearanceState.draft.missingAnchorsEngine.currentAnchor.field_id, "appearance_proxy_anchor_kind");
+  assert.equal(appearanceState.draft.answers.intake_completeness.fields.appearance_proxy_plan, undefined);
 });
 
 test("replayed intake never enables confirmation while required details are still missing", () => {

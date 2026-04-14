@@ -8,6 +8,16 @@ import {
   resolveTimelineFieldRecord,
 } from "./intake-completeness-service.js";
 import {
+  describeStartingCapacity,
+  describeSwimAccessReality,
+  normalizeStartingCapacityValue,
+  normalizeSwimAccessRealityValue,
+  parseSwimBenchmarkText,
+  STARTING_CAPACITY_META,
+  STARTING_CAPACITY_VALUES,
+  SWIM_ACCESS_REALITY_VALUES,
+} from "./intake-baseline-service.js";
+import {
   applyIntakeGoalStackConfirmation,
   buildDeterministicAnchorPromptText,
   buildIntakeGoalReviewModel,
@@ -721,13 +731,18 @@ const buildAppearanceProxyChoiceAnchor = ({ requirement = null, question = {}, p
         label: "Waist",
         description: "Use waist if that tracks the visual change better for you.",
       },
+      {
+        value: "skip_for_now",
+        label: "Skip for now",
+        description: "Keep the first block more conservative and add a proxy later in Settings.",
+      },
     ],
     priority,
     applies_to_goal_ids,
     draftValue: sanitizeText(selectedValue, 80),
-    canonical_field_ids: [],
-    why_it_matters: "We only need one clean proxy so this goal stays trackable instead of fuzzy.",
-    coach_voice_line: "Coach note: pick the one you'll actually measure, not the one that sounds more impressive.",
+    canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan],
+    why_it_matters: "One honest proxy sharpens the appearance goal. If you do not have one yet, I can keep the first block more conservative.",
+    coach_voice_line: "Coach note: pick the one you'll actually track. If neither is ready, skipping for now is fine.",
   })
 );
 
@@ -790,6 +805,125 @@ const buildAppearanceProxyWaistAnchor = ({ requirement = null, question = {}, pr
     coach_voice_line: "Coach note: a rough tape check is fine here. I just want a repeatable starting point.",
     unit: "in",
     unit_options: [{ value: "in", label: "in" }],
+  });
+};
+
+const buildSwimBenchmarkAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], answers = {} } = {}) => {
+  const storedSwimAnchor = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor);
+  return buildMissingAnchor({
+    field_id: INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor,
+    requirement,
+    question: {
+      ...question,
+      prompt: "What's one recent swim anchor you can use right now?",
+    },
+    label: "Recent swim anchor",
+    input_type: "text",
+    expected_value_type: "swim_benchmark",
+    placeholder: "Example: 1000 yd in 22:30",
+    helper_text: "One recent distance or time anchor is enough.",
+    validation: {
+      kind: "recent_swim_anchor",
+      message: "Add one recent swim distance or time anchor.",
+    },
+    examples: ["1000 yd in 22:30", "500 m in 11:40"],
+    priority,
+    applies_to_goal_ids,
+    draftValue: sanitizeText(storedSwimAnchor?.raw || "", 160),
+    canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor],
+    why_it_matters: "A recent swim anchor keeps the first block honest about how much swim work belongs in week one.",
+    coach_voice_line: "Coach note: one recent swim distance or time is enough. I just need a real anchor.",
+  });
+};
+
+const buildSwimRealityAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], answers = {} } = {}) => {
+  const storedReality = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.swimAccessReality);
+  return buildMissingAnchor({
+    field_id: INTAKE_COMPLETENESS_FIELDS.swimAccessReality,
+    requirement,
+    question: {
+      ...question,
+      prompt: "Where is this swim goal mostly happening right now?",
+    },
+    label: "Water reality",
+    input_type: "choice_chips",
+    expected_value_type: "swim_access_reality",
+    helper_text: "This keeps the early swim block honest about your real setup.",
+    validation: {
+      kind: "swim_access_reality",
+      message: "Choose whether this is mostly pool, open water, or both.",
+    },
+    options: [
+      {
+        value: SWIM_ACCESS_REALITY_VALUES.pool,
+        label: "Pool",
+        description: "Pool access is the main reality right now.",
+      },
+      {
+        value: SWIM_ACCESS_REALITY_VALUES.openWater,
+        label: "Open water",
+        description: "Open-water reality is the main constraint right now.",
+      },
+      {
+        value: SWIM_ACCESS_REALITY_VALUES.both,
+        label: "Both",
+        description: "You can use both pool structure and open-water practice.",
+      },
+    ],
+    priority,
+    applies_to_goal_ids,
+    draftValue: sanitizeText(storedReality?.value || storedReality?.raw || "", 80),
+    canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.swimAccessReality],
+    why_it_matters: "Pool and open-water reality change the kind of swim progression that makes sense first.",
+    coach_voice_line: "Coach note: pick the setup you can actually use most often right now.",
+  });
+};
+
+const buildStartingCapacityAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], answers = {} } = {}) => {
+  const storedStartingCapacity = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor);
+  return buildMissingAnchor({
+    field_id: INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor,
+    requirement,
+    question: {
+      ...question,
+      prompt: "What feels repeatable right now?",
+    },
+    label: "Safe starting capacity",
+    input_type: "choice_chips",
+    expected_value_type: "starting_capacity",
+    helper_text: "Pick the starting point you could repeat this week without digging a hole.",
+    validation: {
+      kind: "starting_capacity",
+      message: "Choose the starting capacity that feels most repeatable right now.",
+    },
+    options: [
+      {
+        value: STARTING_CAPACITY_VALUES.walkOnly,
+        label: "Walks / very short",
+        description: STARTING_CAPACITY_META[STARTING_CAPACITY_VALUES.walkOnly]?.summary || "",
+      },
+      {
+        value: STARTING_CAPACITY_VALUES.easyTen,
+        label: "About 10 easy min",
+        description: STARTING_CAPACITY_META[STARTING_CAPACITY_VALUES.easyTen]?.summary || "",
+      },
+      {
+        value: STARTING_CAPACITY_VALUES.steadyTwenty,
+        label: "About 20-30 min",
+        description: STARTING_CAPACITY_META[STARTING_CAPACITY_VALUES.steadyTwenty]?.summary || "",
+      },
+      {
+        value: STARTING_CAPACITY_VALUES.durableThirty,
+        label: "30+ min repeatable",
+        description: STARTING_CAPACITY_META[STARTING_CAPACITY_VALUES.durableThirty]?.summary || "",
+      },
+    ],
+    priority,
+    applies_to_goal_ids,
+    draftValue: sanitizeText(storedStartingCapacity?.value || storedStartingCapacity?.raw || "", 80),
+    canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor],
+    why_it_matters: "This sets the safe starting dose so the first block fits what you can actually repeat now.",
+    coach_voice_line: "Coach note: pick the repeatable truth, not the best day you had a month ago.",
   });
 };
 
@@ -951,6 +1085,27 @@ const expandRequirementToAnchors = ({
         }
       }
       break;
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.swimBaseline:
+      if (!facts?.recentSwimAnchor?.text) {
+        anchors.push(buildSwimBenchmarkAnchor({
+          requirement,
+          question,
+          priority,
+          applies_to_goal_ids: appliesToGoalIds,
+          answers,
+        }));
+        priority += 1;
+      }
+      if (!facts?.swimAccessReality) {
+        anchors.push(buildSwimRealityAnchor({
+          requirement,
+          question,
+          priority,
+          applies_to_goal_ids: appliesToGoalIds,
+          answers,
+        }));
+      }
+      break;
     case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor:
       if (!facts?.currentBodyweight) {
         anchors.push(buildMissingAnchor({
@@ -1018,14 +1173,14 @@ const expandRequirementToAnchors = ({
       }
       break;
     case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor:
-      if (!facts?.currentBodyweight && !facts?.currentWaist && facts?.progressPhotos !== true) {
+      if (!facts?.currentBodyweight && !facts?.currentWaist && facts?.appearanceProxyPlan !== "skip_for_now") {
         if (!selectedAppearanceProxy) {
           anchors.push(buildAppearanceProxyChoiceAnchor({
             requirement,
             question,
             priority,
             applies_to_goal_ids: appliesToGoalIds,
-            selectedValue: selectedAppearanceProxy,
+            selectedValue: selectedAppearanceProxy || facts?.appearanceProxyPlan || "",
           }));
         } else if (selectedAppearanceProxy === INTAKE_COMPLETENESS_FIELDS.currentBodyweight) {
           anchors.push(buildAppearanceProxyBodyweightAnchor({
@@ -1044,6 +1199,17 @@ const expandRequirementToAnchors = ({
             answers,
           }));
         }
+      }
+      break;
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.startingCapacity:
+      if (!facts?.startingCapacityAnchor) {
+        anchors.push(buildStartingCapacityAnchor({
+          requirement,
+          question,
+          priority,
+          applies_to_goal_ids: appliesToGoalIds,
+          answers,
+        }));
       }
       break;
     default: {
@@ -1349,6 +1515,7 @@ export const validateMissingAnchorAnswer = ({
       const allowedValues = new Set([
         INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
         INTAKE_COMPLETENESS_FIELDS.currentWaist,
+        "skip_for_now",
       ]);
       if (!allowedValues.has(chosenValue)) {
         return {
@@ -1366,8 +1533,20 @@ export const validateMissingAnchorAnswer = ({
         formError: "",
         parsed_value: chosenValue,
         parse_confidence: 1,
-        canonicalWrites: [],
-        summaryText: chosenValue === INTAKE_COMPLETENESS_FIELDS.currentWaist
+        canonicalWrites: chosenValue === "skip_for_now"
+          ? [
+              buildBindingWrite({
+                fieldKey: INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan,
+                record: {
+                  raw: "skip for now",
+                  value: "skip_for_now",
+                },
+              }),
+            ]
+          : [],
+        summaryText: chosenValue === "skip_for_now"
+          ? "Skip for now"
+          : chosenValue === INTAKE_COMPLETENESS_FIELDS.currentWaist
           ? "Waist"
           : "Bodyweight",
         parseErrorCode: "",
@@ -1597,6 +1776,110 @@ export const validateMissingAnchorAnswer = ({
         parseErrorCode: "",
       };
     }
+    case INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor: {
+      const swimBenchmark = parseSwimBenchmarkText(cleanRaw);
+      if (!swimBenchmark) {
+        return {
+          isValid: false,
+          formError: validationMessage,
+          parsed_value: null,
+          parse_confidence: 0,
+          canonicalWrites: [],
+          summaryText: "",
+          parseErrorCode: "invalid_swim_anchor",
+        };
+      }
+      return {
+        isValid: true,
+        formError: "",
+        parsed_value: {
+          canonical_field_id: INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor,
+          value: swimBenchmark.raw,
+          distance: swimBenchmark.distance,
+          distanceUnit: swimBenchmark.distanceUnit,
+          duration: swimBenchmark.duration,
+        },
+        parse_confidence: 0.95,
+        canonicalWrites: [
+          buildBindingWrite({
+            fieldKey: INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor,
+            record: {
+              raw: swimBenchmark.raw,
+              value: swimBenchmark.raw,
+              distance: swimBenchmark.distance,
+              distanceUnit: swimBenchmark.distanceUnit,
+              duration: swimBenchmark.duration,
+            },
+          }),
+        ],
+        summaryText: swimBenchmark.raw,
+        parseErrorCode: "",
+      };
+    }
+    case INTAKE_COMPLETENESS_FIELDS.swimAccessReality: {
+      const swimAccessReality = normalizeSwimAccessRealityValue(answerObject?.value || cleanRaw);
+      if (!swimAccessReality) {
+        return {
+          isValid: false,
+          formError: validationMessage,
+          parsed_value: null,
+          parse_confidence: 0,
+          canonicalWrites: [],
+          summaryText: "",
+          parseErrorCode: "invalid_swim_access_reality",
+        };
+      }
+      const swimAccessRealityLabel = describeSwimAccessReality(swimAccessReality) || swimAccessReality.replaceAll("_", " ");
+      return {
+        isValid: true,
+        formError: "",
+        parsed_value: swimAccessReality,
+        parse_confidence: 1,
+        canonicalWrites: [
+          buildBindingWrite({
+            fieldKey: INTAKE_COMPLETENESS_FIELDS.swimAccessReality,
+            record: {
+              raw: swimAccessRealityLabel,
+              value: swimAccessReality,
+            },
+          }),
+        ],
+        summaryText: swimAccessRealityLabel,
+        parseErrorCode: "",
+      };
+    }
+    case INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor: {
+      const startingCapacity = normalizeStartingCapacityValue(answerObject?.value || cleanRaw);
+      if (!startingCapacity) {
+        return {
+          isValid: false,
+          formError: validationMessage,
+          parsed_value: null,
+          parse_confidence: 0,
+          canonicalWrites: [],
+          summaryText: "",
+          parseErrorCode: "invalid_starting_capacity",
+        };
+      }
+      const startingCapacityLabel = describeStartingCapacity(startingCapacity) || startingCapacity.replaceAll("_", " ");
+      return {
+        isValid: true,
+        formError: "",
+        parsed_value: startingCapacity,
+        parse_confidence: 1,
+        canonicalWrites: [
+          buildBindingWrite({
+            fieldKey: INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor,
+            record: {
+              raw: startingCapacityLabel,
+              value: startingCapacity,
+            },
+          }),
+        ],
+        summaryText: startingCapacityLabel,
+        parseErrorCode: "",
+      };
+    }
     case INTAKE_COMPLETENESS_FIELDS.targetWeightChange: {
       const rawNumber = toFiniteNumber(answerObject?.value ?? answer_value ?? cleanRaw, null);
       let targetChange = Number.isFinite(rawNumber) ? rawNumber : parseTargetWeightChange(cleanRaw);
@@ -1794,6 +2077,7 @@ export const applyMissingAnchorAnswer = ({
     binding: {
       anchor_id: sanitizeText(anchor?.anchor_id || "", 120),
       field_id: sanitizeText(anchor?.field_id || "", 80),
+      canonical_field_ids: acceptedWrites.map((item) => sanitizeText(item?.fieldKey || "", 80)).filter(Boolean),
       raw_text: sanitizeText(raw_text || (answer_value ?? ""), 220),
       parsed_value: clonePlainValue(appliedValidation.parsed_value),
       parse_confidence: Number(appliedValidation.parse_confidence || 0),
@@ -2717,7 +3001,12 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
         }
         const nextAnchorBindingLog = anchorBindingLog.slice(0, -1);
         const nextBindingsByFieldId = rebuildBindingsByFieldIdFromLog(nextAnchorBindingLog);
-        const nextAnswers = removeCompletenessField(currentDraft.answers || {}, lastBinding.field_id);
+        const nextAnswers = [
+          sanitizeText(lastBinding.field_id || "", 80),
+          ...toArray(lastBinding.canonical_field_ids).map((item) => sanitizeText(item, 80)).filter(Boolean),
+        ]
+          .filter(Boolean)
+          .reduce((acc, fieldKey) => removeCompletenessField(acc, fieldKey), currentDraft.answers || {});
         const nextDraft = buildDeterministicIntakeDraft({
           answers: nextAnswers,
           typedIntakePacket: currentDraft.typedIntakePacket,
