@@ -98,6 +98,22 @@ test("half-marathon goals keep a specific event summary instead of generic runni
   assert.doesNotMatch(result.resolvedGoals[0].summary, /hybrid|aerobic base/i);
 });
 
+test("swim goals keep swim-specific summaries and domain adapter hints", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "swim a faster mile",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "swim a faster mile" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "performance");
+  assert.equal(result.resolvedGoals[0].summary, "Swim a faster mile");
+  assert.equal(result.resolvedGoals[0].primaryDomain, "swimming_endurance_technique");
+  assert.ok(result.resolvedGoals[0].candidateDomainAdapters.includes("swimming_endurance_technique"));
+  assert.ok(result.unresolvedGaps.some((gap) => /pool|swim/i.test(gap)));
+});
+
 test("pure running goals do not become hybrid even if provider interpretation drifts", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "run a 1:45 half marathon",
@@ -164,6 +180,33 @@ test("strength goal parsing preserves four-digit lift targets for downstream rea
   assert.equal(result.resolvedGoals[0].primaryMetric.key, "bench_press_weight");
   assert.equal(result.resolvedGoals[0].primaryMetric.targetValue, "2200");
   assert.match(result.planningGoals[0].measurableTarget, /2200 lb/i);
+});
+
+test("marathon time language in minutes stays attached to the marathon goal instead of collapsing to a generic event", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 30 minute marathon",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "run a 30 minute marathon" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.rawIntent, "run a 30 minute marathon");
+  assert.equal(result.resolvedGoals[0].primaryMetric.key, "marathon_time");
+  assert.equal(result.resolvedGoals[0].primaryMetric.targetValue, "0:30:00");
+  assert.equal(result.resolvedGoals[0].summary, "Run a marathon in 0:30:00");
+});
+
+test("strength parsing prefers the intended benchmark when smaller accessory weights are also mentioned", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "bench press 225 lbs, not 45 lb dumbbells",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "bench press 225 lbs, not 45 lb dumbbells" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals[0].primaryMetric.key, "bench_press_weight");
+  assert.equal(result.resolvedGoals[0].primaryMetric.targetValue, "225");
+  assert.match(result.planningGoals[0].measurableTarget, /225 lb/i);
 });
 
 test("appearance goals stay proxy-measurable and use a time horizon when timing is approximate", () => {
@@ -290,6 +333,23 @@ test("running plus maintained strength stays run-led and event-specific when exp
   assert.equal(result.resolvedGoals[1].goalFamily, "strength");
   assert.equal(result.resolvedGoals[1].summary, "Keep strength while the primary goal leads");
   assert.doesNotMatch(result.resolvedGoals[0].summary, /hybrid/i);
+});
+
+test("dunk goals map into the athletic-power family without breaking the planning model", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "dunk a basketball",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "dunk a basketball" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-11",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "athletic_power");
+  assert.equal(result.resolvedGoals[0].planningCategory, "strength");
+  assert.equal(result.resolvedGoals[0].measurabilityTier, GOAL_MEASURABILITY_TIERS.proxyMeasurable);
+  assert.equal(result.resolvedGoals[0].summary, "Dunk a basketball");
+  assert.match(result.resolvedGoals[0].first30DaySuccessDefinition, /lower-body power sessions/i);
+  assert.equal(result.planningGoals[0].tracking.mode, "progress_tracker");
 });
 
 test("resolved goals populate canonical goal slots so planner-facing normalization reads resolved objects", () => {

@@ -153,3 +153,18 @@ These structures still exist, but they are no longer the intended canonical perf
 - New adaptation logic should read from `performanceRecords`.
 - New review surfaces should render from `performanceRecords`.
 - Legacy mirrors should only exist at compatibility edges until those edges are retired.
+
+## Adaptation Semantics
+
+Performance records are now explicit planner inputs for:
+
+- strain detection after repeated shortfall or harder-than-expected sessions
+- progression hold vs progress decisions
+- near-term quality-session protection
+
+They influence future planning posture, but they do not mutate historical actual records.
+
+## 2026-04-13 Hardening Notes
+
+- Quick logging copy now distinguishes planned versus actual capture more explicitly.
+- Log prepopulation is expected to come from the same canonical prescribed session used by Today and Program.

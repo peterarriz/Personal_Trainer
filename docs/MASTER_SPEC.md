@@ -19,11 +19,14 @@ For any given day, the athlete should be able to open the app and get:
 
 - Deterministic state first. Core decisions must come from structured application state, not UI heuristics or freeform AI output.
 - One shared model, many screens. Today, Program, Coach, Nutrition, and Logging are different views over the same product state.
+- One obvious job per screen. Reading, logging, coaching, and management should not be mixed by default.
 - Planned state and actual state stay separate. Prescription is not evidence.
 - Derived state must be reproducible. If a value can be recalculated from canonical state, it should not become a hidden source of truth.
 - Explicit provenance beats implicit behavior. Users should be able to tell where a recommendation came from.
 - AI may interpret and explain, but it must not silently mutate canonical records.
 - Scope should stay narrow per change. New work should strengthen existing seams instead of creating parallel systems.
+- Mobile-first hierarchy wins. Default views should be concise, scannable, and action-first, with deeper detail behind progressive disclosure.
+- Quiet degraded mode wins over noisy failure UI. Transient cloud problems should preserve local coherency and stay secondary to execution surfaces.
 
 ## Canonical Entities
 
@@ -57,6 +60,8 @@ Derived state should be computed from canonical entities and never treated as in
 - performance trends and progression suggestions
 - coach memory summaries and weekly review summaries
 - trust and provenance labels shown in the UI
+- support-tier labeling for the active planning lane
+- metrics / baseline confidence and planning influence
 
 Rules:
 
@@ -70,21 +75,31 @@ The plan model should resolve top-down in this order:
 
 1. Product mission and user profile
 2. Goal stack
-3. Program block
-4. Weekly intent
-5. Plan week
-6. Plan day
-7. Domain prescriptions
-8. Actual logs and outcomes
-9. Future adaptations
+3. Goal capability packet and domain adapter
+4. Program block
+5. Weekly intent
+6. Plan week
+7. Plan day
+8. Domain prescriptions
+9. Actual logs and outcomes
+10. Future adaptations
 
 Interpretation:
 
 - `ProgramBlock` defines the phase-level purpose.
+- `GoalCapabilityPacket` and the domain adapter map broad user intent into one finite planning substrate.
 - `WeeklyIntent` defines what this specific week is trying to accomplish.
 - `PlanDay` is the single daily operating decision.
 - Domain prescriptions are children of the day, not separate competing plans.
 - Actual outcomes influence future plan generation, never rewrite history.
+
+## Dynamic Planning Engine
+
+- Goal phrasing is normalized into a finite capability ontology.
+- One dominant domain adapter shapes the week without creating a second planner.
+- Training preference is a planning-policy input, not decorative copy.
+- Programs are backbones; Styles are overlays.
+- The engine must emit a short visible change summary whenever the plan materially changes.
 
 ## Daily Decision Engine Responsibilities
 
@@ -122,39 +137,67 @@ Logging rules:
 - A user can log actuals after the fact without mutating the original prescription.
 - Adaptation logic should compare prescribed vs actual, not assume they are the same.
 
+## Account And Reliability
+
+- Auth identity, local runtime state, and cloud persistence must be treated as separate concerns with explicit handoff points.
+- Signup captures minimal account identity; profile setup completes the minimum athlete identity before intake.
+- Logout pauses cloud sync but does not imply account deletion.
+- Delete account must remove the auth identity and clear local caches on the current device.
+- Transient cloud failures should degrade to local-first `SYNC RETRYING` behavior without UI thrash.
+
+## Metrics And Editability
+
+- Goal-relevant baselines must be inspectable and editable after intake.
+- The product should show whether a metric is user-provided, intake-derived, log-inferred, or placeholder.
+- Editing a baseline may change future planning but must not rewrite historical actuals.
+
+## Support Tiers
+
+- Tier 1: first-class deterministic support with stronger domain rules and clearer metrics.
+- Tier 2: bounded but meaningful support through narrower adapters and more guardrails.
+- Tier 3: exploratory fallback through the nearest safe shared mode with explicit uncertainty.
+
 ## Screen Responsibilities
 
 ### Today
 
 - Present the single recommended `PlanDay`.
-- Explain why the decision is correct for today.
+- Make today's session the first thing visible.
 - Capture today's check-in and actual outcome with minimal friction.
-- Surface urgent adjustments, constraints, and success criteria.
+- Keep rationale short by default and expandable on demand.
 
 ### Program
 
-- Show the hierarchy from goals to block to week to day.
-- Make weekly intent and plan continuity visible.
-- Show how today's decision fits the broader plan.
-- Expose future structure without pretending future days are final actuals.
+- Show the current week clearly and the next few weeks clearly.
+- Keep the surface mostly read-oriented, not override-oriented.
+- Make plan continuity and major changes visible without long essays.
+- Push plan-management actions into Settings.
 
 ### Coach
 
 - Translate structured state into coaching guidance, options, and rationale.
-- Propose explicit actions or adjustments that can be accepted or rejected.
+- Help the user make decisions or understand adjustments.
+- Keep configuration and provider controls out of the default conversation flow.
 - Never become an untracked hidden writer of canonical state.
 
 ### Nutrition
 
-- Present the nutrition prescription derived from today's overall decision.
+- Present today's nutrition prescription first.
 - Capture nutrition reality separately from training completion.
-- Show meal structure, hydration, supplements, and practical execution support.
+- Make daily logging quick; keep support content secondary and collapsible.
 
 ### Logging
 
 - Act as the audit layer for what actually happened.
+- Make quick capture the primary action.
 - Preserve the distinction between prescribed, modified, skipped, and completed behavior.
-- Support review, correction, and trend visibility without rewriting plan history.
+- Keep review/history detail secondary so logging stays fast.
+
+### Settings
+
+- Own profile, preferences, theme, plan management, and advanced controls.
+- Own Program/Style activation and goal-management actions that should not live in Program.
+- Hide unfinished integrations and advanced/debug controls by default.
 
 ## AI Boundaries
 
@@ -190,3 +233,14 @@ AI is not allowed to:
 - Deterministic application state outranks AI-generated wording.
 - When certainty is low, the system should say so explicitly instead of sounding authoritative.
 - Trust is earned by traceability, stable contracts, and faithful separation of plan from reality.
+- Default trust copy should stay short: basis, change, and save state first; deeper explanation only when requested.
+
+## 2026-04-13 Hardening Update
+
+- Today, Program, and Log now share one live-day session display contract via `buildDayPrescriptionDisplay(...)`, and Log detailed capture is seeded from that same planned session.
+- Settings now separates Account, Profile, Plan Management, Preferences, and Advanced surfaces instead of one long mixed management page.
+- Coach primary rendering now uses a compact deterministic summary (`headline`, `action`, `why`, `watch`) so common prompts diverge without repeating the same blob.
+- Profile editing in Settings is explicit-save to avoid repeated cloud writes during typing.
+- Missing Program metrics now route directly to Settings → Metrics / Baselines.
+- Daily nutrition logging uses one outcome model based on actual deviation plus friction, while weekly planning stays visible as a separate execution layer.
+- Coach explanation remains helpful, but accepted deterministic actions still own canonical state changes.

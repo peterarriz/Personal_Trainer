@@ -1,11 +1,15 @@
 const { sendJson } = require("./garmin");
 
-const INTAKE_REQUEST_TYPES = new Set(["goal_interpretation", "clarifying_question_generation"]);
+const INTAKE_REQUEST_TYPES = new Set(["goal_interpretation", "clarifying_question_generation", "missing_field_extraction"]);
 const GOAL_TYPES = new Set(["performance", "strength", "body_comp", "appearance", "hybrid", "general_fitness", "re_entry"]);
 const MEASURABILITY_TIERS = new Set(["fully_measurable", "proxy_measurable", "exploratory_fuzzy"]);
 const CONFIDENCE_LEVELS = new Set(["low", "medium", "high"]);
 const TIMELINE_STATUSES = new Set(["realistic", "aggressive", "unclear"]);
 const METRIC_KINDS = new Set(["primary", "proxy"]);
+const EXTRACTION_INPUT_TYPES = new Set(["number", "number_with_unit", "choice_chips", "date_or_month", "strength_top_set", "text"]);
+const COACH_VOICE_ALLOWED_KEYS = new Set(["questionText", "helperText", "reassuranceLine"]);
+const COACH_VOICE_SCHEMA_WORD_PATTERN = /\b(field_id|anchor|schema|canonical|validation|goal_id|required field|transition_id)\b/i;
+const COACH_VOICE_CLAIM_PATTERN = /\b(guarantee|guaranteed|promise|promised|definitely|certainly|for sure|always|never|i know|i can tell|you will definitely|this will absolutely)\b/i;
 const PROVIDER_DEFAULTS = {
   anthropic: {
     model: "claude-haiku-4-5",
@@ -19,6 +23,16 @@ const PROVIDER_DEFAULTS = {
 
 function sanitizeText(value = "", maxLength = 320) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function sanitizeCoachVoiceLine(value = "", maxLength = 220) {
+  return sanitizeText(value, maxLength);
+}
+
+function validateCoachVoiceLine(value = "", maxLength = 220) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized || normalized.length > maxLength) return "";
+  return normalized;
 }
 
 function slugify(value = "", fallback = "") {
@@ -89,13 +103,171 @@ function normalizeMetrics(payload = {}) {
   };
 }
 
-function sanitizeIntakeInterpretationProposal(payload = null) {
+function dedupeLowercase(values = []) {
+  const seen = new Set();
+  return toArray(values)
+    .filter(Boolean)
+    .filter((value) => {
+      const key = String(value || "").toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function normalizeScheduleBoundary(value = {}) {
+  const daysRaw = value?.trainingDaysPerWeek;
+  const trainingDaysPerWeek = Number.isFinite(Number(daysRaw))
+    ? Math.max(0, Math.min(14, Math.round(Number(daysRaw))))
+    : null;
+  return {
+    trainingDaysPerWeek,
+    sessionLength: sanitizeText(value?.sessionLength || "", 40),
+    trainingLocation: sanitizeText(value?.trainingLocation || "", 60),
+  };
+}
+
+function normalizeEquipmentBoundary(value = {}) {
+  return {
+    trainingLocation: sanitizeText(value?.trainingLocation || "", 60),
+    equipment: dedupeLowercase(
+      toArray(value?.equipment)
+        .map((item) => sanitizeText(item, 40))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right))
+    ),
+  };
+}
+
+function normalizeInjuryBoundary(value = {}) {
+  return {
+    injuryText: sanitizeText(value?.injuryText || "", 180),
+    constraints: dedupeLowercase(
+      toArray(value?.constraints)
+        .map((item) => sanitizeText(item, 120))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right))
+    ),
+  };
+}
+
+function arraysEqual(left = [], right = []) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function buildExplicitBoundarySnapshot(statePacket = null) {
+  const intake = statePacket?.intake || {};
+  const scheduleReality = normalizeScheduleBoundary(intake?.scheduleReality || {});
+  const equipmentAccessContext = normalizeEquipmentBoundary(intake?.equipmentAccessContext || {});
+  const injuryConstraintContext = normalizeInjuryBoundary(intake?.injuryConstraintContext || {});
+  return {
+    scheduleReality,
+    equipmentAccessContext,
+    injuryConstraintContext,
+    hasExplicitSchedule: scheduleReality.trainingDaysPerWeek !== null
+      || Boolean(scheduleReality.sessionLength)
+      || Boolean(scheduleReality.trainingLocation),
+    hasExplicitEquipment: equipmentAccessContext.equipment.length > 0,
+    hasExplicitInjury: Boolean(injuryConstraintContext.injuryText) || injuryConstraintContext.constraints.length > 0,
+  };
+}
+
+function buildProposalBoundarySnapshot(payload = {}) {
+  const scheduleSource = payload?.scheduleReality && typeof payload.scheduleReality === "object"
+    ? payload.scheduleReality
+    : payload?.schedule && typeof payload.schedule === "object"
+      ? payload.schedule
+      : {};
+  const equipmentSource = payload?.equipmentAccessContext && typeof payload.equipmentAccessContext === "object"
+    ? payload.equipmentAccessContext
+    : {};
+  const injurySource = payload?.injuryConstraintContext && typeof payload.injuryConstraintContext === "object"
+    ? payload.injuryConstraintContext
+    : {};
+  const scheduleReality = normalizeScheduleBoundary({
+    trainingDaysPerWeek: payload?.trainingDaysPerWeek ?? scheduleSource?.trainingDaysPerWeek,
+    sessionLength: payload?.sessionLength || scheduleSource?.sessionLength || "",
+    trainingLocation: payload?.trainingLocation || scheduleSource?.trainingLocation || "",
+  });
+  const equipmentAccessContext = normalizeEquipmentBoundary({
+    trainingLocation: equipmentSource?.trainingLocation || payload?.trainingLocation || "",
+    equipment: equipmentSource?.equipment || payload?.equipment || payload?.availableEquipment || [],
+  });
+  const injuryConstraintContext = normalizeInjuryBoundary({
+    injuryText: injurySource?.injuryText || payload?.injuryText || "",
+    constraints: injurySource?.constraints || payload?.constraints || payload?.injuryConstraints || [],
+  });
+  return {
+    scheduleReality,
+    equipmentAccessContext,
+    injuryConstraintContext,
+    hasScheduleSuggestion: Boolean(payload?.scheduleReality || payload?.schedule)
+      || scheduleReality.trainingDaysPerWeek !== null
+      || Boolean(scheduleReality.sessionLength)
+      || Boolean(scheduleReality.trainingLocation),
+    hasEquipmentSuggestion: Boolean(payload?.equipmentAccessContext)
+      || equipmentAccessContext.equipment.length > 0,
+    hasInjurySuggestion: Boolean(payload?.injuryConstraintContext)
+      || Boolean(injuryConstraintContext.injuryText)
+      || injuryConstraintContext.constraints.length > 0,
+  };
+}
+
+function collectExplicitBoundaryDrops(payload = null, statePacket = null) {
+  if (!payload || typeof payload !== "object") return [];
+  const explicit = buildExplicitBoundarySnapshot(statePacket);
+  const suggested = buildProposalBoundarySnapshot(payload);
+  const drops = [];
+
+  const scheduleConflict = explicit.hasExplicitSchedule
+    && suggested.hasScheduleSuggestion
+    && (
+      (explicit.scheduleReality.trainingDaysPerWeek !== null
+        && suggested.scheduleReality.trainingDaysPerWeek !== null
+        && explicit.scheduleReality.trainingDaysPerWeek !== suggested.scheduleReality.trainingDaysPerWeek)
+      || (explicit.scheduleReality.sessionLength
+        && suggested.scheduleReality.sessionLength
+        && explicit.scheduleReality.sessionLength.toLowerCase() !== suggested.scheduleReality.sessionLength.toLowerCase())
+      || (explicit.scheduleReality.trainingLocation
+        && suggested.scheduleReality.trainingLocation
+        && explicit.scheduleReality.trainingLocation.toLowerCase() !== suggested.scheduleReality.trainingLocation.toLowerCase())
+    );
+  if (scheduleConflict) drops.push("scheduleReality");
+
+  const equipmentConflict = explicit.hasExplicitEquipment
+    && suggested.hasEquipmentSuggestion
+    && !arraysEqual(explicit.equipmentAccessContext.equipment, suggested.equipmentAccessContext.equipment);
+  if (equipmentConflict) drops.push("equipmentAccessContext");
+
+  const injuryConflict = explicit.hasExplicitInjury
+    && suggested.hasInjurySuggestion
+    && (
+      (explicit.injuryConstraintContext.injuryText
+        && suggested.injuryConstraintContext.injuryText
+        && explicit.injuryConstraintContext.injuryText.toLowerCase() !== suggested.injuryConstraintContext.injuryText.toLowerCase())
+      || (
+        explicit.injuryConstraintContext.constraints.length > 0
+        && suggested.injuryConstraintContext.constraints.length > 0
+        && !arraysEqual(explicit.injuryConstraintContext.constraints, suggested.injuryConstraintContext.constraints)
+      )
+    );
+  if (injuryConflict) drops.push("injuryConstraintContext");
+
+  return dedupeLowercase([
+    ...toArray(payload?.boundaryDrops).map((item) => sanitizeText(item, 80)).filter(Boolean),
+    ...drops,
+  ]);
+}
+
+function sanitizeIntakeInterpretationProposal(payload = null, options = {}) {
   const metrics = normalizeMetrics(payload || {});
   const horizonRaw = Number(payload?.timelineRealism?.suggestedHorizonWeeks ?? payload?.targetHorizonWeeks);
   const confidence = sanitizeText(payload?.confidence || payload?.confidenceLevel || "", 20).toLowerCase();
   const interpretedGoalType = sanitizeText(payload?.interpretedGoalType || payload?.goalFamily || "", 40).toLowerCase();
   const measurabilityTier = sanitizeText(payload?.measurabilityTier || "", 40).toLowerCase();
   const timelineStatus = sanitizeText(payload?.timelineRealism?.status || "", 24).toLowerCase();
+  const boundaryDrops = collectExplicitBoundaryDrops(payload, options?.statePacket || null);
   return {
     interpretedGoalType: GOAL_TYPES.has(interpretedGoalType) ? interpretedGoalType : "general_fitness",
     measurabilityTier: MEASURABILITY_TIERS.has(measurabilityTier) ? measurabilityTier : "exploratory_fuzzy",
@@ -111,6 +283,7 @@ function sanitizeIntakeInterpretationProposal(payload = null) {
     detectedConflicts: dedupeStrings(payload?.detectedConflicts || payload?.tradeoffs || [], 140).slice(0, 4),
     missingClarifyingQuestions: dedupeStrings(payload?.missingClarifyingQuestions || payload?.missingInformation || [], 180).slice(0, 4),
     coachSummary: sanitizeText(payload?.coachSummary || payload?.summary || "", 420),
+    boundaryDrops,
   };
 }
 
@@ -131,6 +304,159 @@ function parseJsonObjectFromText(text = "") {
       return null;
     }
   }
+}
+
+function sanitizeStructuredValue(value = null, depth = 0) {
+  if (depth > 2 || value === null || value === undefined) return null;
+  if (typeof value === "string") return sanitizeText(value, 160);
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    const items = value
+      .slice(0, 6)
+      .map((item) => sanitizeStructuredValue(item, depth + 1))
+      .filter((item) => item !== null && item !== undefined && item !== "");
+    return items;
+  }
+  if (typeof value === "object") {
+    const out = {};
+    Object.entries(value)
+      .slice(0, 8)
+      .forEach(([key, item]) => {
+        const cleanKey = sanitizeText(key, 40);
+        const cleanValue = sanitizeStructuredValue(item, depth + 1);
+        if (!cleanKey || cleanValue === null || cleanValue === undefined || cleanValue === "") return;
+        out[cleanKey] = cleanValue;
+      });
+    return Object.keys(out).length ? out : null;
+  }
+  return null;
+}
+
+function sanitizeEvidenceSpan(span = {}) {
+  const start = Number(span?.start);
+  const end = Number(span?.end);
+  const text = sanitizeText(span?.text || "", 120);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || !text) return null;
+  return {
+    start: Math.max(0, Math.round(start)),
+    end: Math.max(Math.round(start), Math.round(end)),
+    text,
+  };
+}
+
+function sanitizeMissingField(field = {}) {
+  const field_id = sanitizeText(field?.field_id || "", 80);
+  const label = sanitizeText(field?.label || "", 120);
+  const input_type = sanitizeText(field?.input_type || "text", 30).toLowerCase();
+  const validation = field?.validation && typeof field.validation === "object"
+    ? {
+        kind: sanitizeText(field.validation.kind || "", 80),
+        message: sanitizeText(field.validation.message || "", 220),
+        ...(Number.isFinite(field.validation.min) ? { min: field.validation.min } : {}),
+        ...(Number.isFinite(field.validation.max) ? { max: field.validation.max } : {}),
+        ...(field.validation.direction ? { direction: sanitizeText(field.validation.direction, 20).toLowerCase() } : {}),
+      }
+    : {};
+  if (!field_id || !label || !EXTRACTION_INPUT_TYPES.has(input_type)) return null;
+  return {
+    field_id,
+    label,
+    input_type,
+    validation,
+    examples: dedupeStrings(field?.examples || [], 120).slice(0, 4),
+    options: toArray(field?.options)
+      .map((item) => ({
+        value: sanitizeText(item?.value || "", 80),
+        label: sanitizeText(item?.label || item?.value || "", 120),
+      }))
+      .filter((item) => item.value && item.label)
+      .slice(0, 6),
+    unit_options: toArray(field?.unit_options)
+      .map((item) => ({
+        value: sanitizeText(item?.value || item, 40),
+        label: sanitizeText(item?.label || item, 60),
+      }))
+      .filter((item) => item.value && item.label)
+      .slice(0, 4),
+  };
+}
+
+function sanitizeFieldExtractionRequest(request = {}) {
+  return {
+    utterance: sanitizeText(request?.utterance || "", 600),
+    context: sanitizeText(request?.context || "", 220),
+    missingFields: toArray(request?.missingFields || request?.missing_fields)
+      .map((item) => sanitizeMissingField(item))
+      .filter(Boolean)
+      .slice(0, 6),
+  };
+}
+
+function sanitizeCoachVoiceRequest(request = {}) {
+  return {
+    field_id: sanitizeText(request?.field_id || "", 80),
+    label: sanitizeText(request?.label || "", 140),
+    question_template: sanitizeText(request?.question_template || request?.questionText || "", 220),
+    why_it_matters: sanitizeText(request?.why_it_matters || "", 220),
+    examples: dedupeStrings(request?.examples || [], 120).slice(0, 4),
+    tone: sanitizeText(request?.tone || "supportive_trainer", 60) || "supportive_trainer",
+    context: sanitizeText(request?.context || "", 180),
+  };
+}
+
+function sanitizeMissingFieldExtractionProposal(payload = null, extractionRequest = {}) {
+  const allowedFieldIds = new Set(
+    toArray(extractionRequest?.missingFields).map((item) => sanitizeText(item?.field_id || "", 80)).filter(Boolean)
+  );
+  const seenFieldIds = new Set();
+  const candidates = toArray(payload?.candidates || payload?.fields)
+    .map((candidate) => {
+      const field_id = sanitizeText(candidate?.field_id || candidate?.fieldId || "", 80);
+      if (!field_id || !allowedFieldIds.has(field_id) || seenFieldIds.has(field_id)) return null;
+      const raw_text = sanitizeText(candidate?.raw_text || candidate?.raw || candidate?.text || "", 220);
+      const confidenceRaw = Number(candidate?.confidence ?? candidate?.parse_confidence ?? 0);
+      const confidence = Number.isFinite(confidenceRaw) ? Math.max(0, Math.min(1, confidenceRaw)) : 0;
+      if (!raw_text) return null;
+      seenFieldIds.add(field_id);
+      return {
+        field_id,
+        confidence,
+        raw_text,
+        parsed_value: sanitizeStructuredValue(candidate?.parsed_value ?? candidate?.value ?? null),
+        evidence_spans: toArray(candidate?.evidence_spans || candidate?.evidenceSpans)
+          .map((span) => sanitizeEvidenceSpan(span))
+          .filter(Boolean)
+          .slice(0, 3),
+      };
+    })
+    .filter(Boolean);
+  return { candidates };
+}
+
+function sanitizeCoachVoiceProposal(payload = null) {
+  const source = payload?.phrasing && typeof payload?.phrasing === "object"
+    ? payload.phrasing
+    : payload;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return null;
+  const keys = Object.keys(source);
+  if (!keys.length || keys.some((key) => !COACH_VOICE_ALLOWED_KEYS.has(key))) return null;
+
+  const questionText = validateCoachVoiceLine(source?.questionText || "", 220);
+  const helperText = validateCoachVoiceLine(source?.helperText || "", 220);
+  const reassuranceLine = validateCoachVoiceLine(source?.reassuranceLine || "", 180);
+  if (!questionText || !helperText || !reassuranceLine) return null;
+
+  const allLines = [questionText, helperText, reassuranceLine];
+  if (allLines.some((line) => COACH_VOICE_SCHEMA_WORD_PATTERN.test(line) || COACH_VOICE_CLAIM_PATTERN.test(line))) return null;
+  if ((questionText.match(/\?/g) || []).length !== 1) return null;
+  if (/\?/.test(helperText) || /\?/.test(reassuranceLine)) return null;
+
+  return {
+    questionText,
+    helperText,
+    reassuranceLine,
+  };
 }
 
 function getEnv(...names) {
@@ -199,6 +525,76 @@ RULES:
 - confidence should reflect how complete and usable the current goal language is.
 - coachSummary must stay under 120 words and remain interpretation-only.
 - Never claim the goal is impossible. If the timeline is aggressive, say what is realistic first.`;
+}
+
+function buildMissingFieldExtractionSystemPrompt({
+  statePacket = null,
+  extractionRequest = null,
+} = {}) {
+  return `You are a bounded intake extraction assistant inside a fitness app. Respond ONLY with valid JSON, no other text.
+
+Your source of truth is the typed intake packet and extraction request below.
+You may propose candidate values only for the explicitly allowed missing fields.
+You are not the system of record and you may not write canonical goals, plan state, or any field not listed in missingFields.
+AI_STATE_PACKET_JSON:${JSON.stringify(statePacket || {})}
+EXTRACTION_REQUEST_JSON:${JSON.stringify(extractionRequest || {})}
+
+Return JSON in this exact format:
+{
+  "candidates": [
+    {
+      "field_id": "field_id_from_missingFields",
+      "confidence": 0.0,
+      "raw_text": "exact supporting text",
+      "parsed_value": {},
+      "evidence_spans": [
+        { "start": 0, "end": 7, "text": "supporting text" }
+      ]
+    }
+  ]
+}
+
+RULES:
+- Only use field_id values that appear in missingFields.
+- Max 1 candidate per field_id.
+- If the utterance does not clearly support a field, omit it.
+- confidence must be between 0 and 1 and reflect extraction certainty only.
+- evidence_spans must quote exact supporting text from the utterance.
+- parsed_value must stay small and schema-aligned.
+- Use these schema hints:
+  * number_with_unit => { "value": 185, "unit": "lb" }
+  * choice_chips => { "value": "option_value" }
+  * date_or_month => { "mode": "date|month", "value": "2026-10-12|2026-10", "raw": "October 12" }
+  * strength_top_set => { "weight": 185, "reps": 5, "raw": "185 x 5" }
+  * text => "short parsed text"
+- If nothing is clear, return { "candidates": [] }.`;
+}
+
+function buildCoachVoiceSystemPrompt({
+  statePacket = null,
+  coachVoiceRequest = null,
+} = {}) {
+  return `You are writing intake phrasing for a fitness app. Respond ONLY with valid JSON, no other text.
+
+You are rephrasing one already-chosen intake field. You may not introduce new questions, new required details, goal changes, or coaching claims.
+AI_STATE_PACKET_JSON:${JSON.stringify(statePacket || {})}
+COACH_VOICE_REQUEST_JSON:${JSON.stringify(coachVoiceRequest || {})}
+
+Return JSON in this exact format:
+{
+  "questionText": "single friendly question for the same field only",
+  "helperText": "one short sentence explaining why this helps",
+  "reassuranceLine": "one short reassuring coach note"
+}
+
+RULES:
+- Keep the same meaning as question_template.
+- Do not ask for any additional information beyond this one field.
+- Do not mention field_id, anchors, schemas, validation, canonical state, or goal changes.
+- Do not make promises, medical claims, or certainty claims.
+- questionText must be one question only.
+- helperText and reassuranceLine must be statements, not questions.
+- Keep questionText <= 160 chars, helperText <= 170 chars, reassuranceLine <= 170 chars.`;
 }
 
 function getAnthropicApiKey() {
@@ -329,6 +725,8 @@ function logGatewayEvent(event = {}) {
 async function runIntakeProviderGateway({
   statePacket = null,
   requestType = "goal_interpretation",
+  extractionRequest = null,
+  coachVoiceRequest = null,
   requestedProvider = "",
   requestedModel = "",
   fetchImpl = fetch,
@@ -336,6 +734,8 @@ async function runIntakeProviderGateway({
   const startedAt = Date.now();
   const provider = resolveConfiguredProvider(requestedProvider);
   const normalizedRequestType = INTAKE_REQUEST_TYPES.has(requestType) ? requestType : "goal_interpretation";
+  const normalizedExtractionRequest = sanitizeFieldExtractionRequest(extractionRequest || {});
+  const normalizedCoachVoiceRequest = sanitizeCoachVoiceRequest(coachVoiceRequest || {});
   const model = sanitizeText(requestedModel || resolveProviderModel(provider), 80);
   if (!provider || !model) {
     const meta = {
@@ -354,8 +754,22 @@ async function runIntakeProviderGateway({
   const providerResult = await requestProviderInterpretation({
     provider,
     model,
-    systemPrompt: buildIntakeInterpretationSystemPrompt(statePacket),
-    userPrompt: "Interpret the typed intake packet and return a JSON proposal only.",
+    systemPrompt: normalizedRequestType === "missing_field_extraction"
+      ? buildMissingFieldExtractionSystemPrompt({
+          statePacket,
+          extractionRequest: normalizedExtractionRequest,
+        })
+      : normalizedRequestType === "clarifying_question_generation"
+      ? buildCoachVoiceSystemPrompt({
+          statePacket,
+          coachVoiceRequest: normalizedCoachVoiceRequest,
+        })
+      : buildIntakeInterpretationSystemPrompt(statePacket),
+    userPrompt: normalizedRequestType === "missing_field_extraction"
+      ? "Extract only explicitly allowed missing fields from the user's utterance and return a JSON proposal only."
+      : normalizedRequestType === "clarifying_question_generation"
+      ? "Rewrite the known intake field copy only and return JSON phrasing only."
+      : "Interpret the typed intake packet and return a JSON proposal only.",
     fetchImpl,
   });
   if (!providerResult.ok) {
@@ -387,7 +801,28 @@ async function runIntakeProviderGateway({
     return { ok: false, meta, interpretation: null, rawText: providerResult.rawText || "" };
   }
 
-  const interpretation = sanitizeIntakeInterpretationProposal(parsed);
+  const interpretation = normalizedRequestType === "missing_field_extraction" || normalizedRequestType === "clarifying_question_generation"
+    ? null
+    : sanitizeIntakeInterpretationProposal(parsed, { statePacket });
+  const extraction = normalizedRequestType === "missing_field_extraction"
+    ? sanitizeMissingFieldExtractionProposal(parsed, normalizedExtractionRequest)
+    : null;
+  const phrasing = normalizedRequestType === "clarifying_question_generation"
+    ? sanitizeCoachVoiceProposal(parsed)
+    : null;
+  if (normalizedRequestType === "clarifying_question_generation" && !phrasing) {
+    const meta = {
+      requestType: normalizedRequestType,
+      provider,
+      model,
+      latencyMs: Date.now() - startedAt,
+      usage: providerResult.usage || null,
+      failureReason: "invalid_provider_json",
+      status: "failed",
+    };
+    logGatewayEvent(meta);
+    return { ok: false, meta, interpretation: null, extraction: null, phrasing: null, rawText: providerResult.rawText || "" };
+  }
   const meta = {
     requestType: normalizedRequestType,
     provider,
@@ -398,7 +833,7 @@ async function runIntakeProviderGateway({
     status: "ok",
   };
   logGatewayEvent(meta);
-  return { ok: true, meta, interpretation, rawText: providerResult.rawText || "" };
+  return { ok: true, meta, interpretation, extraction, phrasing, rawText: providerResult.rawText || "" };
 }
 
 async function readJsonBody(req) {
@@ -409,11 +844,17 @@ async function readJsonBody(req) {
 }
 
 module.exports = {
+  buildCoachVoiceSystemPrompt,
+  buildMissingFieldExtractionSystemPrompt,
   buildIntakeInterpretationSystemPrompt,
   parseJsonObjectFromText,
   readJsonBody,
   resolveConfiguredProvider,
   runIntakeProviderGateway,
+  sanitizeCoachVoiceProposal,
+  sanitizeCoachVoiceRequest,
+  sanitizeFieldExtractionRequest,
   sanitizeIntakeInterpretationProposal,
+  sanitizeMissingFieldExtractionProposal,
   sendJson,
 };

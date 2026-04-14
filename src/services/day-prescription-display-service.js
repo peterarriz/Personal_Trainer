@@ -1,6 +1,8 @@
 import { sanitizeDisplayCopy } from "./text-format-service.js";
+import { getMovementExplanation } from "./movement-explanation-service.js";
 
 const sanitizeText = (value = "", maxLength = 240) => sanitizeDisplayCopy(String(value || "").replace(/\s+/g, " ").trim()).slice(0, maxLength);
+const normalizeDisplayNumber = (value = "") => sanitizeText(value, 40);
 
 const TYPE_LABELS = {
   "easy-run": "Easy run",
@@ -8,6 +10,13 @@ const TYPE_LABELS = {
   "long-run": "Long run",
   "run+strength": "Run + strength",
   "strength+prehab": "Strength",
+  "swim-technique": "Technique swim",
+  "swim-aerobic": "Aerobic swim",
+  "swim-threshold": "Threshold swim",
+  "swim-endurance": "Endurance swim",
+  "power-skill": "Power session",
+  "reactive-plyo": "Reactive plyometrics",
+  "sprint-support": "Sprint support",
   conditioning: "Conditioning",
   strength: "Strength",
   recovery: "Recovery",
@@ -20,6 +29,13 @@ const PURPOSE_BY_TYPE = {
   "long-run": "Build endurance and resilience.",
   "run+strength": "Pair run quality with a strength touchpoint.",
   "strength+prehab": "Build or maintain strength while supporting durability.",
+  "swim-technique": "Build technique, rhythm, and clean swim mechanics.",
+  "swim-aerobic": "Build aerobic swim durability without turning the day into a race effort.",
+  "swim-threshold": "Build threshold pacing while protecting technique quality.",
+  "swim-endurance": "Build sustained swim endurance and pacing control.",
+  "power-skill": "Build explosive intent without sloppy fatigue.",
+  "reactive-plyo": "Build reactive ability and clean elastic contacts.",
+  "sprint-support": "Keep sprint and approach rhythm connected to the week.",
   conditioning: "Keep conditioning support in the week without a full run focus.",
   strength: "Build or maintain strength.",
   recovery: "Absorb work and protect the next productive session.",
@@ -38,6 +54,13 @@ const SESSION_LABEL_RULES = [
   { pattern: /^supportive conditioning run$/i, label: "Easy conditioning run" },
   { pattern: /^supportive run\/walk$/i, label: "Easy run/walk" },
   { pattern: /^strength focus$/i, label: "Full-body strength focus" },
+  { pattern: /^technique swim$/i, label: "Technique swim" },
+  { pattern: /^aerobic swim$/i, label: "Aerobic swim" },
+  { pattern: /^threshold swim$/i, label: "Threshold swim" },
+  { pattern: /^long aerobic swim$/i, label: "Long aerobic swim" },
+  { pattern: /^jump technique \+ power$/i, label: "Jump technique + power" },
+  { pattern: /^reactive plyometrics$/i, label: "Reactive plyometrics" },
+  { pattern: /^sprint \/ approach support$/i, label: "Sprint / approach support" },
   { pattern: /^short version strength$/i, label: "Short full-body strength A" },
   { pattern: /^short version strength ([ab])$/i, build: (match) => `Short full-body strength ${String(match?.[1] || "").toUpperCase()}` },
 ];
@@ -57,17 +80,13 @@ const resolveSessionLabel = (training = {}) => {
 };
 
 const buildMovementNote = (training = {}, sessionLabel = "") => {
+  const explanation = getMovementExplanation(sessionLabel || training?.label || training?.type || "");
+  if (explanation?.found && explanation.whatItIs) return explanation.whatItIs;
+
   const rawLabel = sanitizeText(training?.label || "", 120);
   const safeLabel = sanitizeText(sessionLabel || rawLabel, 120);
   if (!safeLabel) return "";
-  if (/complex/i.test(rawLabel)) return "A complex strings a few movements together before you rest.";
   if (/push\/pull/i.test(rawLabel) || /push\/pull/i.test(safeLabel)) return "Push/pull means you alternate pressing and rowing or pull-down work in the same session.";
-  if (/durability/i.test(rawLabel) || /durability/i.test(safeLabel)) return "Durability work is lighter accessory or mobility work that keeps tissues and joints happy.";
-  if (/strength (?:priority )?[ab]\b/i.test(rawLabel) || /^full-body strength [ab]\b/i.test(safeLabel.toLowerCase())) {
-    return "A/B labels mean alternating lift templates so you hit the same patterns without repeating the exact same order.";
-  }
-  if (/circuit/i.test(safeLabel)) return "Circuit means you move through paired lifts with shorter rests to keep the session moving.";
-  if (/otf|interval/i.test(rawLabel) || /interval/i.test(safeLabel)) return "Intervals are controlled hard efforts with easy recoveries between them.";
   return "";
 };
 
@@ -78,6 +97,9 @@ const PURPOSE_LABEL_RULES = [
   { pattern: /strength finish/i, purpose: "Get the main run done, then add a short strength touchpoint." },
   { pattern: /conditioning intervals/i, purpose: "Build work capacity without turning the day into a full run session." },
   { pattern: /easy conditioning run|easy run\/walk/i, purpose: "Add low-stress aerobic work without stealing recovery from bigger sessions." },
+  { pattern: /technique swim/i, purpose: "Groove technique and aerobic rhythm without turning the day into a grind." },
+  { pattern: /threshold swim/i, purpose: "Build threshold swim pacing while keeping stroke quality honest." },
+  { pattern: /jump technique \+ power|reactive plyometrics/i, purpose: "Build explosive quality while protecting tendon freshness." },
 ];
 
 const estimateRunDuration = (detail = "", fallbackType = "") => {
@@ -102,9 +124,240 @@ const estimateStrengthDuration = (training = {}) => (
   || "20-35 min"
 );
 
+const resolvePrescribedExercises = ({ training = {}, prescribedExercises = [] } = {}) => {
+  if (Array.isArray(prescribedExercises) && prescribedExercises.length > 0) return prescribedExercises;
+  const candidates = [
+    ...(Array.isArray(training?.prescribedExercises) ? training.prescribedExercises : []),
+    ...(Array.isArray(training?.exerciseRows) ? training.exerciseRows : []),
+    ...(Array.isArray(training?.strengthExercises) ? training.strengthExercises : []),
+    ...(Array.isArray(training?.exercises) ? training.exercises : []),
+    ...(Array.isArray(training?.strength?.rows) ? training.strength.rows : []),
+  ];
+  return candidates.filter(Boolean);
+};
+
+const parseExerciseStructure = (entry = {}) => {
+  const sets = normalizeDisplayNumber(entry?.sets || "");
+  const reps = normalizeDisplayNumber(entry?.reps || "");
+  if (sets && reps) return sanitizeText(`${sets} x ${reps}`, 80);
+  if (sets) return sanitizeText(sets, 80);
+  if (reps) return sanitizeText(reps, 80);
+  return "";
+};
+
+const buildPlanRow = ({
+  title = "",
+  detail = "",
+  note = "",
+} = {}) => ({
+  title: sanitizeText(title, 120) || "Planned block",
+  detail: sanitizeText(detail, 140),
+  note: sanitizeText(note, 180),
+});
+
+const buildRunPlanRows = (training = {}) => {
+  const run = training?.run || null;
+  if (!run) return [];
+  const focus = sanitizeText(run?.t || training?.label || "Run", 80);
+  if (/interval/i.test(focus)) {
+    return [
+      buildPlanRow({
+        title: "Warm-up jog",
+        detail: "10-15 min easy + drills",
+        note: "Stay relaxed and gradually raise cadence.",
+      }),
+      buildPlanRow({
+        title: "Main interval set",
+        detail: run?.d || "As prescribed",
+        note: "Recoveries are built into the set. Keep form tall.",
+      }),
+      buildPlanRow({
+        title: "Cool-down",
+        detail: "8-12 min easy jog or walk",
+        note: "Bring effort down gradually before you stop.",
+      }),
+    ];
+  }
+  if (/tempo|steady/i.test(focus)) {
+    return [
+      buildPlanRow({
+        title: "Warm-up",
+        detail: "10-15 min easy + strides",
+        note: "Prime mechanics before the harder work starts.",
+      }),
+      buildPlanRow({
+        title: "Tempo segment",
+        detail: run?.d || "As prescribed",
+        note: "Controlled discomfort with even pacing.",
+      }),
+      buildPlanRow({
+        title: "Cool-down",
+        detail: "8-12 min easy",
+        note: "Finish smooth and conversational.",
+      }),
+    ];
+  }
+  if (/long/i.test(focus)) {
+    return [
+      buildPlanRow({
+        title: "Long aerobic run",
+        detail: run?.d || "As prescribed",
+        note: "Stay easy enough to keep the whole session repeatable.",
+      }),
+      buildPlanRow({
+        title: "Fuel and hydration",
+        detail: "Water + carbs as needed",
+        note: "Start fueling before you feel depleted.",
+      }),
+      buildPlanRow({
+        title: "Post-run reset",
+        detail: "5-10 min walk + calf/hip mobility",
+        note: "Downshift gradually to support recovery.",
+      }),
+    ];
+  }
+  return [
+    buildPlanRow({
+      title: "Easy aerobic run",
+      detail: run?.d || "As prescribed",
+      note: "Keep the pace conversational and smooth.",
+    }),
+    buildPlanRow({
+      title: "Strides (optional)",
+      detail: "4-6 x 15-20 sec",
+      note: "Quick feet, relaxed upper body.",
+    }),
+    buildPlanRow({
+      title: "Cool-down walk",
+      detail: "5 min",
+      note: "Finish calm and controlled.",
+    }),
+  ];
+};
+
+const buildSwimPlanRows = (training = {}) => {
+  const swim = training?.swim || null;
+  if (!swim) return [];
+  const primaryLine = sanitizeText(swim?.setLine || swim?.d || "", 140);
+  return [
+    buildPlanRow({
+      title: sanitizeText(swim?.focus || training?.label || "Swim set", 120),
+      detail: primaryLine || "As prescribed",
+      note: sanitizeText(swim?.note || "Keep the stroke quality cleaner than the fatigue.", 180),
+    }),
+  ];
+};
+
+const buildPowerPlanRows = (training = {}) => {
+  const power = training?.power || null;
+  if (!power && !training?.optionalSecondary && !training?.strengthDose) return [];
+  return [
+    buildPlanRow({
+      title: sanitizeText(power?.focus || training?.label || "Power block", 120),
+      detail: sanitizeText(power?.support || power?.dose || training?.strengthDose || training?.fallback || "As prescribed", 140),
+      note: sanitizeText(training?.intensityGuidance || power?.note || "Keep the quality explosive without dragging into fatigue.", 180),
+    }),
+  ];
+};
+
+const buildStrengthPlanRows = ({ training = {}, prescribedExercises = [] } = {}) => {
+  const rawType = sanitizeText(training?.type || "", 40).toLowerCase();
+  const isStrengthSession = ["strength", "strength+prehab", "run+strength"].includes(rawType) || Boolean(training?.strSess);
+  if (!isStrengthSession) return [];
+
+  const rows = resolvePrescribedExercises({ training, prescribedExercises })
+    .map((entry = {}) => {
+      const exercise = sanitizeText(entry?.ex || entry?.exercise || entry?.exercise_name || "", 120);
+      if (!exercise) return null;
+      const structure = parseExerciseStructure(entry);
+      const movementNote = sanitizeText(
+        getMovementExplanation(exercise)?.whatItIs || entry?.cue || entry?.note || "",
+        140
+      );
+      return buildPlanRow({
+        title: exercise,
+        detail: structure,
+        note: movementNote,
+      });
+    })
+    .filter(Boolean);
+  return rows;
+};
+
+const buildSessionPlanPreview = ({ training = {}, prescribedExercises = [] } = {}) => {
+  const safeTraining = training && typeof training === "object" ? training : {};
+  const rawType = sanitizeText(safeTraining?.type || "", 40).toLowerCase();
+  const sections = [];
+
+  const runRows = buildRunPlanRows(safeTraining);
+  if (runRows.length) {
+    sections.push({
+      key: "run",
+      title: sanitizeText(safeTraining?.run?.t || "Run block", 80),
+      rows: runRows,
+    });
+  }
+
+  const strengthRows = buildStrengthPlanRows({ training: safeTraining, prescribedExercises });
+  if (strengthRows.length) {
+    sections.push({
+      key: "strength",
+      title: sanitizeText(
+        safeTraining?.strSess
+          ? `Strength ${safeTraining.strSess}`
+          : ["run+strength", "strength+prehab", "strength"].includes(rawType)
+          ? "Strength block"
+          : "Session plan",
+        80
+      ),
+      rows: strengthRows,
+    });
+  }
+
+  const swimRows = buildSwimPlanRows(safeTraining);
+  if (swimRows.length) {
+    sections.push({
+      key: "swim",
+      title: "Swim block",
+      rows: swimRows,
+    });
+  }
+
+  const powerRows = buildPowerPlanRows(safeTraining);
+  if (powerRows.length && !sections.some((section) => section.key === "strength")) {
+    sections.push({
+      key: "support",
+      title: "Support block",
+      rows: powerRows,
+    });
+  }
+
+  const rows = sections.flatMap((section) => section.rows || []);
+  const summaryOnly = rows.length === 0 && Boolean(safeTraining?.label || safeTraining?.type);
+  return {
+    available: rows.length > 0,
+    rows,
+    sections,
+    summaryOnly,
+    note: summaryOnly ? "This stored workout is still summary-level right now." : "",
+  };
+};
+
 const buildStructure = (training = {}) => {
   if (training?.run?.d) {
     return sanitizeText(`${training.run.t ? `${training.run.t}: ` : ""}${training.run.d}`, 180);
+  }
+  if (training?.swim?.d || training?.swim?.setLine) {
+    return sanitizeText([
+      training?.swim?.focus ? `${training.swim.focus}:` : "",
+      training?.swim?.setLine || training?.swim?.d || "",
+    ].filter(Boolean).join(" "), 180);
+  }
+  if (training?.power?.dose || training?.power?.support) {
+    return sanitizeText([
+      training?.power?.focus || "",
+      training?.power?.support || training?.power?.dose || "",
+    ].filter(Boolean).join(" - "), 180);
   }
   if (training?.strengthDose) return sanitizeText(training.strengthDose, 180);
   if (training?.strengthDuration) {
@@ -133,6 +386,7 @@ export const buildDayPrescriptionDisplay = ({
   week = {},
   provenance = null,
   includeWhy = true,
+  prescribedExercises = [],
 } = {}) => {
   const safeTraining = training && typeof training === "object" ? training : {};
   const rawType = sanitizeText(safeTraining?.type || "", 40).toLowerCase();
@@ -154,6 +408,21 @@ export const buildDayPrescriptionDisplay = ({
   );
   const why = includeWhy ? buildWhySummary({ training: safeTraining, week, provenance }) : "";
   const movementNote = buildMovementNote(safeTraining, sessionLabel);
+  const sessionPlan = buildSessionPlanPreview({
+    training: safeTraining,
+    prescribedExercises,
+  });
+  const exercisePreview = {
+    available: sessionPlan.available,
+    rows: (sessionPlan.rows || []).map((row) => ({
+      exercise: row.title,
+      structure: row.detail,
+      movementNote: row.note,
+    })),
+    sections: sessionPlan.sections,
+    summaryOnly: sessionPlan.summaryOnly,
+    note: sessionPlan.note,
+  };
 
   return {
     sessionLabel,
@@ -162,6 +431,8 @@ export const buildDayPrescriptionDisplay = ({
     structure,
     expectedDuration,
     movementNote,
+    sessionPlan,
+    exercisePreview,
     why,
   };
 };

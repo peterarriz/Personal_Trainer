@@ -5,7 +5,7 @@ const {
   buildDayPrescriptionDisplay,
 } = require("../src/services/day-prescription-display-service.js");
 
-test("strength placeholder sessions expand into concise prescription detail", () => {
+test("strength placeholder sessions expose a usable canonical session plan instead of summary-only fallback", () => {
   const summary = buildDayPrescriptionDisplay({
     training: {
       type: "strength+prehab",
@@ -24,7 +24,13 @@ test("strength placeholder sessions expand into concise prescription detail", ()
   assert.equal(summary.sessionType, "Strength");
   assert.match(summary.structure, /40-55 min strength progression/i);
   assert.match(summary.expectedDuration, /40-55 min/i);
-  assert.match(summary.movementNote, /A\/B labels mean alternating lift templates/i);
+  assert.match(summary.movementNote, /second full-body strength template/i);
+  assert.equal(summary.sessionPlan.available, true);
+  assert.equal(summary.sessionPlan.rows.length, 1);
+  assert.equal(summary.sessionPlan.rows[0].title, "Strength B");
+  assert.match(summary.sessionPlan.rows[0].detail, /40-55 min strength progression/i);
+  assert.equal(summary.exercisePreview.available, true);
+  assert.equal(summary.exercisePreview.note, "");
   assert.match(summary.why, /strength lane moving/i);
 });
 
@@ -45,6 +51,9 @@ test("run sessions infer useful duration and keep interval structure legible", (
   assert.match(summary.structure, /intervals:/i);
   assert.match(summary.structure, /8min/i);
   assert.match(summary.expectedDuration, /3[0-9]-4[0-9] min/i);
+  assert.equal(summary.sessionPlan.available, true);
+  assert.equal(summary.sessionPlan.rows.length, 3);
+  assert.equal(summary.sessionPlan.rows[1].title, "Main interval set");
 });
 
 test("unclear movement names get a short explanation note", () => {
@@ -57,5 +66,46 @@ test("unclear movement names get a short explanation note", () => {
   });
 
   assert.equal(summary.sessionLabel, "Push-Up Complex");
-  assert.match(summary.movementNote, /strings a few movements together/i);
+  assert.match(summary.movementNote, /variation cluster/i);
+});
+
+test("strength sessions surface exercise-level detail when prescribed rows exist", () => {
+  const summary = buildDayPrescriptionDisplay({
+    training: {
+      type: "strength+prehab",
+      label: "Strength B",
+      strSess: "B",
+    },
+    prescribedExercises: [
+      { ex: "Push-Up Complex", sets: "3 rounds", note: "No rest within round." },
+      { ex: "Band Bent-over Row", sets: "4", reps: "15", note: "Row to chest." },
+      { ex: "Hollow Body Hold", sets: "4", reps: "30 sec", note: "Lower back pressed down." },
+    ],
+  });
+
+  assert.equal(summary.exercisePreview.available, true);
+  assert.equal(summary.exercisePreview.rows.length, 3);
+  assert.equal(summary.exercisePreview.rows[0].exercise, "Push-Up Complex");
+  assert.match(summary.exercisePreview.rows[0].movementNote, /variation cluster/i);
+  assert.equal(summary.exercisePreview.rows[1].structure, "4 x 15");
+});
+
+test("exercise preview keeps the full prescribed structure available for Today execution", () => {
+  const summary = buildDayPrescriptionDisplay({
+    training: {
+      type: "strength",
+      label: "Strength Circuit A",
+    },
+    prescribedExercises: [
+      { ex: "Goblet Squat", sets: "3", reps: "10" },
+      { ex: "Push-Up", sets: "3", reps: "12" },
+      { ex: "DB Row", sets: "3", reps: "10" },
+      { ex: "Split Squat", sets: "3", reps: "8/side" },
+      { ex: "Carry", sets: "3", reps: "40m" },
+    ],
+  });
+
+  assert.equal(summary.exercisePreview.available, true);
+  assert.equal(summary.exercisePreview.rows.length, 5);
+  assert.equal(summary.exercisePreview.note, "");
 });

@@ -1,5 +1,13 @@
 # Ideal Intake Flow
 
+## Current Runtime Notes (2026-04)
+
+- After goal interpretation, the live app now shows a short "Here's what I heard" review with one row per parsed goal before required anchor collection begins.
+- The current correction surface is deterministic goal removal/editing from that review state, rather than a separate AI accept/revise screen.
+- Partial intake progress is restored from browser session storage until the user confirms and builds the plan or abandons the browser session.
+- Review-lane edits now re-run the intake machine silently. They do not replay AI summaries or anchor prompts into the transcript just because review state was recomputed.
+- Confirmation and missing-required gating now follow the active goal stack only. Deferred/background goals stay visible in review, but they do not block confirmation until the user promotes them back into the active stack.
+
 ## 1. Product Objective
 
 ### What intake is supposed to accomplish

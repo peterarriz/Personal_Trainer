@@ -16,7 +16,7 @@ module.exports = async (req, res) => {
     if (!authToken) {
       return sendJson(res, 401, {
         message: "You must be signed in before disconnecting Garmin.",
-        fix: "Sign back into Personal Trainer, then retry Disconnect.",
+        fix: "Sign back into FORMA, then retry Disconnect.",
       });
     }
 

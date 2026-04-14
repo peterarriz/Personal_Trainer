@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createAuthStorageModule } from "../src/modules-auth-storage.js";
+import {
+  classifyStorageError,
+  createAuthStorageModule,
+  AUTH_CACHE_KEY,
+  LOCAL_CACHE_KEY,
+  STORAGE_STATUS_REASONS,
+} from "../src/modules-auth-storage.js";
 
 const noop = () => {};
 
@@ -179,4 +185,285 @@ test("handleSignOut clears the cached auth session and marks storage as signed o
   assert.equal(localStorage.getItem("trainer_auth_session_v1"), "null");
   assert.equal(nextStorageStatus?.reason, "signed_out");
   assert.ok(requests.some((request) => /\/auth\/v1\/logout$/.test(request.url) && request.method === "POST"));
+});
+
+test("handleSignUp sends initial profile metadata with the auth request", async () => {
+  const requests = [];
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+        body: options.body ? JSON.parse(options.body) : null,
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          access_token: "header.payload.signature",
+          refresh_token: "refresh-token",
+          user: { id: "00000000-0000-0000-0000-000000000001", email: "athlete@example.com" },
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+        }),
+        text: async () => "",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  let nextSession = null;
+  const result = await module.handleSignUp({
+    authEmail: "athlete@example.com",
+    authPassword: "secret-pass",
+    authProfile: {
+      displayName: "Peter",
+      units: "imperial",
+      timezone: "America/Chicago",
+    },
+    setAuthError: noop,
+    setAuthSession: (value) => { nextSession = value; },
+  });
+
+  const signUpRequest = requests.find((request) => /\/auth\/v1\/signup$/.test(request.url));
+  assert.equal(signUpRequest?.method, "POST");
+  assert.equal(signUpRequest?.body?.email, "athlete@example.com");
+  assert.equal(signUpRequest?.body?.data?.display_name, "Peter");
+  assert.equal(signUpRequest?.body?.data?.preferred_units, "imperial");
+  assert.equal(signUpRequest?.body?.data?.timezone, "America/Chicago");
+  assert.equal(result?.ok, true);
+  assert.equal(nextSession?.user?.email, "athlete@example.com");
+});
+
+test("persistAll keeps local cache active when no signed-in session exists", async () => {
+  const localStore = new Map();
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+  global.localStorage = {
+    getItem: (key) => (localStore.has(key) ? localStore.get(key) : null),
+    setItem: (key, value) => { localStore.set(key, String(value)); },
+    removeItem: (key) => { localStore.delete(key); },
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async () => {
+      throw new Error("network should not be called without auth");
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  let nextStorageStatus = null;
+  const payload = {
+    version: "runtime_storage_v1",
+    logs: {},
+    bodyweights: [],
+    paceOverrides: {},
+    weekNotes: {},
+    planAlerts: [],
+    personalization: { profile: { onboardingComplete: true } },
+    goals: [],
+    coachActions: [],
+    coachPlanAdjustments: {},
+    dailyCheckins: {},
+    weeklyCheckins: {},
+    nutritionFavorites: {},
+    nutritionActualLogs: {},
+    plannedDayRecords: {},
+    planWeekRecords: {},
+  };
+
+  await module.persistAll({
+    payload,
+    authSession: null,
+    setStorageStatus: (value) => { nextStorageStatus = value; },
+    setAuthSession: noop,
+  });
+
+  assert.equal(nextStorageStatus?.reason, "not_signed_in");
+  assert.deepEqual(JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY)), payload);
+});
+
+test("persistAll skips unchanged goal and coach-memory shadow syncs on repeated saves", async () => {
+  const requests = [];
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+  global.localStorage = {
+    getItem: () => null,
+    setItem: noop,
+    removeItem: noop,
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+        body: options.body ? JSON.parse(options.body) : null,
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  const authSession = {
+    access_token: "header.payload.signature",
+    refresh_token: "refresh-token",
+    user: { id: "00000000-0000-0000-0000-000000000001" },
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+  };
+  const payload = {
+    version: "runtime_storage_v1",
+    logs: {},
+    bodyweights: [],
+    paceOverrides: {},
+    weekNotes: {},
+    planAlerts: [],
+    personalization: {
+      coachMemory: {
+        wins: ["Stays consistent"],
+        constraints: ["Busy mornings"],
+      },
+    },
+    goals: [
+      {
+        id: "goal_1",
+        name: "Bench 225",
+        category: "strength",
+        priority: 1,
+        active: true,
+      },
+    ],
+    coachActions: [],
+    coachPlanAdjustments: {},
+    dailyCheckins: {},
+    weeklyCheckins: {},
+    nutritionFavorites: {},
+    nutritionActualLogs: {},
+    plannedDayRecords: {},
+    planWeekRecords: {},
+  };
+
+  await module.persistAll({
+    payload,
+    authSession,
+    setStorageStatus: noop,
+    setAuthSession: noop,
+  });
+  await module.persistAll({
+    payload,
+    authSession,
+    setStorageStatus: noop,
+    setAuthSession: noop,
+  });
+
+  const goalsPosts = requests.filter((request) => /\/rest\/v1\/goals$/.test(request.url) && request.method === "POST");
+  const coachMemoryPosts = requests.filter((request) => /\/rest\/v1\/coach_memory$/.test(request.url) && request.method === "POST");
+  const trainerDataPosts = requests.filter((request) => /\/rest\/v1\/trainer_data$/.test(request.url) && request.method === "POST");
+
+  assert.equal(goalsPosts.length, 1);
+  assert.equal(coachMemoryPosts.length, 1);
+  assert.equal(trainerDataPosts.length, 1);
+});
+
+test("transient network storage failures are labeled as retrying instead of permanent fallback", () => {
+  const status = classifyStorageError(new Error("FETCH_NETWORK: load failed"));
+
+  assert.equal(status.reason, STORAGE_STATUS_REASONS.transient);
+  assert.equal(status.label, "SYNC RETRYING");
+  assert.match(status.detail, /temporarily unreachable|saved safely/i);
+});
+
+test("handleDeleteAccount calls the server delete path and clears local caches", async () => {
+  const localStore = new Map();
+  const requests = [];
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+  global.localStorage = {
+    getItem: (key) => (localStore.has(key) ? localStore.get(key) : null),
+    setItem: (key, value) => { localStore.set(key, String(value)); },
+    removeItem: (key) => { localStore.delete(key); },
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+        headers: options.headers || {},
+      });
+      if (url === "/api/auth/delete-account") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, message: "Account deleted." }),
+          text: async () => "",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => "",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  const authSession = {
+    access_token: "header.payload.signature",
+    refresh_token: "refresh-token",
+    user: { id: "00000000-0000-0000-0000-000000000001" },
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+  };
+  localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(authSession));
+  localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ version: "runtime_storage_v1" }));
+
+  let nextSession = authSession;
+  let nextStorageStatus = null;
+  let cleared = false;
+
+  await module.handleDeleteAccount({
+    authSession,
+    setAuthSession: (value) => { nextSession = value; },
+    setStorageStatus: (value) => { nextStorageStatus = value; },
+    clearLocalData: async () => { cleared = true; },
+  });
+
+  assert.equal(nextSession, null);
+  assert.equal(cleared, true);
+  assert.equal(localStorage.getItem(AUTH_CACHE_KEY), null);
+  assert.equal(localStorage.getItem(LOCAL_CACHE_KEY), null);
+  assert.equal(nextStorageStatus?.reason, STORAGE_STATUS_REASONS.accountDeleted);
+  assert.ok(requests.some((request) => request.url === "/api/auth/delete-account" && request.method === "POST"));
 });

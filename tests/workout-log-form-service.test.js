@@ -3,8 +3,12 @@ const assert = require("node:assert/strict");
 
 const {
   WORKOUT_LOG_FAMILIES,
+  WORKOUT_LOG_MODES,
+  buildWorkoutLogFormRecommendation,
   buildWorkoutLogDraft,
   buildWorkoutLogEntryFromDraft,
+  buildWorkoutQuickCaptureModel,
+  hasWorkoutQuickCaptureValues,
 } = require("../src/services/workout-log-form-service.js");
 
 const buildPlannedDayRecord = (training) => ({
@@ -30,6 +34,50 @@ test("run day builds run-focused logging fields first", () => {
   assert.equal(draft.strength.enabled, false);
 });
 
+test("recommendation service maps run sessions to running fields", () => {
+  const recommendation = buildWorkoutLogFormRecommendation({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "hard-run",
+      label: "Tempo Run",
+      run: { t: "Tempo", d: "10 min easy + 20 min tempo + 10 min easy" },
+    }),
+  });
+
+  assert.equal(recommendation.recommendedMode, WORKOUT_LOG_MODES.running);
+  assert.deepEqual(
+    recommendation.recommendedFields.map((field) => field.id),
+    ["distance", "duration", "pace", "feel", "notes"]
+  );
+  assert.equal(recommendation.sections.run.enabled, true);
+  assert.equal(recommendation.sections.strength.enabled, false);
+  assert.equal(recommendation.sections.generic.enabled, false);
+});
+
+test("quick capture model keeps the default logging path compact for run days", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "hard-run",
+      label: "Tempo Run",
+      run: { t: "Tempo", d: "10 min easy + 20 min tempo + 10 min easy" },
+    }),
+  });
+
+  const quickCapture = buildWorkoutQuickCaptureModel({ draft });
+
+  assert.equal(quickCapture.completeActionLabel, "Quick complete");
+  assert.equal(quickCapture.detailToggleLabel, "Add quick run details");
+  assert.equal(quickCapture.saveActionLabel, "Save quick run log");
+  assert.equal(quickCapture.run.enabled, true);
+  assert.deepEqual(
+    quickCapture.run.fields.map((field) => field.id),
+    ["duration", "distance", "pace"]
+  );
+  assert.match(quickCapture.supportLine, /actual details stay separate/i);
+  assert.equal(hasWorkoutQuickCaptureValues({ draft }), false);
+});
+
 test("strength day prefills prescribed exercise logging path", () => {
   const draft = buildWorkoutLogDraft({
     dateKey: "2026-04-11",
@@ -51,6 +99,57 @@ test("strength day prefills prescribed exercise logging path", () => {
   assert.equal(draft.strength.rows[0].exercise, "Barbell Bench Press");
   assert.equal(draft.strength.rows[0].prescribedSets, 4);
   assert.equal(draft.strength.rows[0].prescribedReps, 6);
+  assert.equal(draft.strength.rows[0].substitutionAllowed, true);
+  assert.equal(draft.strength.rows[0].substitutionState, "prescribed");
+  assert.equal(draft.strength.rows[0].canResetToPrescribed, false);
+  assert.equal(draft.substitutionSupport.allowed, true);
+});
+
+test("quick capture model limits strength rows while keeping prescribed context visible", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "strength+prehab",
+      label: "Strength B",
+    }),
+    prescribedExercises: [
+      { ex: "Barbell Bench Press", sets: "4x6" },
+      { ex: "Cable Row", sets: "3x10" },
+      { ex: "Romanian Deadlift", sets: "3x8" },
+      { ex: "Bulgarian Split Squat", sets: "3x10" },
+    ],
+  });
+
+  const quickCapture = buildWorkoutQuickCaptureModel({ draft });
+
+  assert.equal(quickCapture.detailToggleLabel, "Add quick sets and reps");
+  assert.equal(quickCapture.saveActionLabel, "Save quick strength log");
+  assert.equal(quickCapture.strength.rows.length, 3);
+  assert.equal(quickCapture.strength.hiddenRowCount, 1);
+  assert.match(quickCapture.strength.rows[0].prescribedSummary, /4 sets/i);
+});
+
+test("run-day detailed logging stays seeded from the canonical planned session even if legacy generic fields exist", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "hard-run",
+      label: "Tempo Run",
+      run: { t: "Tempo", d: "10 min easy + 20 min tempo + 10 min easy" },
+    }),
+    logEntry: {
+      pushups: "25",
+      reps: "25",
+      weight: "0",
+    },
+  });
+
+  assert.equal(draft.family, WORKOUT_LOG_FAMILIES.run);
+  assert.equal(draft.generic.visible, false);
+  assert.equal(draft.strength.rows.length, 0);
+  assert.equal(draft.plannedSummary.sessionLabel, "Tempo Run");
+  assert.equal(draft.plannedSummary.sessionPlan.available, true);
+  assert.equal(draft.plannedSummary.sessionPlan.rows[1].title, "Tempo segment");
 });
 
 test("exercise substitution path preserves actual exercise change", () => {
@@ -68,6 +167,9 @@ test("exercise substitution path preserves actual exercise change", () => {
 
   draft.feel = "4";
   draft.strength.rows[0].exercise = "Dumbbell Bench Press";
+  draft.strength.rows[0].isSubstituted = true;
+  draft.strength.rows[0].substitutionState = "substituted";
+  draft.strength.rows[0].canResetToPrescribed = true;
   draft.strength.rows[0].actualSets = "4";
   draft.strength.rows[0].actualReps = "8";
   draft.strength.rows[0].actualWeight = "80";
@@ -83,6 +185,115 @@ test("exercise substitution path preserves actual exercise change", () => {
   assert.equal(entry.strengthPerformance[0].actualSets, 4);
   assert.equal(entry.strengthPerformance[0].actualReps, 8);
   assert.equal(entry.strengthPerformance[0].actualWeight, 80);
+});
+
+test("minimal quick run input can be saved without the full detail form", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "hard-run",
+      label: "Intervals",
+      run: { t: "Intervals", d: "1 mi warm-up + 4 x 5 min / 2 min + 1 mi cool-down" },
+    }),
+    logEntry: {},
+  });
+
+  draft.run.duration = "42";
+
+  const entry = buildWorkoutLogEntryFromDraft({
+    draft,
+    baseEntry: {},
+    todayKey: "2026-04-11",
+  });
+
+  assert.equal(hasWorkoutQuickCaptureValues({ draft }), true);
+  assert.equal(entry.runTime, "42");
+  assert.equal(entry.miles, "");
+  assert.equal(entry.actualSession.sessionFamily, WORKOUT_LOG_FAMILIES.run);
+});
+
+test("minimal quick strength input still preserves prescribed versus actual separation", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "strength+prehab",
+      label: "Strength B",
+    }),
+    prescribedExercises: [
+      { ex: "Barbell Bench Press", sets: "4x6", weight: 185 },
+    ],
+    logEntry: {},
+  });
+
+  draft.strength.rows[0].actualSets = "4";
+  draft.strength.rows[0].actualReps = "5";
+  draft.strength.rows[0].actualWeight = "185";
+
+  const entry = buildWorkoutLogEntryFromDraft({
+    draft,
+    baseEntry: {},
+    todayKey: "2026-04-11",
+  });
+
+  assert.equal(hasWorkoutQuickCaptureValues({ draft }), true);
+  assert.equal(entry.strengthPerformance.length, 1);
+  assert.equal(entry.strengthPerformance[0].prescribedSets, 4);
+  assert.equal(entry.strengthPerformance[0].prescribedReps, 6);
+  assert.equal(entry.strengthPerformance[0].actualSets, 4);
+  assert.equal(entry.strengthPerformance[0].actualReps, 5);
+  assert.equal(entry.strengthPerformance[0].actualWeight, 185);
+});
+
+test("actual records matched to a prescribed row mark the row as substituted", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "strength+prehab",
+      label: "Strength B",
+    }),
+    prescribedExercises: [
+      { ex: "Barbell Bench Press", sets: "4x6" },
+    ],
+    logEntry: {
+      date: "2026-04-11",
+      strengthPerformance: [
+        {
+          exercise: "Dumbbell Bench Press",
+          actualSets: 4,
+          actualReps: 8,
+          actualWeight: 80,
+        },
+      ],
+    },
+  });
+
+  assert.equal(draft.strength.rows[0].exercise, "Dumbbell Bench Press");
+  assert.equal(draft.strength.rows[0].isSubstituted, true);
+  assert.equal(draft.strength.rows[0].substitutionState, "substituted");
+  assert.equal(draft.strength.rows[0].canResetToPrescribed, true);
+});
+
+test("canonical training exercise rows can seed strength logging without extra wiring", () => {
+  const recommendation = buildWorkoutLogFormRecommendation({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "strength+prehab",
+      label: "Strength A",
+      prescribedExercises: [
+        { ex: "Goblet Squat", sets: "3x10" },
+        { ex: "Single-Arm Row", sets: "3x12" },
+      ],
+    }),
+  });
+
+  assert.equal(recommendation.recommendedMode, WORKOUT_LOG_MODES.strength);
+  assert.equal(recommendation.prefilledExerciseRows.length, 2);
+  assert.equal(recommendation.prefilledExerciseRows[0].exercise, "Goblet Squat");
+  assert.equal(recommendation.sections.strength.hasPrescribedStructure, true);
+  assert.deepEqual(
+    recommendation.sections.strength.fields.filter((field) => field.fastPath).map((field) => field.id),
+    ["actualSets", "actualReps", "actualWeight"]
+  );
 });
 
 test("mixed session builds split run and strength logging paths", () => {
@@ -103,6 +314,14 @@ test("mixed session builds split run and strength logging paths", () => {
   assert.equal(draft.run.enabled, true);
   assert.equal(draft.strength.enabled, true);
   assert.equal(draft.strength.rows.length, 1);
+  assert.equal(draft.generic.visible, false);
+  assert.equal(draft.sections.run.enabled, true);
+  assert.equal(draft.sections.strength.enabled, true);
+  assert.equal(draft.sections.generic.enabled, false);
+  assert.deepEqual(
+    draft.recommendedFields.map((field) => field.section),
+    ["run", "run", "run", "run", "run", "strength", "strength", "strength", "strength", "strength", "strength"]
+  );
 });
 
 test("strength session without prescribed structure degrades to generic fallback", () => {
@@ -121,4 +340,24 @@ test("strength session without prescribed structure degrades to generic fallback
   assert.equal(draft.strength.hasPrescribedStructure, false);
   assert.equal(draft.strength.rows.length, 0);
   assert.equal(draft.generic.visible, true);
+});
+
+test("generic fallback sessions recommend a compact fallback schema", () => {
+  const recommendation = buildWorkoutLogFormRecommendation({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "session",
+      label: "Open Gym",
+    }),
+  });
+
+  assert.equal(recommendation.recommendedMode, WORKOUT_LOG_MODES.generic);
+  assert.equal(recommendation.sections.generic.enabled, true);
+  assert.equal(recommendation.sections.run.enabled, false);
+  assert.equal(recommendation.sections.strength.enabled, false);
+  assert.deepEqual(
+    recommendation.recommendedFields.map((field) => field.id),
+    ["reps", "weight", "feel", "notes"]
+  );
+  assert.equal(recommendation.substitutionSupport.allowed, false);
 });
