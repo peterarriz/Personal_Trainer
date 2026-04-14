@@ -247,6 +247,32 @@ test("structured timeline follow-up accepts natural phrases like by summer", () 
   assert.equal(answered.answers.intake_completeness.fields.target_timeline.value, "by summer");
 });
 
+test("structured body-comp timeline follow-up accepts open-ended timing", () => {
+  const resolvedGoals = buildResolvedGoals("lose 20 lb");
+  const question = deriveIntakeCompletenessState({
+    resolvedGoals,
+    answers: {},
+  }).nextQuestions.find((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline);
+  const validation = validateIntakeCompletenessAnswer({
+    question,
+    answerValues: {
+      target_timeline: "Open-ended",
+    },
+  });
+  const answered = applyIntakeCompletenessAnswer({
+    answers: {},
+    question,
+    answerValues: {
+      target_timeline: "Open-ended",
+    },
+  });
+
+  assert.equal(validation.isValid, true);
+  assert.equal(validation.summaryText, "Open-ended");
+  assert.equal(answered.answers.intake_completeness.fields.target_timeline.raw, "Open-ended");
+  assert.equal(answered.answers.intake_completeness.fields.target_timeline.value, "open_ended");
+});
+
 test("structured timeline follow-up normalizes month-year answers while preserving the raw phrase", () => {
   const resolvedGoals = buildResolvedGoals("run a 2-hour half marathon");
   const question = deriveIntakeCompletenessState({

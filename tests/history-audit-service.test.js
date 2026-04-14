@@ -79,6 +79,10 @@ test("archived day review preserves original plan, latest plan, and actual outco
   assert.equal(review.originalPrescription.label, "Tempo Intervals");
   assert.equal(review.latestPrescription.label, "Tempo Intervals Reduced");
   assert.equal(review.actualLog.type, "Tempo Run Modified");
+  assert.equal(review.story.plannedSummary.label, "Tempo Intervals Reduced");
+  assert.ok(review.story.actualSummary.label.length > 0);
+  assert.ok(review.story.mainLesson.length > 0);
+  assert.ok(review.story.nextEffect.length > 0);
   assert.equal(review.revisions.length, 2);
 });
 
@@ -170,4 +174,7 @@ test("historical week audit entries normalize committed week records for review 
   assert.equal(entries[0].label, "BUILD - Week 8");
   assert.equal(entries[0].loggedSessionCount, 1);
   assert.equal(entries[0].weeklyCheckin.energy, 3);
+  assert.ok(entries[0].story.plannedSummary.length > 0);
+  assert.ok(entries[0].story.actualSummary.length > 0);
+  assert.ok(entries[0].story.nextEffect.length > 0);
 });

@@ -1,3 +1,8 @@
+import {
+  isOpenEndedTimingValue,
+  OPEN_ENDED_TIMING_VALUE,
+} from "./goal-timing-service.js";
+
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
 
@@ -314,6 +319,12 @@ export const resolveTimelineFieldRecord = ({
   const validatedRaw = validateTimelineValue(acceptedRaw);
   const normalizedMonth = normalizeTimelineMonthValue(cleanCandidate) || normalizeTimelineMonthValue(preferredRaw);
   if (!validatedRaw && !normalizedMonth) return null;
+  if (validatedRaw === OPEN_ENDED_TIMING_VALUE) {
+    return {
+      raw: "Open-ended",
+      value: OPEN_ENDED_TIMING_VALUE,
+    };
+  }
   return {
     raw: validatedRaw || preferredRaw || cleanCandidate,
     value: normalizedMonth || validatedRaw || preferredRaw || cleanCandidate,
@@ -891,7 +902,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
             inputType: "text",
             expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
             placeholder: "Example: by August or over the next 16 weeks",
-            helperText: "A rough window is enough. It does not need to be exact.",
+            helperText: "A rough window is enough. It does not need to be exact, and open-ended is okay if there is no hard finish date.",
             required: true,
           }],
           validation: {
@@ -994,7 +1005,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
             inputType: "text",
             expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
             placeholder: "Example: by late summer",
-            helperText: "A rough target month or season is enough.",
+            helperText: "A rough target month or season is enough, and open-ended is okay if there is no hard finish date.",
             required: true,
           }],
           validation: {
@@ -1090,6 +1101,7 @@ const normalizeStructuredAnswerValues = (answerValues = {}) => Object.fromEntrie
 export function validateTimelineValue(value = "") {
   const clean = sanitizeText(value, 120);
   if (!clean) return "";
+  if (isOpenEndedTimingValue(clean)) return OPEN_ENDED_TIMING_VALUE;
   if (/^\d{4}-\d{2}(?:-\d{2})?$/.test(clean) || hasTimingSignal(clean)) return clean;
   return "";
 }

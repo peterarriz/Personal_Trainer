@@ -144,5 +144,10 @@ test("day review keeps original and latest prescription separate from actual exe
   assert.equal(review.actualWorkout.actualSession.sessionLabel, "Upper Strength plus accessories");
   assert.equal(review.currentRecord.resolved.training.label, "Upper Strength Reduced Load");
   assert.equal(review.comparison.completionKind, "modified");
+  assert.equal(review.story.classificationLabel, "Partial");
+  assert.equal(review.story.plannedSummary.label, "Upper Strength Reduced Load");
+  assert.equal(review.story.actualSummary.label, "Upper Strength plus accessories");
+  assert.match(review.story.mainLesson, /intent but changed the dose|readiness signal/i);
+  assert.match(review.story.nextEffect, /session theme|next progression step/i);
   assert.equal(review.revisionTimeline.length, 2);
 });

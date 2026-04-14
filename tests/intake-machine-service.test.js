@@ -700,6 +700,7 @@ test("machine exposes field-card metadata for timeline and strength baseline par
 
   assert.equal(runningState.draft.missingAnchorsEngine.currentAnchor.field_id, "target_timeline");
   assert.equal(runningState.draft.missingAnchorsEngine.currentAnchor.input_type, "date_or_month");
+  assert.equal(runningState.draft.missingAnchorsEngine.currentAnchor.allow_open_ended, false);
   assert.ok(runningState.draft.missingAnchorsEngine.currentAnchor.why_it_matters);
   assert.ok(runningState.draft.missingAnchorsEngine.currentAnchor.coach_voice_line);
 
@@ -798,6 +799,72 @@ test("machine exposes field-card metadata for timeline and strength baseline par
     value: 205,
     weight: 205,
     reps: 1,
+  });
+});
+
+test("body-comp timeline anchors accept open-ended timing without forcing a finish date", () => {
+  let nextState = createIntakeMachineState();
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_body_comp_goal_submit",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "lose 20 lb",
+      },
+      now: TEST_NOW,
+    },
+  });
+  nextState = intakeReducer(nextState, buildInterpretationEvent({
+    event_id: "evt_body_comp_goal_interpreted",
+    answers: {
+      goal_intent: "lose 20 lb",
+    },
+    rawGoalText: "lose 20 lb",
+  }));
+
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.field_id, "current_bodyweight");
+
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_bodyweight_answered",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "205",
+      answer_value: "205",
+    }),
+  });
+
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_target_weight_answered",
+    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+    timestamp: TEST_NOW,
+    payload: buildAnchorAnsweredPayload({
+      anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
+      raw_text: "20",
+      answer_value: "20",
+    }),
+  });
+
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.field_id, "target_timeline");
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.allow_open_ended, true);
+
+  const openEndedValidation = validateMissingAnchorAnswer({
+    anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
+    raw_text: "Open-ended",
+    answer_value: {
+      mode: "open_ended",
+      value: "open_ended",
+      raw: "Open-ended",
+    },
+  });
+
+  assert.equal(openEndedValidation.isValid, true);
+  assert.equal(openEndedValidation.summaryText, "Open-ended");
+  assert.deepEqual(openEndedValidation.canonicalWrites[0].record, {
+    raw: "Open-ended",
+    value: "open_ended",
   });
 });
 

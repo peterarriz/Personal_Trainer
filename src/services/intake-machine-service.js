@@ -28,6 +28,9 @@ import {
   buildTranscriptMessageKey,
   TRANSCRIPT_MESSAGE_KINDS,
 } from "./intake-transcript-service.js";
+import {
+  isOpenEndedTimingValue,
+} from "./goal-timing-service.js";
 import { resolveGoalTranslation } from "./goal-resolution-service.js";
 import { sanitizeDisplayCopy } from "./text-format-service.js";
 
@@ -219,7 +222,7 @@ const buildDefaultAnchorCoachVoiceLine = ({
   const normalizedInputType = sanitizeText(inputType, 40).toLowerCase();
   const lowerLabel = sanitizeText(label, 160).toLowerCase();
   if (normalizedInputType === "date_or_month") {
-    return "Coach note: a rough month is enough if you do not know the exact date yet.";
+    return "Coach note: a rough month is enough if you do not know the exact date yet. Open-ended is fine when this goal has no hard finish date.";
   }
   if (normalizedInputType === "choice_chips") {
     return "Coach note: pick the option that's easiest to answer right now.";
@@ -247,6 +250,13 @@ const buildTimelineConfirmationEdits = ({
   const timelineRecord = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.targetTimeline);
   const timelineValue = sanitizeText(timelineRecord?.value || timelineRecord?.raw || answers?.timeline_feedback || "", 120);
   if (!timelineValue) return {};
+  if (isOpenEndedTimingValue(timelineValue)) {
+    return {
+      targetDate: "",
+      targetHorizonWeeks: null,
+      openEnded: true,
+    };
+  }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(timelineValue)) {
     return {
@@ -509,6 +519,7 @@ const buildMissingAnchor = ({
   unit = "",
   unit_options = [],
   options = [],
+  allow_open_ended = false,
 } = {}) => {
   const normalizedQuestion = sanitizeText(question?.prompt || label || "", 220);
   const normalizedLabel = sanitizeText(label || question?.label || "", 160);
@@ -550,6 +561,7 @@ const buildMissingAnchor = ({
       }),
       220
     ),
+    allow_open_ended: Boolean(allow_open_ended && normalizedInputType === "date_or_month"),
     unit: sanitizeText(unit, 20),
     unit_options: toArray(unit_options)
       .map((item) => ({
@@ -956,6 +968,29 @@ const expandRequirementToAnchors = ({
 
   switch (requirement.key) {
     case INTAKE_COMPLETENESS_QUESTION_KEYS.runningTiming:
+      anchors.push(buildMissingAnchor({
+        field_id: INTAKE_COMPLETENESS_FIELDS.targetTimeline,
+        requirement,
+        question,
+        label: question?.inputFields?.[0]?.label || question.label,
+        input_type: "date_or_month",
+        expected_value_type: question?.inputFields?.[0]?.expectedValueType || question.expectedValueType,
+        placeholder: question?.inputFields?.[0]?.placeholder || question.placeholder,
+        helper_text: question?.inputFields?.[0]?.helperText || "",
+        validation: {
+          ...(question?.validation || {}),
+          min: question?.inputFields?.[0]?.min,
+          max: question?.inputFields?.[0]?.max,
+        },
+        priority,
+        applies_to_goal_ids: appliesToGoalIds,
+        draftValue: sanitizeText(readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.targetTimeline)?.raw || "", 160),
+        canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.targetTimeline],
+        why_it_matters: "This sets the runway so the first block matches the calendar you actually care about.",
+        coach_voice_line: "Coach note: a rough month is enough if you do not know the exact date yet.",
+        allow_open_ended: false,
+      }));
+      break;
     case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline:
     case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceTimeline:
       anchors.push(buildMissingAnchor({
@@ -977,7 +1012,8 @@ const expandRequirementToAnchors = ({
         draftValue: sanitizeText(readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.targetTimeline)?.raw || "", 160),
         canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.targetTimeline],
         why_it_matters: "This sets the runway so the first block matches the calendar you actually care about.",
-        coach_voice_line: "Coach note: a rough month is enough if you do not know the exact date yet.",
+        coach_voice_line: "Coach note: a rough month is enough if you do not know the exact date yet. Open-ended is fine when this goal has no hard finish date.",
+        allow_open_ended: true,
       }));
       break;
     case INTAKE_COMPLETENESS_QUESTION_KEYS.strengthBaseline:

@@ -107,7 +107,8 @@ test("goal settings view model shows current and archived goals with field prove
   assert.equal(view.currentGoals.length, 2);
   assert.equal(view.archivedGoals.length, 1);
   assert.equal(view.currentGoals[0].summary, "Bench press 225 lb");
-  assert.equal(view.currentGoals[1].timingLabel, "12-week horizon");
+  assert.equal(view.currentGoals[1].timingLabel, "Target horizon: about 12 weeks");
+  assert.match(view.currentGoals[1].timingDetail || "", /next 3 months|visible plan/i);
   assert.match(view.currentGoals[0].fieldRows.find((row) => row.field === "summary")?.provenanceSummary || "", /confirmed|imported/i);
   assert.equal(view.archivedGoals[0].status, GOAL_ARCHIVE_STATUSES.completed);
 });

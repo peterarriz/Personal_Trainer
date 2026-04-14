@@ -6,6 +6,7 @@ const {
   buildPersistedTrainerPayload,
 } = require("../src/services/persistence-adapter-service.js");
 const {
+  buildPersistedPlanWeekReview,
   createPersistedPlanWeekRecord,
   listCommittedPlanWeekRecords,
   PLAN_WEEK_RECORD_COMMITMENT,
@@ -209,4 +210,29 @@ test("Older payloads without PlanWeek records still load safely", () => {
   });
 
   assert.deepEqual(restored.planWeekRecords, {});
+});
+
+test("week review story emphasizes planned work, actual work, and next effect without losing audit metadata", () => {
+  const record = createPersistedPlanWeekRecord({
+    planWeek: buildPlanWeekFixture({ weekNumber: 4 }),
+    capturedAt: 1712664000000,
+    weeklyCheckin: { energy: 2, stress: 4, confidence: 3, ts: 1712664000000 },
+  });
+
+  const review = buildPersistedPlanWeekReview({
+    planWeekRecord: record,
+    logs: {
+      "2026-04-06": { type: "Easy Run" },
+    },
+    weeklyCheckins: {},
+    currentWeek: 4,
+  });
+
+  assert.equal(review.story.classificationLabel, "In progress");
+  assert.match(review.story.plannedSummary, /Planned 3 training sessions/i);
+  assert.match(review.story.actualSummary, /Logged 1 of 3 planned sessions/i);
+  assert.match(review.story.whatMattered, /Low energy or higher stress/i);
+  assert.match(review.story.nextEffect, /remaining days|make-up volume/i);
+  assert.equal(review.commitment, "committed");
+  assert.equal(review.durability, "durable");
 });

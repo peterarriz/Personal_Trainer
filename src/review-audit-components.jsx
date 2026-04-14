@@ -5,6 +5,41 @@ const basePanelCardStyle = {
   padding: "0.55rem",
 };
 
+const detailDisclosureStyle = {
+  background: "#0f172a",
+  border: "1px solid #1e293b",
+  borderRadius: 10,
+  padding: "0.5rem 0.55rem",
+};
+
+const eyebrowStyle = {
+  fontSize: "0.48rem",
+  color: "#64748b",
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+};
+
+const buildLocalTone = (kind = "", palette = {}) => {
+  const C = palette;
+  const normalized = String(kind || "").trim().toLowerCase();
+  if (["match", "completed_as_planned", "followed"].includes(normalized)) {
+    return { color: C.green || "#22c55e", bg: `${C.green || "#22c55e"}14` };
+  }
+  if (["partial", "modified", "changed"].includes(normalized)) {
+    return { color: C.blue || "#3b82f6", bg: `${C.blue || "#3b82f6"}14` };
+  }
+  if (["missing", "pending", "unknown", "skip", "skipped", "not_logged", "in_progress"].includes(normalized)) {
+    return { color: C.amber || "#f59e0b", bg: `${C.amber || "#f59e0b"}14` };
+  }
+  return { color: "#cbd5e1", bg: "rgba(148,163,184,0.14)" };
+};
+
+const formatAuditLabel = (value = "", fallback = "unknown") => {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  return raw.replaceAll("_", " ").replaceAll("-", " ");
+};
+
 export function HistoryAuditDayReviewCard({
   title = "DAY REVIEW",
   subtitle = "",
@@ -24,16 +59,24 @@ export function HistoryAuditDayReviewCard({
 }) {
   if (!review) return null;
   const C = palette;
-  const comparisonTone = buildReviewBadgeTone(review?.comparison?.completionKind || review?.comparison?.differenceKind);
-  const revisionTone = buildReviewBadgeTone((review?.revisions?.length || 0) > 1 ? "changed" : "match");
-  const nutritionTone = buildReviewBadgeTone(review?.actualNutrition?.adherence || review?.actualNutrition?.deviationKind);
-  const planChanged = (review?.revisions?.length || 0) > 1;
-  const executedDifferently = !["completed_as_planned", "matched", "followed"].includes(String(review?.comparison?.completionKind || "").toLowerCase())
-    || !["matched", "followed", "none"].includes(String(review?.comparison?.differenceKind || "").toLowerCase());
+  const story = review?.story || {};
+  const classificationTone = buildReviewBadgeTone(story?.toneKey || review?.comparison?.completionKind || review?.comparison?.differenceKind);
+  const nutritionSummary = buildNutritionActualSummary(review?.actualNutrition);
+  const recoverySummary = buildRecoveryActualSummary(review?.actualRecovery);
+  const showCheckinContext = Boolean(review?.actualCheckin?.status || review?.actualCheckin?.note || review?.actualCheckin?.blocker || review?.actualCheckin?.sessionFeel);
+  const showNutritionContext = Boolean(review?.actualNutrition?.loggedAt || review?.nutritionComparison?.hasPrescription);
+  const showRecoveryContext = Boolean(review?.actualRecovery?.loggedAt);
+  const revisionTimeline = review?.revisionTimeline || [];
+  const originalSummary = buildSessionSummary(review?.originalRecord?.resolved?.training || review?.originalRecord?.base?.training || null);
+  const currentSummary = buildSessionSummary(review?.currentRecord?.resolved?.training || review?.currentRecord?.base?.training || null);
 
   return (
-    <div className="card card-soft" style={{ marginBottom: "0.8rem", borderColor: (C.blue || "#3b82f6") + "30" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem", flexWrap: "wrap" }}>
+    <div
+      className="card card-soft"
+      style={{ marginBottom: "0.8rem", borderColor: (C.blue || "#3b82f6") + "30" }}
+      data-testid="history-day-review-card"
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", marginBottom: "0.45rem", flexWrap: "wrap" }}>
         <div>
           <div className="sect-title" style={{ color: C.blue, marginBottom: "0.12rem" }}>{title}</div>
           {subtitle && <div style={{ fontSize: "0.54rem", color: "#94a3b8" }}>{subtitle}</div>}
@@ -41,158 +84,311 @@ export function HistoryAuditDayReviewCard({
         {selector}
       </div>
 
-      <div style={{ display: "grid", gap: "0.55rem" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: "0.45rem" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", alignItems: "center", marginBottom: "0.55rem" }}>
+        <span
+          style={{
+            fontSize: "0.48rem",
+            color: classificationTone.color,
+            background: classificationTone.bg,
+            padding: "0.14rem 0.4rem",
+            borderRadius: 999,
+          }}
+        >
+          {sanitizeDisplayText(story?.classificationLabel || summarizeExecutionDelta(review?.comparison))}
+        </span>
+        {story?.auditSummary && (
+          <span style={{ fontSize: "0.5rem", color: "#8fa5c8" }}>
+            {sanitizeDisplayText(story.auditSummary)}
+          </span>
+        )}
+      </div>
+
+      <div data-testid="history-day-review-primary" style={{ display: "grid", gap: "0.55rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: "0.45rem" }}>
           <div style={basePanelCardStyle}>
-            <div style={{ fontSize: "0.48rem", color: "#64748b", letterSpacing: "0.08em" }}>REVIEW STATUS</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.28rem", marginTop: "0.18rem" }}>
-              <span style={{ fontSize: "0.48rem", color: comparisonTone.color, background: comparisonTone.bg, padding: "0.14rem 0.4rem", borderRadius: 999 }}>{summarizeExecutionDelta(review?.comparison)}</span>
-              <span style={{ fontSize: "0.48rem", color: revisionTone.color, background: revisionTone.bg, padding: "0.14rem 0.4rem", borderRadius: 999 }}>{planChanged ? "Plan changed" : "Plan stable"}</span>
-              <span style={{ fontSize: "0.48rem", color: executedDifferently ? C.amber : C.green, background: (executedDifferently ? C.amber : C.green) + "14", padding: "0.14rem 0.4rem", borderRadius: 999 }}>{executedDifferently ? "Executed differently" : "Executed as prescribed"}</span>
+            <div style={eyebrowStyle}>Planned</div>
+            <div style={{ fontSize: "0.62rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+              {sanitizeDisplayText(story?.plannedSummary?.label || currentSummary.label)}
             </div>
-            <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.22rem", lineHeight: 1.55 }}>{sanitizeDisplayText(review?.comparison?.summary || "Comparison unavailable.")}</div>
+            <div style={{ fontSize: "0.53rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.55 }}>
+              {sanitizeDisplayText(story?.plannedSummary?.detail || currentSummary.detail || currentSummary.type || "No saved session detail.")}
+            </div>
           </div>
           <div style={basePanelCardStyle}>
-            <div style={{ fontSize: "0.48rem", color: "#64748b", letterSpacing: "0.08em" }}>PRESCRIPTION STATE</div>
-            <div style={{ fontSize: "0.6rem", color: "#e2e8f0", marginTop: "0.16rem" }}>Rev {review?.currentRevision?.revisionNumber || 0} of {review?.revisions?.length || 0}</div>
-            <div style={{ fontSize: "0.51rem", color: "#8fa5c8", marginTop: "0.14rem", lineHeight: 1.5 }}>Source: {sanitizeStatusLabel(review?.currentRevision?.sourceType, "unknown")} - {sanitizeStatusLabel(review?.currentRevision?.durability, "unknown")}</div>
-          </div>
-          <div style={basePanelCardStyle}>
-            <div style={{ fontSize: "0.48rem", color: "#64748b", letterSpacing: "0.08em" }}>NUTRITION STATUS</div>
-            <div style={{ display: "inline-flex", fontSize: "0.48rem", color: nutritionTone.color, background: nutritionTone.bg, padding: "0.14rem 0.4rem", borderRadius: 999, marginTop: "0.18rem" }}>{sanitizeStatusLabel(review?.actualNutrition?.adherence || review?.actualNutrition?.deviationKind, "Not logged")}</div>
-            <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.22rem", lineHeight: 1.55 }}>{sanitizeDisplayText(review?.nutritionComparison?.summary || "Nutrition comparison unavailable.")}</div>
+            <div style={eyebrowStyle}>Actual</div>
+            <div style={{ fontSize: "0.62rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+              {sanitizeDisplayText(story?.actualSummary?.label || cleanHistorySessionName(review?.actualLog?.type || "No workout log"))}
+            </div>
+            <div style={{ fontSize: "0.53rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.55 }}>
+              {sanitizeDisplayText(story?.actualSummary?.detail || review?.actualLog?.notes || "No actual session detail was saved.")}
+            </div>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: "0.45rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem" }}>
           <div style={basePanelCardStyle}>
-            <div style={{ fontSize: "0.49rem", color: "#64748b", letterSpacing: "0.08em", marginBottom: "0.22rem" }}>ORIGINAL PRESCRIPTION</div>
-            {(() => {
-              const summary = buildSessionSummary(review?.originalRecord?.resolved?.training || review?.originalRecord?.base?.training || null);
-              return (
-                <>
-                  <div style={{ fontSize: "0.6rem", color: "#e2e8f0" }}>{summary.label}</div>
-                  <div style={{ fontSize: "0.53rem", color: "#8fa5c8", marginTop: "0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
-                  <div style={{ fontSize: "0.5rem", color: "#64748b", marginTop: "0.18rem", lineHeight: 1.5 }}>{review?.originalRevision ? `${formatReviewTimestamp(review.originalRevision.capturedAt)} - ${sanitizeDisplayText(describeProvenanceRecord(review.originalRevision.provenance || null, review.originalRevision.reason || "initial_capture"))}` : "No original revision available."}</div>
-                </>
-              );
-            })()}
+            <div style={eyebrowStyle}>What mattered</div>
+            <div style={{ fontSize: "0.57rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.6 }}>
+              {sanitizeDisplayText(story?.mainLesson || review?.comparison?.summary || "No lesson is available yet.")}
+            </div>
           </div>
           <div style={basePanelCardStyle}>
-            <div style={{ fontSize: "0.49rem", color: "#64748b", letterSpacing: "0.08em", marginBottom: "0.22rem" }}>LATEST PRESCRIPTION</div>
-            {(() => {
-              const summary = buildSessionSummary(review?.currentRecord?.resolved?.training || review?.currentRecord?.base?.training || null);
-              return (
-                <>
-                  <div style={{ fontSize: "0.6rem", color: "#e2e8f0" }}>{summary.label}</div>
-                  <div style={{ fontSize: "0.53rem", color: "#8fa5c8", marginTop: "0.12rem" }}>{summary.detail || summary.type || "No detail saved."}</div>
-                  <div style={{ fontSize: "0.5rem", color: "#64748b", marginTop: "0.18rem", lineHeight: 1.5 }}>{review?.currentRevision ? `${formatReviewTimestamp(review.currentRevision.capturedAt)} - ${sanitizeDisplayText(describeProvenanceRecord(review.currentRevision.provenance || null, review.currentRevision.reason || "latest_revision"))}` : "No current revision available."}</div>
-                </>
-              );
-            })()}
+            <div style={eyebrowStyle}>What changes next</div>
+            <div style={{ fontSize: "0.57rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.6 }}>
+              {sanitizeDisplayText(story?.nextEffect || "No forward-looking effect is available yet.")}
+            </div>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: "0.45rem" }}>
-          <div style={basePanelCardStyle}>
-            <div style={{ fontSize: "0.49rem", color: "#64748b", letterSpacing: "0.08em", marginBottom: "0.22rem" }}>ACTUAL OUTCOME</div>
-            <div style={{ fontSize: "0.6rem", color: "#e2e8f0" }}>{sanitizeDisplayText(cleanHistorySessionName(review?.actualLog?.type || review?.comparison?.actualSession?.label || "No workout log"))}</div>
-            <div style={{ fontSize: "0.53rem", color: "#8fa5c8", marginTop: "0.12rem" }}>{sanitizeDisplayText(review?.actualLog?.notes || review?.comparison?.actualSession?.detail || review?.comparison?.status || "No session detail logged.")}</div>
-            <div style={{ fontSize: "0.5rem", color: "#64748b", marginTop: "0.18rem" }}>Executed: {sanitizeStatusLabel(review?.comparison?.completionKind, "unknown")} - {sanitizeStatusLabel(review?.comparison?.differenceKind, "unknown")}</div>
+        {(showCheckinContext || showNutritionContext || showRecoveryContext) && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: "0.45rem" }}>
+            {showCheckinContext && (
+              <div style={basePanelCardStyle}>
+                <div style={eyebrowStyle}>Check-in context</div>
+                <div style={{ fontSize: "0.55rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                  {sanitizeDisplayText(review?.actualCheckin?.status || "Check-in saved")}
+                </div>
+                <div style={{ fontSize: "0.5rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                  {sanitizeDisplayText(review?.actualCheckin?.note || review?.actualCheckin?.blocker || review?.actualCheckin?.sessionFeel || "No extra check-in detail saved.")}
+                </div>
+              </div>
+            )}
+            {showNutritionContext && (
+              <div style={basePanelCardStyle}>
+                <div style={eyebrowStyle}>Nutrition</div>
+                <div style={{ fontSize: "0.55rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                  {sanitizeDisplayText(nutritionSummary.label)}
+                </div>
+                <div style={{ fontSize: "0.5rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                  {sanitizeDisplayText(review?.nutritionComparison?.summary || nutritionSummary.detail)}
+                </div>
+              </div>
+            )}
+            {showRecoveryContext && (
+              <div style={basePanelCardStyle}>
+                <div style={eyebrowStyle}>Recovery</div>
+                <div style={{ fontSize: "0.55rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                  {sanitizeDisplayText(recoverySummary.label)}
+                </div>
+                <div style={{ fontSize: "0.5rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                  {sanitizeDisplayText(recoverySummary.detail)}
+                </div>
+              </div>
+            )}
           </div>
-          <div style={basePanelCardStyle}>
-            <div style={{ fontSize: "0.49rem", color: "#64748b", letterSpacing: "0.08em", marginBottom: "0.18rem" }}>ACTUAL CHECK-IN</div>
-            <div style={{ fontSize: "0.56rem", color: "#e2e8f0" }}>{sanitizeDisplayText(review?.actualCheckin?.status || "No check-in saved")}</div>
-            <div style={{ fontSize: "0.51rem", color: "#8fa5c8", marginTop: "0.12rem" }}>{sanitizeDisplayText(review?.actualCheckin?.note || review?.actualCheckin?.blocker || review?.actualCheckin?.sessionFeel || "No additional context saved.")}</div>
-          </div>
-          <div style={basePanelCardStyle}>
-            <div style={{ fontSize: "0.49rem", color: "#64748b", letterSpacing: "0.08em", marginBottom: "0.18rem" }}>ACTUAL NUTRITION</div>
-            {(() => {
-              const nutritionSummary = buildNutritionActualSummary(review?.actualNutrition);
-              return (
-                <>
-                  <div style={{ fontSize: "0.56rem", color: "#e2e8f0" }}>{sanitizeDisplayText(nutritionSummary.label)}</div>
-                  <div style={{ fontSize: "0.51rem", color: "#8fa5c8", marginTop: "0.12rem" }}>{sanitizeDisplayText(nutritionSummary.detail)}</div>
-                </>
-              );
-            })()}
-          </div>
-          <div style={basePanelCardStyle}>
-            <div style={{ fontSize: "0.49rem", color: "#64748b", letterSpacing: "0.08em", marginBottom: "0.18rem" }}>ACTUAL RECOVERY</div>
-            {(() => {
-              const recoverySummary = buildRecoveryActualSummary(review?.actualRecovery);
-              return (
-                <>
-                  <div style={{ fontSize: "0.56rem", color: "#e2e8f0" }}>{sanitizeDisplayText(recoverySummary.label)}</div>
-                  <div style={{ fontSize: "0.51rem", color: "#8fa5c8", marginTop: "0.12rem" }}>{sanitizeDisplayText(recoverySummary.detail)}</div>
-                </>
-              );
-            })()}
-          </div>
-        </div>
+        )}
+      </div>
 
-        <details style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 10, padding: "0.5rem 0.55rem" }} open={review?.revisions?.length > 1}>
-          <summary style={{ cursor: "pointer", fontSize: "0.55rem", color: "#dbe7f6" }}>Revision timeline ({review?.revisions?.length || 0})</summary>
-          <div style={{ marginTop: "0.35rem", display: "grid", gap: "0.32rem" }}>
-            {(review?.revisions || []).map((revision) => {
-              const summary = buildSessionSummary(revision?.record?.resolved?.training || revision?.record?.base?.training || null);
-              const isOriginal = revision?.revisionNumber === review?.originalRevision?.revisionNumber;
-              const isCurrent = revision?.revisionNumber === review?.currentRevision?.revisionNumber;
-              return (
-                <div key={revision?.revisionId || `${review?.dateKey}_${revision?.revisionNumber}`} style={{ border: "1px solid #182335", borderRadius: 8, background: "rgba(8,12,20,0.65)", padding: "0.4rem 0.45rem" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
-                    <div style={{ fontSize: "0.56rem", color: "#e2e8f0" }}>Rev {revision?.revisionNumber || 0}: {summary.label}</div>
-                    <div style={{ display: "flex", gap: "0.24rem", flexWrap: "wrap", alignItems: "center" }}>
-                      {isOriginal && <span style={{ fontSize: "0.46rem", color: C.blue, background: C.blue + "14", padding: "0.12rem 0.35rem", borderRadius: 999 }}>original</span>}
-                      {isCurrent && <span style={{ fontSize: "0.46rem", color: C.green, background: C.green + "14", padding: "0.12rem 0.35rem", borderRadius: 999 }}>latest</span>}
-                      <div style={{ fontSize: "0.48rem", color: "#64748b" }}>{formatReviewTimestamp(revision?.capturedAt)}</div>
+      <details style={{ ...detailDisclosureStyle, marginTop: "0.6rem" }} data-testid="history-day-review-audit">
+        <summary style={{ cursor: "pointer", fontSize: "0.55rem", color: "#dbe7f6" }}>Audit detail</summary>
+        <div style={{ marginTop: "0.4rem", display: "grid", gap: "0.45rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem" }}>
+            <div style={basePanelCardStyle}>
+              <div style={eyebrowStyle}>Active plan capture</div>
+              <div style={{ fontSize: "0.6rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                {sanitizeDisplayText(currentSummary.label)}
+              </div>
+              <div style={{ fontSize: "0.52rem", color: "#8fa5c8", marginTop: "0.12rem" }}>
+                {sanitizeDisplayText(currentSummary.detail || currentSummary.type || "No saved session detail.")}
+              </div>
+              <div style={{ fontSize: "0.49rem", color: "#94a3b8", marginTop: "0.18rem", lineHeight: 1.5 }}>
+                {review?.currentRevision
+                  ? `${formatReviewTimestamp(review.currentRevision.capturedAt)} • ${sanitizeStatusLabel(review.currentRevision.sourceType, "unknown")} • ${sanitizeStatusLabel(review.currentRevision.durability, "unknown")}`
+                  : "No active plan capture was found."}
+              </div>
+              <div style={{ fontSize: "0.49rem", color: "#64748b", marginTop: "0.14rem", lineHeight: 1.5 }}>
+                {sanitizeDisplayText(review?.provenanceSummary || describeProvenanceRecord(review?.currentRevision?.provenance || null, review?.currentRevision?.reason || "latest_revision"))}
+              </div>
+            </div>
+
+            <div style={basePanelCardStyle}>
+              <div style={eyebrowStyle}>{review?.revisions?.length > 1 ? "First saved capture" : "Saved capture"}</div>
+              <div style={{ fontSize: "0.6rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                {sanitizeDisplayText(originalSummary.label)}
+              </div>
+              <div style={{ fontSize: "0.52rem", color: "#8fa5c8", marginTop: "0.12rem" }}>
+                {sanitizeDisplayText(originalSummary.detail || originalSummary.type || "No saved session detail.")}
+              </div>
+              <div style={{ fontSize: "0.49rem", color: "#94a3b8", marginTop: "0.18rem", lineHeight: 1.5 }}>
+                {review?.originalRevision
+                  ? `${formatReviewTimestamp(review.originalRevision.capturedAt)} • ${sanitizeStatusLabel(review.originalRevision.sourceType, "unknown")} • ${sanitizeStatusLabel(review.originalRevision.durability, "unknown")}`
+                  : "No earlier saved capture was found."}
+              </div>
+              <div style={{ fontSize: "0.49rem", color: "#64748b", marginTop: "0.14rem", lineHeight: 1.5 }}>
+                {sanitizeDisplayText(
+                  review?.originalRevision
+                    ? describeProvenanceRecord(review.originalRevision.provenance || null, review.originalRevision.reason || "initial_capture")
+                    : "No provenance detail was saved."
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: "0.45rem" }}>
+            <div style={basePanelCardStyle}>
+              <div style={eyebrowStyle}>Execution classification</div>
+              <div style={{ fontSize: "0.56rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                {sanitizeDisplayText(summarizeExecutionDelta(review?.comparison))}
+              </div>
+              <div style={{ fontSize: "0.49rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                {sanitizeDisplayText(review?.comparison?.summary || "Comparison unavailable.")}
+              </div>
+            </div>
+
+            <div style={basePanelCardStyle}>
+              <div style={eyebrowStyle}>Source detail</div>
+              <div style={{ fontSize: "0.56rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                {sanitizeStatusLabel(review?.compatibility?.sourceType, "unknown")}
+              </div>
+              <div style={{ fontSize: "0.49rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                Durability: {sanitizeStatusLabel(review?.compatibility?.durability, "unknown")}
+              </div>
+              {review?.compatibility?.usedFallbackHistory && (
+                <div style={{ fontSize: "0.49rem", color: C.amber || "#f59e0b", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                  A legacy fallback history bridge was used for this review.
+                </div>
+              )}
+            </div>
+
+            <div style={basePanelCardStyle}>
+              <div style={eyebrowStyle}>Actual outcome source</div>
+              <div style={{ fontSize: "0.56rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                {sanitizeDisplayText(cleanHistorySessionName(review?.actualLog?.type || review?.actualLog?.label || review?.actualLog?.actualSession?.sessionLabel || "No workout log"))}
+              </div>
+              <div style={{ fontSize: "0.49rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                {sanitizeDisplayText(review?.actualLog?.notes || review?.actualCheckin?.note || "No extra actual-outcome detail was saved.")}
+              </div>
+            </div>
+          </div>
+
+          <div style={basePanelCardStyle}>
+            <div style={eyebrowStyle}>Plan capture history</div>
+            <div style={{ marginTop: "0.28rem", display: "grid", gap: "0.32rem" }}>
+              {revisionTimeline.length === 0 && (
+                <div style={{ fontSize: "0.52rem", color: "#8fa5c8" }}>No saved plan capture history is available.</div>
+              )}
+              {revisionTimeline.map((revision) => {
+                const summary = buildSessionSummary(revision?.record?.resolved?.training || revision?.record?.base?.training || null);
+                const isOriginal = revision?.revisionNumber === review?.originalRevision?.revisionNumber;
+                const isCurrent = revision?.revisionNumber === review?.currentRevision?.revisionNumber;
+                return (
+                  <div key={revision?.revisionId || `${review?.dateKey}_${revision?.revisionNumber}`} style={{ border: "1px solid #182335", borderRadius: 8, background: "rgba(8,12,20,0.65)", padding: "0.4rem 0.45rem" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
+                      <div style={{ fontSize: "0.56rem", color: "#e2e8f0" }}>
+                        Capture {revision?.revisionNumber || 0}: {sanitizeDisplayText(summary.label)}
+                      </div>
+                      <div style={{ display: "flex", gap: "0.24rem", flexWrap: "wrap", alignItems: "center" }}>
+                        {isOriginal && <span style={{ fontSize: "0.46rem", color: C.blue, background: `${C.blue}14`, padding: "0.12rem 0.35rem", borderRadius: 999 }}>first</span>}
+                        {isCurrent && <span style={{ fontSize: "0.46rem", color: C.green, background: `${C.green}14`, padding: "0.12rem 0.35rem", borderRadius: 999 }}>active</span>}
+                        <div style={{ fontSize: "0.48rem", color: "#64748b" }}>{formatReviewTimestamp(revision?.capturedAt)}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: "0.5rem", color: "#8fa5c8", marginTop: "0.1rem" }}>
+                      {sanitizeDisplayText(summary.detail || summary.type || "No session detail saved.")}
+                    </div>
+                    <div style={{ fontSize: "0.49rem", color: "#94a3b8", marginTop: "0.14rem", lineHeight: 1.5 }}>
+                      Saved because: {sanitizeDisplayText(revision?.provenanceSummary || revision?.reason || "unknown")} • {sanitizeDisplayText(formatAuditLabel(revision?.sourceType || "unknown"))} • {sanitizeDisplayText(formatAuditLabel(revision?.durability || "unknown"))}
                     </div>
                   </div>
-                  <div style={{ fontSize: "0.5rem", color: "#8fa5c8", marginTop: "0.1rem" }}>{summary.detail || summary.type || "No session detail saved."}</div>
-                  <div style={{ fontSize: "0.49rem", color: "#94a3b8", marginTop: "0.14rem", lineHeight: 1.5 }}>Plan changed because: {sanitizeDisplayText(revision?.provenanceSummary || revision?.reason || "unknown")} - {sanitizeDisplayText(revision?.sourceType || "unknown")} - {sanitizeDisplayText(revision?.durability || "unknown")}</div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </details>
-      </div>
+        </div>
+      </details>
     </div>
   );
 }
 
 export function HistoryAuditWeekHistorySection({
-  title = "COMMITTED WEEK HISTORY",
+  title = "WEEK REVIEW HISTORY",
   entries = [],
   emptyState = "",
   palette = {},
 }) {
   const C = palette;
   return (
-    <details className="card" style={{ marginBottom: "0.8rem" }} open={entries.length > 0}>
+    <details className="card" style={{ marginBottom: "0.8rem" }} open={entries.length > 0} data-testid="history-week-history-section">
       <summary style={{ cursor: "pointer", fontSize: "0.58rem", color: "#94a3b8", letterSpacing: "0.06em" }}>{title}</summary>
-      <div style={{ marginTop: "0.45rem", display: "grid", gap: "0.4rem" }}>
+      <div style={{ marginTop: "0.45rem", display: "grid", gap: "0.45rem" }}>
         {entries.length === 0 ? (
           <div style={{ fontSize: "0.55rem", color: "#64748b", lineHeight: 1.55 }}>{emptyState}</div>
-        ) : entries.slice(0, 8).map((entry) => (
-          <div key={entry.weekKey} style={{ border: "1px solid #20314a", borderRadius: 8, background: "#0f172a", padding: "0.45rem 0.5rem" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ fontSize: "0.56rem", color: "#dbe7f6" }}>{entry.label}</div>
-              <div style={{ display: "flex", gap: "0.24rem", flexWrap: "wrap", alignItems: "center" }}>
-                {entry?.isCurrentWeek && <span style={{ fontSize: "0.46rem", color: C.green, background: C.green + "14", padding: "0.12rem 0.35rem", borderRadius: 999 }}>current</span>}
-                <span style={{ fontSize: "0.46rem", color: "#8fa5c8", background: "#172233", padding: "0.12rem 0.35rem", borderRadius: 999 }}>{String(entry?.status || "planned").replaceAll("_", " ")}</span>
+        ) : entries.slice(0, 8).map((entry) => {
+          const story = entry?.story || {};
+          const storyTone = buildLocalTone(story?.toneKey || story?.classificationKey || entry?.status, C);
+          return (
+            <div key={entry.weekKey} style={{ border: "1px solid #20314a", borderRadius: 10, background: "#0f172a", padding: "0.5rem 0.55rem" }} data-testid={`history-week-review-card-${entry.weekKey}`}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: "0.58rem", color: "#dbe7f6" }}>{entry.label}</div>
+                  {(entry.startDate || entry.endDate) && (
+                    <div style={{ fontSize: "0.49rem", color: "#8fa5c8", marginTop: "0.1rem" }}>
+                      {entry.startDate && entry.endDate ? `${entry.startDate} to ${entry.endDate}` : "Week window unavailable"}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: "0.24rem", flexWrap: "wrap", alignItems: "center" }}>
+                  {entry?.isCurrentWeek && <span style={{ fontSize: "0.46rem", color: C.green, background: `${C.green}14`, padding: "0.12rem 0.35rem", borderRadius: 999 }}>current</span>}
+                  <span style={{ fontSize: "0.46rem", color: storyTone.color, background: storyTone.bg, padding: "0.12rem 0.35rem", borderRadius: 999 }}>
+                    {story?.classificationLabel || formatAuditLabel(entry?.status || "planned")}
+                  </span>
+                </div>
               </div>
-            </div>
-            <div style={{ fontSize: "0.52rem", color: "#93c5fd", marginTop: "0.12rem", lineHeight: 1.55 }}>{entry.focus || entry.summary || "Committed week snapshot"}</div>
-            <div style={{ fontSize: "0.5rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
-              {entry.startDate && entry.endDate ? `${entry.startDate} to ${entry.endDate}` : "Week window unavailable"} - {entry.plannedSessionCount || 0} planned - {entry.loggedSessionCount || 0} logged
-            </div>
-            {entry?.weeklyCheckin?.ts && (
-              <div style={{ fontSize: "0.49rem", color: "#94a3b8", marginTop: "0.14rem", lineHeight: 1.5 }}>
-                Weekly check-in: energy {entry.weeklyCheckin.energy || "?"}, stress {entry.weeklyCheckin.stress || "?"}, confidence {entry.weeklyCheckin.confidence || "?"}
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem", marginTop: "0.45rem" }}>
+                <div style={basePanelCardStyle}>
+                  <div style={eyebrowStyle}>What was planned</div>
+                  <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
+                    {story?.plannedSummary || `Planned ${entry?.plannedSessionCount || 0} sessions.`}
+                  </div>
+                </div>
+                <div style={basePanelCardStyle}>
+                  <div style={eyebrowStyle}>What actually happened</div>
+                  <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
+                    {story?.actualSummary || `Logged ${entry?.loggedSessionCount || 0} sessions.`}
+                  </div>
+                </div>
               </div>
-            )}
-          </div>
-        ))}
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem", marginTop: "0.45rem" }}>
+                <div style={basePanelCardStyle}>
+                  <div style={eyebrowStyle}>What mattered</div>
+                  <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
+                    {story?.whatMattered || entry?.focus || entry?.summary || "No weekly context was saved."}
+                  </div>
+                </div>
+                <div style={basePanelCardStyle}>
+                  <div style={eyebrowStyle}>What changes next</div>
+                  <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
+                    {story?.nextEffect || "No forward-looking effect was saved."}
+                  </div>
+                </div>
+              </div>
+
+              <details style={{ ...detailDisclosureStyle, marginTop: "0.45rem" }}>
+                <summary style={{ cursor: "pointer", fontSize: "0.53rem", color: "#cbd5e1" }}>Audit detail</summary>
+                <div style={{ marginTop: "0.35rem", display: "grid", gap: "0.32rem" }}>
+                  <div style={{ fontSize: "0.5rem", color: "#8fa5c8", lineHeight: 1.5 }}>
+                    Status: {formatAuditLabel(entry?.status || "planned")} • {entry?.plannedSessionCount || 0} planned • {entry?.loggedSessionCount || 0} logged
+                  </div>
+                  <div style={{ fontSize: "0.5rem", color: "#8fa5c8", lineHeight: 1.5 }}>
+                    Commitment: {formatAuditLabel(entry?.commitment || "committed")} • Durability: {formatAuditLabel(entry?.durability || "durable")}
+                  </div>
+                  {(entry?.focus || entry?.summary) && (
+                    <div style={{ fontSize: "0.5rem", color: "#94a3b8", lineHeight: 1.5 }}>
+                      {entry?.focus || entry?.summary}
+                    </div>
+                  )}
+                  {entry?.weeklyCheckin?.ts && (
+                    <div style={{ fontSize: "0.49rem", color: "#94a3b8", lineHeight: 1.5 }}>
+                      Weekly check-in: energy {entry.weeklyCheckin.energy || "?"}, stress {entry.weeklyCheckin.stress || "?"}, confidence {entry.weeklyCheckin.confidence || "?"}
+                    </div>
+                  )}
+                </div>
+              </details>
+            </div>
+          );
+        })}
       </div>
     </details>
   );
@@ -230,12 +426,12 @@ export function HistoryAuditArchiveSection({
               <div style={{ fontSize: "0.5rem", color: "#7f94b3", marginTop: "0.1rem" }}>Archived {archive.archivedAt ? new Date(archive.archivedAt).toLocaleString() : "unknown"}</div>
               {archive.committedWeekCount > 0 && (
                 <div style={{ fontSize: "0.49rem", color: "#93c5fd", marginTop: "0.1rem" }}>
-                  {archive.committedWeekCount} committed week snapshots archived.
+                  {archive.committedWeekCount} saved week review{archive.committedWeekCount === 1 ? "" : "s"} archived.
                 </div>
               )}
               {archive.prescribedDayCount > 0 && (
                 <div style={{ fontSize: "0.49rem", color: "#8fa5c8", marginTop: "0.1rem" }}>
-                  {archive.prescribedDayCount} prescribed-day snapshots archived.
+                  {archive.prescribedDayCount} day review snapshot{archive.prescribedDayCount === 1 ? "" : "s"} archived.
                 </div>
               )}
 
@@ -243,7 +439,8 @@ export function HistoryAuditArchiveSection({
                 <div style={{ marginTop: "0.25rem", display: "grid", gap: "0.18rem" }}>
                   {archive.weekReviews.slice(0, 4).map((entry) => (
                     <div key={`${archive.id}_week_${entry.weekKey}`} style={{ fontSize: "0.52rem", color: "#9fb2d2", lineHeight: 1.55 }}>
-                      Week {entry.absoluteWeek || entry.weekNumber}: {sanitizeDisplayText(entry.label || "Committed week")} {entry.focus ? `- ${sanitizeDisplayText(entry.focus)}` : ""}{entry.summary ? ` - ${sanitizeDisplayText(entry.summary)}` : ""}
+                      Week {entry.absoluteWeek || entry.weekNumber}: {sanitizeDisplayText(entry.label || "Saved week")} • {sanitizeDisplayText(entry?.story?.classificationLabel || formatAuditLabel(entry?.status || "planned"))}
+                      {entry?.story?.whatMattered ? ` • ${sanitizeDisplayText(entry.story.whatMattered)}` : entry.focus ? ` • ${sanitizeDisplayText(entry.focus)}` : ""}
                     </div>
                   ))}
                 </div>
@@ -277,9 +474,9 @@ export function HistoryAuditArchiveSection({
                 <div style={{ marginTop: "0.45rem" }}>
                   <HistoryAuditDayReviewCard
                     title="ARCHIVED DAY REVIEW"
-                    subtitle="Archived plan state stays separate from later actual outcome."
+                    subtitle="Archived plan state stays separate from later outcome."
                     review={selectedArchiveReview.review}
-                    palette={palette}
+                    palette={C}
                     sanitizeDisplayText={sanitizeDisplayText}
                     sanitizeStatusLabel={sanitizeStatusLabel}
                     buildReviewBadgeTone={buildReviewBadgeTone}
