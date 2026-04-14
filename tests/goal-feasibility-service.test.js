@@ -6,6 +6,7 @@ const {
 } = require("../src/services/goal-resolution-service.js");
 const {
   GOAL_FEASIBILITY_ACTIONS,
+  GOAL_FEASIBILITY_GATE_STATUSES,
   GOAL_REALISM_STATUSES,
   GOAL_TARGET_VALIDATION_STATUSES,
   applyFeasibilityPriorityOrdering,
@@ -215,9 +216,27 @@ test("impossible marathon target is blocked and given a phased revision", () => 
   });
 
   assert.equal(feasibility.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
+  assert.equal(feasibility.status, GOAL_FEASIBILITY_GATE_STATUSES.impossible);
   assert.equal(feasibility.realismStatus, GOAL_REALISM_STATUSES.unrealistic);
   assert.equal(feasibility.goalAssessments[0].targetValidationStatus, GOAL_TARGET_VALIDATION_STATUSES.unrealisticButValid);
   assert.equal(feasibility.targetValidation.status, GOAL_TARGET_VALIDATION_STATUSES.valid);
+  assert.equal(feasibility.primary_reason_code, "target_beyond_credible_range");
+  assert.ok(Array.isArray(feasibility.reasons));
+  assert.ok(feasibility.reasons.length >= 1);
+  assert.equal(feasibility.suggested_revision.kind, "build_running_base");
+  assert.match(feasibility.suggested_revision.first_block_target, /runs per week|long run/i);
+  assert.equal(feasibility.first_block_alternatives.length, 2);
+  assert.equal(feasibility.first_block_alternatives[0].label, "Conservative");
+  assert.equal(feasibility.first_block_alternatives[1].label, "Standard");
+  assert.match(feasibility.first_block_alternatives[0].summary, /reassess the bigger target after that block/i);
+  assert.match(
+    feasibility.first_block_alternatives[1].summary,
+    new RegExp(`${feasibility.first_block_alternatives[1].suggested_target_horizon_weeks} weeks`, "i")
+  );
+  assert.match(feasibility.explanation_text, /Realistic first block:/i);
+  assert.match(feasibility.explanation_text, /What would change this:/i);
+  assert.equal((feasibility.explanation_text.match(/What would change this:/g) || []).length, 1);
+  assert.doesNotMatch(feasibility.explanation_text, /safe ceiling|conservative/i);
   assert.match(feasibility.blockingReasons[0], /marathon time target/i);
   assert.match(feasibility.recommendedRevision.summary, /first block|longer horizon/i);
 });
@@ -314,9 +333,13 @@ test("body-comp goals with missing baseline stay blocked as incomplete instead o
   });
 
   assert.equal(feasibility.confirmationAction, GOAL_FEASIBILITY_ACTIONS.block);
+  assert.equal(feasibility.status, GOAL_FEASIBILITY_GATE_STATUSES.needsRevision);
+  assert.equal(feasibility.primary_reason_code, "missing_required_context");
   assert.equal(feasibility.missingConfidence.level, "high");
   assert.equal(feasibility.targetValidation.status, GOAL_TARGET_VALIDATION_STATUSES.underconstrainedPlausible);
   assert.equal(feasibility.targetValidation.clarificationRequired, true);
+  assert.equal(feasibility.suggested_revision.kind, "collect_missing_anchors");
+  assert.match(feasibility.explanation_text, /What would change this:/i);
   assert.equal(feasibility.recommendedRevision.kind, "missing_context");
   assert.match(feasibility.recommendedRevision.summary, /current bodyweight|target timeline/i);
 });

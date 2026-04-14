@@ -186,6 +186,58 @@ test("structured running goal follow-up for race date validates and clears immed
   assert.ok(!state.missingRequired.some((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.runningTiming));
 });
 
+test("structured timeline follow-up accepts natural phrases like by summer", () => {
+  const resolvedGoals = buildResolvedGoals("run a 2-hour half marathon");
+  const question = deriveIntakeCompletenessState({
+    resolvedGoals,
+    answers: {},
+  }).nextQuestions[0];
+  const validation = validateIntakeCompletenessAnswer({
+    question,
+    answerValues: {
+      target_timeline: "by summer",
+    },
+  });
+  const answered = applyIntakeCompletenessAnswer({
+    answers: {},
+    question,
+    answerValues: {
+      target_timeline: "by summer",
+    },
+  });
+
+  assert.equal(validation.isValid, true);
+  assert.equal(validation.summaryText, "by summer");
+  assert.equal(answered.answers.intake_completeness.fields.target_timeline.raw, "by summer");
+  assert.equal(answered.answers.intake_completeness.fields.target_timeline.value, "by summer");
+});
+
+test("structured timeline follow-up normalizes month-year answers while preserving the raw phrase", () => {
+  const resolvedGoals = buildResolvedGoals("run a 2-hour half marathon");
+  const question = deriveIntakeCompletenessState({
+    resolvedGoals,
+    answers: {},
+  }).nextQuestions[0];
+  const validation = validateIntakeCompletenessAnswer({
+    question,
+    answerValues: {
+      target_timeline: "October 2026",
+    },
+  });
+  const answered = applyIntakeCompletenessAnswer({
+    answers: {},
+    question,
+    answerValues: {
+      target_timeline: "October 2026",
+    },
+  });
+
+  assert.equal(validation.isValid, true);
+  assert.equal(validation.summaryText, "October 2026");
+  assert.equal(answered.answers.intake_completeness.fields.target_timeline.raw, "October 2026");
+  assert.equal(answered.answers.intake_completeness.fields.target_timeline.value, "2026-10");
+});
+
 test("structured running baseline follow-up validates required fields and clears immediately", () => {
   const resolvedGoals = buildResolvedGoals("run a 2-hour half marathon");
   const question = deriveIntakeCompletenessState({

@@ -6,6 +6,8 @@ export const AI_PACKET_INTENTS = {
   coachChat: "coach_chat",
   planAnalysis: "plan_analysis",
   intakeInterpretation: "intake_interpretation",
+  intakeFieldExtraction: "intake_field_extraction",
+  intakeCoachVoice: "intake_coach_voice",
 };
 
 const clonePlainValueAiState = (value) => {
@@ -479,7 +481,194 @@ RULES:
 - coachSummary must stay under 120 words and remain interpretation-only.
 - Never claim the goal is impossible. If the timeline is aggressive, say what is realistic first.`;
 
-export const sanitizeIntakeInterpretationProposal = (proposal = null) => {
+export const buildIntakeFieldExtractionAiSystemPrompt = ({
+  statePacket = null,
+  extractionRequest = null,
+} = {}) => `You are a bounded intake extraction assistant inside a fitness app. Respond ONLY with valid JSON, no other text.
+Your source of truth is the typed intake packet and extraction request below.
+You may propose candidate values only for the explicitly allowed missing fields.
+You are not the system of record and you may not write canonical goals, plan state, or any field not listed in missingFields.
+AI_STATE_PACKET_JSON:${stringifyPacketForPrompt(statePacket)}
+EXTRACTION_REQUEST_JSON:${stringifyPacketForPrompt(extractionRequest)}
+
+Return JSON in this exact format:
+{
+  "candidates": [
+    {
+      "field_id": "field_id_from_missingFields",
+      "confidence": 0.0,
+      "raw_text": "exact supporting text",
+      "parsed_value": {},
+      "evidence_spans": [
+        { "start": 0, "end": 7, "text": "supporting text" }
+      ]
+    }
+  ]
+}
+
+RULES:
+- Only use field_id values that appear in missingFields.
+- Max 1 candidate per field_id.
+- If the utterance does not clearly support a field, omit it.
+- confidence must be between 0 and 1 and reflect extraction certainty only.
+- evidence_spans must quote exact supporting text from the utterance.
+- parsed_value must stay small and schema-aligned.
+- If nothing is clear, return {"candidates":[]}.`;
+
+const dedupeLowercaseAiState = (values = []) => {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : [])
+    .filter(Boolean)
+    .filter((value) => {
+      const key = String(value || "").toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const normalizeScheduleBoundaryAiState = (value = {}) => {
+  const daysRaw = value?.trainingDaysPerWeek;
+  const trainingDaysPerWeek = Number.isFinite(Number(daysRaw))
+    ? clampNumberAiState(daysRaw, 0, 14, 0)
+    : null;
+  return {
+    trainingDaysPerWeek,
+    sessionLength: sanitizeTextAiState(value?.sessionLength || "", 40),
+    trainingLocation: sanitizeTextAiState(value?.trainingLocation || "", 60),
+  };
+};
+
+const normalizeEquipmentBoundaryAiState = (value = {}) => ({
+  trainingLocation: sanitizeTextAiState(value?.trainingLocation || "", 60),
+  equipment: dedupeLowercaseAiState(
+    (Array.isArray(value?.equipment) ? value.equipment : [])
+      .map((item) => sanitizeTextAiState(item, 40))
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right))
+  ),
+});
+
+const normalizeInjuryBoundaryAiState = (value = {}) => ({
+  injuryText: sanitizeTextAiState(value?.injuryText || "", 180),
+  constraints: dedupeLowercaseAiState(
+    (Array.isArray(value?.constraints) ? value.constraints : [])
+      .map((item) => sanitizeTextAiState(item, 120))
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right))
+  ),
+});
+
+const arraysEqualAiState = (left = [], right = []) => {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+};
+
+const buildExplicitBoundarySnapshotAiState = (statePacket = null) => {
+  const intake = statePacket?.intake || {};
+  const scheduleReality = normalizeScheduleBoundaryAiState(intake?.scheduleReality || {});
+  const equipmentAccessContext = normalizeEquipmentBoundaryAiState(intake?.equipmentAccessContext || {});
+  const injuryConstraintContext = normalizeInjuryBoundaryAiState(intake?.injuryConstraintContext || {});
+  return {
+    scheduleReality,
+    equipmentAccessContext,
+    injuryConstraintContext,
+    hasExplicitSchedule: scheduleReality.trainingDaysPerWeek !== null
+      || Boolean(scheduleReality.sessionLength)
+      || Boolean(scheduleReality.trainingLocation),
+    hasExplicitEquipment: equipmentAccessContext.equipment.length > 0,
+    hasExplicitInjury: Boolean(injuryConstraintContext.injuryText) || injuryConstraintContext.constraints.length > 0,
+  };
+};
+
+const buildProposalBoundarySnapshotAiState = (proposal = {}) => {
+  const scheduleSource = proposal?.scheduleReality && typeof proposal.scheduleReality === "object"
+    ? proposal.scheduleReality
+    : proposal?.schedule && typeof proposal.schedule === "object"
+      ? proposal.schedule
+      : {};
+  const equipmentSource = proposal?.equipmentAccessContext && typeof proposal.equipmentAccessContext === "object"
+    ? proposal.equipmentAccessContext
+    : {};
+  const injurySource = proposal?.injuryConstraintContext && typeof proposal.injuryConstraintContext === "object"
+    ? proposal.injuryConstraintContext
+    : {};
+  const scheduleReality = normalizeScheduleBoundaryAiState({
+    trainingDaysPerWeek: proposal?.trainingDaysPerWeek ?? scheduleSource?.trainingDaysPerWeek,
+    sessionLength: proposal?.sessionLength || scheduleSource?.sessionLength || "",
+    trainingLocation: proposal?.trainingLocation || scheduleSource?.trainingLocation || "",
+  });
+  const equipmentAccessContext = normalizeEquipmentBoundaryAiState({
+    trainingLocation: equipmentSource?.trainingLocation || proposal?.trainingLocation || "",
+    equipment: equipmentSource?.equipment || proposal?.equipment || proposal?.availableEquipment || [],
+  });
+  const injuryConstraintContext = normalizeInjuryBoundaryAiState({
+    injuryText: injurySource?.injuryText || proposal?.injuryText || "",
+    constraints: injurySource?.constraints || proposal?.constraints || proposal?.injuryConstraints || [],
+  });
+  return {
+    scheduleReality,
+    equipmentAccessContext,
+    injuryConstraintContext,
+    hasScheduleSuggestion: Boolean(proposal?.scheduleReality || proposal?.schedule)
+      || scheduleReality.trainingDaysPerWeek !== null
+      || Boolean(scheduleReality.sessionLength)
+      || Boolean(scheduleReality.trainingLocation),
+    hasEquipmentSuggestion: Boolean(proposal?.equipmentAccessContext)
+      || equipmentAccessContext.equipment.length > 0,
+    hasInjurySuggestion: Boolean(proposal?.injuryConstraintContext)
+      || Boolean(injuryConstraintContext.injuryText)
+      || injuryConstraintContext.constraints.length > 0,
+  };
+};
+
+const collectExplicitBoundaryDropsAiState = ({ proposal = null, statePacket = null } = {}) => {
+  if (!proposal || typeof proposal !== "object") return [];
+  const explicit = buildExplicitBoundarySnapshotAiState(statePacket);
+  const suggested = buildProposalBoundarySnapshotAiState(proposal);
+  const drops = [];
+
+  const scheduleConflict = explicit.hasExplicitSchedule
+    && suggested.hasScheduleSuggestion
+    && (
+      (explicit.scheduleReality.trainingDaysPerWeek !== null
+        && suggested.scheduleReality.trainingDaysPerWeek !== null
+        && explicit.scheduleReality.trainingDaysPerWeek !== suggested.scheduleReality.trainingDaysPerWeek)
+      || (explicit.scheduleReality.sessionLength
+        && suggested.scheduleReality.sessionLength
+        && explicit.scheduleReality.sessionLength.toLowerCase() !== suggested.scheduleReality.sessionLength.toLowerCase())
+      || (explicit.scheduleReality.trainingLocation
+        && suggested.scheduleReality.trainingLocation
+        && explicit.scheduleReality.trainingLocation.toLowerCase() !== suggested.scheduleReality.trainingLocation.toLowerCase())
+    );
+  if (scheduleConflict) drops.push("scheduleReality");
+
+  const equipmentConflict = explicit.hasExplicitEquipment
+    && suggested.hasEquipmentSuggestion
+    && !arraysEqualAiState(explicit.equipmentAccessContext.equipment, suggested.equipmentAccessContext.equipment);
+  if (equipmentConflict) drops.push("equipmentAccessContext");
+
+  const injuryConflict = explicit.hasExplicitInjury
+    && suggested.hasInjurySuggestion
+    && (
+      (explicit.injuryConstraintContext.injuryText
+        && suggested.injuryConstraintContext.injuryText
+        && explicit.injuryConstraintContext.injuryText.toLowerCase() !== suggested.injuryConstraintContext.injuryText.toLowerCase())
+      || (
+        explicit.injuryConstraintContext.constraints.length > 0
+        && suggested.injuryConstraintContext.constraints.length > 0
+        && !arraysEqualAiState(explicit.injuryConstraintContext.constraints, suggested.injuryConstraintContext.constraints)
+      )
+    );
+  if (injuryConflict) drops.push("injuryConstraintContext");
+
+  return dedupeLowercaseAiState([
+    ...(Array.isArray(proposal?.boundaryDrops) ? proposal.boundaryDrops : []).map((item) => sanitizeTextAiState(item, 80)).filter(Boolean),
+    ...drops,
+  ]);
+};
+
+export const sanitizeIntakeInterpretationProposal = (proposal = null, { statePacket = null } = {}) => {
   const safeGoalTypes = new Set(["performance", "strength", "body_comp", "appearance", "hybrid", "general_fitness", "re_entry"]);
   const safeMeasurability = new Set(["fully_measurable", "proxy_measurable", "exploratory_fuzzy"]);
   const safeTimelineStatuses = new Set(["realistic", "aggressive", "unclear"]);
@@ -501,6 +690,7 @@ export const sanitizeIntakeInterpretationProposal = (proposal = null) => {
     detectedConflicts: [],
     missingClarifyingQuestions: [],
     coachSummary: "",
+    boundaryDrops: [],
   };
 
   if (!proposal || typeof proposal !== "object") return fallback;
@@ -548,6 +738,7 @@ export const sanitizeIntakeInterpretationProposal = (proposal = null) => {
     .slice(0, 5);
   const primaryMetric = suggestedMetrics.find((metric) => metric.kind === "primary") || null;
   const proxyMetrics = suggestedMetrics.filter((metric) => metric.kind === "proxy").slice(0, 4);
+  const boundaryDrops = collectExplicitBoundaryDropsAiState({ proposal, statePacket });
 
   return {
     interpretedGoalType: safeGoalTypes.has(interpretedGoalType) ? interpretedGoalType : fallback.interpretedGoalType,
@@ -570,6 +761,7 @@ export const sanitizeIntakeInterpretationProposal = (proposal = null) => {
       .map((item) => sanitizeTextAiState(item, 160))
       .filter(Boolean),
     coachSummary: sanitizeTextAiState(proposal?.coachSummary || "", 420),
+    boundaryDrops,
   };
 };
 

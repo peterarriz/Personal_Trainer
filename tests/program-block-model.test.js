@@ -343,7 +343,6 @@ test("ProgramBlock uses resolved goal structure to express horizon, proxies, and
           measurabilityTier: "proxy_measurable",
           proxyMetrics: [
             { key: "waist_circumference", label: "Waist circumference", unit: "in", kind: "proxy" },
-            { key: "progress_photos", label: "Manual photo review (future)", unit: "checkins", kind: "proxy" },
           ],
           targetHorizonWeeks: 8,
           tradeoffs: ["Aggressive fat loss may limit strength progression and recovery quality."],

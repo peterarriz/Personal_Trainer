@@ -122,6 +122,25 @@ const normalizeSupplementTakenMap = (supplementTaken = {}) => {
   return {};
 };
 
+export const applyHydrationQuickAdd = ({
+  currentOz = 0,
+  targetOz = 0,
+  incrementOz = 12,
+} = {}) => {
+  const safeCurrentOz = Math.max(0, Number(currentOz || 0));
+  const safeTargetOz = Math.max(0, Number(targetOz || 0));
+  const safeIncrementOz = Math.max(0, Number(incrementOz || 0));
+  const hydrationOz = safeCurrentOz + safeIncrementOz;
+  const hydrationPct = safeTargetOz > 0
+    ? Math.max(0, Math.min(100, Math.round((hydrationOz / safeTargetOz) * 100)))
+    : 0;
+  return {
+    hydrationOz,
+    hydrationTargetOz: safeTargetOz,
+    hydrationPct,
+  };
+};
+
 const inferNutritionDeviationKind = ({ status = "", issue = "", note = "" } = {}) => {
   const statusText = String(status || "").toLowerCase();
   const issueText = String(issue || "").toLowerCase();
@@ -147,8 +166,8 @@ export const normalizeActualNutritionLog = ({ dateKey = "", feedback = {}, planR
   const raw = clonePlainValueNutrition(feedback || {});
   const nested = clonePlainValueNutrition(raw?.actualNutrition || raw?.actualNutritionLog || null);
   const status = String(
-    nested?.quickStatus
-    || raw?.status
+    raw?.status
+    || nested?.quickStatus
     || nested?.status
     || ""
   ).toLowerCase();
@@ -162,14 +181,14 @@ export const normalizeActualNutritionLog = ({ dateKey = "", feedback = {}, planR
     || {}
   );
   const hydrationOz = Number(
-    nested?.hydration?.oz
-    ?? raw?.hydrationOz
+    raw?.hydrationOz
+    ?? nested?.hydration?.oz
     ?? nested?.hydrationOz
     ?? 0
   ) || 0;
   const hydrationTargetOz = Number(
-    nested?.hydration?.targetOz
-    ?? raw?.hydrationTargetOz
+    raw?.hydrationTargetOz
+    ?? nested?.hydration?.targetOz
     ?? nested?.hydrationTargetOz
     ?? 0
   ) || 0;
@@ -234,7 +253,7 @@ export const normalizeActualNutritionLog = ({ dateKey = "", feedback = {}, planR
       count: takenNames.length,
     },
     planReference: clonePlainValueNutrition(raw?.planReference || nested?.planReference || planReference || null),
-    loggedAt: hasAnySignal ? (Number(nested?.loggedAt || raw?.ts || Date.now()) || Date.now()) : null,
+    loggedAt: hasAnySignal ? (Number(raw?.ts || nested?.loggedAt || Date.now()) || Date.now()) : null,
     legacy: {
       status,
       issue,
@@ -493,7 +512,7 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
 };
 
 export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext, nutritionLayer, momentum, favorites, travelMode, learningLayer, timeOfDay, loggedIntake }) => {
-  const city = (location || "Austin").trim() || "Austin";
+  const city = (location || "").trim() || "your area";
   const key = `${city.toLowerCase()}_${dayType}`;
   const favoriteRestaurants = favorites?.restaurants || [];
   const favoriteSafeMeals = favorites?.safeMeals || [];
@@ -529,7 +548,7 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
 
   const defaultMealStructure = nutritionLayer?.simplified
     ? ["Meal 1: protein + carb anchor", "Meal 2: default safe meal", "Meal 3: protein + veg + carb", "Snack: protein + fruit"]
-    : ["Meal 1: structured breakfast", "Meal 2: performance lunch", "Meal 3: recovery dinner", "Snack: protein top-up"];
+    : ["Meal 1: structured breakfast", "Meal 2: performance lunch", "Meal 3: recovery dinner", "Snack: extra protein snack"];
 
   const constraints = [];
   if (travelMode) constraints.push("travel_logistics");

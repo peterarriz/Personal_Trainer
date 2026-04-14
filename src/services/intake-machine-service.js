@@ -5,16 +5,25 @@ import {
   INTAKE_COMPLETENESS_FIELDS,
   INTAKE_COMPLETENESS_QUESTION_KEYS,
   INTAKE_COMPLETENESS_VALUE_TYPES,
+  resolveTimelineFieldRecord,
 } from "./intake-completeness-service.js";
 import {
+  applyIntakeGoalStackConfirmation,
+  buildDeterministicAnchorPromptText,
   buildIntakeGoalReviewModel,
   deriveIntakeConfirmationState,
   readAdditionalGoalEntries,
 } from "./intake-goal-flow-service.js";
+import {
+  buildTranscriptMessageKey,
+  TRANSCRIPT_MESSAGE_KINDS,
+} from "./intake-transcript-service.js";
 import { resolveGoalTranslation } from "./goal-resolution-service.js";
+import { sanitizeDisplayCopy } from "./text-format-service.js";
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
+const sanitizeDisplayLine = (value = "", maxLength = 240) => sanitizeDisplayCopy(sanitizeText(value, maxLength));
 const toFiniteNumber = (value, fallback = null) => {
   if (value === "" || value === null || value === undefined) return fallback;
   const parsed = Number(value);
@@ -129,19 +138,79 @@ const parseWaistMeasurement = (text = "") => {
   return withWaist?.[1] ? Number(withWaist[1]) : null;
 };
 
-const hasTimingSignal = (text = "") => /\b(by|before|over the next|within|in)\b|\bweek(?:s)?\b|\bmonth(?:s)?\b|\byear(?:s)?\b|\bspring\b|\bsummer\b|\bfall\b|\bautumn\b|\bwinter\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b|\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b/i.test(String(text || ""));
+const buildDefaultAnchorWhyItMatters = ({
+  label = "",
+  question = "",
+  inputType = "",
+} = {}) => {
+  const lowerLabel = sanitizeText(label || question || "", 160).toLowerCase();
+  if (/\bdate\b|\bmonth\b|\btimeline\b|\bhorizon\b/.test(lowerLabel)) {
+    return "This tells me how much runway you really have for the first block.";
+  }
+  if (/\brun\b|\bpace\b|\brace\b/.test(lowerLabel)) {
+    return "This helps me size the first block around your current running shape instead of guessing.";
+  }
+  if (/\bstrength\b|\blift\b|\btop set\b|\bmax\b/.test(lowerLabel)) {
+    return "This tells me how aggressive the first block can be without overshooting.";
+  }
+  if (/\bbodyweight\b|\bwaist\b|\bweight\b/.test(lowerLabel)) {
+    return "This gives me a clear starting point so progress is grounded in something real.";
+  }
+  if (sanitizeText(inputType, 40).toLowerCase() === "choice_chips") {
+    return "This helps me take the cleanest next step without slowing the intake down.";
+  }
+  return "This helps me set the first block around where you're starting right now.";
+};
 
-const validateTimelineValue = (value = "") => {
-  const clean = sanitizeText(value, 120);
-  if (!clean) return "";
-  if (/\b\d{4}-\d{2}-\d{2}\b/.test(clean) || hasTimingSignal(clean)) return clean;
-  return "";
+const buildDefaultAnchorCoachVoiceLine = ({
+  inputType = "",
+  label = "",
+} = {}) => {
+  const normalizedInputType = sanitizeText(inputType, 40).toLowerCase();
+  const lowerLabel = sanitizeText(label, 160).toLowerCase();
+  if (normalizedInputType === "date_or_month") {
+    return "Coach note: a rough month is enough if you do not know the exact date yet.";
+  }
+  if (normalizedInputType === "choice_chips") {
+    return "Coach note: pick the option that's easiest to answer right now.";
+  }
+  if (normalizedInputType === "number" || normalizedInputType === "number_with_unit") {
+    return /\bwaist\b/.test(lowerLabel)
+      ? "Coach note: a rough tape check is fine here."
+      : "Coach note: a close estimate is enough here.";
+  }
+  if (normalizedInputType === "strength_top_set") {
+    return "Coach note: even an estimate is enough to give me a real starting point.";
+  }
+  return "Coach note: close enough is fine here. I just need a real starting point.";
 };
 
 const readStoredField = (answers = {}, fieldKey = "") => {
   const stored = answers?.intake_completeness?.fields?.[fieldKey];
   return stored && typeof stored === "object" ? stored : null;
 };
+
+const buildAnchorBindingTarget = (anchor = null) => ({
+  anchor_id: sanitizeText(anchor?.anchor_id || "", 120),
+  field_id: sanitizeText(anchor?.field_id || "", 80),
+});
+
+const readEventBindingTarget = (payload = {}) => {
+  const explicitTarget = payload?.binding_target && typeof payload.binding_target === "object"
+    ? payload.binding_target
+    : {};
+  return {
+    anchor_id: sanitizeText(explicitTarget?.anchor_id || payload?.anchor_id || "", 120),
+    field_id: sanitizeText(explicitTarget?.field_id || payload?.field_id || "", 80),
+  };
+};
+
+const matchesBindingTarget = (expected = {}, received = {}) => (
+  sanitizeText(expected?.anchor_id || "", 120)
+  && sanitizeText(expected?.field_id || "", 80)
+  && sanitizeText(expected?.anchor_id || "", 120) === sanitizeText(received?.anchor_id || "", 120)
+  && sanitizeText(expected?.field_id || "", 80) === sanitizeText(received?.field_id || "", 80)
+);
 
 const upsertCompletenessField = (answers = {}, fieldKey = "", fieldRecord = null) => {
   if (!fieldKey || !fieldRecord) return answers;
@@ -277,45 +346,90 @@ const buildMissingAnchor = ({
   unit = "",
   unit_options = [],
   options = [],
-} = {}) => ({
-  anchor_id: `${sanitizeText(requirement?.key || question?.key || "anchor", 80)}:${sanitizeText(field_id, 80)}`,
-  requirement_key: sanitizeText(requirement?.key || question?.key || "", 80),
-  field_id: sanitizeText(field_id, 80),
-  question: sanitizeText(question?.prompt || label || "", 220),
-  label: sanitizeText(label || question?.label || "", 160),
-  input_type: sanitizeText(input_type, 30) || "text",
-  expected_value_type: sanitizeText(expected_value_type, 80) || "text",
-  placeholder: sanitizeText(placeholder, 120),
-  helper_text: sanitizeText(helper_text, 180),
-  validation: {
-    kind: sanitizeText(validation?.kind || "", 80),
-    message: sanitizeText(validation?.message || "", 220),
-    ...(Number.isFinite(validation?.min) ? { min: validation.min } : {}),
-    ...(Number.isFinite(validation?.max) ? { max: validation.max } : {}),
-    ...(validation?.direction ? { direction: sanitizeText(validation.direction, 20).toLowerCase() } : {}),
-  },
-  examples: extractExamples(placeholder, examples),
-  priority: Math.max(1, Number(priority) || 1),
-  applies_to_goal_ids: toArray(applies_to_goal_ids).map((item) => sanitizeText(item, 120)).filter(Boolean),
-  draftValue: sanitizeText(draftValue, 160),
-  canonical_field_ids: toArray(canonical_field_ids).map((item) => sanitizeText(item, 80)).filter(Boolean),
-  why_it_matters: sanitizeText(why_it_matters, 220),
-  coach_voice_line: sanitizeText(coach_voice_line, 220),
-  unit: sanitizeText(unit, 20),
-  unit_options: toArray(unit_options)
-    .map((item) => ({
-      value: sanitizeText(item?.value || item, 40),
-      label: sanitizeText(item?.label || item, 60),
-    }))
-    .filter((item) => item.value),
-  options: toArray(options)
-    .map((item) => ({
-      value: sanitizeText(item?.value || "", 80),
-      label: sanitizeText(item?.label || item?.value || "", 120),
-      description: sanitizeText(item?.description || "", 180),
-    }))
-    .filter((item) => item.value && item.label),
-});
+} = {}) => {
+  const normalizedQuestion = sanitizeText(question?.prompt || label || "", 220);
+  const normalizedLabel = sanitizeText(label || question?.label || "", 160);
+  const normalizedInputType = sanitizeText(input_type, 30) || "text";
+  return {
+    anchor_id: `${sanitizeText(requirement?.key || question?.key || "anchor", 80)}:${sanitizeText(field_id, 80)}`,
+    requirement_key: sanitizeText(requirement?.key || question?.key || "", 80),
+    field_id: sanitizeText(field_id, 80),
+    question: sanitizeDisplayLine(normalizedQuestion, 220),
+    label: sanitizeDisplayLine(normalizedLabel, 160),
+    input_type: normalizedInputType,
+    expected_value_type: sanitizeText(expected_value_type, 80) || "text",
+    placeholder: sanitizeDisplayLine(placeholder, 120),
+    helper_text: sanitizeDisplayLine(helper_text, 180),
+    validation: {
+      kind: sanitizeText(validation?.kind || "", 80),
+      message: sanitizeDisplayLine(validation?.message || "", 220),
+      ...(Number.isFinite(validation?.min) ? { min: validation.min } : {}),
+      ...(Number.isFinite(validation?.max) ? { max: validation.max } : {}),
+      ...(validation?.direction ? { direction: sanitizeText(validation.direction, 20).toLowerCase() } : {}),
+    },
+    examples: extractExamples(placeholder, examples).map((item) => sanitizeDisplayLine(item, 120)).filter(Boolean),
+    priority: Math.max(1, Number(priority) || 1),
+    applies_to_goal_ids: toArray(applies_to_goal_ids).map((item) => sanitizeText(item, 120)).filter(Boolean),
+    draftValue: sanitizeText(draftValue, 160),
+    canonical_field_ids: toArray(canonical_field_ids).map((item) => sanitizeText(item, 80)).filter(Boolean),
+    why_it_matters: sanitizeDisplayLine(
+      why_it_matters || buildDefaultAnchorWhyItMatters({
+        label: normalizedLabel,
+        question: normalizedQuestion,
+        inputType: normalizedInputType,
+      }),
+      220
+    ),
+    coach_voice_line: sanitizeDisplayLine(
+      coach_voice_line || buildDefaultAnchorCoachVoiceLine({
+        inputType: normalizedInputType,
+        label: normalizedLabel,
+      }),
+      220
+    ),
+    unit: sanitizeText(unit, 20),
+    unit_options: toArray(unit_options)
+      .map((item) => ({
+        value: sanitizeText(item?.value || item, 40),
+        label: sanitizeDisplayLine(item?.label || item, 60),
+      }))
+      .filter((item) => item.value),
+    options: toArray(options)
+      .map((item) => ({
+        value: sanitizeText(item?.value || "", 80),
+        label: sanitizeDisplayLine(item?.label || item?.value || "", 120),
+        description: sanitizeDisplayLine(item?.description || "", 180),
+      }))
+      .filter((item) => item.value && item.label),
+  };
+};
+
+const removeCompletenessField = (answers = {}, fieldKey = "") => {
+  if (!fieldKey) return answers;
+  const existingFields = answers?.intake_completeness?.fields || {};
+  if (!hasOwn(existingFields, fieldKey)) return answers;
+  const nextFields = { ...existingFields };
+  delete nextFields[fieldKey];
+  return {
+    ...answers,
+    intake_completeness: {
+      version: "2026-04-v1",
+      ...(answers?.intake_completeness || {}),
+      fields: nextFields,
+    },
+  };
+};
+
+const rebuildBindingsByFieldIdFromLog = (anchorBindingLog = []) => (
+  toArray(anchorBindingLog).reduce((nextBindings, binding) => {
+    const fieldId = sanitizeText(binding?.field_id || "", 80);
+    if (!fieldId) return nextBindings;
+    return {
+      ...nextBindings,
+      [fieldId]: clonePlainValue(binding),
+    };
+  }, {})
+);
 
 const buildRunningEnduranceChoiceAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], selectedValue = "" } = {}) => (
   buildMissingAnchor({
@@ -325,14 +439,14 @@ const buildRunningEnduranceChoiceAnchor = ({ requirement = null, question = {}, 
       ...question,
       prompt: "Which is easier right now: longest recent run or a recent race/pace?",
     },
-    label: "Choose your running anchor",
+    label: "Choose your running benchmark",
     input_type: "choice_chips",
     expected_value_type: "running_anchor_choice",
     placeholder: "",
-    helper_text: "Pick the version you can answer fastest. One clean anchor is enough.",
+    helper_text: "Pick the version you can answer fastest. One clear benchmark is enough.",
     validation: {
       kind: "running_anchor_choice",
-      message: "Choose the running anchor that's easier to answer right now.",
+      message: "Choose the running detail that's easier to answer right now.",
     },
     options: [
       {
@@ -350,8 +464,8 @@ const buildRunningEnduranceChoiceAnchor = ({ requirement = null, question = {}, 
     applies_to_goal_ids,
     draftValue: sanitizeText(selectedValue, 80),
     canonical_field_ids: [],
-    why_it_matters: "One endurance anchor is enough to set the first running block without guessing.",
-    coach_voice_line: "Coach note: whichever one is easier to answer is enough to keep moving.",
+    why_it_matters: "One running benchmark is enough to set the first block without guessing.",
+    coach_voice_line: "Coach note: pick the one that's easiest to answer. One honest benchmark is enough.",
   })
 );
 
@@ -414,7 +528,7 @@ const buildRunningPaceAnchor = ({ requirement = null, question = {}, priority = 
     helper_text: "A race result, steady pace, or workout pace all work.",
     validation: {
       kind: "recent_pace_baseline",
-      message: "Add a recent pace or race result so I have one clean running anchor.",
+      message: "Add a recent pace or race result so I have one clear running benchmark.",
     },
     examples: ["29:30 5K", "9:15 easy pace"],
     priority,
@@ -422,39 +536,107 @@ const buildRunningPaceAnchor = ({ requirement = null, question = {}, priority = 
     draftValue: sanitizeText(storedPace?.raw || "", 160),
     canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline],
     why_it_matters: "A recent pace or result helps set effort ranges without pretending we know more than we do.",
-    coach_voice_line: "Coach note: one honest pace anchor is plenty. It does not need to be perfect.",
+    coach_voice_line: "Coach note: one honest pace benchmark is plenty. It does not need to be perfect.",
   });
 };
 
-const buildAppearanceProxyAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], answers = {} } = {}) => {
-  const storedBodyweight = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight);
-  const storedWaist = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentWaist);
-  return buildMissingAnchor({
-    field_id: "appearance_proxy_anchor",
+const buildAppearanceProxyChoiceAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], selectedValue = "" } = {}) => (
+  buildMissingAnchor({
+    field_id: "appearance_proxy_anchor_kind",
     requirement,
     question: {
       ...question,
-      prompt: "What's one proxy we can track right now: current bodyweight or waist?",
+      prompt: "For your appearance goal, which proxy is easier to use right now: bodyweight or waist?",
     },
-    label: "Appearance proxy anchor",
-    input_type: "text",
-    expected_value_type: INTAKE_COMPLETENESS_VALUE_TYPES.appearanceProxyAnchor,
-    placeholder: "Example: 198 lb or 35-inch waist",
-    helper_text: "Use one clean proxy. Bodyweight or waist is enough.",
+    label: "Choose your appearance proxy",
+    input_type: "choice_chips",
+    expected_value_type: "appearance_proxy_choice",
+    placeholder: "",
+    helper_text: "Pick the one you can check consistently without friction.",
     validation: {
-      kind: "appearance_proxy_anchor",
-      message: "Add either your current bodyweight or your waist.",
+      kind: "appearance_proxy_choice",
+      message: "Choose the appearance proxy that's easier for you to track right now.",
     },
-    examples: ["198 lb", "35-inch waist"],
+    options: [
+      {
+        value: INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
+        label: "Bodyweight",
+        description: "Use scale weight if that's the easiest thing to check consistently.",
+      },
+      {
+        value: INTAKE_COMPLETENESS_FIELDS.currentWaist,
+        label: "Waist",
+        description: "Use waist if that tracks the visual change better for you.",
+      },
+    ],
     priority,
     applies_to_goal_ids,
-    draftValue: sanitizeText(storedBodyweight?.raw || storedWaist?.raw || "", 160),
-    canonical_field_ids: [
-      INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
-      INTAKE_COMPLETENESS_FIELDS.currentWaist,
-    ],
-    why_it_matters: "We need one simple proxy so this goal stays trackable instead of vague.",
-    coach_voice_line: "Coach note: one clean proxy beats three fuzzy ones.",
+    draftValue: sanitizeText(selectedValue, 80),
+    canonical_field_ids: [],
+    why_it_matters: "We only need one clean proxy so this goal stays trackable instead of fuzzy.",
+    coach_voice_line: "Coach note: pick the one you'll actually measure, not the one that sounds more impressive.",
+  })
+);
+
+const buildAppearanceProxyBodyweightAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], answers = {} } = {}) => {
+  const storedBodyweight = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight);
+  return buildMissingAnchor({
+    field_id: INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
+    requirement,
+    question: {
+      ...question,
+      prompt: "For your appearance goal, what's your current bodyweight or closest recent scale weight?",
+    },
+    label: "Current bodyweight",
+    input_type: "number_with_unit",
+    expected_value_type: "number",
+    placeholder: "198",
+    helper_text: "Closest recent scale weight is fine.",
+    validation: {
+      kind: "current_bodyweight",
+      message: "Enter your current bodyweight.",
+      min: 1,
+      max: 1000,
+    },
+    priority,
+    applies_to_goal_ids,
+    draftValue: Number.isFinite(storedBodyweight?.value) ? String(storedBodyweight.value) : "",
+    canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.currentBodyweight],
+    why_it_matters: "Bodyweight gives us one clean number to track while the appearance goal is still broad.",
+    coach_voice_line: "Coach note: closest recent scale weight is plenty. I don't need a perfect weigh-in.",
+    unit: "lb",
+    unit_options: [{ value: "lb", label: "lb" }],
+  });
+};
+
+const buildAppearanceProxyWaistAnchor = ({ requirement = null, question = {}, priority = 1, applies_to_goal_ids = [], answers = {} } = {}) => {
+  const storedWaist = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentWaist);
+  return buildMissingAnchor({
+    field_id: INTAKE_COMPLETENESS_FIELDS.currentWaist,
+    requirement,
+    question: {
+      ...question,
+      prompt: "For your appearance goal, what's your current waist measurement?",
+    },
+    label: "Current waist",
+    input_type: "number_with_unit",
+    expected_value_type: "number",
+    placeholder: "35",
+    helper_text: "A rough tape measurement is enough.",
+    validation: {
+      kind: "current_waist",
+      message: "Enter your current waist measurement.",
+      min: 1,
+      max: 100,
+    },
+    priority,
+    applies_to_goal_ids,
+    draftValue: Number.isFinite(storedWaist?.value) ? String(storedWaist.value) : "",
+    canonical_field_ids: [INTAKE_COMPLETENESS_FIELDS.currentWaist],
+    why_it_matters: "Waist gives us a simple visual-change proxy when bodyweight is noisy.",
+    coach_voice_line: "Coach note: a rough tape check is fine here. I just want a repeatable starting point.",
+    unit: "in",
+    unit_options: [{ value: "in", label: "in" }],
   });
 };
 
@@ -475,6 +657,12 @@ const expandRequirementToAnchors = ({
   const selectedRunningAnchor = sanitizeText(
     bindingsByFieldId?.running_endurance_anchor_kind?.parsed_value
       || bindingsByFieldId?.running_endurance_anchor_kind?.raw_text
+      || "",
+    80
+  );
+  const selectedAppearanceProxy = sanitizeText(
+    bindingsByFieldId?.appearance_proxy_anchor_kind?.parsed_value
+      || bindingsByFieldId?.appearance_proxy_anchor_kind?.raw_text
       || "",
     80
   );
@@ -678,13 +866,31 @@ const expandRequirementToAnchors = ({
       break;
     case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor:
       if (!facts?.currentBodyweight && !facts?.currentWaist && facts?.progressPhotos !== true) {
-        anchors.push(buildAppearanceProxyAnchor({
-          requirement,
-          question,
-          priority,
-          applies_to_goal_ids: appliesToGoalIds,
-          answers,
-        }));
+        if (!selectedAppearanceProxy) {
+          anchors.push(buildAppearanceProxyChoiceAnchor({
+            requirement,
+            question,
+            priority,
+            applies_to_goal_ids: appliesToGoalIds,
+            selectedValue: selectedAppearanceProxy,
+          }));
+        } else if (selectedAppearanceProxy === INTAKE_COMPLETENESS_FIELDS.currentBodyweight) {
+          anchors.push(buildAppearanceProxyBodyweightAnchor({
+            requirement,
+            question,
+            priority,
+            applies_to_goal_ids: appliesToGoalIds,
+            answers,
+          }));
+        } else if (selectedAppearanceProxy === INTAKE_COMPLETENESS_FIELDS.currentWaist) {
+          anchors.push(buildAppearanceProxyWaistAnchor({
+            requirement,
+            question,
+            priority,
+            applies_to_goal_ids: appliesToGoalIds,
+            answers,
+          }));
+        }
       }
       break;
     default: {
@@ -768,6 +974,114 @@ const buildBindingWrite = ({
   record,
 });
 
+const shouldEmitIntakeDebugWarnings = () => {
+  try {
+    if (typeof window !== "undefined") {
+      const host = String(window?.location?.hostname || "").toLowerCase();
+      if (host === "localhost" || host === "127.0.0.1") return true;
+      if (window?.localStorage?.getItem?.("trainer_debug") === "1") return true;
+      return false;
+    }
+    if (typeof process !== "undefined") {
+      return process?.env?.NODE_ENV === "development";
+    }
+  } catch {}
+  return false;
+};
+
+const emitRejectedAnchorWriteWarning = ({
+  anchor = null,
+  fieldKey = "",
+  expectedFieldKeys = [],
+  phase = "validation",
+} = {}) => {
+  if (!shouldEmitIntakeDebugWarnings()) return;
+  try {
+    console.warn(
+      `[intake-core:rejected_canonical_write] Rejected unexpected canonical write during ${sanitizeText(phase, 40) || "validation"}.`,
+      {
+        anchor_id: sanitizeText(anchor?.anchor_id || "", 120),
+        anchor_field_id: sanitizeText(anchor?.field_id || "", 80),
+        rejected_field_key: sanitizeText(fieldKey, 80),
+        expected_field_keys: toArray(expectedFieldKeys).map((item) => sanitizeText(item, 80)).filter(Boolean),
+      }
+    );
+  } catch {}
+};
+
+const buildExpectedAnchorFieldKeys = (anchor = null) => {
+  const explicitFieldKeys = toArray(anchor?.canonical_field_ids)
+    .map((item) => sanitizeText(item, 80))
+    .filter(Boolean);
+  if (explicitFieldKeys.length) return explicitFieldKeys;
+  const fallbackFieldId = sanitizeText(anchor?.field_id || "", 80);
+  return fallbackFieldId ? [fallbackFieldId] : [];
+};
+
+export const partitionCanonicalWritesForAnchor = ({
+  anchor = null,
+  canonicalWrites = [],
+  phase = "validation",
+} = {}) => {
+  const expectedFieldKeys = buildExpectedAnchorFieldKeys(anchor);
+  const expectedFieldKeySet = new Set(expectedFieldKeys);
+  const acceptedWrites = [];
+  const rejectedWrites = [];
+
+  toArray(canonicalWrites).forEach((item) => {
+    const fieldKey = sanitizeText(item?.fieldKey || "", 80);
+    if (!fieldKey || !item?.record) return;
+    if (expectedFieldKeySet.size && !expectedFieldKeySet.has(fieldKey)) {
+      rejectedWrites.push(item);
+      emitRejectedAnchorWriteWarning({
+        anchor,
+        fieldKey,
+        expectedFieldKeys,
+        phase,
+      });
+      return;
+    }
+    acceptedWrites.push(item);
+  });
+
+  return {
+    expectedFieldKeys,
+    acceptedWrites,
+    rejectedWrites,
+  };
+};
+
+const finalizeMissingAnchorValidation = ({
+  anchor = null,
+  validation = null,
+} = {}) => {
+  if (!validation || typeof validation !== "object") return validation;
+  const canonicalWrites = toArray(validation?.canonicalWrites);
+  if (!canonicalWrites.length) return validation;
+  const { acceptedWrites, rejectedWrites } = partitionCanonicalWritesForAnchor({
+    anchor,
+    canonicalWrites,
+    phase: "validation",
+  });
+  if (!rejectedWrites.length) return validation;
+  if (!acceptedWrites.length) {
+    return {
+      ...validation,
+      isValid: false,
+      formError: "I couldn't safely save that to the field I asked for.",
+      parsed_value: null,
+      parse_confidence: 0,
+      canonicalWrites: [],
+      summaryText: "",
+      parseErrorCode: "unexpected_canonical_write",
+    };
+  }
+  return {
+    ...validation,
+    canonicalWrites: acceptedWrites,
+  };
+};
+
 export const validateMissingAnchorAnswer = ({
   anchor = null,
   raw_text = "",
@@ -812,12 +1126,14 @@ export const validateMissingAnchorAnswer = ({
     };
   }
 
-  switch (fieldId) {
+  const validation = (() => {
+    switch (fieldId) {
     case INTAKE_COMPLETENESS_FIELDS.targetTimeline: {
-      const timelineValue = sanitizeText(answerObject?.value || cleanRaw, 120);
-      const timeline = /^\d{4}-\d{2}$/.test(timelineValue) ? timelineValue : validateTimelineValue(timelineValue);
-      const timelineDisplay = sanitizeText(answerObject?.raw || timeline, 120) || timeline;
-      if (!timeline) {
+      const timelineRecord = resolveTimelineFieldRecord({
+        rawText: answerObject?.raw || cleanRaw,
+        candidateValue: answerObject?.value || cleanRaw,
+      });
+      if (!timelineRecord) {
         return {
           isValid: false,
           formError: validationMessage,
@@ -831,18 +1147,18 @@ export const validateMissingAnchorAnswer = ({
       return {
         isValid: true,
         formError: "",
-        parsed_value: timeline,
+        parsed_value: timelineRecord.value,
         parse_confidence: 1,
         canonicalWrites: [
           buildBindingWrite({
             fieldKey: INTAKE_COMPLETENESS_FIELDS.targetTimeline,
             record: {
-              raw: timelineDisplay,
-              value: timeline,
+              raw: timelineRecord.raw,
+              value: timelineRecord.value,
             },
           }),
         ],
-        summaryText: timelineDisplay,
+        summaryText: timelineRecord.raw,
         parseErrorCode: "",
       };
     }
@@ -872,6 +1188,35 @@ export const validateMissingAnchorAnswer = ({
         summaryText: chosenValue === INTAKE_COMPLETENESS_FIELDS.longestRecentRun
           ? "Longest recent run"
           : "Recent race or pace",
+        parseErrorCode: "",
+      };
+    }
+    case "appearance_proxy_anchor_kind": {
+      const chosenValue = sanitizeText(answerObject?.value || cleanRaw, 80);
+      const allowedValues = new Set([
+        INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
+        INTAKE_COMPLETENESS_FIELDS.currentWaist,
+      ]);
+      if (!allowedValues.has(chosenValue)) {
+        return {
+          isValid: false,
+          formError: validationMessage,
+          parsed_value: null,
+          parse_confidence: 0,
+          canonicalWrites: [],
+          summaryText: "",
+          parseErrorCode: "invalid_choice",
+        };
+      }
+      return {
+        isValid: true,
+        formError: "",
+        parsed_value: chosenValue,
+        parse_confidence: 1,
+        canonicalWrites: [],
+        summaryText: chosenValue === INTAKE_COMPLETENESS_FIELDS.currentWaist
+          ? "Waist"
+          : "Bodyweight",
         parseErrorCode: "",
       };
     }
@@ -983,7 +1328,24 @@ export const validateMissingAnchorAnswer = ({
       };
     }
     case INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline: {
-      const parsedTopSet = parseStrengthTopSet(cleanRaw);
+      const explicitMode = sanitizeText(answerObject?.mode || "", 40).toLowerCase();
+      const explicitWeight = toFiniteNumber(answerObject?.weight ?? answerObject?.value, null);
+      const explicitReps = toFiniteNumber(answerObject?.reps, null);
+      const parsedTopSet = Number.isFinite(explicitWeight) && explicitWeight > 0
+        ? {
+            raw: explicitMode === "estimated_max"
+              ? `${explicitWeight} estimated max`
+              : Number.isFinite(explicitReps) && explicitReps > 0
+              ? `${explicitWeight}x${Math.round(explicitReps)}`
+              : `${explicitWeight}`,
+            weight: explicitWeight,
+            reps: explicitMode === "estimated_max"
+              ? 1
+              : Number.isFinite(explicitReps) && explicitReps > 0
+              ? Math.round(explicitReps)
+              : null,
+          }
+        : parseStrengthTopSet(cleanRaw);
       if (!Number.isFinite(parsedTopSet.weight) || parsedTopSet.weight <= 0) {
         return {
           isValid: false,
@@ -1015,6 +1377,38 @@ export const validateMissingAnchorAnswer = ({
           }),
         ],
         summaryText: parsedTopSet.raw,
+        parseErrorCode: "",
+      };
+    }
+    case INTAKE_COMPLETENESS_FIELDS.currentWaist: {
+      const waist = toFiniteNumber(answerObject?.value ?? answer_value ?? cleanRaw, null) ?? parseWaistMeasurement(cleanRaw);
+      if (!Number.isFinite(waist) || waist <= 0) {
+        return {
+          isValid: false,
+          formError: validationMessage,
+          parsed_value: null,
+          parse_confidence: 0,
+          canonicalWrites: [],
+          summaryText: "",
+          parseErrorCode: "invalid_waist",
+        };
+      }
+      return {
+        isValid: true,
+        formError: "",
+        parsed_value: waist,
+        parse_confidence: 1,
+        canonicalWrites: [
+          buildBindingWrite({
+            fieldKey: INTAKE_COMPLETENESS_FIELDS.currentWaist,
+            record: {
+              raw: `${waist} in`,
+              value: waist,
+              unit: "in",
+            },
+          }),
+        ],
+        summaryText: `${waist} in`,
         parseErrorCode: "",
       };
     }
@@ -1160,25 +1554,31 @@ export const validateMissingAnchorAnswer = ({
         parseErrorCode: "",
       };
     }
-    default:
-      return {
-        isValid: true,
-        formError: "",
-        parsed_value: cleanRaw,
-        parse_confidence: 0.75,
-        canonicalWrites: [
-          buildBindingWrite({
-            fieldKey: fieldId,
-            record: {
-              raw: cleanRaw,
-              value: cleanRaw,
-            },
-          }),
-        ],
-        summaryText: cleanRaw,
-        parseErrorCode: "",
-      };
-  }
+      default:
+        return {
+          isValid: true,
+          formError: "",
+          parsed_value: cleanRaw,
+          parse_confidence: 0.75,
+          canonicalWrites: [
+            buildBindingWrite({
+              fieldKey: fieldId,
+              record: {
+                raw: cleanRaw,
+                value: cleanRaw,
+              },
+            }),
+          ],
+          summaryText: cleanRaw,
+          parseErrorCode: "",
+        };
+    }
+  })();
+
+  return finalizeMissingAnchorValidation({
+    anchor,
+    validation,
+  });
 };
 
 export const applyMissingAnchorAnswer = ({
@@ -1204,20 +1604,46 @@ export const applyMissingAnchorAnswer = ({
     };
   }
 
+  const { acceptedWrites } = partitionCanonicalWritesForAnchor({
+    anchor,
+    canonicalWrites: validation?.canonicalWrites,
+    phase: "apply",
+  });
+  const appliedValidation = {
+    ...validation,
+    canonicalWrites: acceptedWrites,
+  };
+  if (toArray(validation?.canonicalWrites).length && !acceptedWrites.length) {
+    return {
+      answers,
+      validation: {
+        ...appliedValidation,
+        isValid: false,
+        formError: "I couldn't safely save that to the field I asked for.",
+        parsed_value: null,
+        parse_confidence: 0,
+        summaryText: "",
+        parseErrorCode: "unexpected_canonical_write",
+      },
+      binding: null,
+    };
+  }
+
   let nextAnswers = answers;
-  validation.canonicalWrites.forEach((item) => {
+  appliedValidation.canonicalWrites.forEach((item) => {
     if (!item?.fieldKey || !item?.record) return;
     nextAnswers = upsertCompletenessField(nextAnswers, item.fieldKey, item.record);
   });
 
   return {
     answers: nextAnswers,
-    validation,
+    validation: appliedValidation,
     binding: {
+      anchor_id: sanitizeText(anchor?.anchor_id || "", 120),
       field_id: sanitizeText(anchor?.field_id || "", 80),
       raw_text: sanitizeText(raw_text || (answer_value ?? ""), 220),
-      parsed_value: clonePlainValue(validation.parsed_value),
-      parse_confidence: Number(validation.parse_confidence || 0),
+      parsed_value: clonePlainValue(appliedValidation.parsed_value),
+      parse_confidence: Number(appliedValidation.parse_confidence || 0),
       timestamp: normalizeTimestamp(timestamp),
       source: sanitizeText(source || "user", 20).toLowerCase() || "user",
     },
@@ -1242,8 +1668,84 @@ export const INTAKE_MACHINE_EVENTS = {
   REALISM_RESULT: "REALISM_RESULT",
   ARBITRATION_RESULT: "ARBITRATION_RESULT",
   USER_CONFIRMED: "USER_CONFIRMED",
+  COMMIT_COMPLETED: "COMMIT_COMPLETED",
+  COMMIT_FAILED: "COMMIT_FAILED",
   USER_EDITED: "USER_EDITED",
   USER_BACK: "USER_BACK",
+};
+
+const COMMITTABLE_GOAL_ROLES = new Set(["primary", "maintained"]);
+
+const buildIntakeCommitRequest = ({
+  draft = {},
+  confirmationSnapshotId = "",
+  now = null,
+} = {}) => {
+  const confirmedResolvedGoals = applyIntakeGoalStackConfirmation({
+    resolvedGoals: toArray(draft?.orderedResolvedGoals),
+    goalStackConfirmation: draft?.goalStackConfirmation || null,
+    goalFeasibility: draft?.goalFeasibility || null,
+  });
+  return {
+    version: "2026-04-v1",
+    confirmation_snapshot_id: sanitizeText(confirmationSnapshotId, 120),
+    requested_at: normalizeTimestamp(now),
+    typedIntakePacket: clonePlainValue(draft?.typedIntakePacket || null),
+    aiInterpretationProposal: clonePlainValue(draft?.aiInterpretationProposal || null),
+    goalStackConfirmation: clonePlainValue(draft?.goalStackConfirmation || null),
+    goalFeasibility: clonePlainValue(draft?.goalFeasibility || null),
+    arbitration: clonePlainValue(draft?.arbitration || null),
+    confirmedResolvedGoals: clonePlainValue(confirmedResolvedGoals),
+  };
+};
+
+export const validateIntakeCommitRequest = (commitRequest = null) => {
+  const confirmationSnapshotId = sanitizeText(commitRequest?.confirmation_snapshot_id || "", 120);
+  if (!confirmationSnapshotId) {
+    return {
+      ok: false,
+      reason: "I need the reviewed goal snapshot before I can build your plan.",
+      confirmation_snapshot_id: "",
+      commitRequest: null,
+    };
+  }
+  const confirmedResolvedGoals = toArray(commitRequest?.confirmedResolvedGoals);
+  if (!confirmedResolvedGoals.length) {
+    return {
+      ok: false,
+      reason: "I need a confirmed goal stack before I can build your plan.",
+      confirmation_snapshot_id: confirmationSnapshotId,
+      commitRequest: null,
+    };
+  }
+  const invalidGoal = confirmedResolvedGoals.find((goal) => {
+    const role = sanitizeText(goal?.intakeConfirmedRole || "", 40).toLowerCase();
+    return !sanitizeText(goal?.id || goal?.summary || "", 160) || !COMMITTABLE_GOAL_ROLES.has(role);
+  });
+  if (invalidGoal) {
+    return {
+      ok: false,
+      reason: "The confirmed goals are out of date. Please review them once more before building.",
+      confirmation_snapshot_id: confirmationSnapshotId,
+      commitRequest: null,
+    };
+  }
+  return {
+    ok: true,
+    reason: "",
+    confirmation_snapshot_id: confirmationSnapshotId,
+    commitRequest: {
+      version: sanitizeText(commitRequest?.version || "2026-04-v1", 40) || "2026-04-v1",
+      confirmation_snapshot_id: confirmationSnapshotId,
+      requested_at: normalizeTimestamp(commitRequest?.requested_at || null),
+      typedIntakePacket: clonePlainValue(commitRequest?.typedIntakePacket || null),
+      aiInterpretationProposal: clonePlainValue(commitRequest?.aiInterpretationProposal || null),
+      goalStackConfirmation: clonePlainValue(commitRequest?.goalStackConfirmation || null),
+      goalFeasibility: clonePlainValue(commitRequest?.goalFeasibility || null),
+      arbitration: clonePlainValue(commitRequest?.arbitration || null),
+      confirmedResolvedGoals: clonePlainValue(confirmedResolvedGoals),
+    },
+  };
 };
 
 const buildDeterministicIntakeDraft = ({
@@ -1281,7 +1783,7 @@ const buildDeterministicIntakeDraft = ({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     answers,
   });
-  const goalFeasibility = assessGoalFeasibility({
+  const previewGoalFeasibility = assessGoalFeasibility({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     ...buildGoalFeasibilityContextFromIntake(intakeContext),
     intakeCompleteness: previewCompleteness,
@@ -1289,7 +1791,7 @@ const buildDeterministicIntakeDraft = ({
   });
   const feasibleResolvedGoals = applyFeasibilityPriorityOrdering({
     resolvedGoals: goalResolution?.resolvedGoals || [],
-    feasibility: goalFeasibility,
+    feasibility: previewGoalFeasibility,
   });
   const arbitrationInputs = buildConfirmedArbitrationInputs({
     answers,
@@ -1301,30 +1803,44 @@ const buildDeterministicIntakeDraft = ({
     confirmedPrimaryGoal: arbitrationInputs.confirmedPrimaryGoal,
     confirmedAdditionalGoals: arbitrationInputs.confirmedAdditionalGoals,
     additionalGoalTexts: arbitrationInputs.additionalGoalTexts,
-    goalFeasibility,
+    goalFeasibility: previewGoalFeasibility,
     intakeCompleteness: previewCompleteness,
+    answers,
     typedIntakePacket: typedPacket,
     now,
   });
   const orderedResolvedGoals = arbitration?.goals?.length ? arbitration.goals : feasibleResolvedGoals;
+  const activeResolvedGoals = applyIntakeGoalStackConfirmation({
+    resolvedGoals: orderedResolvedGoals,
+    goalStackConfirmation,
+    goalFeasibility: previewGoalFeasibility,
+  });
+  const effectiveResolvedGoals = activeResolvedGoals.length ? activeResolvedGoals : orderedResolvedGoals;
+  const activeCompleteness = deriveIntakeCompletenessState({
+    resolvedGoals: effectiveResolvedGoals,
+    answers,
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: effectiveResolvedGoals,
+    ...buildGoalFeasibilityContextFromIntake(intakeContext),
+    intakeCompleteness: activeCompleteness,
+    now,
+  });
   const reviewModel = buildIntakeGoalReviewModel({
     goalResolution,
     orderedResolvedGoals,
     goalFeasibility,
+    arbitration,
     aiInterpretationProposal,
     answers,
     goalStackConfirmation,
   });
-  const confirmationState = deriveIntakeConfirmationState({
-    reviewModel,
-    askedQuestions: [],
-    maxQuestions: 2,
-  });
+  const confirmationState = deriveIntakeConfirmationState({ reviewModel });
   const activeGoals = toArray(reviewModel?.activeResolvedGoals).length ? reviewModel.activeResolvedGoals : orderedResolvedGoals;
   const missingAnchorsEngine = buildMissingAnchorsEngine({
     resolvedGoals: activeGoals,
     answers,
-    completenessState: reviewModel?.completeness || previewCompleteness,
+    completenessState: reviewModel?.completeness || activeCompleteness,
     bindingsByFieldId: anchorBindingsByFieldId,
   });
 
@@ -1338,9 +1854,11 @@ const buildDeterministicIntakeDraft = ({
     orderedResolvedGoals: clonePlainValue(orderedResolvedGoals),
     reviewModel: clonePlainValue(reviewModel),
     confirmationState: clonePlainValue(confirmationState),
-    intakeCompleteness: clonePlainValue(reviewModel?.completeness || previewCompleteness),
+    intakeCompleteness: clonePlainValue(reviewModel?.completeness || activeCompleteness),
     missingAnchorsEngine: clonePlainValue(missingAnchorsEngine),
     goalStackConfirmation: clonePlainValue(goalStackConfirmation),
+    commitRequested: false,
+    commitRequest: null,
     rawGoalText,
   };
 };
@@ -1349,8 +1867,38 @@ const summarizeEvent = (event = {}) => ({
   event_id: sanitizeText(event?.event_id || "", 120),
   type: sanitizeText(event?.type || "", 80),
   timestamp: normalizeTimestamp(event?.timestamp || event?.created_at || null),
+  anchor_id: sanitizeText(event?.payload?.anchor_id || event?.payload?.binding_target?.anchor_id || event?.payload?.anchor?.anchor_id || "", 120),
   field_id: sanitizeText(event?.payload?.field_id || event?.payload?.anchor?.field_id || "", 80),
   goal_intent: sanitizeText(event?.payload?.answers?.goal_intent || event?.payload?.typedIntakePacket?.intake?.rawGoalText || "", 120),
+});
+
+const createEmptyMissingAnchorsEngine = () => ({
+  missingAnchors: [],
+  orderedFieldIds: [],
+  currentAnchor: null,
+  completenessState: null,
+});
+
+const buildResetDraftForGoalEdit = ({
+  currentDraft = {},
+  nextAnswers = {},
+} = {}) => ({
+  ...currentDraft,
+  answers: clonePlainValue(nextAnswers),
+  typedIntakePacket: null,
+  aiInterpretationProposal: null,
+  goalResolution: null,
+  goalFeasibility: null,
+  arbitration: null,
+  orderedResolvedGoals: [],
+  reviewModel: null,
+  confirmationState: null,
+  intakeCompleteness: null,
+  missingAnchorsEngine: createEmptyMissingAnchorsEngine(),
+  goalStackConfirmation: null,
+  commitRequested: false,
+  commitRequest: null,
+  rawGoalText: sanitizeText(nextAnswers?.goal_intent || "", 320),
 });
 
 const appendMessages = (state = {}, messages = []) => {
@@ -1358,14 +1906,22 @@ const appendMessages = (state = {}, messages = []) => {
   const outbox = [...toArray(state.outbox)];
   let messageCount = Number(state.messageCount || 0);
   toArray(messages).forEach((message) => {
-    const key = sanitizeText(message?.key || "", 160);
+    const key = sanitizeText(message?.message_key || message?.idempotency_key || message?.key || "", 220);
     const text = sanitizeText(message?.text || "", 320);
     if (!key || !text || emitted[key]) return;
     emitted[key] = true;
     messageCount += 1;
     outbox.push({
       message_id: buildCounterId("message", messageCount),
+      message_key: key,
       key,
+      idempotency_key: key,
+      anchor_id: sanitizeText(message?.anchor_id || "", 120),
+      transition_id: sanitizeText(message?.transition_id || "", 120),
+      stage: sanitizeText(message?.stage || "", 80),
+      message_kind: sanitizeText(message?.message_kind || "", 40).toLowerCase(),
+      intent: sanitizeText(message?.intent || "", 80),
+      packet_version: sanitizeText(message?.packet_version || "", 40),
       text,
       created_at: normalizeTimestamp(message?.created_at || null),
     });
@@ -1387,6 +1943,35 @@ const commitTransition = ({
 } = {}) => {
   const transitionCount = Number(state.transitionCount || 0) + 1;
   const transition_id = buildCounterId("transition", transitionCount);
+  const preparedMessages = toArray(messages).map((message, index) => {
+    const anchorId = sanitizeText(message?.anchor_id || "", 120);
+    const stage = sanitizeText(nextStage || state.stage || "", 80);
+    const messageKind = sanitizeText(
+      message?.message_kind || TRANSCRIPT_MESSAGE_KINDS.systemNote,
+      40
+    ).toLowerCase();
+    const providedKey = sanitizeText(message?.message_key || message?.idempotency_key || message?.key || "", 220);
+    const derivedKey = buildTranscriptMessageKey({
+      stage,
+      anchor_id: anchorId,
+      transition_id,
+      intent: sanitizeText(message?.intent || "", 80),
+      packet_version: sanitizeText(message?.packet_version || "", 40),
+      message_kind: messageKind,
+    });
+    const fallbackKey = sanitizeText(`${messageKind || "message"}:${transition_id}:${index + 1}`, 220);
+    const messageKey = providedKey || derivedKey || fallbackKey;
+    return {
+      ...clonePlainValue(message),
+      message_key: messageKey,
+      key: messageKey,
+      idempotency_key: messageKey,
+      transition_id,
+      stage,
+      ...(anchorId ? { anchor_id: anchorId } : {}),
+      ...(messageKind ? { message_kind: messageKind } : {}),
+    };
+  });
   const nextEventLog = [
     ...toArray(state.eventLog),
     {
@@ -1410,7 +1995,7 @@ const commitTransition = ({
       ...(state.ui || {}),
       ...((patch && patch.ui) || {}),
     },
-  }, messages);
+  }, preparedMessages);
   return nextState;
 };
 
@@ -1449,11 +2034,15 @@ export const createIntakeMachineState = ({
       completenessState: null,
     },
     goalStackConfirmation: null,
+    commitRequested: false,
+    commitRequest: null,
+    lastCommittedSnapshotId: "",
     rawGoalText: "",
   },
   ui: {
     clearReason: "",
     lastParseError: "",
+    currentBindingTarget: null,
   },
   clock: {
     now: now ? normalizeTimestamp(now) : "",
@@ -1518,6 +2107,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
     case INTAKE_MACHINE_EVENTS.INTERPRETATION_READY: {
       const payload = event?.payload || {};
       const typedIntakePacket = payload?.assessment?.typedIntakePacket || payload?.typedIntakePacket || currentDraft.typedIntakePacket;
+      const suppressTranscript = Boolean(payload?.suppress_transcript || payload?.suppressTranscript);
       if (!typedIntakePacket) {
         return commitTransition({
           state,
@@ -1539,9 +2129,30 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
         anchorBindingsByFieldId: state.anchorBindingsByFieldId || {},
         now,
       });
-      const nextStage = nextDraft?.missingAnchorsEngine?.currentAnchor
+      const nextAnchor = nextDraft?.missingAnchorsEngine?.currentAnchor || null;
+      const nextStage = nextAnchor
         ? INTAKE_MACHINE_STATES.ANCHOR_COLLECTION
         : INTAKE_MACHINE_STATES.REALISM_GATE;
+      const nextMessages = [];
+      const assessmentText = sanitizeText(payload?.assessment?.text || "", 320);
+      if (!suppressTranscript && assessmentText) {
+        nextMessages.push({
+          message_kind: TRANSCRIPT_MESSAGE_KINDS.aiSummary,
+          intent: sanitizeText(typedIntakePacket?.intent || "intake_interpretation", 80) || "intake_interpretation",
+          packet_version: sanitizeText(typedIntakePacket?.version || "2026-04-v1", 40) || "2026-04-v1",
+          text: assessmentText,
+        });
+      }
+      if (!suppressTranscript && nextStage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION && nextAnchor?.question) {
+        nextMessages.push({
+          message_kind: TRANSCRIPT_MESSAGE_KINDS.anchorQuestion,
+          anchor_id: nextAnchor.anchor_id,
+          text: buildDeterministicAnchorPromptText({
+            fieldId: nextAnchor.field_id,
+            prompt: nextAnchor.question,
+          }),
+        });
+      }
       return commitTransition({
         state,
         event,
@@ -1552,11 +2163,13 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ...(state.ui || {}),
             clearReason: nextDraft?.confirmationState?.reason || "",
             lastParseError: "",
+            currentBindingTarget: nextAnchor ? buildAnchorBindingTarget(nextAnchor) : null,
           },
           clock: {
             now,
           },
         },
+        messages: nextMessages,
       });
     }
     case INTAKE_MACHINE_EVENTS.ANCHOR_PARSE_FAILED: {
@@ -1575,6 +2188,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ...(state.ui || {}),
             lastParseError: sanitizeText(event?.payload?.formError || "", 220),
             clearReason: sanitizeText(event?.payload?.formError || "", 220),
+            currentBindingTarget: buildAnchorBindingTarget(currentDraft?.missingAnchorsEngine?.currentAnchor || null),
           },
           clock: {
             now,
@@ -1583,8 +2197,24 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
       });
     }
     case INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED: {
-      const anchor = event?.payload?.anchor || currentDraft?.missingAnchorsEngine?.currentAnchor || null;
-      if (!anchor?.field_id) {
+      const anchor = currentDraft?.missingAnchorsEngine?.currentAnchor || null;
+      const bindingTarget = readEventBindingTarget(event?.payload || {});
+      if (!bindingTarget?.anchor_id || !bindingTarget?.field_id) {
+        return commitTransition({
+          state,
+          event,
+          nextStage: INTAKE_MACHINE_STATES.ANCHOR_COLLECTION,
+          patch: {
+            ui: {
+              ...(state.ui || {}),
+              lastParseError: "That answer is missing its field binding target.",
+              clearReason: "That answer is missing its field binding target.",
+              currentBindingTarget: buildAnchorBindingTarget(currentDraft?.missingAnchorsEngine?.currentAnchor || null),
+            },
+          },
+        });
+      }
+      if (!anchor?.field_id || !anchor?.anchor_id) {
         return commitTransition({
           state,
           event,
@@ -1593,6 +2223,23 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ui: {
               ...(state.ui || {}),
               lastParseError: "No active intake field is waiting for an answer.",
+              clearReason: "No active intake field is waiting for an answer.",
+              currentBindingTarget: null,
+            },
+          },
+        });
+      }
+      if (!Boolean(event?.payload?.multi_bind_mode) && !matchesBindingTarget(buildAnchorBindingTarget(anchor), bindingTarget)) {
+        return commitTransition({
+          state,
+          event,
+          nextStage: INTAKE_MACHINE_STATES.ANCHOR_COLLECTION,
+          patch: {
+            ui: {
+              ...(state.ui || {}),
+              lastParseError: "That answer was bound to a different intake field than the one currently on screen.",
+              clearReason: "That answer was bound to a different intake field than the one currently on screen.",
+              currentBindingTarget: buildAnchorBindingTarget(anchor),
             },
           },
         });
@@ -1620,6 +2267,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
               ...(state.ui || {}),
               lastParseError: sanitizeText(applied.validation?.formError || "", 220),
               clearReason: sanitizeText(applied.validation?.formError || "", 220),
+              currentBindingTarget: buildAnchorBindingTarget(anchor),
             },
           },
         });
@@ -1643,13 +2291,23 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
         : INTAKE_MACHINE_STATES.REALISM_GATE;
       const messages = [];
       if (binding?.field_id) {
+        const captureLabel = sanitizeText(event?.payload?.capture_label || "", 220);
+        const defaultCaptureText = `Got it. ${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 180)}.`;
         messages.push({
-          key: `anchor_saved:${binding.field_id}:${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 120).toLowerCase()}`,
-          text: nextAnchor
-            ? `Got it. ${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 180)}. Next: ${nextAnchor.question}`
-            : `Got it. ${sanitizeText(applied.validation?.summaryText || binding.raw_text || "", 180)}.`,
+          message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+          text: captureLabel || defaultCaptureText,
         });
-      }
+          if (nextAnchor?.question) {
+            messages.push({
+              message_kind: TRANSCRIPT_MESSAGE_KINDS.anchorQuestion,
+              anchor_id: nextAnchor.anchor_id,
+              text: buildDeterministicAnchorPromptText({
+                fieldId: nextAnchor.field_id,
+                prompt: nextAnchor.question,
+              }),
+            });
+          }
+        }
       return commitTransition({
         state,
         event,
@@ -1665,6 +2323,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ...(state.ui || {}),
             lastParseError: "",
             clearReason: nextDraft?.confirmationState?.reason || "",
+            currentBindingTarget: nextAnchor ? buildAnchorBindingTarget(nextAnchor) : null,
           },
           clock: {
             now,
@@ -1686,6 +2345,9 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
               clearReason: hasMissingAnchors
                 ? "A required anchor is still missing."
                 : "The realism gate is not ready yet.",
+              currentBindingTarget: hasMissingAnchors
+                ? buildAnchorBindingTarget(currentDraft?.missingAnchorsEngine?.currentAnchor || null)
+                : null,
             },
           },
         });
@@ -1698,6 +2360,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
           ui: {
             ...(state.ui || {}),
             clearReason: currentDraft?.confirmationState?.reason || "",
+            currentBindingTarget: null,
           },
           clock: {
             now,
@@ -1727,6 +2390,7 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
           ui: {
             ...(state.ui || {}),
             clearReason: currentDraft?.confirmationState?.reason || "",
+            currentBindingTarget: null,
           },
           clock: {
             now,
@@ -1735,7 +2399,26 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
       });
     }
     case INTAKE_MACHINE_EVENTS.USER_CONFIRMED: {
-      if (!currentDraft?.confirmationState?.canConfirm) {
+      if (Boolean(currentDraft?.commitRequested) && currentDraft?.commitRequest?.confirmation_snapshot_id) {
+        return state;
+      }
+      const confirmationStatus = sanitizeText(currentDraft?.confirmationState?.status || "", 20).toLowerCase();
+      const statusAllowsConfirm = confirmationStatus === "warn" || confirmationStatus === "proceed";
+      if (currentDraft?.confirmationState?.requiresAcknowledgement && !Boolean(event?.payload?.acknowledged_warning)) {
+        return commitTransition({
+          state,
+          event,
+          nextStage: INTAKE_MACHINE_STATES.REVIEW_CONFIRM,
+          patch: {
+            ui: {
+              ...(state.ui || {}),
+              clearReason: "Please confirm that you understand this timeline is aggressive.",
+              currentBindingTarget: null,
+            },
+          },
+        });
+      }
+      if (!statusAllowsConfirm || !currentDraft?.confirmationState?.canConfirm) {
         return commitTransition({
           state,
           event,
@@ -1744,6 +2427,27 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
             ui: {
               ...(state.ui || {}),
               clearReason: currentDraft?.confirmationState?.reason || "The intake draft is not ready to confirm yet.",
+              currentBindingTarget: null,
+            },
+          },
+        });
+      }
+      const confirmationSnapshotId = sanitizeText(state?.transition_id || "", 120);
+      const commitRequestValidation = validateIntakeCommitRequest(buildIntakeCommitRequest({
+        draft: currentDraft,
+        confirmationSnapshotId,
+        now,
+      }));
+      if (!commitRequestValidation.ok) {
+        return commitTransition({
+          state,
+          event,
+          nextStage: INTAKE_MACHINE_STATES.REVIEW_CONFIRM,
+          patch: {
+            ui: {
+              ...(state.ui || {}),
+              clearReason: commitRequestValidation.reason,
+              currentBindingTarget: null,
             },
           },
         });
@@ -1756,6 +2460,63 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
           draft: {
             ...currentDraft,
             commitRequested: true,
+            commitRequest: commitRequestValidation.commitRequest,
+          },
+          ui: {
+            ...(state.ui || {}),
+            currentBindingTarget: null,
+          },
+          clock: {
+            now,
+          },
+        },
+      });
+    }
+    case INTAKE_MACHINE_EVENTS.COMMIT_COMPLETED: {
+      const committedSnapshotId = sanitizeText(
+        event?.payload?.confirmation_snapshot_id
+        || currentDraft?.commitRequest?.confirmation_snapshot_id
+        || "",
+        120
+      );
+      if (!committedSnapshotId) return state;
+      return commitTransition({
+        state,
+        event,
+        nextStage: INTAKE_MACHINE_STATES.REVIEW_CONFIRM,
+        patch: {
+          draft: {
+            ...currentDraft,
+            commitRequested: false,
+            commitRequest: null,
+            lastCommittedSnapshotId: committedSnapshotId,
+          },
+          ui: {
+            ...(state.ui || {}),
+            clearReason: "",
+            currentBindingTarget: null,
+          },
+          clock: {
+            now,
+          },
+        },
+      });
+    }
+    case INTAKE_MACHINE_EVENTS.COMMIT_FAILED: {
+      return commitTransition({
+        state,
+        event,
+        nextStage: INTAKE_MACHINE_STATES.REVIEW_CONFIRM,
+        patch: {
+          draft: {
+            ...currentDraft,
+            commitRequested: false,
+            commitRequest: null,
+          },
+          ui: {
+            ...(state.ui || {}),
+            clearReason: sanitizeText(event?.payload?.error || "I hit a problem while saving your plan.", 220),
+            currentBindingTarget: null,
           },
           clock: {
             now,
@@ -1780,14 +2541,15 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
           anchorBindingsByFieldId: {},
           anchorBindingLog: [],
           anchorFailureCounts: {},
-          draft: {
-            ...currentDraft,
-            answers: nextAnswers,
-          },
+          draft: buildResetDraftForGoalEdit({
+            currentDraft,
+            nextAnswers,
+          }),
           ui: {
             ...(state.ui || {}),
             clearReason: "",
             lastParseError: "",
+            currentBindingTarget: null,
           },
           clock: {
             now,
@@ -1796,6 +2558,69 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
       });
     }
     case INTAKE_MACHINE_EVENTS.USER_BACK: {
+      if (Boolean(event?.payload?.edit_last_anchor)) {
+        const anchorBindingLog = toArray(state.anchorBindingLog);
+        const lastBinding = anchorBindingLog[anchorBindingLog.length - 1] || null;
+        if (!lastBinding?.field_id) {
+          return commitTransition({
+            state,
+            event,
+            nextStage: state.stage || INTAKE_MACHINE_STATES.FREEFORM_GOALS,
+            patch: {
+              ui: {
+                ...(state.ui || {}),
+                currentBindingTarget: buildAnchorBindingTarget(currentDraft?.missingAnchorsEngine?.currentAnchor || null),
+              },
+              clock: {
+                now,
+              },
+            },
+          });
+        }
+        const nextAnchorBindingLog = anchorBindingLog.slice(0, -1);
+        const nextBindingsByFieldId = rebuildBindingsByFieldIdFromLog(nextAnchorBindingLog);
+        const nextAnswers = removeCompletenessField(currentDraft.answers || {}, lastBinding.field_id);
+        const nextDraft = buildDeterministicIntakeDraft({
+          answers: nextAnswers,
+          typedIntakePacket: currentDraft.typedIntakePacket,
+          aiInterpretationProposal: currentDraft.aiInterpretationProposal,
+          goalStackConfirmation: currentDraft.goalStackConfirmation || null,
+          anchorBindingsByFieldId: nextBindingsByFieldId,
+          now,
+        });
+        const nextAnchor = nextDraft?.missingAnchorsEngine?.currentAnchor || null;
+        return commitTransition({
+          state,
+          event,
+          nextStage: nextAnchor ? INTAKE_MACHINE_STATES.ANCHOR_COLLECTION : INTAKE_MACHINE_STATES.REVIEW_CONFIRM,
+          patch: {
+            draft: nextDraft,
+            anchorBindingsByFieldId: nextBindingsByFieldId,
+            anchorBindingLog: nextAnchorBindingLog,
+            anchorFailureCounts: {
+              ...(state.anchorFailureCounts || {}),
+              ...(lastBinding.field_id ? { [lastBinding.field_id]: 0 } : {}),
+            },
+            ui: {
+              ...(state.ui || {}),
+              lastParseError: "",
+              clearReason: nextDraft?.confirmationState?.reason || "",
+              currentBindingTarget: nextAnchor ? buildAnchorBindingTarget(nextAnchor) : null,
+            },
+            clock: {
+              now,
+            },
+          },
+          messages: nextAnchor?.question ? [{
+            message_kind: TRANSCRIPT_MESSAGE_KINDS.anchorQuestion,
+            anchor_id: nextAnchor.anchor_id,
+            text: buildDeterministicAnchorPromptText({
+              fieldId: nextAnchor.field_id,
+              prompt: nextAnchor.question,
+            }),
+          }] : [],
+        });
+      }
       const explicitTarget = sanitizeText(event?.payload?.target_stage || "", 80);
       const stageHistory = toArray(state.stageHistory);
       const fallbackStage = stageHistory.length > 1 ? stageHistory[stageHistory.length - 2] : INTAKE_MACHINE_STATES.FREEFORM_GOALS;
@@ -1807,6 +2632,12 @@ export const intakeReducer = (state = createIntakeMachineState(), event = {}) =>
         event,
         nextStage,
         patch: {
+          ui: {
+            ...(state.ui || {}),
+            currentBindingTarget: nextStage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION
+              ? buildAnchorBindingTarget(currentDraft?.missingAnchorsEngine?.currentAnchor || null)
+              : null,
+          },
           clock: {
             now,
           },
@@ -1823,22 +2654,68 @@ export const replayIntakeMachineEvents = ({
   events = [],
 } = {}) => toArray(events).reduce((nextState, event) => intakeReducer(nextState, event), initialState);
 
-export const buildIntakeMachineDebugView = (state = {}) => ({
-  state: sanitizeText(state?.stage || "", 80),
-  transition_id: sanitizeText(state?.transition_id || "", 120),
-  missing_anchors: toArray(state?.draft?.missingAnchorsEngine?.missingAnchors).map((anchor) => ({
-    field_id: sanitizeText(anchor?.field_id || "", 80),
-    label: sanitizeText(anchor?.label || "", 160),
-    question: sanitizeText(anchor?.question || "", 220),
-  })),
-  last_events: toArray(state?.eventLog).slice(-10).map((entry) => ({
-    transition_id: sanitizeText(entry?.transition_id || "", 120),
-    event_id: sanitizeText(entry?.event_id || "", 120),
-    type: sanitizeText(entry?.type || "", 80),
-    stage_before: sanitizeText(entry?.stage_before || "", 80),
-    stage_after: sanitizeText(entry?.stage_after || "", 80),
-    field_id: sanitizeText(entry?.field_id || "", 80),
-    goal_intent: sanitizeText(entry?.goal_intent || "", 120),
-    timestamp: normalizeTimestamp(entry?.timestamp || null),
-  })),
-});
+const resolveLatestAnchorBinding = (state = {}) => (
+  Object.values(state?.anchorBindingsByFieldId || {}).reduce((latest, candidate) => {
+    if (!candidate?.field_id) return latest;
+    if (!latest?.field_id) return candidate;
+    const candidateTimestamp = String(candidate?.timestamp || "");
+    const latestTimestamp = String(latest?.timestamp || "");
+    return candidateTimestamp >= latestTimestamp ? candidate : latest;
+  }, null)
+);
+
+export const buildIntakeMachineDebugView = (state = {}) => {
+  const latestBinding = resolveLatestAnchorBinding(state);
+  return {
+    state: sanitizeText(state?.stage || "", 80),
+    transition_id: sanitizeText(state?.transition_id || "", 120),
+    current_binding_target: {
+      anchor_id: sanitizeText(state?.ui?.currentBindingTarget?.anchor_id || state?.draft?.missingAnchorsEngine?.currentAnchor?.anchor_id || "", 120),
+      field_id: sanitizeText(state?.ui?.currentBindingTarget?.field_id || state?.draft?.missingAnchorsEngine?.currentAnchor?.field_id || "", 80),
+    },
+    latest_binding: latestBinding?.field_id ? {
+      anchor_id: sanitizeText(latestBinding?.anchor_id || "", 120),
+      field_id: sanitizeText(latestBinding?.field_id || "", 80),
+      parsed_value: clonePlainValue(latestBinding?.parsed_value),
+      parse_confidence: Number(latestBinding?.parse_confidence || 0),
+      timestamp: normalizeTimestamp(latestBinding?.timestamp || null),
+    } : null,
+    missing_anchors: toArray(state?.draft?.missingAnchorsEngine?.missingAnchors).map((anchor) => ({
+      anchor_id: sanitizeText(anchor?.anchor_id || "", 120),
+      field_id: sanitizeText(anchor?.field_id || "", 80),
+      label: sanitizeText(anchor?.label || "", 160),
+      question: sanitizeText(anchor?.question || "", 220),
+    })),
+    last_events: toArray(state?.eventLog).slice(-10).map((entry) => ({
+      transition_id: sanitizeText(entry?.transition_id || "", 120),
+      event_id: sanitizeText(entry?.event_id || "", 120),
+      type: sanitizeText(entry?.type || "", 80),
+      stage_before: sanitizeText(entry?.stage_before || "", 80),
+      stage_after: sanitizeText(entry?.stage_after || "", 80),
+      anchor_id: sanitizeText(entry?.anchor_id || "", 120),
+      field_id: sanitizeText(entry?.field_id || "", 80),
+      goal_intent: sanitizeText(entry?.goal_intent || "", 120),
+      timestamp: normalizeTimestamp(entry?.timestamp || null),
+    })),
+  };
+};
+
+export const buildIntakeParseDebugView = ({
+  state = {},
+  debugMode = false,
+  toggleEnabled = false,
+} = {}) => {
+  const machineDebugView = buildIntakeMachineDebugView(state);
+  const latestBinding = machineDebugView?.latest_binding || null;
+  const available = Boolean(debugMode && latestBinding?.field_id);
+  const visible = Boolean(available && toggleEnabled);
+  return {
+    available,
+    visible,
+    field_id: visible ? sanitizeText(latestBinding?.field_id || "", 80) : "",
+    anchor_id: visible ? sanitizeText(latestBinding?.anchor_id || "", 120) : "",
+    parsed_value: visible ? clonePlainValue(latestBinding?.parsed_value) : null,
+    parse_confidence: visible ? Number(latestBinding?.parse_confidence || 0) : 0,
+    timestamp: visible ? normalizeTimestamp(latestBinding?.timestamp || null) : null,
+  };
+};

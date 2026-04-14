@@ -80,9 +80,9 @@ export const normalizeTrainingSessionDuration = (value = "") => {
 export const normalizeTrainingIntensity = (value = "") => {
   const text = String(value || "").trim().toLowerCase();
   if (!text) return TRAINING_INTENSITY_VALUES.unknown;
-  if (["conservative", "keep it simple"].includes(text)) return TRAINING_INTENSITY_VALUES.conservative;
-  if (["standard", "find the balance"].includes(text)) return TRAINING_INTENSITY_VALUES.standard;
-  if (["aggressive", "push me hard"].includes(text)) return TRAINING_INTENSITY_VALUES.aggressive;
+  if (["conservative", "keep it simple", "keep me consistent"].includes(text)) return TRAINING_INTENSITY_VALUES.conservative;
+  if (["standard", "find the balance", "balanced coaching"].includes(text)) return TRAINING_INTENSITY_VALUES.standard;
+  if (["aggressive", "push me hard", "push me (with guardrails)"].includes(text)) return TRAINING_INTENSITY_VALUES.aggressive;
   if (["adaptive", "let the data decide"].includes(text)) return TRAINING_INTENSITY_VALUES.adaptive;
   return TRAINING_INTENSITY_VALUES.unknown;
 };

@@ -164,15 +164,95 @@ const parseWaistMeasurement = (text = "") => {
   return withWaist?.[1] ? Number(withWaist[1]) : null;
 };
 
+const MONTH_NAME_TO_NUMBER = {
+  january: "01",
+  jan: "01",
+  february: "02",
+  feb: "02",
+  march: "03",
+  mar: "03",
+  april: "04",
+  apr: "04",
+  may: "05",
+  june: "06",
+  jun: "06",
+  july: "07",
+  jul: "07",
+  august: "08",
+  aug: "08",
+  september: "09",
+  sep: "09",
+  sept: "09",
+  october: "10",
+  oct: "10",
+  november: "11",
+  nov: "11",
+  december: "12",
+  dec: "12",
+};
+
+const MONTH_TOKEN_PATTERN = /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)\b/i;
+const SEASON_PATTERN = /\b(?:early|mid|late)?\s*(?:spring|summer|fall|autumn|winter)\b/i;
+const RELATIVE_TIMELINE_PATTERN = /\b(?:in|within|over the next)\s+\d{1,3}\s+(?:week|weeks|month|months|year|years)\b/i;
+const BOUNDED_TIMELINE_PATTERN = /\b(?:by|before)\s+(?:next year|this year|\d{4}-\d{2}(?:-\d{2})?|(?:early|mid|late)\s+(?:spring|summer|fall|autumn|winter)|spring|summer|fall|autumn|winter|january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)(?:\s+\d{4})?\b/i;
+const NEXT_YEAR_PATTERN = /\b(?:next|this)\s+year\b/i;
+
+export const normalizeTimelineMonthValue = (value = "") => {
+  const clean = sanitizeText(value, 120);
+  if (!clean) return "";
+
+  const isoMonthMatch = clean.match(/\b(\d{4})-(\d{2})(?:-\d{2})?\b/);
+  if (isoMonthMatch?.[1] && isoMonthMatch?.[2]) return `${isoMonthMatch[1]}-${isoMonthMatch[2]}`;
+
+  const yearMatch = clean.match(/\b(19\d{2}|20\d{2}|21\d{2})\b/);
+  const monthMatch = clean.match(MONTH_TOKEN_PATTERN);
+  const monthNumber = monthMatch?.[1]
+    ? MONTH_NAME_TO_NUMBER[String(monthMatch[1]).toLowerCase()]
+    : "";
+  if (yearMatch?.[1] && monthNumber) return `${yearMatch[1]}-${monthNumber}`;
+
+  return "";
+};
+
 const parseExplicitDateText = (text = "") => {
   const normalized = sanitizeText(text, 120);
   if (!normalized) return "";
+  const normalizedMonth = normalizeTimelineMonthValue(normalized);
+  if (normalizedMonth) return normalizedMonth;
   const isoMatch = normalized.match(/\b\d{4}-\d{2}-\d{2}\b/);
   if (isoMatch?.[0]) return isoMatch[0];
   return normalized;
 };
 
-const hasTimingSignal = (text = "") => /\b(by|before|over the next|within|in)\b|\bweek(?:s)?\b|\bmonth(?:s)?\b|\byear(?:s)?\b|\bspring\b|\bsummer\b|\bfall\b|\bautumn\b|\bwinter\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b|\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b/i.test(String(text || ""));
+const hasTimingSignal = (text = "") => {
+  const clean = sanitizeText(text, 120);
+  if (!clean) return false;
+  if (/^\d{4}-\d{2}(?:-\d{2})?$/.test(clean)) return true;
+  if (normalizeTimelineMonthValue(clean)) return true;
+  if (RELATIVE_TIMELINE_PATTERN.test(clean)) return true;
+  if (BOUNDED_TIMELINE_PATTERN.test(clean)) return true;
+  if (NEXT_YEAR_PATTERN.test(clean)) return true;
+  if (SEASON_PATTERN.test(clean)) return true;
+  if (MONTH_TOKEN_PATTERN.test(clean)) return true;
+  if (/\bweek(?:s)?\b|\bmonth(?:s)?\b|\byear(?:s)?\b/i.test(clean)) return true;
+  return false;
+};
+
+export const resolveTimelineFieldRecord = ({
+  rawText = "",
+  candidateValue = "",
+} = {}) => {
+  const preferredRaw = sanitizeText(rawText || candidateValue, 120);
+  const cleanCandidate = sanitizeText(candidateValue || rawText, 120);
+  const acceptedRaw = preferredRaw || cleanCandidate;
+  const validatedRaw = validateTimelineValue(acceptedRaw);
+  const normalizedMonth = normalizeTimelineMonthValue(cleanCandidate) || normalizeTimelineMonthValue(preferredRaw);
+  if (!validatedRaw && !normalizedMonth) return null;
+  return {
+    raw: validatedRaw || preferredRaw || cleanCandidate,
+    value: normalizedMonth || validatedRaw || preferredRaw || cleanCandidate,
+  };
+};
 
 const buildQuestionField = ({
   key = "",
@@ -679,19 +759,11 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
       fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentWaist],
       goalRole,
     }));
-    optionalFields.push(buildRequirement({
-      key: "body_comp_photos_optional",
-      label: "Manual photo review (future)",
-      required: false,
-      filled: facts?.progressPhotos === true,
-      fieldKeys: [INTAKE_COMPLETENESS_FIELDS.progressPhotos],
-      goalRole,
-    }));
   }
 
   if (goalFamily === "appearance" && goalRole === "primary") {
     const appearanceHasExplicitTimingSignal = /\b(by|before|for)\b|\bspring\b|\bsummer\b|\bfall\b|\bautumn\b|\bwinter\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b|\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b/i.test(String(goal?.rawIntent?.text || ""));
-    const proxyAnchorReady = Boolean(facts?.currentBodyweight || facts?.currentWaist || facts?.progressPhotos === true);
+    const proxyAnchorReady = Boolean(facts?.currentBodyweight || facts?.currentWaist);
     requiredFields.push(buildRequirement({
       key: INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
       label: "Appearance tracking proxy",
@@ -703,7 +775,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
       goalRole,
       question: buildQuestion({
         key: INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
-        prompt: "What's one proxy we can track for this right now: current bodyweight or waist?",
+        prompt: "For your appearance goal, what's one proxy we can track right now: current bodyweight or waist?",
         placeholder: "Example: 198 lb or 35-inch waist",
         fieldKeys: [
           INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
@@ -825,12 +897,12 @@ const normalizeStructuredAnswerValues = (answerValues = {}) => Object.fromEntrie
     .filter(([key]) => key)
 );
 
-const validateTimelineValue = (value = "") => {
+export function validateTimelineValue(value = "") {
   const clean = sanitizeText(value, 120);
   if (!clean) return "";
-  if (/\b\d{4}-\d{2}-\d{2}\b/.test(clean) || hasTimingSignal(clean)) return clean;
+  if (/^\d{4}-\d{2}(?:-\d{2})?$/.test(clean) || hasTimingSignal(clean)) return clean;
   return "";
-};
+}
 
 export const isStructuredIntakeCompletenessQuestion = (question = {}) => (
   sanitizeText(question?.source || "", 40).toLowerCase() === COMPLETENESS_SOURCE
@@ -968,16 +1040,19 @@ export const validateIntakeCompletenessAnswer = ({
     case INTAKE_COMPLETENESS_QUESTION_KEYS.runningTiming:
     case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline:
     case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceTimeline: {
-      const timelineText = validateTimelineValue(values[INTAKE_COMPLETENESS_FIELDS.targetTimeline] || cleanText);
-      if (!timelineText) {
+      const timelineRecord = resolveTimelineFieldRecord({
+        rawText: values[INTAKE_COMPLETENESS_FIELDS.targetTimeline] || cleanText,
+        candidateValue: values[INTAKE_COMPLETENESS_FIELDS.targetTimeline] || cleanText,
+      });
+      if (!timelineRecord) {
         setFieldError(INTAKE_COMPLETENESS_FIELDS.targetTimeline, "Enter a date, target month, or rough time window.");
         break;
       }
-      summaryText = timelineText;
+      summaryText = timelineRecord.raw;
       normalizedValues = {
         [INTAKE_COMPLETENESS_FIELDS.targetTimeline]: {
-          raw: timelineText,
-          value: timelineText,
+          raw: timelineRecord.raw,
+          value: timelineRecord.value,
         },
       };
       break;
@@ -1249,7 +1324,14 @@ export const applyIntakeCompletenessAnswer = ({
     case INTAKE_COMPLETENESS_QUESTION_KEYS.runningTiming:
     case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline:
     case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceTimeline: {
-      storeField(INTAKE_COMPLETENESS_FIELDS.targetTimeline, parseExplicitDateText(cleanAnswer));
+      const timelineRecord = resolveTimelineFieldRecord({
+        rawText: cleanAnswer,
+        candidateValue: cleanAnswer,
+      });
+      if (timelineRecord && canStoreField(INTAKE_COMPLETENESS_FIELDS.targetTimeline)) {
+        nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.targetTimeline, timelineRecord);
+        storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.targetTimeline);
+      }
       break;
     }
     case INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline: {
@@ -1358,7 +1440,6 @@ export const buildIntakeCompletenessContext = ({
     Number.isFinite(facts?.currentBodyweight) ? `Current bodyweight: ${facts.currentBodyweight} lb` : "",
     Number.isFinite(facts?.targetWeightChange) ? `Desired bodyweight change: ${facts.targetWeightChange > 0 ? "+" : ""}${facts.targetWeightChange} lb` : "",
     Number.isFinite(facts?.currentWaist) ? `Current waist: ${facts.currentWaist} in` : "",
-    facts?.progressPhotos === true ? "Manual photo review is available as a future proxy." : "",
   ]);
 
   const timingHints = dedupeStrings([
@@ -1367,7 +1448,6 @@ export const buildIntakeCompletenessContext = ({
 
   const appearanceHints = dedupeStrings([
     Number.isFinite(facts?.currentWaist) ? `${facts.currentWaist} in waist` : "",
-    facts?.progressPhotos === true ? "manual photo review later" : "",
   ]);
 
   return {

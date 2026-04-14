@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useRef, useMemo } from "react";
 import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, normalizeGoals, getActiveTimeBoundGoal, generateTodayPlan } from "./modules-planning.js";
 import { createAuthStorageModule, buildStorageStatus, classifyStorageError, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
-import { getGoalContext, normalizeActualNutritionLog, resolveNutritionActualLogStoreCompat, compareNutritionPrescriptionToActual, getPlaceRecommendations, buildGroceryBasket, deriveGroceryExecutionSupport, mergeActualNutritionLogUpdate } from "./modules-nutrition.js";
+import { getGoalContext, normalizeActualNutritionLog, resolveNutritionActualLogStoreCompat, compareNutritionPrescriptionToActual, getPlaceRecommendations, buildGroceryBasket, deriveGroceryExecutionSupport, mergeActualNutritionLogUpdate, applyHydrationQuickAdd } from "./modules-nutrition.js";
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, resolveEffectiveStatus, buildPlannedDayRecord, comparePlannedDayToActual } from "./modules-checkins.js";
 import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, deterministicCoachPacket } from "./modules-coach-engine.js";
 import { buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildTodayWhyNowSentence, buildMacroShiftLine, buildEasierSessionsObservation, buildSkippedQualityDecision, buildWeeklyConsistencyAnchor, buildBadWeekTriageResponse } from "./prompts/coach-text.js";
@@ -9,7 +9,15 @@ import { SettingsIcon } from "./icons.js";
 import { assembleCanonicalPlanDay, resolvePlanDayStateInputs, resolvePlanDayTimeOfDay } from "./services/plan-day-service.js";
 import { assemblePlanWeekRuntime, resolveCurrentPlanWeekNumber, resolvePlanWeekNumberForDateKey, resolveProgramDisplayHorizon } from "./services/plan-week-service.js";
 import { buildDayReview, buildDayReviewComparison, classifyDayReviewStatus } from "./services/day-review-service.js";
-import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
+import {
+  BRAND_FOUNDATION,
+  BRAND_THEME_MODES,
+  BRAND_THEME_OPTIONS,
+  PRODUCT_BRAND,
+  buildBrandThemeState,
+  normalizeAppearanceSettings,
+} from "./services/brand-theme-service.js";
+import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeCoachVoiceRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
 import { deriveCanonicalAthleteState, withLegacyGoalProfileCompatibility } from "./services/canonical-athlete-service.js";
 import { buildPlanningGoalsFromResolvedGoals, applyResolvedGoalsToGoalSlots, buildGoalStateFromResolvedGoals, resolveGoalTranslation } from "./services/goal-resolution-service.js";
 import { buildGoalArbitrationStack } from "./services/goal-arbitration-service.js";
@@ -82,6 +90,7 @@ import {
   TRAINING_CONTEXT_SOURCES,
   TRAINING_EQUIPMENT_VALUES,
   TRAINING_ENVIRONMENT_VALUES,
+  TRAINING_INTENSITY_VALUES,
   TRAINING_SESSION_DURATION_VALUES,
   trainingEnvironmentToDisplayMode,
   trainingEquipmentToEnvironmentCode,
@@ -91,18 +100,19 @@ import {
   applyIntakeCompletenessAnswer,
   applyIntakeGoalAdjustment,
   applyIntakeGoalStackConfirmation,
-  buildIntakeClarificationCoachMessages,
   buildIntakeCompletenessPacketContext,
+  buildIntakeConfirmationNeedsList,
+  canAskSecondaryGoal,
   buildIntakeGoalStackConfirmation,
   buildIntakeGoalStackReviewModel,
   buildIntakeGoalReviewModel,
   buildIntakeSecondaryGoalPrompt,
   deriveIntakeConfirmationState,
   buildRawGoalIntentFromAnswers,
+  GOAL_REVIEW_LANE_KEYS,
   GOAL_STACK_ROLES,
   readAdditionalGoalEntries,
   SECONDARY_GOAL_RESPONSE_KEYS,
-  getNextIntakeClarifyingQuestion,
   resolveCompatibilityPrimaryGoalKey,
 } from "./services/intake-goal-flow-service.js";
 import {
@@ -123,25 +133,82 @@ import {
   upsertGoalAnchorQuickEntry,
 } from "./services/goal-anchor-quick-entry-service.js";
 import {
+  buildMetricsBaselinesModel,
+} from "./services/metrics-baselines-service.js";
+import {
+  buildSupportTierModel,
+} from "./services/support-tier-service.js";
+import {
+  buildActiveBasisSnapshot,
+  buildProgramCatalogViewModel,
+  buildProgramSelectionHistoryEntry,
+  createDefaultProgramSelectionState,
+  createProgramInstance,
+  createStyleSelection,
+  getProgramDefinitionById,
+  getStyleDefinitionById,
+  listProgramDefinitions,
+  listStyleDefinitions,
+  normalizeProgramsSelectionState,
+  PROGRAM_FIDELITY_MODES,
+  PROGRAM_SELECTION_MODES,
+  PROGRAM_SOURCE_BASIS_LABELS,
+  SOURCE_CONFIDENCE_LABELS,
+} from "./services/program-catalog-service.ts";
+import {
+  assessProgramCompatibility,
+  assessStyleCompatibility,
+  buildCompatibilityHeadline,
+  COMPATIBILITY_OUTCOMES,
+} from "./services/program-compatibility-service.ts";
+import {
+  buildActivationConfirmationCopy,
+  buildCompatibilityWarningCopy,
+  buildPlanBasisExplanation,
+  buildProgramCardExplanation,
+  buildProgramWeekExplanation,
+  buildStyleCardExplanation,
+} from "./services/program-explanation-service.ts";
+import {
+  buildStyleOverlayPreview,
+  STYLE_INFLUENCE_LEVELS,
+} from "./services/style-overlay-service.ts";
+import {
   WORKOUT_LOG_FAMILIES,
+  buildWorkoutQuickCaptureModel,
   buildWorkoutLogDraft,
   buildWorkoutLogEntryFromDraft,
+  hasWorkoutQuickCaptureValues,
 } from "./services/workout-log-form-service.js";
 import {
+  buildIntakeInjuryConstraintContext,
+  INTAKE_INJURY_IMPACT_OPTIONS,
   normalizeHomeEquipmentResponse,
   sanitizeIntakeText,
 } from "./services/intake-flow-service.js";
 import {
   buildIntakeMachineDebugView,
+  buildIntakeParseDebugView,
   createIntakeMachineState,
   intakeReducer,
   INTAKE_MACHINE_EVENTS,
   INTAKE_MACHINE_STATES,
+  validateIntakeCommitRequest,
 } from "./services/intake-machine-service.js";
+import { buildAnchorCollectionViewModel } from "./services/intake-anchor-collection-service.js";
+import { aiExtractForMissingFields } from "./services/intake-ai-extraction-service.js";
+import { resolveCoachVoiceDisplayCopy } from "./services/intake-coach-voice-service.js";
 import {
+  buildTranscriptMessageKey,
   queueCoachTranscriptMessages,
   resolveNextCoachStreamTargetId,
+  TRANSCRIPT_MESSAGE_KINDS,
 } from "./services/intake-transcript-service.js";
+import {
+  buildPersistableIntakeSession,
+  INTAKE_SESSION_STORAGE_KEY,
+  restorePersistedIntakeSession,
+} from "./services/intake-session-service.js";
 import {
   buildLegacyHistoryDisplayLabel,
   resolveLegacyPlannedDayHistoryEntry,
@@ -154,8 +221,16 @@ import {
 } from "./review-audit-components.jsx";
 
 // PROFILE
+const DEFAULT_TIMEZONE = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Chicago";
+  } catch {
+    return "America/Chicago";
+  }
+})();
+
 const PROFILE = {
-  name: "Athlete", height: "6'1\"", weight: 190, age: 30,
+  name: "Athlete", height: "6'1\"", weight: 190, age: 30, timezone: DEFAULT_TIMEZONE,
   goalRace: "TBD", goalTime: "TBD", goalPace: "TBD",
   startDate: new Date(),
   tdee: 3100,
@@ -334,6 +409,38 @@ const safeStorageSet = (storageLike, key, value) => {
     return true;
   } catch {
     return false;
+  }
+};
+
+const toTestIdFragment = (value = "") => String(value || "")
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-+|-+$/g, "")
+  .slice(0, 80);
+
+const safeStorageRemove = (storageLike, key) => {
+  try {
+    if (!storageLike?.removeItem) return false;
+    storageLike.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const readPersistedIntakeSessionSnapshot = ({
+  startingFresh = false,
+} = {}) => {
+  if (typeof window === "undefined") return null;
+  const raw = safeStorageGet(sessionStorage, INTAKE_SESSION_STORAGE_KEY, "");
+  if (!raw) return null;
+  try {
+    return restorePersistedIntakeSession(JSON.parse(raw), {
+      startingFresh: Boolean(startingFresh),
+    });
+  } catch {
+    return null;
   }
 };
 
@@ -1068,6 +1175,10 @@ const getPlannedTrainingForLogDraft = (plannedDayRecord = null) => (
 );
 
 const buildStrengthPrescriptionEntriesForLogging = (training = null) => {
+  const prescribedExercises = Array.isArray(training?.prescribedExercises)
+    ? training.prescribedExercises.map(sanitizeWorkoutEntry).filter((item) => item?.ex)
+    : [];
+  if (prescribedExercises.length) return prescribedExercises;
   const strengthTrack = String(training?.strengthTrack || "").trim();
   const strengthSession = String(training?.strSess || "").trim();
   const mainExercises = (STRENGTH[strengthSession]?.[strengthTrack] || []).map(sanitizeWorkoutEntry);
@@ -1288,15 +1399,15 @@ const buildTrustSummary = ({
     deviceData ? "device data" : null,
     inferredHeuristics ? "inferred heuristics" : null,
   ].filter(Boolean);
-  let summary = sources.length ? `Using ${joinHumanList(sources)}.` : "Using limited data.";
+  let summary = sources.length ? `Guidance is currently leaning on ${joinHumanList(sources)}.` : "Guidance is currently leaning on limited data.";
   if (!explicitUserInput && !loggedActuals && !deviceData) {
     summary = inferredHeuristics
-      ? "Using inferred heuristics because no explicit input, actual log, or device data is available."
+      ? "Guidance is currently leaning on inferred heuristics because no explicit input, actual log, or device data is available."
       : "No explicit input, actual log, or device data is available yet.";
   } else if (!explicitUserInput && !loggedActuals) {
-    summary = `Using ${joinHumanList(sources)}. No explicit input or actual log is available yet.`;
+    summary = `Guidance is currently leaning on ${joinHumanList(sources)}. No explicit input or actual log is available yet.`;
   } else if (!deviceData && inferredHeuristics) {
-    summary = `Using ${joinHumanList(sources)}. No device data is contributing here.`;
+    summary = `Guidance is currently leaning on ${joinHumanList(sources)}. No device data is contributing here.`;
   }
   if (stale) summary += " Some supporting data is stale.";
   if (limitation) summary += ` ${limitation}`;
@@ -1479,7 +1590,7 @@ const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().spl
   }
   if (isPositiveRecovery(activeCheckin)) {
     progressScore += 3;
-    progressReasons.push("today's recovery input is supportive");
+    progressReasons.push("today's recovery input looks supportive");
   } else if (recentSupportiveCount >= 2) {
     progressScore += 1;
     progressReasons.push("recent recovery inputs have been steady");
@@ -1566,17 +1677,17 @@ const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().spl
     adjustedWorkout.intensityGuidance = "steady with one small progression";
     adjustedWorkout.extendedFinisher = adjustedWorkout?.extendedFinisher || (adjustedWorkout?.run ? "Optional: 4 × 20s strides if the session stays smooth." : "Optional: add one final quality set if form stays crisp.");
     appendEnvironmentNote("Progression-ready today: one small progression is available if execution stays controlled.");
-    coachLine = "Progression is available today: keep the plan intact and add only one small progression if it stays smooth.";
+    coachLine = "Current signals may support one small progression today: keep the plan intact and add it only if the session stays smooth.";
     recoveryLine = "Recovery recommendation: normal fueling, normal mobility, and no extra bonus work after the progression.";
-    userVisibleLine = "Your recovery and recent consistency allow a small progression today.";
-    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "supportive recovery and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
+    userVisibleLine = "Current recovery and consistency signals may support a small progression today.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "recovery signals that look supportive and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
   } else {
     adjustedWorkout.recoveryRecommendation = "Normal recovery: finish the session, refuel, and do your usual mobility.";
     adjustedWorkout.intensityGuidance = "planned";
     appendEnvironmentNote("Readiness is steady today: run the planned session with clean control.");
     coachLine = "Readiness is steady today: execute the planned session cleanly and keep the effort controlled.";
     recoveryLine = "Recovery recommendation: follow your normal fueling and mobility routine after the session.";
-    userVisibleLine = "Your recent recovery and training load support the planned session.";
+    userVisibleLine = "Current signals do not suggest changing the planned session.";
     adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness looks steady based on ${reasonText || "recent completion, recovery, and training load"}. Run the planned session as written and keep recovery normal.`;
   }
 
@@ -1746,7 +1857,7 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
   }
   if (strongPositiveCheckin) {
     progressScore += 3;
-    progressReasons.push("the latest recovery check-in is supportive");
+    progressReasons.push("the latest recovery check-in looks supportive");
   } else if (recentSupportiveRows.length >= 2) {
     progressScore += 1;
     progressReasons.push("recent recovery inputs have stayed steady");
@@ -1843,17 +1954,17 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
     adjustedWorkout.intensityGuidance = "planned plus one small progression";
     adjustedWorkout.extendedFinisher = adjustedWorkout?.extendedFinisher || (adjustedWorkout?.run ? "Optional: 4 x 20s strides if the session stays smooth." : "Optional: add one final quality set if form stays crisp.");
     appendEnvironmentNote("Progression-ready today: one small progression is available if execution stays controlled.");
-    coachLine = "Progression is available today: keep the plan intact and add only one small progression if it stays smooth.";
+    coachLine = "Current signals may support one small progression today: keep the plan intact and add it only if the session stays smooth.";
     recoveryLine = "Recovery recommendation: normal fueling, normal mobility, and no extra bonus work after the progression.";
-    userVisibleLine = "Supportive recovery and reliable recent completion allow a small progression today.";
-    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "supportive recovery and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
+    userVisibleLine = "Supportive-looking recovery signals and reliable recent completion may allow a small progression today.";
+    adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness state is progression-ready based on ${reasonText || "recovery signals that look supportive and stable recent training"}. Keep the plan intact and progress only if the first half feels controlled.`;
   } else {
     adjustedWorkout.recoveryRecommendation = "Normal recovery: finish the session, refuel, and do your usual mobility.";
     adjustedWorkout.intensityGuidance = "planned";
     appendEnvironmentNote("Readiness is steady today: run the planned session with clean control.");
     coachLine = "Readiness is steady today: execute the planned session cleanly and keep the effort controlled.";
     recoveryLine = "Recovery recommendation: follow your normal fueling and mobility routine after the session.";
-    userVisibleLine = "Recent completion, recovery, and load support the planned session.";
+    userVisibleLine = "Current signals do not suggest changing the planned session.";
     adjustedWorkout.explanation = `${baseExplanation ? `${baseExplanation} ` : ""}Readiness looks steady based on ${reasonText || "recent completion, recovery, and training load"}. Run the planned session as written and keep recovery normal.`;
   }
 
@@ -2197,10 +2308,26 @@ const safeFetchWithTimeout = async (url, options = {}, timeoutMs = 8500) => {
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await fetch(url, { ...options, signal: ctrl.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`FETCH_TIMEOUT:${timeoutMs}`);
+    }
+    const message = String(error?.message || error || "");
+    if (/failed to fetch|networkerror|network request failed|load failed/i.test(message)) {
+      throw new Error(`FETCH_NETWORK:${message || "request_failed"}`);
+    }
+    throw error;
   } finally {
     clearTimeout(timer);
   }
 };
+
+const sameStorageStatus = (left = null, right = null) => (
+  String(left?.mode || "") === String(right?.mode || "")
+  && String(left?.label || "") === String(right?.label || "")
+  && String(left?.reason || "") === String(right?.reason || "")
+  && String(left?.detail || "") === String(right?.detail || "")
+);
 
 const PRIMARY_GOAL_OPTIONS = ["fat_loss", "muscle_gain", "endurance", "general_fitness"];
 const PRIMARY_GOAL_LABELS = { fat_loss: "Fat Loss", muscle_gain: "Muscle Gain", endurance: "Endurance", general_fitness: "General Fitness" };
@@ -2223,11 +2350,6 @@ const splitIntakeListText = (value = "") => String(value || "")
   .filter(Boolean)
   .slice(0, 8);
 
-const hasMeaningfulConstraintText = (value = "") => {
-  const text = String(value || "").trim();
-  return Boolean(text && !/^(none|nothing current|none currently|nope|healthy)$/i.test(text));
-};
-
 const extractAppearanceConstraints = (...values) => values
   .map((value) => String(value || "").trim())
   .filter((value) => value && /(abs|lean|athletic|toned|look|appearance|physique|body comp|body composition|shirtless|defined)/i.test(value))
@@ -2242,7 +2364,10 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
   const homeEquipment = Array.isArray(answers.home_equipment)
     ? answers.home_equipment
     : splitIntakeListText(answers.equipment_text || "");
-  const injuryText = String(answers.injury_text || "").trim();
+  const injuryConstraintContext = buildIntakeInjuryConstraintContext({
+    injuryText: answers.injury_text,
+    injuryImpact: answers.injury_impact,
+  });
   const timingConstraints = [
     answers.timeline_adjustment,
     answers.timeline_feedback,
@@ -2294,8 +2419,9 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
           : "",
       },
       injuryConstraintContext: {
-        injuryText,
-        constraints: hasMeaningfulConstraintText(injuryText) ? [injuryText] : [],
+        injuryText: injuryConstraintContext.injuryText,
+        injuryImpact: injuryConstraintContext.injuryImpact,
+        constraints: injuryConstraintContext.constraints,
       },
       userProvidedConstraints: {
         timingConstraints: mergedTimingConstraints,
@@ -2510,7 +2636,7 @@ const buildPreviewGoalResolutionBundle = ({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     answers,
   });
-  const goalFeasibility = assessGoalFeasibility({
+  const previewGoalFeasibility = assessGoalFeasibility({
     resolvedGoals: goalResolution?.resolvedGoals || [],
     ...buildGoalFeasibilityContextFromIntake(intakeContext),
     intakeCompleteness,
@@ -2518,7 +2644,7 @@ const buildPreviewGoalResolutionBundle = ({
   });
   const feasibleResolvedGoals = applyFeasibilityPriorityOrdering({
     resolvedGoals: goalResolution?.resolvedGoals || [],
-    feasibility: goalFeasibility,
+    feasibility: previewGoalFeasibility,
   });
   const arbitrationInputs = buildConfirmedArbitrationInputs({
     answers,
@@ -2530,12 +2656,29 @@ const buildPreviewGoalResolutionBundle = ({
     confirmedPrimaryGoal: arbitrationInputs.confirmedPrimaryGoal,
     confirmedAdditionalGoals: arbitrationInputs.confirmedAdditionalGoals,
     additionalGoalTexts: arbitrationInputs.additionalGoalTexts,
-    goalFeasibility,
+    goalFeasibility: previewGoalFeasibility,
     intakeCompleteness,
+    answers,
     typedIntakePacket,
     now,
   });
   const orderedResolvedGoals = arbitration?.goals?.length ? arbitration.goals : feasibleResolvedGoals;
+  const activeResolvedGoals = applyIntakeGoalStackConfirmation({
+    resolvedGoals: orderedResolvedGoals,
+    goalStackConfirmation: null,
+    goalFeasibility: previewGoalFeasibility,
+  });
+  const effectiveResolvedGoals = activeResolvedGoals.length ? activeResolvedGoals : orderedResolvedGoals;
+  const activeCompleteness = deriveIntakeCompletenessState({
+    resolvedGoals: effectiveResolvedGoals,
+    answers,
+  });
+  const goalFeasibility = assessGoalFeasibility({
+    resolvedGoals: effectiveResolvedGoals,
+    ...buildGoalFeasibilityContextFromIntake(intakeContext),
+    intakeCompleteness: activeCompleteness,
+    now,
+  });
 
   return {
     typedIntakePacket,
@@ -2555,23 +2698,9 @@ const buildIntakeTimelineFallback = (payload = {}) => {
   });
   const topGoal = preview?.orderedResolvedGoals?.[0] || preview?.goalResolution?.resolvedGoals?.[0] || null;
   const focusLabel = topGoal?.summary || PRIMARY_GOAL_LABELS[payload.primary_goal] || payload.primary_goal || "your goal";
-  const statusLine = preview?.goalFeasibility?.realismStatus === GOAL_REALISM_STATUSES.unrealistic
-    ? `The current target for ${String(focusLabel).toLowerCase()} needs a smaller first block before I can plan credibly.`
-    : preview?.goalFeasibility?.confirmationAction === GOAL_FEASIBILITY_ACTIONS.block
-    ? `I still need one or two critical anchors before I can build a credible plan for ${String(focusLabel).toLowerCase()}.`
-    : preview?.goalFeasibility?.realismStatus === GOAL_REALISM_STATUSES.aggressive
-    ? `This goal stack can work, but the current schedule or tradeoffs make the near-term path tight.`
-    : preview?.goalFeasibility?.realismStatus === GOAL_REALISM_STATUSES.exploratory
-    ? `This goal is real, but the first block should focus on a concrete 30-day win instead of pretending every detail is settled.`
-    : `This goal stack fits your current schedule and baseline well enough to plan directly from it.`;
-  const realisticLine = preview?.goalFeasibility?.realisticByTargetDate?.[0]?.summary || "";
-  const revisionLine = preview?.goalFeasibility?.recommendedRevision?.summary
-    ? `Recommended revision: ${preview.goalFeasibility.recommendedRevision.summary}`
-    : "";
-  const conflictLine = preview?.goalFeasibility?.conflictFlags?.[0]?.summary
-    ? `Main tradeoff: ${preview.goalFeasibility.conflictFlags[0].summary}`
-    : "";
-  return sanitizeIntakeText([statusLine, realisticLine, revisionLine, conflictLine].filter(Boolean).join(" "));
+  const gateLine = sanitizeIntakeText(preview?.goalFeasibility?.explanation_text || "");
+  if (gateLine) return gateLine;
+  return sanitizeIntakeText(`I need a little more grounded context before I can finish the gate for ${String(focusLabel).toLowerCase()}.`);
 };
 
 const buildIntakeAssessmentTextFromProposal = ({
@@ -2586,32 +2715,7 @@ const buildIntakeAssessmentTextFromProposal = ({
   });
   const topGoal = orderedResolvedGoals?.[0] || previewGoalResolution?.resolvedGoals?.[0] || null;
   if (!topGoal || !goalFeasibility) return buildIntakeTimelineFallback(payload);
-  const trackingLabels = [
-    topGoal?.primaryMetric?.label,
-    ...(Array.isArray(topGoal?.proxyMetrics) ? topGoal.proxyMetrics.map((metric) => metric.label) : []),
-  ].filter(Boolean).slice(0, 3);
-  const statusLine = goalFeasibility.realismStatus === GOAL_REALISM_STATUSES.unrealistic
-    ? `The full ${String(topGoal.summary || "goal").toLowerCase()} outcome is too compressed for your current schedule and baseline, so the first block needs a scaled target.`
-    : goalFeasibility.confirmationAction === GOAL_FEASIBILITY_ACTIONS.block
-    ? `I still need a little more grounded context before I can build this plan credibly.`
-    : goalFeasibility.realismStatus === GOAL_REALISM_STATUSES.aggressive
-    ? `This goal stack is workable, but the current window or tradeoffs are tight for your schedule and baseline.`
-    : goalFeasibility.realismStatus === GOAL_REALISM_STATUSES.exploratory
-    ? `This goal direction is valid, but the first block should lock in a concrete 30-day win before we push a more exact outcome.`
-    : `This goal stack fits your current schedule and baseline well enough to plan directly from it.`;
-  const trackingLine = trackingLabels.length
-    ? `We'll track ${trackingLabels.join(", ")} first so progress stays grounded in something visible.`
-    : "";
-  const realisticLine = goalFeasibility?.realisticByTargetDate?.[0]?.summary || "";
-  const longerLine = goalFeasibility?.longerHorizonNeeds?.[0]?.summary
-    ? `Longer horizon: ${goalFeasibility.longerHorizonNeeds[0].summary}`
-    : "";
-  const revisionLine = goalFeasibility?.recommendedRevision?.summary
-    ? `Recommended revision: ${goalFeasibility.recommendedRevision.summary}`
-    : "";
-  const conflictLine = goalFeasibility?.conflictFlags?.[0]?.summary
-    ? `Main tradeoff: ${goalFeasibility.conflictFlags[0].summary}`
-    : "";
+  const gateLine = sanitizeIntakeText(goalFeasibility?.explanation_text || "");
   const priorityLine = orderedResolvedGoals.length > 1
     ? `Priority order: ${orderedResolvedGoals.map((goal) => goal.summary).join(", then ")}.`
     : `Priority order: ${topGoal.summary}.`;
@@ -2619,12 +2723,7 @@ const buildIntakeAssessmentTextFromProposal = ({
     ? `Main open question: ${interpretation.missingClarifyingQuestions[0]}`
     : "";
   return sanitizeIntakeText([
-    statusLine,
-    trackingLine,
-    realisticLine,
-    longerLine,
-    revisionLine,
-    conflictLine,
+    gateLine,
     priorityLine,
     optionalInterpretationLine,
   ].filter(Boolean).join(" "));
@@ -2707,6 +2806,11 @@ const DEFAULT_PERSONALIZATION = {
   userGoalProfile: { ...DEFAULT_USER_GOAL_PROFILE },
   profile: {
     name: "Athlete",
+    timezone: DEFAULT_TIMEZONE,
+    birthYear: "",
+    height: "",
+    weight: "",
+    profileSetupComplete: false,
     onboardingComplete: false,
     trainingAgeYears: 0,
     preferredCoachingTone: "adaptive",
@@ -2849,8 +2953,8 @@ const DEFAULT_PERSONALIZATION = {
       intensityPreference: "Standard",
     },
     appearance: {
-      theme: "System",
-      palette: "Green",
+      theme: "Atlas",
+      mode: "Dark",
     },
     notifications: {
       allOff: false,
@@ -2859,6 +2963,7 @@ const DEFAULT_PERSONALIZATION = {
       proactiveNudgeOn: true,
     },
   },
+  programs: createDefaultProgramSelectionState(),
   planArchives: [],
   goalChangeHistory: [],
   goalReviewHistory: [],
@@ -2924,6 +3029,11 @@ const mergePersonalization = (base, patch) => ({
     },
   },
   coachMemory: { ...base.coachMemory, ...(patch?.coachMemory || {}), wins: patch?.coachMemory?.wins || base.coachMemory.wins, constraints: patch?.coachMemory?.constraints || base.coachMemory.constraints },
+  programs: {
+    ...(base.programs || createDefaultProgramSelectionState()),
+    ...(patch?.programs || {}),
+    selectionHistory: patch?.programs?.selectionHistory || (base.programs || createDefaultProgramSelectionState()).selectionHistory,
+  },
 });
 
 const derivePersonalization = (logs, bodyweights, previous) => {
@@ -4168,6 +4278,7 @@ export default function TrainerDashboard() {
     const requestedTab = new URLSearchParams(window.location.search).get("tab");
     return requestedTab === "settings" ? 5 : 0;
   });
+  const [settingsFocus, setSettingsFocus] = useState("");
   const [logs, setLogs] = useState({});
   const [bodyweights, setBodyweights] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -4187,12 +4298,23 @@ export default function TrainerDashboard() {
   const [nutritionActualLogs, setNutritionActualLogs] = useState({});
   const [analyzing, setAnalyzing] = useState(false);
   const [storageStatus, setStorageStatus] = useState(() => buildStorageStatus({ mode: "syncing", label: "SYNCING", reason: STORAGE_STATUS_REASONS.unknown, detail: "Cloud sync is initializing." }));
+  const applyStorageStatus = (nextStatus = null) => {
+    if (!nextStatus) return;
+    setStorageStatus((currentStatus) => (
+      sameStorageStatus(currentStatus, nextStatus)
+        ? currentStatus
+        : nextStatus
+    ));
+  };
   const [lastSaved, setLastSaved] = useState(null);
   const [dismissedTriggers, setDismissedTriggers] = useState([]);
   const [authSession, setAuthSession] = useState(null);
   const [authMode, setAuthMode] = useState("signin");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [authDisplayName, setAuthDisplayName] = useState("");
+  const [authUnits, setAuthUnits] = useState("imperial");
+  const [authTimezone, setAuthTimezone] = useState(DEFAULT_TIMEZONE);
   const [authError, setAuthError] = useState("");
   const [authInitializing, setAuthInitializing] = useState(true);
   const [startupLocalResumeAvailable, setStartupLocalResumeAvailable] = useState(false);
@@ -4203,6 +4325,7 @@ export default function TrainerDashboard() {
   const realtimeInterruptedRef = useRef(false);
   const lastLocalMutationAtRef = useRef(0);
   const skipNextGoalsPersistRef = useRef(false);
+  const suspendLocalPersistenceRef = useRef(false);
   const authSessionRef = useRef(null);
   const sbLoadRef = useRef(null);
   const logDiagRef = useRef(null);
@@ -4210,6 +4333,7 @@ export default function TrainerDashboard() {
   const [startFreshConfirmOpen, setStartFreshConfirmOpen] = useState(false);
   const [showAppleHealthFirstLaunch, setShowAppleHealthFirstLaunch] = useState(false);
   const DEBUG_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
+  const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "apple_health_supported", "0") === "1";
   const logDiag = (...args) => { if (DEBUG_MODE) console.log("[trainer-debug]", ...args); };
   const canonicalAthlete = useMemo(
     () => deriveCanonicalAthleteState({ goals, personalization, profileDefaults: PROFILE }),
@@ -4231,6 +4355,9 @@ export default function TrainerDashboard() {
   const baseTodayWorkout = getTodayWorkout(currentWeek, dayOfWeek);
   const baseWeek = WEEKS[(currentWeek - 1) % WEEKS.length] || WEEKS[0];
   const todayKey = new Date().toISOString().split("T")[0];
+  useEffect(() => {
+    if (tab !== 5 && settingsFocus) setSettingsFocus("");
+  }, [tab, settingsFocus]);
   const dismissedTriggerStorageKey = `dismissed_triggers_${todayKey}`;
   const dayOverride = coachPlanAdjustments.dayOverrides?.[todayKey];
   const nutritionOverride = coachPlanAdjustments.nutritionOverrides?.[todayKey];
@@ -4242,7 +4369,31 @@ export default function TrainerDashboard() {
   const learningLayer = deriveLearningLayer({ dailyCheckins, logs, weeklyCheckins, momentum, personalization, validationLayer, optimizationLayer });
   const salvageLayer = deriveSalvageLayer({ logs, momentum, dailyCheckins, weeklyCheckins, personalization, learningLayer });
   const failureMode = deriveFailureModeHardening({ logs, dailyCheckins, bodyweights, coachPlanAdjustments, coachActions, salvageLayer });
-  const planComposer = composeGoalNativePlan({ goals: goalsModel, personalization, momentum, learningLayer, currentWeek, baseWeek, weekTemplates: WEEKS });
+  const prePlanWeeklyNutritionReview = useMemo(() => buildWeeklyNutritionReview({
+    anchorDateKey: todayKey,
+    plannedDayRecords,
+    nutritionActualLogs,
+  }), [todayKey, plannedDayRecords, nutritionActualLogs]);
+  const planComposer = composeGoalNativePlan({
+    goals: goalsModel,
+    personalization,
+    momentum,
+    learningLayer,
+    currentWeek,
+    baseWeek,
+    weekTemplates: WEEKS,
+    athleteProfile: canonicalAthlete,
+    logs,
+    bodyweights,
+    dailyCheckins,
+    nutritionActualLogs,
+    weeklyNutritionReview: prePlanWeeklyNutritionReview,
+    coachActions,
+    todayKey,
+    currentDayOfWeek: dayOfWeek,
+    plannedDayRecords,
+    planWeekRecords,
+  });
   const planWeekRuntime = useMemo(() => {
     const runtime = assemblePlanWeekRuntime({
       todayKey,
@@ -4341,6 +4492,8 @@ export default function TrainerDashboard() {
       weeklyIntent: currentPlanWeek?.weeklyIntent || null,
       planWeek: currentPlanWeek,
       plannedSession: currentPlanSession,
+      changeSummary: currentPlanWeek?.changeSummary || planComposer?.changeSummary || null,
+      planningBasis: planComposer?.planningBasis || currentPlanWeek?.planningBasis || null,
     }
   );
   const rollingHorizon = planWeekRuntime.rollingHorizon;
@@ -4402,7 +4555,7 @@ export default function TrainerDashboard() {
     : garminReadiness?.mode === "reduced_load"
     ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Reduced-load)`, explanation: `Garmin readiness is pointing to partial recovery, so today's session is reduced as a caution move rather than a hard stop.` }
     : deviceSyncAudit?.planMode === "recovery"
-    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data points toward a recovery day.", explanation: `Connected device data is leaning recovery today. The app is using that signal cautiously because device context is supportive, not definitive, on its own.` }
+    ? { ...todayWorkoutHardenedBase, type: "rest", label: "Recovery Mode (Device signals)", run: null, strSess: null, nutri: "rest", success: "Device data suggests a recovery day.", explanation: `Connected device data is leaning recovery today. The app is using that signal cautiously because device context is suggestive, not definitive, on its own.` }
     : deviceSyncAudit?.planMode === "reduced_load"
     ? { ...todayWorkoutHardenedBase, minDay: true, label: `${todayWorkoutHardenedBase?.label || "Session"} (Device-adjusted)`, explanation: `Device signals suggest slightly reducing today's load to stay within productive training ranges.` }
     : todayWorkoutHardenedBase;
@@ -4922,15 +5075,93 @@ export default function TrainerDashboard() {
   const { SB_URL, SB_KEY, SB_CONFIG_ERROR, localLoad } = authStorage;
 
   const handleSignIn = async () => {
+    suspendLocalPersistenceRef.current = false;
     await authStorage.handleSignIn({ authEmail, authPassword, setAuthError, setAuthSession });
   };
 
   const handleSignUp = async () => {
-    await authStorage.handleSignUp({ authEmail, authPassword, setAuthError, setAuthSession });
+    suspendLocalPersistenceRef.current = false;
+    const result = await authStorage.handleSignUp({
+      authEmail,
+      authPassword,
+      authProfile: {
+        displayName: authDisplayName,
+        units: authUnits,
+        timezone: authTimezone,
+      },
+      setAuthError,
+      setAuthSession,
+    });
+    if (result?.ok) {
+      setPersonalization((current) => mergePersonalization(current, {
+        profile: {
+          ...current?.profile,
+          name: String(authDisplayName || "").trim() || current?.profile?.name || DEFAULT_PERSONALIZATION.profile.name,
+          timezone: String(authTimezone || "").trim() || current?.profile?.timezone || DEFAULT_PERSONALIZATION.profile.timezone,
+          profileSetupComplete: false,
+        },
+        settings: {
+          ...(current?.settings || DEFAULT_PERSONALIZATION.settings),
+          units: authUnits === "metric"
+            ? { weight: "kg", height: "cm", distance: "kilometers" }
+            : { weight: "lbs", height: "ft_in", distance: "miles" },
+        },
+      }));
+      if (result?.needsEmailConfirmation) {
+        setAuthMode("signin");
+      }
+    }
   };
 
   const handleSignOut = async () => {
     await authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
+  };
+
+  const resetRuntimeAfterAccountRemoval = () => {
+    suspendLocalPersistenceRef.current = true;
+    const resetPersonalization = mergePersonalization(DEFAULT_PERSONALIZATION, {
+      profile: {
+        ...DEFAULT_PERSONALIZATION.profile,
+        onboardingComplete: false,
+      },
+    });
+    setLogs({});
+    setBodyweights([]);
+    setDailyCheckins({});
+    setPlannedDayRecords({});
+    setPlanWeekRecords({});
+    setWeeklyCheckins({});
+    setGoals(normalizeGoals(DEFAULT_MULTI_GOALS));
+    setPersonalization(resetPersonalization);
+    setCoachActions([]);
+    setCoachPlanAdjustments(DEFAULT_COACH_PLAN_ADJUSTMENTS);
+    setNutritionFavorites(DEFAULT_NUTRITION_FAVORITES);
+    setNutritionActualLogs({});
+    setPaceOverrides({});
+    setWeekNotes({});
+    setPlanAlerts([]);
+    setTab(0);
+    setAuthError("");
+    setStartupLocalResumeAccepted(false);
+    setStartupLocalResumeAvailable(false);
+  };
+
+  const handleDeleteAccount = async () => {
+    try {
+      await authStorage.handleDeleteAccount({
+        authSession,
+        setAuthSession,
+        setStorageStatus,
+        setAuthError,
+        clearLocalData: async () => {
+          resetRuntimeAfterAccountRemoval();
+        },
+      });
+    } catch (error) {
+      const nextStatus = classifyStorageError(error);
+      applyStorageStatus(nextStatus);
+      setAuthError(error?.message || "Account deletion failed.");
+    }
   };
 
   const buildPersistedPersonalization = (draftPersonalization = personalization, draftGoals = goals) => {
@@ -4969,6 +5200,7 @@ export default function TrainerDashboard() {
   };
 
   const persistAll = async (newLogs, newBW, newOvr, newNotes, newAlerts, newPersonalization = personalization, newCoachActions = coachActions, newCoachPlanAdjustments = coachPlanAdjustments, newGoals = goals, newDailyCheckins = dailyCheckins, newWeeklyCheckins = weeklyCheckins, newNutritionFavorites = nutritionFavorites, newNutritionActualLogs = nutritionActualLogs, newPlannedDayRecords = plannedDayRecords, newPlanWeekRecords = planWeekRecords) => {
+    if (suspendLocalPersistenceRef.current) return;
     const normalizedGoalPayload = normalizeGoals(newGoals || []);
     const runtimeState = buildCanonicalRuntimeState({
       logs: newLogs,
@@ -5015,7 +5247,7 @@ export default function TrainerDashboard() {
         logDiag("startup.local_cache.import_failed", cacheErr?.message || "unknown");
       }
     }
-    if (statusOverride) setStorageStatus(statusOverride);
+    if (statusOverride) applyStorageStatus(statusOverride);
     return hasCache;
   };
 
@@ -5057,13 +5289,13 @@ export default function TrainerDashboard() {
       try {
         skipNextGoalsPersistRef.current = true;
         await (sbLoadRef.current?.() || Promise.resolve());
-        setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
+        applyStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
         logDiagRef.current?.("realtime.resync.ok", reason);
       } catch (e) {
         skipNextGoalsPersistRef.current = false;
         logDiagRef.current?.("realtime.resync.failed", reason, e?.message || "unknown");
       }
-    }, 250);
+    }, 900);
   };
 
   const getPlannedDayHistoryForDate = (dateKey, logEntry = null) => {
@@ -5336,7 +5568,7 @@ export default function TrainerDashboard() {
       try {
         await sbLoad();
         setAuthError("");
-        setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
+        applyStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
       } catch(e) {
         logDiag("Cloud load failed:", e.message);
         const nextStatus = classifyStorageError(e);
@@ -5363,7 +5595,7 @@ export default function TrainerDashboard() {
             logDiag("local cache import fallback failed", cacheErr?.message || "unknown");
           }
         }
-        setStorageStatus(nextStatus);
+        applyStorageStatus(nextStatus);
       }
       setLoading(false);
     })();
@@ -5587,7 +5819,7 @@ export default function TrainerDashboard() {
       await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
       if (changedDateKey) await syncSessionLogShadowRow(changedDateKey, changedLog || null);
       setLastSaved(new Date().toLocaleTimeString());
-    } catch(e) { logDiag("saveLogs fallback", e.message); setStorageStatus(classifyStorageError(e)); }
+    } catch(e) { logDiag("saveLogs fallback", e.message); applyStorageStatus(classifyStorageError(e)); }
     analyzePlan(nextLogs);
   };
 
@@ -5600,7 +5832,7 @@ export default function TrainerDashboard() {
     try {
       await persistAll(logs, arr, paceOverrides, weekNotes, planAlerts, derived, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
       setLastSaved(new Date().toLocaleTimeString());
-    } catch(e) { logDiag("saveBodyweights fallback", e.message); setStorageStatus(classifyStorageError(e)); }
+    } catch(e) { logDiag("saveBodyweights fallback", e.message); applyStorageStatus(classifyStorageError(e)); }
   };
 
   const saveManualProgressInputs = async (update) => {
@@ -5611,7 +5843,23 @@ export default function TrainerDashboard() {
     try {
       await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
       setLastSaved(new Date().toLocaleTimeString());
-    } catch(e) { logDiag("saveManualProgressInputs fallback", e.message); setStorageStatus(classifyStorageError(e)); }
+    } catch(e) { logDiag("saveManualProgressInputs fallback", e.message); applyStorageStatus(classifyStorageError(e)); }
+  };
+
+  const saveProgramSelection = async (update) => {
+    const currentPrograms = normalizeProgramsSelectionState(personalization?.programs || createDefaultProgramSelectionState());
+    const nextPrograms = normalizeProgramsSelectionState(
+      typeof update === "function" ? update(currentPrograms) : (update || currentPrograms)
+    );
+    const nextPersonalization = mergePersonalization(personalization, { programs: nextPrograms });
+    setPersonalization(nextPersonalization);
+    try {
+      await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
+      setLastSaved(new Date().toLocaleTimeString());
+    } catch (e) {
+      logDiag("saveProgramSelection fallback", e.message);
+      applyStorageStatus(classifyStorageError(e));
+    }
   };
 
   const savePlanState = async (newOvr, newNotes, newAlerts) => {
@@ -5944,10 +6192,11 @@ Keep it plain and specific.`;
   useEffect(() => {
     if (loading || authInitializing) return;
     if (!personalization?.profile?.onboardingComplete) return;
+    if (!(DEBUG_MODE || APPLE_HEALTH_SUPPORTED_MODE)) return;
     const apple = personalization?.connectedDevices?.appleHealth || {};
     if (apple?.permissionRequestedAt || apple?.skipped) return;
     setShowAppleHealthFirstLaunch(true);
-  }, [loading, authInitializing, personalization?.profile?.onboardingComplete, personalization?.connectedDevices?.appleHealth?.permissionRequestedAt, personalization?.connectedDevices?.appleHealth?.skipped]);
+  }, [loading, authInitializing, personalization?.profile?.onboardingComplete, personalization?.connectedDevices?.appleHealth?.permissionRequestedAt, personalization?.connectedDevices?.appleHealth?.skipped, DEBUG_MODE, APPLE_HEALTH_SUPPORTED_MODE]);
 
   const updateAppleHealthState = async (patch = {}) => {
     const nextPersonalization = mergePersonalization(personalization, {
@@ -6161,11 +6410,11 @@ Keep it plain and specific.`;
         runtimeState.planWeekRecords
       );
       setLastSaved("restored + synced");
-      setStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
+      applyStorageStatus(buildStorageStatus({ mode: "cloud", label: "SYNCED", reason: STORAGE_STATUS_REASONS.synced, detail: "Cloud sync is working normally." }));
       return true;
     } catch(e) {
       logDiag("import failed", e.message);
-      setStorageStatus(buildStorageStatus({
+      applyStorageStatus(buildStorageStatus({
         mode: "local",
         label: "RESTORE FAILED",
         reason: STORAGE_STATUS_REASONS.dataIncompatible,
@@ -6422,7 +6671,7 @@ Keep it plain and specific.`;
   );
 
   if (!authSession?.user?.id && !startupLocalResumeAccepted) return (
-    <div style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#e7edf7", padding:"1rem" }}>
+    <div data-testid="auth-gate" style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#e7edf7", padding:"1rem" }}>
       <div style={{ width:"100%", maxWidth:380, border:"1px solid rgba(114,138,173,0.24)", borderRadius:16, padding:"1rem", background:"#162131", boxShadow:"0 14px 28px rgba(5,10,18,0.28)" }}>
         <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1.08rem", fontWeight:700, letterSpacing:"0.05em", color:"#f6f8fc", marginBottom:"0.5rem" }}>ACCOUNT ACCESS</div>
         <div style={{ fontSize:"0.58rem", color:"#8da0bb", marginBottom:"0.5rem" }}>
@@ -6430,19 +6679,55 @@ Keep it plain and specific.`;
             ? "Cloud sign-in is unavailable right now. You can still keep going locally on this device."
             : startupLocalResumeAvailable
             ? "Sign in to sync your private training state, or continue locally with the data already on this device."
+            : authMode === "signup"
+            ? "Create the account first, then finish the short profile setup before intake starts."
             : "Sign in to load your private training state."}
         </div>
-        <input value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="email" style={{ marginBottom:"0.4rem" }} />
-        <input type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="password" style={{ marginBottom:"0.5rem" }} />
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
-          <button className="btn btn-primary" onClick={handleSignIn} style={{ fontSize:"0.56rem" }} disabled={storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable}>SIGN IN</button>
-          <button className="btn" onClick={handleSignUp} style={{ fontSize:"0.56rem", color:"#94a3b8" }} disabled={storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable}>SIGN UP</button>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.45rem" }}>
+          <button data-testid="auth-mode-signin" className="btn" onClick={() => setAuthMode("signin")} style={{ fontSize:"0.54rem", color:authMode === "signin" ? "#dbe7f6" : "#94a3b8", borderColor:authMode === "signin" ? "#3a5674" : "#324961", background:authMode === "signin" ? "rgba(71,126,176,0.12)" : "transparent" }}>
+            Sign in
+          </button>
+          <button data-testid="auth-mode-signup" className="btn" onClick={() => setAuthMode("signup")} style={{ fontSize:"0.54rem", color:authMode === "signup" ? "#dbe7f6" : "#94a3b8", borderColor:authMode === "signup" ? "#3a5674" : "#324961", background:authMode === "signup" ? "rgba(71,126,176,0.12)" : "transparent" }}>
+            Create account
+          </button>
+        </div>
+        {authMode === "signup" && (
+          <>
+            <input data-testid="auth-signup-name" value={authDisplayName} onChange={e=>setAuthDisplayName(e.target.value)} placeholder="first name or display name" style={{ marginBottom:"0.4rem" }} />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.4rem" }}>
+              <select data-testid="auth-signup-units" value={authUnits} onChange={e=>setAuthUnits(e.target.value)} style={{ fontSize:"0.58rem" }}>
+                <option value="imperial">Units: imperial</option>
+                <option value="metric">Units: metric</option>
+              </select>
+              <input data-testid="auth-signup-timezone" value={authTimezone} onChange={e=>setAuthTimezone(e.target.value)} placeholder="Timezone" />
+            </div>
+          </>
+        )}
+        <input data-testid="auth-email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="email" style={{ marginBottom:"0.4rem" }} />
+        <input data-testid="auth-password" type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="password" style={{ marginBottom:"0.5rem" }} />
+        <div style={{ display:"grid", gridTemplateColumns:"1fr", gap:"0.35rem" }}>
+          <button
+            data-testid="auth-submit"
+            className="btn btn-primary"
+            onClick={authMode === "signup" ? handleSignUp : handleSignIn}
+            style={{ fontSize:"0.56rem" }}
+            disabled={
+              storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable
+              || !String(authEmail || "").trim()
+              || !String(authPassword || "").trim()
+              || (authMode === "signup" && !String(authDisplayName || "").trim())
+            }
+          >
+            {authMode === "signup" ? "Create account" : "Sign in"}
+          </button>
         </div>
         {(startupLocalResumeAvailable || storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable) && (
           <button
+            data-testid="continue-local-mode"
             className="btn"
             onClick={() => {
               if (startupLocalResumeAvailable) {
+                suspendLocalPersistenceRef.current = false;
                 hydrateLocalRuntimeCache({
                   statusOverride: buildStorageStatus({
                     mode: "local",
@@ -6452,7 +6737,8 @@ Keep it plain and specific.`;
                   }),
                 });
               } else {
-                setStorageStatus(buildStorageStatus({
+                suspendLocalPersistenceRef.current = false;
+                applyStorageStatus(buildStorageStatus({
                   mode: "local",
                   label: "LOCAL MODE",
                   reason: STORAGE_STATUS_REASONS.providerUnavailable,
@@ -6488,89 +6774,74 @@ Keep it plain and specific.`;
     TAPER: { accent: "#9aa6ff", accentSoft: "rgba(154,166,255,0.22)", accentGlow: "rgba(154,166,255,0.32)" },
   };
   const phaseTheme = PHASE_THEME[activePhase] || PHASE_THEME.BASE;
-  const PALETTE_THEME = {
-    Green: "#27f59a",
-    Blue: "#00c2ff",
-    Orange: "#ff8a00",
-    Red: "#ff3d81",
-    Purple: "#7c5cff",
-    Neutral: "#94a3b8",
-  };
-  const selectedPalette = personalization?.settings?.appearance?.palette || "Green";
-  const userAccent = PALETTE_THEME[selectedPalette] || phaseTheme.accent;
-  const selectedThemeMode = personalization?.settings?.appearance?.theme || "System";
-  const themeTokens = selectedThemeMode === "Light"
-    ? {
-        "--bg": "#edf3fb",
-        "--panel": "rgba(255,255,255,0.92)",
-        "--panel-2": "rgba(247,250,254,0.98)",
-        "--panel-3": "rgba(239,244,251,0.98)",
-        "--border": "rgba(111,129,160,0.26)",
-        "--muted": "#5d6d86",
-        "--text": "#142033",
-        "--text-strong": "#0d1728",
-        "--text-soft": "#6b7d97",
-        "--card-border": "rgba(111,129,160,0.22)",
-        "--card-shadow": "0 8px 18px rgba(81,99,126,0.08)",
-        "--card-shadow-hover": "0 12px 24px rgba(81,99,126,0.12)",
-        "--card-strong-shadow": "0 10px 22px rgba(81,99,126,0.1)",
-        "--card-soft-border": "rgba(111,129,160,0.24)",
-        "--card-soft-shadow": "0 8px 18px rgba(81,99,126,0.07)",
-        "--shell-overlay": "radial-gradient(120% 90% at 50% -10%, rgba(61,114,181,0.08), transparent 60%)",
-        "--tab-strip-bg": "rgba(255,255,255,0.76)",
-        "--tab-strip-border": "rgba(111,129,160,0.22)",
-        "--tab-text": "#53657f",
-        "--heading-start": "#142033",
-        "--surface-1": "#ffffff",
-        "--surface-2": "#f7fafe",
-        "--surface-3": "#eef3f9",
-        "--shadow-1": "0 6px 14px rgba(81,99,126,0.08)",
-        "--shadow-2": "0 10px 24px rgba(81,99,126,0.12)",
-        "--shadow-3": "0 16px 34px rgba(81,99,126,0.14)",
-      }
-    : {
-        "--bg": "#0f1724",
-        "--panel": "#162131",
-        "--panel-2": "#1a2738",
-        "--panel-3": "#213247",
-        "--border": "rgba(114,138,173,0.26)",
-        "--muted": "#8da0bb",
-        "--text": "#e7edf7",
-        "--text-strong": "#f6f8fc",
-        "--text-soft": "#9aacc4",
-        "--card-border": "rgba(114,138,173,0.22)",
-        "--card-shadow": "0 10px 22px rgba(5,10,18,0.24)",
-        "--card-shadow-hover": "0 14px 28px rgba(5,10,18,0.3)",
-        "--card-strong-shadow": "0 12px 26px rgba(5,10,18,0.28)",
-        "--card-soft-border": "rgba(114,138,173,0.22)",
-        "--card-soft-shadow": "0 10px 20px rgba(5,10,18,0.22)",
-        "--shell-overlay": "radial-gradient(120% 90% at 50% -10%, rgba(61,114,181,0.12), transparent 58%)",
-        "--tab-strip-bg": "rgba(18,29,44,0.92)",
-        "--tab-strip-border": "rgba(114,138,173,0.24)",
-        "--tab-text": "#95a8c2",
-        "--heading-start": "#f2f6fb",
-        "--surface-1": "#162131",
-        "--surface-2": "#1a2738",
-        "--surface-3": "#213247",
-        "--shadow-1": "0 8px 18px rgba(5,10,18,0.22)",
-        "--shadow-2": "0 12px 26px rgba(5,10,18,0.28)",
-        "--shadow-3": "0 18px 36px rgba(5,10,18,0.34)",
-      };
-  const appBackground = selectedThemeMode === "Light"
-    ? "linear-gradient(180deg,#f5f8fc 0%, #ecf2f8 100%)"
-    : "linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)";
+  const brandThemeState = buildBrandThemeState({
+    appearance: personalization?.settings?.appearance || DEFAULT_PERSONALIZATION.settings.appearance,
+    phaseTheme,
+  });
+  const themeTokens = brandThemeState.cssVars;
+  const appBackground = brandThemeState.appBackground;
+  const activeBrandTheme = brandThemeState.theme;
+  const activeAppearanceMode = brandThemeState.resolvedMode;
   const onboardingComplete = personalization?.profile?.onboardingComplete;
+  const profileSetupComplete = personalization?.profile?.profileSetupComplete ?? onboardingComplete;
+  const finishProfileSetup = async (profileDraft = {}) => {
+    const todayKey = new Date().toISOString().split("T")[0];
+    const unitPreset = profileDraft?.units === "metric"
+      ? { weight: "kg", height: "cm", distance: "kilometers" }
+      : { weight: "lbs", height: "ft_in", distance: "miles" };
+    const nextTrainingContext = buildTrainingContextFromEditor({
+      mode: profileDraft?.environmentMode || "Home",
+      equipment: profileDraft?.equipmentAccess || TRAINING_EQUIPMENT_VALUES.unknown,
+      time: profileDraft?.sessionLength || TRAINING_SESSION_DURATION_VALUES.min30,
+      intensity: personalization?.settings?.trainingPreferences?.intensityPreference || TRAINING_INTENSITY_VALUES.standard,
+    });
+    const birthYear = Number(profileDraft?.birthYear || 0) || "";
+    const age = birthYear ? Math.max(13, new Date().getFullYear() - birthYear) : "";
+    const nextPersonalization = mergePersonalization(personalization, {
+      profile: {
+        ...personalization.profile,
+        name: String(profileDraft?.name || "").trim() || personalization?.profile?.name || DEFAULT_PERSONALIZATION.profile.name,
+        timezone: String(profileDraft?.timezone || "").trim() || personalization?.profile?.timezone || DEFAULT_PERSONALIZATION.profile.timezone,
+        birthYear,
+        age,
+        height: profileDraft?.height,
+        weight: profileDraft?.weight,
+        trainingAgeYears: Math.max(0, Number(profileDraft?.trainingAgeYears || 0) || 0),
+        estimatedFitnessLevel: profileDraft?.trainingAgeYears >= 5 ? "advanced" : profileDraft?.trainingAgeYears >= 2 ? "intermediate" : personalization?.profile?.estimatedFitnessLevel || "beginner",
+        profileSetupComplete: true,
+      },
+      settings: {
+        ...(personalization.settings || DEFAULT_PERSONALIZATION.settings),
+        units: unitPreset,
+      },
+      trainingContext: nextTrainingContext,
+      environmentConfig: {
+        ...(personalization.environmentConfig || DEFAULT_PERSONALIZATION.environmentConfig),
+        defaultMode: trainingEnvironmentToDisplayMode(nextTrainingContext?.environment?.value || "") || "Home",
+        base: {
+          equipment: trainingEquipmentToEnvironmentCode(nextTrainingContext?.equipmentAccess?.value || "") || "unknown",
+          time: nextTrainingContext?.sessionDuration?.value || "30",
+        },
+      },
+    });
+    setPersonalization(nextPersonalization);
+    await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
+    setLastSaved(todayKey);
+  };
   const finishOnboarding = async (answers) => {
     const todayKey = new Date().toISOString().split("T")[0];
     const existingMemory = personalization?.coachMemory?.longTermMemory || [];
     const experienceLevel = answers.experience_level || "beginner";
     const trainingContext = buildTrainingContextFromAnswers({ answers });
+    const injuryConstraintContext = buildIntakeInjuryConstraintContext({
+      injuryText: answers.injury_text,
+      injuryImpact: answers.injury_impact,
+    });
     const sessionLength = trainingContext?.sessionDuration?.confirmed ? trainingContext.sessionDuration.value : (answers.session_length || "30");
-    const coachingStyle = String(answers.coaching_style || "Find the balance").trim();
+    const coachingStyle = String(answers.coaching_style || "Balanced coaching").trim();
     const trainingDaysLabel = String(answers.training_days || "3").trim();
     const trainingDays = trainingDaysLabel === "6+" ? 6 : Math.max(2, Number(trainingDaysLabel) || 3);
     const trainingLocation = trainingContext?.environment?.confirmed ? trainingEnvironmentToDisplayMode(trainingContext.environment.value) : "Unknown";
-    const injuryText = String(answers.injury_text || "").trim();
     const homeEquipment = Array.isArray(answers.home_equipment) ? answers.home_equipment.filter(Boolean) : [];
     const homeEquipmentOther = String(answers.home_equipment_other || "").trim();
     const normalizedEquipment = [
@@ -6581,8 +6852,8 @@ Keep it plain and specific.`;
       normalizedEquipment.push("Bodyweight only");
     }
     const constraints = [];
-    if (injuryText && !/nothing current|none|nope|healthy/i.test(injuryText)) {
-      constraints.push(injuryText);
+    if (injuryConstraintContext.hasCurrentIssue) {
+      constraints.push(...injuryConstraintContext.constraints);
     }
     const freshPacketArgs = buildIntakePacketArgsFromAnswers({ answers, existingMemory });
     const expectedRawGoalText = sanitizeIntakeText(String(freshPacketArgs?.intakeContext?.rawGoalText || "").trim());
@@ -6591,35 +6862,48 @@ Keep it plain and specific.`;
       || answers?.typedIntakePacket?.intakeContext?.rawGoalText
       || ""
     ).trim());
+    const canonicalCommitValidation = validateIntakeCommitRequest(answers?.intake_commit || null);
+    const canonicalCommit = canonicalCommitValidation.ok ? canonicalCommitValidation.commitRequest : null;
     const canReuseAssessmentBoundary = Boolean(expectedRawGoalText && providedPacketRawGoalText && expectedRawGoalText === providedPacketRawGoalText);
-    const fallbackTypedIntakePacket = canReuseAssessmentBoundary ? answers?.typedIntakePacket : {
+    const fallbackTypedIntakePacket = canonicalCommit?.typedIntakePacket || (canReuseAssessmentBoundary ? answers?.typedIntakePacket : {
       version: "2026-04-v1",
       intent: "intake_interpretation",
       intake: freshPacketArgs.intakeContext,
-    };
-    const goalResolution = resolveGoalTranslation({
-      rawUserGoalIntent: expectedRawGoalText || fallbackTypedIntakePacket?.intake?.rawGoalText || buildRawGoalIntentFromAnswers({ answers, fallbackLabel: "General Fitness" }) || "General Fitness",
-      typedIntakePacket: fallbackTypedIntakePacket,
-      aiInterpretationProposal: canReuseAssessmentBoundary ? (answers?.aiInterpretationProposal || null) : null,
-      explicitUserConfirmation: {
-        confirmed: true,
-        acceptedProposal: true,
-        source: "onboarding_complete",
-      },
-      now: todayKey,
     });
+    const goalResolution = canonicalCommit
+      ? {
+          resolvedGoals: canonicalCommit.confirmedResolvedGoals,
+          confidenceLevel: canonicalCommit.confirmedResolvedGoals?.[0]?.confidence || "",
+          unresolvedGaps: canonicalCommit.confirmedResolvedGoals.flatMap((goal) => goal?.unresolvedGaps || []),
+        }
+      : resolveGoalTranslation({
+          rawUserGoalIntent: expectedRawGoalText || fallbackTypedIntakePacket?.intake?.rawGoalText || buildRawGoalIntentFromAnswers({ answers, fallbackLabel: "General Fitness" }) || "General Fitness",
+          typedIntakePacket: fallbackTypedIntakePacket,
+          aiInterpretationProposal: canReuseAssessmentBoundary ? (answers?.aiInterpretationProposal || null) : null,
+          explicitUserConfirmation: {
+            confirmed: true,
+            acceptedProposal: true,
+            source: "onboarding_complete",
+          },
+          now: todayKey,
+        });
+    const baseResolvedGoals = canonicalCommit?.confirmedResolvedGoals?.length
+      ? canonicalCommit.confirmedResolvedGoals
+      : (goalResolution?.resolvedGoals || []);
     const intakeCompleteness = deriveIntakeCompletenessState({
-      resolvedGoals: goalResolution?.resolvedGoals || [],
+      resolvedGoals: baseResolvedGoals,
       answers,
     });
-    const goalFeasibility = assessGoalFeasibility({
-      resolvedGoals: goalResolution?.resolvedGoals || [],
+    const goalFeasibility = canonicalCommit?.goalFeasibility || assessGoalFeasibility({
+      resolvedGoals: baseResolvedGoals,
       ...buildGoalFeasibilityContextFromIntake(fallbackTypedIntakePacket?.intake || {}),
       intakeCompleteness,
       now: todayKey,
     });
-    const feasibleResolvedGoals = applyFeasibilityPriorityOrdering({
-      resolvedGoals: goalResolution?.resolvedGoals || [],
+    const feasibleResolvedGoals = canonicalCommit?.confirmedResolvedGoals?.length
+      ? canonicalCommit.confirmedResolvedGoals
+      : applyFeasibilityPriorityOrdering({
+      resolvedGoals: baseResolvedGoals,
       feasibility: goalFeasibility,
     });
     const arbitrationInputs = buildConfirmedArbitrationInputs({
@@ -6627,27 +6911,32 @@ Keep it plain and specific.`;
       typedIntakePacket: fallbackTypedIntakePacket,
       now: todayKey,
     });
-    const arbitration = buildGoalArbitrationStack({
+    const arbitration = canonicalCommit?.arbitration || buildGoalArbitrationStack({
       resolvedGoals: feasibleResolvedGoals,
       confirmedPrimaryGoal: arbitrationInputs.confirmedPrimaryGoal,
       confirmedAdditionalGoals: arbitrationInputs.confirmedAdditionalGoals,
       additionalGoalTexts: arbitrationInputs.additionalGoalTexts,
       goalFeasibility,
       intakeCompleteness,
+      answers,
       typedIntakePacket: fallbackTypedIntakePacket,
       now: todayKey,
     });
-    const arbitratedResolvedGoals = arbitration?.goals?.length ? arbitration.goals : feasibleResolvedGoals;
-    const goalStackConfirmation = buildIntakeGoalStackConfirmation({
+    const arbitratedResolvedGoals = canonicalCommit?.confirmedResolvedGoals?.length
+      ? canonicalCommit.confirmedResolvedGoals
+      : (arbitration?.goals?.length ? arbitration.goals : feasibleResolvedGoals);
+    const goalStackConfirmation = canonicalCommit?.goalStackConfirmation || buildIntakeGoalStackConfirmation({
       resolvedGoals: arbitratedResolvedGoals,
       goalStackConfirmation: answers?.goal_stack_confirmation || null,
       goalFeasibility,
     });
-    const orderedResolvedGoals = applyIntakeGoalStackConfirmation({
-      resolvedGoals: arbitratedResolvedGoals,
-      goalStackConfirmation,
-      goalFeasibility,
-    });
+    const orderedResolvedGoals = canonicalCommit?.confirmedResolvedGoals?.length
+      ? canonicalCommit.confirmedResolvedGoals
+      : applyIntakeGoalStackConfirmation({
+          resolvedGoals: arbitratedResolvedGoals,
+          goalStackConfirmation,
+          goalFeasibility,
+        });
     const orderedPlanningGoals = buildPlanningGoalsFromResolvedGoals({
       resolvedGoals: orderedResolvedGoals,
     });
@@ -6691,9 +6980,10 @@ Keep it plain and specific.`;
     const defaultMode = trainingContext?.environment?.confirmed
       ? trainingEnvironmentToDisplayMode(trainingContext.environment.value)
       : "Unknown";
-    const intensityPreference = coachingStyle === "Push me hard"
+    const intensityPosture = trainingContext?.intensityPosture?.value || TRAINING_INTENSITY_VALUES.unknown;
+    const intensityPreference = intensityPosture === TRAINING_INTENSITY_VALUES.aggressive
       ? "Aggressive"
-      : coachingStyle === "Keep it simple"
+      : intensityPosture === TRAINING_INTENSITY_VALUES.conservative
       ? "Conservative"
       : "Standard";
     const goalMix = orderedResolvedGoals?.map((goal) => goal?.summary).filter(Boolean).join(" + ") || primaryGoalLabel;
@@ -6730,6 +7020,7 @@ Keep it plain and specific.`;
     const nextPersonalizationBase = mergePersonalization(personalization, {
       profile: {
         ...personalization.profile,
+        profileSetupComplete: true,
         onboardingComplete: true,
         preferredTrainingStyle: coachingStyle,
         goalMix,
@@ -6777,12 +7068,22 @@ Keep it plain and specific.`;
           trainingContext?.environment?.value === TRAINING_ENVIRONMENT_VALUES.variable ? "environment changes often" : "recovery consistency",
         ],
         scheduleConstraints: [`Available ${trainingDaysLabel} days per week`, `Session length: ${SESSION_LENGTH_LABELS[sessionLength] || sessionLength}`],
-        pushResponse: coachingStyle === "Push me hard" ? "Responds well to direct, demanding coaching." : personalization.coachMemory?.pushResponse || "",
-        protectResponse: coachingStyle === "Find the balance" ? "Wants a balance between push and protection." : coachingStyle === "Keep it simple" ? "Prefers simple, sustainable prescriptions over aggressive progressions." : personalization.coachMemory?.protectResponse || "",
+        pushResponse: intensityPosture === TRAINING_INTENSITY_VALUES.aggressive
+          ? "Responds well to a harder push when recovery and guardrails are in place."
+          : personalization.coachMemory?.pushResponse || "",
+        protectResponse: intensityPosture === TRAINING_INTENSITY_VALUES.standard
+          ? "Wants balanced coaching with enough push to keep progress moving."
+          : intensityPosture === TRAINING_INTENSITY_VALUES.conservative
+          ? "Prefers a steadier approach that protects consistency over big swings."
+          : personalization.coachMemory?.protectResponse || "",
         preferredFoodPatterns: [
           primaryCategory === "body_comp" ? "high-protein fat-loss support" : "high-protein performance",
         ],
-        simplicityVsVariety: coachingStyle === "Keep it simple" ? "simplicity" : coachingStyle === "Let the data decide" ? "balanced" : "variety",
+        simplicityVsVariety: intensityPosture === TRAINING_INTENSITY_VALUES.conservative
+          ? "simplicity"
+          : intensityPosture === TRAINING_INTENSITY_VALUES.standard
+          ? "balanced"
+          : "variety",
         lastAdjustment: `Onboarding complete ${todayKey}.`,
         longTermMemory: [
           ...(personalization.coachMemory?.longTermMemory || []),
@@ -6954,6 +7255,7 @@ Keep it plain and specific.`;
     const nextPersonalizationBase = mergePersonalization(personalization, {
       profile: {
         ...personalization.profile,
+        profileSetupComplete: true,
         onboardingComplete: true,
         goalMix,
       },
@@ -7055,12 +7357,12 @@ Keep it plain and specific.`;
   };
 
   return (
-    <div style={{ "--phase-accent": userAccent, "--phase-accent-soft": phaseTheme.accentSoft, "--phase-accent-glow": phaseTheme.accentGlow, ...themeTokens, fontFamily:"'Inter',sans-serif", background:appBackground, minHeight:"100vh", color:"var(--text)", padding:onboardingComplete ? "1.65rem 1.2rem" : 0 }}>
+    <div data-testid="app-root" data-onboarding-complete={onboardingComplete ? "true" : "false"} style={{ ...themeTokens, fontFamily:"var(--font-body)", background:appBackground, minHeight:"100vh", color:"var(--text)", padding:onboardingComplete ? "1.65rem 1.2rem" : 0 }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
         :root{
-          --accent:var(--phase-accent);
-          --accent-2:#7c5cff;
+          --accent:var(--brand-accent);
+          --accent-2:var(--phase-accent);
           --hot:#ff3d81;
           --signal:#27f59a;
           --space-1:0.25rem;
@@ -7083,33 +7385,33 @@ Keep it plain and specific.`;
         * { box-sizing:border-box; margin:0; padding:0; }
         ::-webkit-scrollbar{width:8px} ::-webkit-scrollbar-track{background:transparent} ::-webkit-scrollbar-thumb{background:rgba(111,129,160,0.38);border-radius:999px}
         .fi{animation:fi 0.22s ease forwards}
-        .hov{transition:background 0.18s ease,border-color 0.18s ease;cursor:pointer} .hov:hover{background:rgba(60,145,230,0.06)!important}
+        .hov{transition:background 0.18s ease,border-color 0.18s ease;cursor:pointer} .hov:hover{background:var(--brand-accent-soft)!important}
         .btn{
           background:var(--surface-2);
           border:1px solid var(--border);
           border-radius:var(--radius-sm);
-          font-family:'Inter',sans-serif;
+          font-family:var(--font-body);
           font-size:var(--type-meta);
           font-weight:600;
-          letter-spacing:0.04em;
+          letter-spacing:0.025em;
           cursor:pointer;
           padding:8px 12px;
           transition:background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
           color:var(--text);
           box-shadow:none;
         }
-        .btn:hover{border-color:rgba(60,145,230,0.34);color:var(--text-strong);background:var(--surface-1);transform:translateY(-1px);box-shadow:var(--shadow-1)}
+        .btn:hover{border-color:var(--border-strong);color:var(--text-strong);background:var(--surface-1);transform:translateY(-1px);box-shadow:var(--shadow-1)}
         .btn:active{transform:translateY(0) scale(0.985)}
         .btn-primary{
-          background:linear-gradient(135deg, rgba(34,84,94,0.92), rgba(27,56,86,0.94))!important;
-          border:1px solid rgba(125,211,252,0.22)!important;
-          color:var(--text-strong)!important;
+          background:var(--cta-bg)!important;
+          border:1px solid var(--cta-border)!important;
+          color:var(--accent-contrast)!important;
           font-weight:700;
-          box-shadow:0 10px 24px rgba(6, 14, 28, 0.34), inset 0 1px 0 rgba(255,255,255,0.04);
+          box-shadow:0 14px 28px rgba(6, 14, 28, 0.24), inset 0 1px 0 rgba(255,255,255,0.08);
         }
-        .btn-primary:hover{filter:none;background:linear-gradient(135deg, rgba(40,95,106,0.95), rgba(32,65,98,0.98))!important;border-color:rgba(147,197,253,0.34)!important;box-shadow:0 14px 28px rgba(8, 18, 34, 0.38)}
-        input,textarea,select{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:'Inter',sans-serif;font-size:0.7rem;padding:9px 11px;outline:none;width:100%;transition:border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease}
-        input:focus,textarea:focus,select:focus{border-color:rgba(60,145,230,0.5);box-shadow:0 0 0 3px rgba(60,145,230,0.14);background:var(--surface-1)}
+        .btn-primary:hover{filter:none;background:var(--cta-bg-hover)!important;border-color:var(--border-strong)!important;box-shadow:0 18px 34px rgba(8, 18, 34, 0.24)}
+        input,textarea,select{background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-family:var(--font-body);font-size:0.7rem;padding:9px 11px;outline:none;width:100%;transition:border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease}
+        input:focus,textarea:focus,select:focus{border-color:var(--border-strong);box-shadow:0 0 0 3px var(--focus-ring);background:var(--input-bg-focus)}
         @keyframes fi{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
         @keyframes pulseGlow{0%,100%{box-shadow:0 0 0 0 rgba(124,92,255,0)}50%{box-shadow:0 0 0 10px rgba(124,92,255,0.14)}}
         @keyframes heroShift{
@@ -7130,7 +7432,7 @@ Keep it plain and specific.`;
           from{opacity:0; transform:translateY(6px)}
           to{opacity:1; transform:translateY(0)}
         }
-        .tag{font-size:var(--type-meta);padding:4px 8px;border-radius:999px;letter-spacing:0.02em;white-space:nowrap;background:var(--surface-2);color:var(--text-soft);border:1px solid var(--border)}
+        .tag{font-size:var(--type-meta);padding:4px 8px;border-radius:999px;letter-spacing:0.04em;white-space:nowrap;background:var(--badge-bg);color:var(--badge-text);border:1px solid var(--badge-border)}
         .card{
           position:relative;
           overflow:hidden;
@@ -7145,18 +7447,25 @@ Keep it plain and specific.`;
           content:"";
           position:absolute;
           inset:-1px -1px auto -1px;
-          height:22%;
+          height:28%;
           pointer-events:none;
-          background:linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0));
-          opacity:0.3;
+          background:linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0));
+          opacity:0.38;
         }
         .card::after{
-          content:none;
+          content:"";
+          position:absolute;
+          inset:auto -20% -50% auto;
+          width:180px;
+          height:180px;
+          background:radial-gradient(circle, var(--brand-accent-soft) 0%, rgba(0,0,0,0) 68%);
+          pointer-events:none;
+          opacity:0.55;
         }
-        .card:hover{transform:translateY(-1px); box-shadow:var(--card-shadow-hover); border-color:rgba(60,145,230,0.24)}
+        .card:hover{transform:translateY(-2px); box-shadow:var(--card-shadow-hover); border-color:var(--border-strong)}
         .card-strong{
           background:var(--panel-2);
-          border-color:rgba(60,145,230,0.26);
+          border-color:var(--border-strong);
           box-shadow:var(--card-strong-shadow);
         }
         .card-soft{
@@ -7164,48 +7473,67 @@ Keep it plain and specific.`;
           border-color:var(--card-soft-border);
           box-shadow:var(--card-soft-shadow);
         }
-        .sect-title{font-family:'Space Grotesk',sans-serif;font-size:var(--type-title);font-weight:700;letter-spacing:0.015em;text-transform:none;color:var(--text-strong)}
-        .mono{font-family:'JetBrains Mono',monospace; letter-spacing:0.01em}
-        .coach-copy{font-family:'Inter',sans-serif; color:var(--text); line-height:1.65}
+        .sect-title{font-family:var(--font-display);font-size:var(--type-title);font-weight:700;letter-spacing:0.01em;text-transform:none;color:var(--text-strong)}
+        .mono{font-family:var(--font-mono); letter-spacing:0.01em}
+        .coach-copy{font-family:var(--font-body); color:var(--text); line-height:1.65}
         .completion-pop{animation:completePop 0.35s ease-out}
         .pulse-ring{animation:ringPulse 1.35s ease-in-out infinite; border-radius:999px}
         .coach-fade{animation:coachFadeIn 0.28s ease-out both}
         .card-hero{
-          border-color:rgba(60,145,230,0.34)!important;
+          border-color:var(--border-strong)!important;
           box-shadow:var(--shadow-2);
         }
         .card-hero::after{
-          content:none;
+          opacity:0.8;
         }
         .card-action{
-          border-color:rgba(60,145,230,0.24)!important;
+          border-color:var(--border-strong)!important;
           box-shadow:var(--shadow-2);
         }
         .card-subtle{
           opacity:1;
           box-shadow:var(--shadow-1);
         }
+        .empty-state{
+          border:1px dashed var(--empty-border);
+          background:var(--empty-bg);
+          border-radius:var(--radius-md);
+          padding:0.9rem;
+        }
         details > summary{list-style:none}
         details > summary::-webkit-details-marker{display:none}
         details[open]{animation:fi 0.18s ease}
       `}</style>
 
-      {!onboardingComplete ? (
+      {!profileSetupComplete ? (
+        <ProfileSetupGate
+          personalization={personalization}
+          onComplete={finishProfileSetup}
+        />
+      ) : !onboardingComplete ? (
         <OnboardingCoach onComplete={finishOnboarding} startingFresh={Boolean(personalization?.planResetUndo?.startedAt)} existingMemory={personalization?.coachMemory?.longTermMemory || []} />
       ) : (
-      <div style={{ maxWidth:900, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
+      <div data-testid="app-shell" style={{ maxWidth:980, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
 
         {/* HEADER BAR */}
-        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:"1.25rem", gap:"0.75rem" }}>
-          <div>
-            <h1 style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:"1.84rem", letterSpacing:"0.025em", color:"var(--heading-start)", lineHeight:1.02 }}>
-              PERSONAL TRAINER
-            </h1>
-            <div style={{ fontFamily:"'Inter',sans-serif", fontSize:"0.56rem", color:"var(--muted)", letterSpacing:"0.08em", marginTop:4 }}>
-              {joinDisplayParts([fmtDate(today).toUpperCase(), `WEEK ${currentWeek}`])}
+        <div style={{ display:"flex", alignItems:"stretch", justifyContent:"space-between", marginBottom:"1.25rem", gap:"0.85rem", flexWrap:"wrap" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:"0.9rem" }}>
+            <div style={{ width:52, height:52, borderRadius:18, display:"grid", placeItems:"center", background:"var(--brand-mark-bg)", border:"1px solid var(--brand-mark-border)", boxShadow:"var(--shadow-2)", color:"var(--text-strong)", fontFamily:"var(--font-display)", fontSize:"1.22rem", fontWeight:700, letterSpacing:"0.08em" }}>
+              {PRODUCT_BRAND.mark}
+            </div>
+            <div>
+              <div style={{ display:"flex", alignItems:"center", gap:"0.5rem", flexWrap:"wrap" }}>
+                <h1 style={{ fontFamily:"var(--font-display)", fontWeight:700, fontSize:"1.92rem", letterSpacing:"0.05em", color:"var(--heading-start)", lineHeight:1 }}>
+                  {PRODUCT_BRAND.name}
+                </h1>
+                <span className="tag" style={{ fontSize:"0.46rem" }}>{activeBrandTheme?.label || "Atlas"} • {activeAppearanceMode}</span>
+              </div>
+              <div style={{ fontFamily:"var(--font-body)", fontSize:"0.58rem", color:"var(--text-soft)", letterSpacing:"0.04em", marginTop:6, lineHeight:1.55 }}>
+                {joinDisplayParts([PRODUCT_BRAND.strapline, fmtDate(today).toUpperCase(), `Week ${currentWeek}`])}
+              </div>
             </div>
           </div>
-          <button className="btn" onClick={()=>setTab(5)} aria-label="Open settings" title="Settings" style={{ width:40, height:40, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+          <button data-testid="app-tab-settings" className="btn" onClick={()=>{ setSettingsFocus(""); setTab(5); }} aria-label="Open settings" title="Settings" style={{ width:44, height:44, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, background:"var(--surface-1)" }}>
             <SettingsIcon size={18} />
           </button>
         </div>
@@ -7215,22 +7543,22 @@ Keep it plain and specific.`;
           </div>
         )}
         {/* TABS */}
-        <div style={{ display:"flex", gap:"0.3rem", marginBottom:"1.25rem", background:"var(--tab-strip-bg)", padding:"0.32rem", borderRadius:14, border:"1px solid var(--tab-strip-border)", overflowX:"auto", boxShadow:"var(--shadow-1)" }}>
+        <div style={{ display:"flex", gap:"0.35rem", marginBottom:"1.25rem", background:"var(--tab-strip-bg)", padding:"0.36rem", borderRadius:18, border:"1px solid var(--tab-strip-border)", overflowX:"auto", boxShadow:"var(--shadow-1)", backdropFilter:"blur(10px)" }}>
           {TABS.map((t,i) => (
-            <button key={t} className="btn" onClick={()=>setTab(i)}
-              style={{ color:tab===i?"#f8fbff":"var(--tab-text)", background:tab===i?"var(--phase-accent)":"transparent", borderColor:tab===i?"transparent":"var(--border)", fontWeight:tab===i?700:500, flexShrink:0 }}>
+            <button key={t} data-testid={`app-tab-${toTestIdFragment(t)}`} className="btn" onClick={()=>setTab(i)}
+              style={{ color:tab===i?"var(--tab-active-text)":"var(--tab-text)", background:tab===i?"var(--tab-active-bg)":"transparent", borderColor:tab===i?"var(--border-strong)":"transparent", fontWeight:tab===i?700:500, flexShrink:0, minWidth:96 }}>
               {t}
             </button>
           ))}
         </div>
 
         {/* TODAY */}
-        {tab === 0 && <TodayTab planDay={planDay} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} loading={loading} storageStatus={storageStatus} authError={authError} />}
+        {tab === 0 && <TodayTab planDay={planDay} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} onGoLog={()=>setTab(2)} loading={loading} storageStatus={storageStatus} authError={authError} />}
 
         {/* PROGRAM */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} todayWorkout={planDay?.resolved?.training} />
+            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} saveProgramSelection={saveProgramSelection} todayWorkout={planDay?.resolved?.training} onManagePlan={(focus = "plan")=>{ setSettingsFocus(focus); setTab(5); }} />
           </ProgramTabErrorBoundary>
         )}
 
@@ -7241,7 +7569,7 @@ Keep it plain and specific.`;
         {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} weeklyNutritionReview={weeklyNutritionReview} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} />}
 
         {/* COACH */}
-        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onOpenSettings={()=>{ setSettingsFocus("advanced"); setTab(5); }} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
           setCoachPlanAdjustments(nextCoachPlanAdjustments);
@@ -7250,31 +7578,7 @@ Keep it plain and specific.`;
           await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
 
-        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} deviceSyncAudit={deviceSyncAudit} onDeleteAccount={async ()=>{
-          const clearedLogs = {};
-          const clearedBodyweights = [];
-          const clearedDaily = {};
-          const clearedPlannedDayRecords = {};
-          const clearedPlanWeekRecords = {};
-          const clearedWeekly = {};
-          const clearedGoals = normalizeGoals(DEFAULT_MULTI_GOALS);
-          const resetPersonalization = mergePersonalization(DEFAULT_PERSONALIZATION, { profile: { ...DEFAULT_PERSONALIZATION.profile, onboardingComplete: false } });
-          setLogs(clearedLogs);
-          setBodyweights(clearedBodyweights);
-          setDailyCheckins(clearedDaily);
-          setPlannedDayRecords(clearedPlannedDayRecords);
-          setPlanWeekRecords(clearedPlanWeekRecords);
-          setWeeklyCheckins(clearedWeekly);
-          setGoals(clearedGoals);
-          setPersonalization(resetPersonalization);
-          setCoachActions([]);
-          setCoachPlanAdjustments(DEFAULT_COACH_PLAN_ADJUSTMENTS);
-          setNutritionFavorites(DEFAULT_NUTRITION_FAVORITES);
-          setNutritionActualLogs({});
-          await persistAll(clearedLogs, clearedBodyweights, {}, {}, [], resetPersonalization, [], DEFAULT_COACH_PLAN_ADJUSTMENTS, clearedGoals, clearedDaily, clearedWeekly, DEFAULT_NUTRITION_FAVORITES, {}, clearedPlannedDayRecords, clearedPlanWeekRecords);
-          setAuthError("");
-          await authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
-        }} onPersist={async (nextPersonalization) => {
+        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} focusSection={settingsFocus} onPersist={async (nextPersonalization) => {
           setPersonalization(nextPersonalization);
           await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
@@ -7282,7 +7586,7 @@ Keep it plain and specific.`;
           <div style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:56, padding:"1rem" }}>
             <div className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"var(--border)", background:"var(--panel)", padding:"0.9rem" }}>
               <div style={{ fontSize:"0.62rem", color:"var(--text)", lineHeight:1.7, marginBottom:"0.6rem" }}>
-                Personal Trainer can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
+                {PRODUCT_BRAND.name} can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
               </div>
               <button className="btn btn-primary" onClick={requestAppleHealthPermissions} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
               <button className="btn" onClick={async ()=>{ await updateAppleHealthState({ skipped: true }); setShowAppleHealthFirstLaunch(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"var(--muted)", borderColor:"var(--border)" }}>
@@ -7327,11 +7631,11 @@ function RuntimeInspector({ snapshot }) {
   const compactList = (items) => (Array.isArray(items) && items.length ? items.join(" • ") : "none");
   return (
     <details style={{ position:"fixed", right:14, bottom:14, width:"min(420px, calc(100vw - 28px))", zIndex:70 }}>
-      <summary className="btn" style={{ width:"100%", justifyContent:"space-between", background:"rgba(5,10,18,0.92)", borderColor:"rgba(0,194,255,0.35)", color:"var(--text)", fontSize:"0.56rem" }}>
+      <summary className="btn" style={{ width:"100%", justifyContent:"space-between", background:"var(--panel-2)", borderColor:"var(--border-strong)", color:"var(--text)", fontSize:"0.56rem", boxShadow:"var(--shadow-1)" }}>
         Runtime Inspector
         <span style={{ color:"var(--muted)", fontSize:"0.5rem" }}>{snapshot?.storage?.label || "UNKNOWN"}</span>
       </summary>
-      <div className="card card-soft" style={{ marginTop:"0.35rem", background:"rgba(4,9,18,0.96)", borderColor:"rgba(0,194,255,0.2)", backdropFilter:"blur(12px)", maxHeight:"70vh", overflowY:"auto" }}>
+      <div className="card card-soft" style={{ marginTop:"0.35rem", background:"var(--panel-2)", borderColor:"var(--border)", backdropFilter:"blur(12px)", maxHeight:"70vh", overflowY:"auto" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.45rem", gap:"0.45rem" }}>
           <div style={{ fontSize:"0.48rem", color:"var(--muted)" }}>Canonical runtime snapshot</div>
           <button className="btn" onClick={copySnapshot} style={{ fontSize:"0.48rem", padding:"0.24rem 0.5rem", minHeight:0 }}>Copy JSON</button>
@@ -7397,67 +7701,104 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const initialPrompt = startingFresh
     ? "Starting fresh. I still remember everything from before — I'm just building a new plan from today. What do you want from this next plan? Exact or vague is fine."
     : "Hey. I'm going to ask you a few questions before I build your plan. Start with what you want from this plan — exact or vague both work.";
+  const intakeDebugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
+  const restoredIntakeSessionRef = useRef(null);
+  if (restoredIntakeSessionRef.current === null) {
+    restoredIntakeSessionRef.current = readPersistedIntakeSessionSnapshot({
+      startingFresh,
+    });
+  }
+  const restoredIntakeSession = restoredIntakeSessionRef.current;
   const BUILD_STAGES = [
     "Mapping your training blocks...",
     "Calibrating intensity to your baseline...",
     "Setting up your nutrition targets...",
     "Almost ready...",
   ];
-  const messagesRef = useRef([]);
+  const messagesRef = useRef(restoredIntakeSession?.messages || []);
   const scrollRef = useRef(null);
   const composerRef = useRef(null);
-  const nextMessageIdRef = useRef(1);
-  const nextIntakeEventIdRef = useRef(1);
-  const processedIntakeMessageKeysRef = useRef(new Set());
-  const secondaryGoalAddedMessageKeysRef = useRef(new Set());
-  const startedRef = useRef(false);
-  const [messages, setMessages] = useState([]);
-  const [answers, setAnswers] = useState({});
-  const [stepIndex, setStepIndex] = useState(0);
-  const [draft, setDraft] = useState("");
+  const nextMessageIdRef = useRef(Math.max(1, Number(restoredIntakeSession?.nextMessageId) || 1));
+  const nextIntakeEventIdRef = useRef(Math.max(1, Number(restoredIntakeSession?.nextIntakeEventId) || 1));
+  const latestAssessmentRequestIdRef = useRef(0);
+  const confirmBuildLockRef = useRef(false);
+  const activeCommitSnapshotIdRef = useRef("");
+  const committedCommitSnapshotIdsRef = useRef(new Set());
+  const processedIntakeMessageKeysRef = useRef(new Set(restoredIntakeSession?.processedMessageKeys || []));
+  const processedTranscriptIdempotencyKeysRef = useRef(new Set(restoredIntakeSession?.processedTranscriptKeys || []));
+  const secondaryGoalAddedMessageKeysRef = useRef(new Set(restoredIntakeSession?.secondaryGoalAddedMessageKeys || []));
+  const sessionPersistenceDisabledRef = useRef(false);
+  const startedRef = useRef(Boolean(restoredIntakeSession?.messages?.length));
+  const [messages, setMessages] = useState(() => restoredIntakeSession?.messages || []);
+  const [answers, setAnswers] = useState(() => restoredIntakeSession?.answers || {});
+  const [stepIndex, setStepIndex] = useState(() => Math.max(0, Number(restoredIntakeSession?.stepIndex) || 0));
+  const [draft, setDraft] = useState(() => String(restoredIntakeSession?.draft || ""));
   const [equipmentSelection, setEquipmentSelection] = useState([]);
   const [equipmentOther, setEquipmentOther] = useState("");
-  const [phase, setPhase] = useState("questions");
-  const [assessmentText, setAssessmentText] = useState("");
-  const [assessmentBoundary, setAssessmentBoundary] = useState({ typedIntakePacket: null, aiInterpretationProposal: null });
-  const [assessmentPreview, setAssessmentPreview] = useState({ goalResolution: null, goalFeasibility: null, orderedResolvedGoals: [], reviewModel: null });
-  const [goalStackConfirmation, setGoalStackConfirmation] = useState(null);
-  const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState([]);
-  const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(null);
-  const [pendingSecondaryGoalPrompt, setPendingSecondaryGoalPrompt] = useState(null);
-  const [secondaryGoalEntries, setSecondaryGoalEntries] = useState([]);
+  const [phase, setPhase] = useState(() => restoredIntakeSession?.phase || "questions");
+  const [assessmentText, setAssessmentText] = useState(() => String(restoredIntakeSession?.assessmentText || ""));
+  const [assessmentBoundary, setAssessmentBoundary] = useState(() => restoredIntakeSession?.assessmentBoundary || { typedIntakePacket: null, aiInterpretationProposal: null, transition_id: "" });
+  const [assessmentPreview, setAssessmentPreview] = useState(() => restoredIntakeSession?.assessmentPreview || { goalResolution: null, goalFeasibility: null, arbitration: null, orderedResolvedGoals: [], reviewModel: null });
+  const [goalStackConfirmation, setGoalStackConfirmation] = useState(() => restoredIntakeSession?.goalStackConfirmation || null);
+  const [askedClarifyingQuestions, setAskedClarifyingQuestions] = useState(() => restoredIntakeSession?.askedClarifyingQuestions || []);
+  const [pendingClarifyingQuestion, setPendingClarifyingQuestion] = useState(() => restoredIntakeSession?.pendingClarifyingQuestion || null);
+  const [pendingSecondaryGoalPrompt, setPendingSecondaryGoalPrompt] = useState(() => restoredIntakeSession?.pendingSecondaryGoalPrompt || null);
+  const [secondaryGoalEntries, setSecondaryGoalEntries] = useState(() => restoredIntakeSession?.secondaryGoalEntries || []);
+  const [showSecondaryGoalCustomInput, setShowSecondaryGoalCustomInput] = useState(() => Boolean(restoredIntakeSession?.showSecondaryGoalCustomInput));
   const [clarificationValues, setClarificationValues] = useState({});
   const [clarificationFieldErrors, setClarificationFieldErrors] = useState({});
   const [clarificationFormError, setClarificationFormError] = useState("");
+  const [naturalAnchorDraft, setNaturalAnchorDraft] = useState("");
+  const [anchorEntryMode, setAnchorEntryMode] = useState("structured");
+  const [naturalAnchorSubmitting, setNaturalAnchorSubmitting] = useState(false);
+  const [anchorCapturePreview, setAnchorCapturePreview] = useState(null);
+  const [coachVoicePhrasingByAnchorKey, setCoachVoicePhrasingByAnchorKey] = useState({});
+  const [currentAnchorBindingTarget, setCurrentAnchorBindingTarget] = useState(null);
+  const [adjustmentTargetGoal, setAdjustmentTargetGoal] = useState(() => restoredIntakeSession?.adjustmentTargetGoal || null);
   const [confirmBuildError, setConfirmBuildError] = useState("");
   const [confirmBuildSubmitting, setConfirmBuildSubmitting] = useState(false);
+  const [confirmWarningAcknowledged, setConfirmWarningAcknowledged] = useState(false);
   const [assessing, setAssessing] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
-  const [intakeMachine, setIntakeMachine] = useState(() => createIntakeMachineState());
+  const [intakeMachine, setIntakeMachine] = useState(() => restoredIntakeSession?.intakeMachine || createIntakeMachineState());
+  const [showParseDebug, setShowParseDebug] = useState(false);
   const intakeMachineRef = useRef(intakeMachine);
+  const coachVoiceRequestKeysRef = useRef(new Set());
 
-  const buildFlow = (currentAnswers = {}) => ([
-    {
-      key: "goal_intent",
-      type: "text",
-      message: initialPrompt,
-      placeholder: "Examples: run a 1:45 half, look athletic again, get abs by summer, lose fat but keep strength",
-    },
-    { key: "experience_level", type: "buttons", message: "Got it. What's your training experience level?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
-    { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week - not your best one.", options: ["2", "3", "4", "5", "6+"] },
-    { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
-    { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
-    ...(["Home", "Both"].includes(currentAnswers.training_location || "") ? [{
-      key: "home_equipment",
-      type: "multiselect",
-      message: "What do you have available at home?",
-      options: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
-    }] : []),
-    { key: "injury_text", type: "text_optional", message: "Do you have any injuries or physical limitations I need to plan around?", placeholder: "Anything current?", skipLabel: "Nothing current", skipValue: "Nothing current" },
-    { key: "coaching_style", type: "buttons", message: "Last one — how do you want to be coached?", options: ["Push me hard", "Find the balance", "Keep it simple", "Let the data decide"] },
-  ]);
-  const flow = useMemo(() => buildFlow(answers), [answers.training_location, initialPrompt]);
+  const buildFlow = (currentAnswers = {}) => {
+    const injuryQuestionContext = buildIntakeInjuryConstraintContext({
+      injuryText: currentAnswers.injury_text,
+      injuryImpact: currentAnswers.injury_impact,
+    });
+    return [
+      {
+        key: "goal_intent",
+        type: "text",
+        message: initialPrompt,
+        placeholder: "Examples: run a 1:45 half, look athletic again, get abs by summer, lose fat but keep strength",
+      },
+      { key: "experience_level", type: "buttons", message: "Got it. What's your training experience level?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
+      { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week - not your best one.", options: ["2", "3", "4", "5", "6+"] },
+      { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
+      { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
+      ...(["Home", "Both"].includes(currentAnswers.training_location || "") ? [{
+        key: "home_equipment",
+        type: "multiselect",
+        message: "What do you have available at home?",
+        options: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
+      }] : []),
+      { key: "injury_text", type: "text_optional", message: "Do you have any injuries or physical limitations I need to plan around?", placeholder: "Anything current?", skipLabel: "Nothing current", skipValue: "Nothing current" },
+      ...(injuryQuestionContext.hasCurrentIssue ? [{
+        key: "injury_impact",
+        type: "buttons",
+        message: "How is that affecting training most right now?",
+        options: [...INTAKE_INJURY_IMPACT_OPTIONS],
+      }] : []),
+      { key: "coaching_style", type: "buttons", message: "Last one — how do you want to be coached?", options: ["Keep me consistent", "Balanced coaching", "Push me (with guardrails)"] },
+    ];
+  };
+  const flow = useMemo(() => buildFlow(answers), [answers.training_location, answers.injury_text, initialPrompt]);
   const currentPrompt = flow[stepIndex] || null;
   const isCoachStreaming = Boolean(streamTargetId);
 
@@ -7477,6 +7818,67 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setMessages([{ id, role: "coach", text: sanitizeIntakeText(initialPrompt), displayedText: "" }]);
     setStreamTargetId(id);
   }, [initialPrompt]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (sessionPersistenceDisabledRef.current) {
+      safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
+      return;
+    }
+    const hasMeaningfulIntakeState = Boolean(
+      messages.length
+      || Object.keys(answers || {}).length
+      || String(draft || "").trim()
+      || phase !== "questions"
+      || stepIndex > 0
+      || intakeMachine?.stage !== INTAKE_MACHINE_STATES.FREEFORM_GOALS
+    );
+    if (!hasMeaningfulIntakeState) {
+      safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
+      return;
+    }
+    const snapshot = buildPersistableIntakeSession({
+      messages,
+      answers,
+      stepIndex,
+      draft,
+      phase,
+      assessmentText,
+      assessmentBoundary,
+      assessmentPreview,
+      goalStackConfirmation,
+      askedClarifyingQuestions,
+      pendingClarifyingQuestion,
+      pendingSecondaryGoalPrompt,
+      secondaryGoalEntries,
+      showSecondaryGoalCustomInput,
+      intakeMachine,
+      adjustmentTargetGoal,
+      nextMessageId: nextMessageIdRef.current,
+      nextIntakeEventId: nextIntakeEventIdRef.current,
+      secondaryGoalAddedMessageKeys: [...secondaryGoalAddedMessageKeysRef.current],
+      startingFresh,
+    });
+    safeStorageSet(sessionStorage, INTAKE_SESSION_STORAGE_KEY, JSON.stringify(snapshot));
+  }, [
+    adjustmentTargetGoal,
+    answers,
+    assessmentBoundary,
+    assessmentPreview,
+    askedClarifyingQuestions,
+    draft,
+    goalStackConfirmation,
+    intakeMachine,
+    messages,
+    pendingClarifyingQuestion,
+    pendingSecondaryGoalPrompt,
+    phase,
+    secondaryGoalEntries,
+    showSecondaryGoalCustomInput,
+    startingFresh,
+    stepIndex,
+    assessmentText,
+  ]);
 
   useEffect(() => {
     if (streamTargetId || phase === "building") return;
@@ -7525,16 +7927,124 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   }, [currentPrompt?.key]);
 
   const activeMachineAnchor = intakeMachine?.draft?.missingAnchorsEngine?.currentAnchor || null;
+  const activeAnchorCoachVoiceKey = [
+    String(intakeMachine?.transition_id || "").trim(),
+    String(activeMachineAnchor?.anchor_id || "").trim(),
+    String(activeMachineAnchor?.field_id || "").trim(),
+  ].filter(Boolean).join(":");
+  const activeAnchorCoachVoicePhrasing = activeAnchorCoachVoiceKey
+    ? coachVoicePhrasingByAnchorKey?.[activeAnchorCoachVoiceKey]?.phrasing || null
+    : null;
+  const activeAnchorDisplayCopy = useMemo(() => resolveCoachVoiceDisplayCopy({
+    anchor: activeMachineAnchor,
+    phrasing: activeAnchorCoachVoicePhrasing,
+  }), [activeMachineAnchor, activeAnchorCoachVoicePhrasing]);
+  const buildCoachVoiceContext = () => {
+    const goalSummary = String(intakeMachine?.draft?.reviewModel?.primarySummary || "").trim();
+    const remainingCount = Array.isArray(intakeMachine?.draft?.missingAnchorsEngine?.missingAnchors)
+      ? intakeMachine.draft.missingAnchorsEngine.missingAnchors.length
+      : 0;
+    return [
+      goalSummary ? `Goal: ${goalSummary}` : "",
+      remainingCount > 0 ? `${remainingCount} required ${remainingCount === 1 ? "detail" : "details"} left.` : "",
+    ].filter(Boolean).join(" ");
+  };
+  const parseStrengthTopSetDraft = (value = "") => {
+    const normalized = String(value || "").trim().replace(/[×]/g, "x");
+    if (!normalized) return { mode: "top_set", weight: "", reps: "" };
+    const topSetMatch = normalized.match(/(\d{2,4}(?:\.\d+)?)\s*x\s*(\d{1,2})\b/i);
+    if (topSetMatch?.[1]) {
+      return {
+        mode: "top_set",
+        weight: String(topSetMatch[1]).trim(),
+        reps: String(topSetMatch[2]).trim(),
+      };
+    }
+    const singleMatch = normalized.match(/(\d{2,4}(?:\.\d+)?)/);
+    if (singleMatch?.[1]) {
+      return {
+        mode: /single|1rm|max/i.test(normalized) ? "estimated_max" : "top_set",
+        weight: String(singleMatch[1]).trim(),
+        reps: "",
+      };
+    }
+    return { mode: "top_set", weight: "", reps: "" };
+  };
+  const applyStrengthStructuredValue = (fieldId, { mode = "top_set", weight = "", reps = "" } = {}) => {
+    setClarificationValues((prev) => ({
+      ...prev,
+      [`${fieldId}__mode`]: String(mode || "top_set"),
+      [`${fieldId}__weight`]: String(weight || "").trim(),
+      [`${fieldId}__reps`]: String(reps || "").trim(),
+    }));
+    setClarificationFieldErrors((prev) => {
+      if (!prev) return prev;
+      const next = { ...(prev || {}) };
+      delete next[fieldId];
+      return next;
+    });
+    if (clarificationFormError) setClarificationFormError("");
+  };
+
+  useEffect(() => {
+    if (phase !== "clarify" || !activeMachineAnchor?.field_id || !activeMachineAnchor?.anchor_id || !activeAnchorCoachVoiceKey) return;
+    if (coachVoiceRequestKeysRef.current.has(activeAnchorCoachVoiceKey)) return;
+    if (coachVoicePhrasingByAnchorKey?.[activeAnchorCoachVoiceKey]) return;
+    coachVoiceRequestKeysRef.current.add(activeAnchorCoachVoiceKey);
+    let cancelled = false;
+    setCoachVoicePhrasingByAnchorKey((prev) => ({
+      ...(prev || {}),
+      [activeAnchorCoachVoiceKey]: {
+        status: "loading",
+        phrasing: null,
+      },
+    }));
+    (async () => {
+      const runtime = await runIntakeCoachVoiceRuntime({
+        safeFetchWithTimeout,
+        anchor: activeMachineAnchor,
+        statePacket: intakeMachine?.draft?.typedIntakePacket || assessmentBoundary?.typedIntakePacket || null,
+        briefContext: buildCoachVoiceContext(),
+        tone: "supportive_trainer",
+      });
+      if (cancelled) return;
+      setCoachVoicePhrasingByAnchorKey((prev) => ({
+        ...(prev || {}),
+        [activeAnchorCoachVoiceKey]: {
+          status: runtime?.ok ? "ready" : "failed",
+          phrasing: runtime?.ok ? runtime.phrasing : null,
+        },
+      }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    phase,
+    activeMachineAnchor,
+    activeAnchorCoachVoiceKey,
+    coachVoicePhrasingByAnchorKey,
+    intakeMachine?.draft?.typedIntakePacket,
+    assessmentBoundary?.typedIntakePacket,
+  ]);
 
   useEffect(() => {
     const isStructuredQuestion = isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion);
     if (phase !== "clarify") {
+      setCurrentAnchorBindingTarget(null);
       setClarificationValues({});
       setClarificationFieldErrors({});
       setClarificationFormError("");
+      setAnchorEntryMode("structured");
+      setNaturalAnchorDraft("");
+      setAnchorCapturePreview(null);
       return;
     }
     if (activeMachineAnchor?.field_id) {
+      setCurrentAnchorBindingTarget({
+        anchor_id: String(activeMachineAnchor?.anchor_id || "").trim(),
+        field_id: String(activeMachineAnchor?.field_id || "").trim(),
+      });
       const fieldId = activeMachineAnchor.field_id;
       const nextValues = activeMachineAnchor?.draftValue
         ? { [fieldId]: activeMachineAnchor.draftValue }
@@ -7552,16 +8062,29 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           : "month";
         nextValues[`${fieldId}__mode`] = storedMode;
       }
+      if (activeMachineAnchor?.input_type === "strength_top_set") {
+        const parsedStrengthDraft = parseStrengthTopSetDraft(activeMachineAnchor?.draftValue || "");
+        nextValues[`${fieldId}__mode`] = parsedStrengthDraft.mode;
+        nextValues[`${fieldId}__weight`] = parsedStrengthDraft.weight;
+        nextValues[`${fieldId}__reps`] = parsedStrengthDraft.reps;
+      }
       setClarificationValues(nextValues);
       setClarificationFieldErrors({});
       setClarificationFormError("");
+      setAnchorEntryMode("structured");
       setDraft("");
+      setNaturalAnchorDraft("");
+      setAnchorCapturePreview(null);
       return;
     }
     if (!isStructuredQuestion) {
+      setCurrentAnchorBindingTarget(null);
       setClarificationValues({});
       setClarificationFieldErrors({});
       setClarificationFormError("");
+      setAnchorEntryMode("structured");
+      setNaturalAnchorDraft("");
+      setAnchorCapturePreview(null);
       return;
     }
     setClarificationValues(buildIntakeCompletenessDraft({
@@ -7570,13 +8093,25 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }));
     setClarificationFieldErrors({});
     setClarificationFormError("");
+    setAnchorEntryMode("structured");
     setDraft("");
+    setNaturalAnchorDraft("");
+    setAnchorCapturePreview(null);
   }, [phase, activeMachineAnchor?.anchor_id, pendingClarifyingQuestion?.key, pendingClarifyingQuestion?.prompt, answers]);
 
   useEffect(() => {
     if (phase !== "secondary_goal") return;
     setSecondaryGoalEntries(readAdditionalGoalEntries({ answers }));
   }, [phase, answers]);
+
+  useEffect(() => {
+    if (phase !== "secondary_goal") {
+      setShowSecondaryGoalCustomInput(false);
+      return;
+    }
+    setShowSecondaryGoalCustomInput(false);
+    setDraft("");
+  }, [phase, pendingSecondaryGoalPrompt?.prompt]);
 
   useEffect(() => {
     if (phase !== "building") return undefined;
@@ -7596,41 +8131,122 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     () => reviewGoals.map((goal) => `${goal?.id || ""}:${goal?.summary || ""}:${goal?.planningPriority || ""}`).join("|"),
     [reviewGoals]
   );
-  const reviewModel = useMemo(() => buildIntakeGoalReviewModel({
+  const derivedReviewModel = useMemo(() => buildIntakeGoalReviewModel({
     goalResolution: assessmentPreview?.goalResolution || null,
     orderedResolvedGoals: reviewGoals,
     goalFeasibility: assessmentPreview?.goalFeasibility || null,
+    arbitration: assessmentPreview?.arbitration || null,
     aiInterpretationProposal: assessmentBoundary?.aiInterpretationProposal || null,
     answers,
     goalStackConfirmation,
   }), [
     assessmentPreview?.goalResolution,
     assessmentPreview?.goalFeasibility,
+    assessmentPreview?.arbitration,
     reviewGoalSignature,
     assessmentBoundary?.aiInterpretationProposal,
     answers,
     goalStackConfirmation,
   ]);
-  const confirmationState = useMemo(() => deriveIntakeConfirmationState({
-    reviewModel,
-    askedQuestions: askedClarifyingQuestions,
-    maxQuestions: 2,
-  }), [reviewModel, askedClarifyingQuestions]);
+  const derivedConfirmationState = useMemo(() => deriveIntakeConfirmationState({
+    reviewModel: derivedReviewModel,
+  }), [derivedReviewModel]);
+  const activeReviewModel = intakeMachine?.draft?.reviewModel || derivedReviewModel;
+  const activeConfirmationState = intakeMachine?.draft?.confirmationState || derivedConfirmationState;
+  const activeReviewGoals = Array.isArray(intakeMachine?.draft?.orderedResolvedGoals) && intakeMachine.draft.orderedResolvedGoals.length
+    ? intakeMachine.draft.orderedResolvedGoals
+    : reviewGoals;
+  const activeGoalResolution = intakeMachine?.draft?.goalResolution || assessmentPreview?.goalResolution || null;
+  const activeGoalFeasibility = intakeMachine?.draft?.goalFeasibility || assessmentPreview?.goalFeasibility || null;
+  const secondaryGoalEligible = useMemo(() => canAskSecondaryGoal({
+    stage: intakeMachine?.stage || "",
+    reviewModel: activeReviewModel,
+    confirmationState: activeConfirmationState,
+    answers: intakeMachine?.draft?.answers || answers,
+  }), [
+    intakeMachine?.stage,
+    intakeMachine?.draft?.reviewModel,
+    intakeMachine?.draft?.confirmationState,
+    intakeMachine?.draft?.answers,
+    activeReviewModel,
+    activeConfirmationState,
+    answers,
+  ]);
+  const confirmationStatusLabel = activeConfirmationState?.status === "incomplete"
+    ? "Need one more detail"
+    : activeConfirmationState?.status === "block"
+    ? "Needs a safer first step"
+    : activeConfirmationState?.status === "warn"
+    ? "Ambitious but workable"
+    : "Ready to build";
+  const confirmationHeadline = activeConfirmationState?.status === "incomplete"
+    ? "I need one more detail before I build this."
+    : activeConfirmationState?.status === "block"
+    ? "I need to tighten this up before I build."
+    : activeConfirmationState?.status === "warn"
+    ? "This is aggressive, but I can build for it."
+    : "This looks realistic from where you're starting.";
+  const confirmationNeedsList = useMemo(() => {
+    return buildIntakeConfirmationNeedsList({
+      reviewModel: activeReviewModel,
+      machineState: intakeMachine,
+      confirmationState: activeConfirmationState,
+      maxItems: 3,
+    });
+  }, [activeReviewModel, intakeMachine, activeConfirmationState]);
+  const confirmationAllowsProceed = activeConfirmationState?.status === "proceed" || activeConfirmationState?.status === "warn";
+  const confirmCtaEnabled = Boolean(
+    confirmationAllowsProceed
+    && activeConfirmationState?.canConfirm
+    && (!activeConfirmationState?.requiresAcknowledgement || confirmWarningAcknowledged)
+  );
+  const confirmationTone = activeConfirmationState?.status === "block" || activeConfirmationState?.status === "incomplete"
+    ? C.amber
+    : activeConfirmationState?.status === "warn"
+    ? "#facc15"
+    : "#8fa5c8";
 
   useEffect(() => {
     setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
-      resolvedGoals: reviewGoals,
+      resolvedGoals: activeReviewGoals,
       goalStackConfirmation: prev,
-      goalFeasibility: assessmentPreview?.goalFeasibility || null,
+      goalFeasibility: activeGoalFeasibility,
     }));
-  }, [reviewGoalSignature, assessmentPreview?.goalFeasibility]);
+  }, [reviewGoalSignature, activeReviewGoals, activeGoalFeasibility]);
+
+  useEffect(() => {
+    setConfirmWarningAcknowledged(false);
+  }, [
+    activeConfirmationState?.status,
+    activeConfirmationState?.reason,
+    activeConfirmationState?.next_required_field,
+    activeReviewModel?.reviewContract?.lead_goal?.id,
+    Array.isArray(activeReviewModel?.reviewContract?.maintained_goals) ? activeReviewModel.reviewContract.maintained_goals.map((goal) => goal?.id || "").join("|") : "",
+  ]);
+
+  useEffect(() => {
+    if (phase !== "secondary_goal" || secondaryGoalEligible) return;
+    setPendingSecondaryGoalPrompt(null);
+    setPhase("review");
+  }, [phase, secondaryGoalEligible]);
 
   const appendCoachMessages = (texts) => {
     const queue = queueCoachTranscriptMessages({
-      texts: (Array.isArray(texts) ? texts : [texts]).map((text) => sanitizeIntakeText(text)),
+      texts: (Array.isArray(texts) ? texts : [texts]).map((item) => (
+        item && typeof item === "object" && !Array.isArray(item)
+          ? {
+              ...item,
+              text: sanitizeIntakeText(item?.text || ""),
+            }
+          : sanitizeIntakeText(item)
+      )),
       nextMessageId: nextMessageIdRef.current,
+      seenMessageKeys: [...processedTranscriptIdempotencyKeysRef.current],
+      seenIdempotencyKeys: [...processedTranscriptIdempotencyKeysRef.current],
+      activeTransitionId: intakeMachineRef.current?.transition_id || "",
     });
     nextMessageIdRef.current = queue.nextMessageId;
+    queue.acceptedMessageKeys.forEach((key) => processedTranscriptIdempotencyKeysRef.current.add(key));
     if (queue.entries.length === 0) return [];
     setMessages((prev) => [...prev, ...queue.entries]);
     setStreamTargetId((prev) => resolveNextCoachStreamTargetId({
@@ -7648,11 +8264,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       timestamp: new Date().toISOString(),
       payload,
     };
-    let nextState = intakeMachineRef.current;
-    setIntakeMachine((prev) => {
-      nextState = intakeReducer(prev, nextEvent);
-      return nextState;
-    });
+    const previousState = intakeMachineRef.current || intakeMachine || createIntakeMachineState();
+    const nextState = intakeReducer(previousState, nextEvent);
+    intakeMachineRef.current = nextState;
+    setIntakeMachine(nextState);
     return nextState;
   };
   const settleIntakeMachine = (machineState = null) => {
@@ -7684,13 +8299,124 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setAssessmentBoundary({
       typedIntakePacket: draftState.typedIntakePacket || null,
       aiInterpretationProposal: draftState.aiInterpretationProposal || null,
+      transition_id: machineState?.transition_id || "",
     });
     setAssessmentPreview({
       goalResolution: draftState.goalResolution || null,
       goalFeasibility: draftState.goalFeasibility || null,
+      arbitration: draftState.arbitration || null,
       orderedResolvedGoals: draftState.orderedResolvedGoals || [],
       reviewModel: draftState.reviewModel || null,
     });
+  };
+  const resolveSecondaryGoalPrompt = ({
+    machineState = null,
+    reviewModelOverride = null,
+    answersOverride = null,
+  } = {}) => {
+    const resolvedMachineState = machineState || intakeMachineRef.current || null;
+    const resolvedReviewModel = reviewModelOverride || resolvedMachineState?.draft?.reviewModel || null;
+    const resolvedAnswers = answersOverride || resolvedMachineState?.draft?.answers || answers;
+    if (!canAskSecondaryGoal({
+      stage: resolvedMachineState?.stage || "",
+      reviewModel: resolvedReviewModel,
+      confirmationState: resolvedMachineState?.draft?.confirmationState || null,
+      answers: resolvedAnswers,
+    })) {
+      return null;
+    }
+    return buildIntakeSecondaryGoalPrompt({
+      reviewModel: resolvedReviewModel,
+      answers: resolvedAnswers,
+    });
+  };
+  const refreshReviewMachineState = ({
+    nextAnswers = answers,
+    nextGoalStackConfirmation = goalStackConfirmation,
+  } = {}) => {
+    const typedIntakePacket = intakeMachineRef.current?.draft?.typedIntakePacket || assessmentBoundary?.typedIntakePacket || null;
+    if (!typedIntakePacket) return intakeMachineRef.current;
+    const refreshedState = settleIntakeMachine(dispatchIntakeMachineEvent(
+      INTAKE_MACHINE_EVENTS.INTERPRETATION_READY,
+      {
+        assessment: {
+          typedIntakePacket,
+          aiInterpretationProposal: intakeMachineRef.current?.draft?.aiInterpretationProposal || assessmentBoundary?.aiInterpretationProposal || null,
+          text: assessmentText,
+        },
+        answers: nextAnswers,
+        goalStackConfirmation: nextGoalStackConfirmation,
+        suppress_transcript: true,
+        now: new Date().toISOString(),
+      }
+    ));
+    syncMachineDraftToIntakeView(refreshedState);
+    return refreshedState;
+  };
+  const clearReviewEditingState = () => {
+    setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
+    setClarificationValues({});
+    setClarificationFieldErrors({});
+    setClarificationFormError("");
+    setNaturalAnchorDraft("");
+    setAnchorCapturePreview(null);
+    setShowSecondaryGoalCustomInput(false);
+    setDraft("");
+  };
+  const routeFromRefreshedReviewState = ({
+    refreshedState = null,
+    answersOverride = answers,
+  } = {}) => {
+    const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
+      machineState: refreshedState,
+      answersOverride: refreshedState?.draft?.answers || answersOverride,
+    });
+    if (refreshedState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
+      setPendingSecondaryGoalPrompt(null);
+      setPhase("clarify");
+      return;
+    }
+    if (nextSecondaryGoalPrompt) {
+      setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
+      setPhase("secondary_goal");
+      return;
+    }
+    setPendingSecondaryGoalPrompt(null);
+    setPhase("review");
+  };
+  const applyGoalStackConfirmationUpdate = (nextGoalStackConfirmation = null) => {
+    setConfirmBuildError("");
+    clearReviewEditingState();
+    setGoalStackConfirmation(nextGoalStackConfirmation);
+    const refreshedState = refreshReviewMachineState({
+      nextGoalStackConfirmation,
+    });
+    routeFromRefreshedReviewState({
+      refreshedState,
+      answersOverride: refreshedState?.draft?.answers || answers,
+    });
+    return refreshedState;
+  };
+  const resetIntakeForGoalEdit = (nextAnswers = answers) => {
+    const editedState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_EDITED, {
+      answers: nextAnswers,
+      now: new Date().toISOString(),
+    });
+    syncMachineDraftToIntakeView(editedState);
+    coachVoiceRequestKeysRef.current = new Set();
+    setCoachVoicePhrasingByAnchorKey({});
+    setAssessmentText("");
+    setGoalStackConfirmation(null);
+    setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
+    setAskedClarifyingQuestions([]);
+    setClarificationValues({});
+    setClarificationFieldErrors({});
+    setClarificationFormError("");
+    setNaturalAnchorDraft("");
+    setAnchorCapturePreview(null);
+    return editedState;
   };
   const appendUserMessage = (text) => {
     const clean = String(text || "").trim();
@@ -7700,23 +8426,62 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   };
   useEffect(() => {
     const pendingMessages = (Array.isArray(intakeMachine?.outbox) ? intakeMachine.outbox : [])
-      .filter((message) => message?.key && !processedIntakeMessageKeysRef.current.has(message.key));
+      .filter((message) => {
+        const messageKey = message?.message_key || message?.idempotency_key || message?.key;
+        return messageKey && !processedIntakeMessageKeysRef.current.has(messageKey);
+      });
     if (pendingMessages.length === 0) return;
-    pendingMessages.forEach((message) => processedIntakeMessageKeysRef.current.add(message.key));
-    appendCoachMessages(pendingMessages.map((message) => message.text));
+    pendingMessages.forEach((message) => {
+      const messageKey = message?.message_key || message?.idempotency_key || message?.key;
+      if (messageKey) processedIntakeMessageKeysRef.current.add(messageKey);
+    });
+    appendCoachMessages(pendingMessages.map((message) => ({
+      text: message.text,
+      message_key: message.message_key || message.idempotency_key || message.key,
+      key: message.message_key || message.idempotency_key || message.key,
+      idempotency_key: message.message_key || message.idempotency_key || message.key,
+      transition_id: message.transition_id,
+      stage: message.stage,
+      anchor_id: message.anchor_id,
+      message_kind: message.message_kind,
+      intent: message.intent,
+      packet_version: message.packet_version,
+    })));
   }, [intakeMachine?.outbox]);
   const updateClarificationValue = (fieldKey, value) => {
+    const rootFieldKey = String(fieldKey || "").split("__")[0] || String(fieldKey || "");
     setClarificationValues((prev) => ({
       ...prev,
       [fieldKey]: value,
     }));
     setClarificationFieldErrors((prev) => {
-      if (!prev?.[fieldKey]) return prev;
+      if (!prev?.[fieldKey] && !prev?.[rootFieldKey]) return prev;
       const next = { ...(prev || {}) };
       delete next[fieldKey];
+      delete next[rootFieldKey];
       return next;
     });
     if (clarificationFormError) setClarificationFormError("");
+  };
+  const hydrateClarificationValuesFromAiCandidate = (anchor, candidate) => {
+    if (!anchor?.field_id || !candidate) return;
+    const fieldId = anchor.field_id;
+    const nextValues = {};
+    if (anchor.input_type === "choice_chips") {
+      nextValues[fieldId] = String(candidate?.answer_value?.value || candidate?.raw_text || "").trim();
+    } else if (anchor.input_type === "date_or_month") {
+      nextValues[fieldId] = String(candidate?.answer_value?.value || "").trim();
+      nextValues[`${fieldId}__mode`] = String(candidate?.answer_value?.mode || "month").trim().toLowerCase() || "month";
+    } else if (anchor.input_type === "number_with_unit") {
+      nextValues[fieldId] = String(candidate?.answer_value?.value ?? "").trim();
+      nextValues[`${fieldId}__unit`] = String(candidate?.answer_value?.unit || anchor?.unit || anchor?.unit_options?.[0]?.value || "").trim();
+    } else {
+      nextValues[fieldId] = String(candidate?.answer_value?.raw || candidate?.raw_text || candidate?.capturePreviewText || "").trim();
+    }
+    setClarificationValues((prev) => ({
+      ...prev,
+      ...nextValues,
+    }));
   };
   const formatMonthInputLabel = (value = "") => {
     const match = String(value || "").match(/^(\d{4})-(\d{2})$/);
@@ -7779,6 +8544,29 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         raw_text: selectedUnit ? `${numericValue} ${selectedUnit}` : numericValue,
       };
     }
+    if (anchor.input_type === "strength_top_set") {
+      const modeKey = `${fieldId}__mode`;
+      const weightKey = `${fieldId}__weight`;
+      const repsKey = `${fieldId}__reps`;
+      const selectedMode = String(clarificationValues?.[modeKey] || "top_set").trim().toLowerCase() || "top_set";
+      const weightValue = String(clarificationValues?.[weightKey] || "").trim();
+      const repsValue = String(clarificationValues?.[repsKey] || "").trim();
+      if (!weightValue) return null;
+      if (selectedMode === "top_set" && !repsValue) return null;
+      const rawText = selectedMode === "estimated_max"
+        ? `${weightValue} estimated max`
+        : `${weightValue}x${repsValue}`;
+      return {
+        answer_value: {
+          mode: selectedMode,
+          weight: weightValue,
+          reps: selectedMode === "top_set" ? repsValue : "",
+          raw: rawText,
+          value: weightValue,
+        },
+        raw_text: rawText,
+      };
+    }
     const cleanValue = String(rawValue || "").trim();
     if (!cleanValue) return null;
     return {
@@ -7786,6 +8574,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       raw_text: cleanValue,
     };
   };
+  const buildNaturalAnchorExtractionContext = () => ({
+    safeFetchWithTimeout,
+    typedIntakePacket: intakeMachineRef.current?.draft?.typedIntakePacket || assessmentBoundary?.typedIntakePacket || null,
+    answers: intakeMachineRef.current?.draft?.answers || answers,
+  });
   const finalizeAssessmentState = ({
     assessment = null,
     updatedAnswers = {},
@@ -7807,36 +8600,44 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       goalResolution: assessment?.goalResolution || null,
       orderedResolvedGoals: assessment?.orderedResolvedGoals || [],
       goalFeasibility: assessment?.goalFeasibility || null,
+      arbitration: interpretedMachineState?.draft?.arbitration || assessmentPreview?.arbitration || null,
       aiInterpretationProposal: assessment?.aiInterpretationProposal || null,
       answers: updatedAnswers,
       goalStackConfirmation,
     });
     const nextMachineAnchor = interpretedMachineState?.draft?.missingAnchorsEngine?.currentAnchor || null;
-    const nextSecondaryGoalPrompt = interpretedMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
-      ? buildIntakeSecondaryGoalPrompt({
-          reviewModel: reviewModelForAssessment,
-          answers: interpretedMachineState?.draft?.answers || updatedAnswers,
-        })
-      : null;
+    const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
+      machineState: interpretedMachineState,
+      reviewModelOverride: reviewModelForAssessment,
+      answersOverride: interpretedMachineState?.draft?.answers || updatedAnswers,
+    });
+    const currentTransitionId = interpretedMachineState?.transition_id || intakeMachineRef.current?.transition_id || "";
+    const currentStage = interpretedMachineState?.stage || intakeMachineRef.current?.stage || INTAKE_MACHINE_STATES.GOAL_INTERPRETATION;
     setAssessmentText(cleanTimeline);
     if (nextMachineAnchor) {
       setPendingClarifyingQuestion(null);
       setPendingSecondaryGoalPrompt(null);
       setPhase("clarify");
-      appendCoachMessages(buildIntakeClarificationCoachMessages({
-        statusText: cleanTimeline,
-        nextQuestion: { prompt: nextMachineAnchor.question },
-      }));
       return;
     }
     if (nextSecondaryGoalPrompt) {
       setPendingClarifyingQuestion(null);
       setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
       setPhase("secondary_goal");
-      appendCoachMessage(nextSecondaryGoalPrompt.prompt);
+      appendCoachMessages([{
+        text: nextSecondaryGoalPrompt.prompt,
+        message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+        transition_id: currentTransitionId,
+        stage: currentStage,
+        message_key: buildTranscriptMessageKey({
+          stage: currentStage,
+          transition_id: currentTransitionId,
+          message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+          topic: "secondary_goal_prompt",
+        }),
+      }]);
       return;
     }
-    appendCoachMessage(cleanTimeline);
     setPendingClarifyingQuestion(null);
     setPendingSecondaryGoalPrompt(null);
     setPhase("review");
@@ -7847,18 +8648,29 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   } = {}) => {
     setAssessing(true);
     setPhase("assessment");
-    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED, {
+    const requestId = latestAssessmentRequestIdRef.current + 1;
+    latestAssessmentRequestIdRef.current = requestId;
+    const goalSubmitState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED, {
       answers: updatedAnswers,
       askedQuestions,
       now: new Date().toISOString(),
     });
-    const assessment = await buildTypedIntakeAssessment({ answers: updatedAnswers, existingMemory });
-    finalizeAssessmentState({
-      assessment,
-      updatedAnswers,
-      askedQuestions,
-    });
-    setAssessing(false);
+    const requestedTransitionId = goalSubmitState?.transition_id || intakeMachineRef.current?.transition_id || "";
+    try {
+      const assessment = await buildTypedIntakeAssessment({ answers: updatedAnswers, existingMemory });
+      const activeTransitionId = intakeMachineRef.current?.transition_id || "";
+      if (latestAssessmentRequestIdRef.current !== requestId) return;
+      if (requestedTransitionId && activeTransitionId && requestedTransitionId !== activeTransitionId) return;
+      finalizeAssessmentState({
+        assessment,
+        updatedAnswers,
+        askedQuestions,
+      });
+    } finally {
+      if (latestAssessmentRequestIdRef.current === requestId) {
+        setAssessing(false);
+      }
+    }
   };
   const advanceConversation = async (updatedAnswers) => {
     const nextIndex = stepIndex + 1;
@@ -7883,6 +8695,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     const storedValue = currentPrompt?.valueMap?.[clean] ?? clean;
     await advanceConversation({ ...answers, [explicitKey]: storedValue });
   };
+  const submitFoundationStart = async () => {
+    appendUserMessage("Start with a foundation plan");
+    await advanceConversation({
+      ...answers,
+      goal_intent: "",
+      primary_goal: "general_fitness",
+    });
+  };
   const submitEquipmentAnswer = async () => {
     const equipmentResponse = normalizeHomeEquipmentResponse({
       selection: equipmentSelection,
@@ -7896,24 +8716,25 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       home_equipment_other: equipmentResponse.otherText,
     });
   };
-  const requestAdjustment = () => {
+  const requestAdjustment = ({ goalSummary = "", goalId = "" } = {}) => {
+    const cleanGoalSummary = sanitizeIntakeText(goalSummary || "");
     setConfirmBuildError("");
-    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_EDITED, {
-      answers,
-      now: new Date().toISOString(),
-    });
-    appendUserMessage("Adjust this goal");
+    setAdjustmentTargetGoal(cleanGoalSummary ? { id: goalId || "", summary: cleanGoalSummary } : null);
+    resetIntakeForGoalEdit(answers);
+    appendUserMessage(cleanGoalSummary ? `Edit a goal: ${cleanGoalSummary}` : "Edit a goal");
     setPhase("adjust");
     setDraft("");
-    setAskedClarifyingQuestions([]);
-    setPendingClarifyingQuestion(null);
-    setPendingSecondaryGoalPrompt(null);
-    appendCoachMessage("Tell me what you want to change and I'll recalibrate it before I build.");
+    appendCoachMessage(
+      cleanGoalSummary
+        ? `Tell me what you want to change about "${cleanGoalSummary}" and I'll recalibrate it before I build.`
+        : "Tell me what you want to change and I'll recalibrate it before I build."
+    );
   };
   const submitAdjustment = async () => {
     const clean = String(draft || "").trim();
     if (!clean) return;
     setConfirmBuildError("");
+    setAdjustmentTargetGoal(null);
     appendUserMessage(clean);
     setDraft("");
     const adjustmentOutcome = applyIntakeGoalAdjustment({
@@ -7933,13 +8754,132 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.prompt) return;
     setConfirmBuildError("");
     if (activeMachineAnchor?.field_id) {
+      const activeBindingTarget = (
+        currentAnchorBindingTarget?.anchor_id
+        && currentAnchorBindingTarget?.field_id
+      )
+        ? currentAnchorBindingTarget
+        : null;
+      if (!activeBindingTarget) {
+        setClarificationFormError("The current anchor lost its binding target. Please try the active card again.");
+        return;
+      }
+      const naturalReply = anchorEntryMode === "natural" && !activeAnchorStrictMode
+        ? String(naturalAnchorDraft || "").trim()
+        : "";
+      if (naturalReply) {
+        appendUserMessage(naturalReply);
+        setNaturalAnchorSubmitting(true);
+        setAnchorCapturePreview(null);
+        setClarificationFieldErrors({});
+        setClarificationFormError("");
+        const extraction = await aiExtractForMissingFields({
+          utterance: naturalReply,
+          missing_fields: [activeMachineAnchor],
+          context: buildNaturalAnchorExtractionContext(),
+        });
+        setNaturalAnchorSubmitting(false);
+        if (extraction?.status === "ready_to_persist" && extraction?.validatedCandidates?.[0]) {
+          const extractedCandidate = extraction.validatedCandidates[0];
+          const nextMachineState = settleIntakeMachine(dispatchIntakeMachineEvent(
+            INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+            {
+              anchor: activeMachineAnchor,
+              binding_target: activeBindingTarget,
+              anchor_id: activeBindingTarget.anchor_id,
+              field_id: activeBindingTarget.field_id,
+              answer_value: extractedCandidate.answer_value,
+              raw_text: extractedCandidate.raw_text,
+              source: "user",
+              capture_label: `Here's what I captured: ${extractedCandidate.capturePreviewText}.`,
+              now: new Date().toISOString(),
+            }
+          ));
+          if (nextMachineState?.ui?.lastParseError) {
+            setClarificationFieldErrors({ [activeMachineAnchor.field_id]: nextMachineState.ui.lastParseError });
+            setClarificationFormError(nextMachineState.ui.lastParseError);
+            setAnchorCapturePreview({
+              field_id: activeMachineAnchor.field_id,
+              captureText: extractedCandidate.capturePreviewText,
+              question: "",
+              evidenceSpans: extractedCandidate.evidence_spans || [],
+            });
+            return;
+          }
+          syncMachineDraftToIntakeView(nextMachineState);
+          setClarificationValues({});
+          setClarificationFieldErrors({});
+          setClarificationFormError("");
+          setNaturalAnchorDraft("");
+          setAnchorCapturePreview(null);
+          setPendingClarifyingQuestion(null);
+          const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
+            machineState: nextMachineState,
+            answersOverride: nextMachineState?.draft?.answers || answers,
+          });
+          if (nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
+            setPendingSecondaryGoalPrompt(null);
+            setPhase("clarify");
+            return;
+          }
+          if (nextSecondaryGoalPrompt) {
+            setPendingSecondaryGoalPrompt(nextSecondaryGoalPrompt);
+            setPhase("secondary_goal");
+            return;
+          }
+          setPendingSecondaryGoalPrompt(null);
+          setPhase("review");
+          return;
+        }
+
+        if (extraction?.status === "needs_clarification" && extraction?.validatedCandidates?.[0]) {
+          const extractedCandidate = extraction.validatedCandidates[0];
+          hydrateClarificationValuesFromAiCandidate(activeMachineAnchor, extractedCandidate);
+          setNaturalAnchorDraft("");
+          setAnchorCapturePreview({
+            field_id: activeMachineAnchor.field_id,
+            captureText: extractedCandidate.capturePreviewText,
+            question: extractedCandidate.clarifyingQuestion || extraction.userFacingError,
+            evidenceSpans: extractedCandidate.evidence_spans || [],
+          });
+          const failedState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.ANCHOR_PARSE_FAILED, {
+            field_id: activeMachineAnchor.field_id,
+            formError: extractedCandidate.clarifyingQuestion || extraction.userFacingError || "Can you confirm that before I save it?",
+            now: new Date().toISOString(),
+          });
+          setClarificationFieldErrors({});
+          setClarificationFormError(failedState?.ui?.lastParseError || extractedCandidate.clarifyingQuestion || extraction.userFacingError || "Can you confirm that before I save it?");
+          return;
+        }
+
+        if (extraction?.status === "runtime_failed" || extraction?.status === "no_response") {
+          setAnchorEntryMode("structured");
+          setAnchorCapturePreview(null);
+          setClarificationFieldErrors({});
+          setClarificationFormError("Natural capture is unavailable right now. Use the guided field above instead.");
+          return;
+        }
+
+        const failedState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.ANCHOR_PARSE_FAILED, {
+          field_id: activeMachineAnchor.field_id,
+          formError: extraction?.userFacingError || "I couldn't confidently bind that to the current field.",
+          now: new Date().toISOString(),
+        });
+        setAnchorCapturePreview(null);
+        setClarificationFieldErrors({});
+        setClarificationFormError(failedState?.ui?.lastParseError || extraction?.userFacingError || "I couldn't confidently bind that to the current field.");
+        return;
+      }
+
       const submissionPayload = buildAnchorSubmissionPayload(activeMachineAnchor);
       if (!submissionPayload?.raw_text) return;
       const nextMachineState = settleIntakeMachine(dispatchIntakeMachineEvent(
         INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
         {
           anchor: activeMachineAnchor,
-          field_id: activeMachineAnchor.field_id,
+          binding_target: activeBindingTarget,
+          anchor_id: activeBindingTarget.anchor_id,
+          field_id: activeBindingTarget.field_id,
           answer_value: submissionPayload.answer_value,
           raw_text: submissionPayload.raw_text,
           source: "user",
@@ -7956,13 +8896,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setClarificationValues({});
       setClarificationFieldErrors({});
       setClarificationFormError("");
+      setNaturalAnchorDraft("");
+      setAnchorCapturePreview(null);
       setPendingClarifyingQuestion(null);
-      const nextSecondaryGoalPrompt = nextMachineState?.stage === INTAKE_MACHINE_STATES.REVIEW_CONFIRM
-        ? buildIntakeSecondaryGoalPrompt({
-            reviewModel: nextMachineState?.draft?.reviewModel || null,
-            answers: nextMachineState?.draft?.answers || answers,
-          })
-        : null;
+      const nextSecondaryGoalPrompt = resolveSecondaryGoalPrompt({
+        machineState: nextMachineState,
+        answersOverride: nextMachineState?.draft?.answers || answers,
+      });
       if (nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION) {
         setPendingSecondaryGoalPrompt(null);
         setPhase("clarify");
@@ -8068,9 +9008,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         allowImplicitGoalReplacement: false,
       });
       if (adjustmentOutcome.kind === "goal_replacement") {
-        setAskedClarifyingQuestions([]);
-        setPendingClarifyingQuestion(null);
-        setPendingSecondaryGoalPrompt(null);
+        resetIntakeForGoalEdit(adjustmentOutcome.answers);
         await runAssessment({ updatedAnswers: adjustmentOutcome.answers, askedQuestions: [] });
         return;
       }
@@ -8092,9 +9030,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       allowImplicitGoalReplacement: true,
     });
     if (adjustmentOutcome.kind === "goal_replacement") {
-      setAskedClarifyingQuestions([]);
-      setPendingClarifyingQuestion(null);
-      setPendingSecondaryGoalPrompt(null);
+      resetIntakeForGoalEdit(adjustmentOutcome.answers);
       await runAssessment({ updatedAnswers: adjustmentOutcome.answers, askedQuestions: [] });
       return;
     }
@@ -8121,17 +9057,40 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setAskedClarifyingQuestions(nextAskedQuestions);
     await runAssessment({ updatedAnswers, askedQuestions: nextAskedQuestions });
   };
+  const editLastAnchorAnswer = () => {
+    if (!activeMachineAnchor?.field_id || !Array.isArray(intakeMachine?.anchorBindingLog) || intakeMachine.anchorBindingLog.length === 0) return;
+    setConfirmBuildError("");
+    const nextMachineState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_BACK, {
+      edit_last_anchor: true,
+      now: new Date().toISOString(),
+    });
+    syncMachineDraftToIntakeView(nextMachineState);
+    setPendingClarifyingQuestion(null);
+    setPendingSecondaryGoalPrompt(null);
+    setClarificationValues({});
+    setClarificationFieldErrors({});
+    setClarificationFormError("");
+    setNaturalAnchorDraft("");
+    setAnchorCapturePreview(null);
+    setDraft("");
+    setPhase("clarify");
+  };
   const submitSecondaryGoalResponse = async (response = null) => {
     const customText = String(draft || "").trim();
-    if (!response?.key) return;
-    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal && !customText) return;
+    const responseKey = String(response?.key || "").trim();
+    const isCustomEntryResponse = responseKey === SECONDARY_GOAL_RESPONSE_KEYS.addGoal || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.custom;
+    const isPresetEntryResponse = responseKey === SECONDARY_GOAL_RESPONSE_KEYS.maintainStrength || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.maintainMobility;
+    const isSkipResponse = responseKey === SECONDARY_GOAL_RESPONSE_KEYS.skip || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly;
+    const isDoneResponse = responseKey === SECONDARY_GOAL_RESPONSE_KEYS.done || responseKey === SECONDARY_GOAL_RESPONSE_KEYS.keepInferred;
+    if (!responseKey) return;
+    if (isCustomEntryResponse && !customText) return;
     setConfirmBuildError("");
-    const stagedEntries = response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal
+    const stagedEntries = isCustomEntryResponse
       ? Array.from(new Set([...secondaryGoalEntries, customText.trim()])).filter(Boolean)
       : secondaryGoalEntries;
-    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly) {
-      appendUserMessage("No, just this goal");
-    } else if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.done) {
+    if (isSkipResponse) {
+      appendUserMessage("Skip");
+    } else if (isDoneResponse) {
       appendUserMessage(stagedEntries.length ? `Also: ${stagedEntries.join("; ")}` : "No extra goals");
     }
     const outcome = applyIntakeSecondaryGoalResponse({
@@ -8148,24 +9107,40 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     });
     setAnswers(outcome.answers);
     setSecondaryGoalEntries(readAdditionalGoalEntries({ answers: outcome.answers }));
-    if (response.key === SECONDARY_GOAL_RESPONSE_KEYS.addGoal && outcome.keepCollecting) {
+    if (responseKey === SECONDARY_GOAL_RESPONSE_KEYS.addGoal && outcome.keepCollecting) {
       setDraft("");
       const goalMessageKey = String(customText || "").trim().toLowerCase();
       if (goalMessageKey && !secondaryGoalAddedMessageKeysRef.current.has(goalMessageKey)) {
+        const addedTranscriptMessageKey = `goal_added:${goalMessageKey}`;
         secondaryGoalAddedMessageKeysRef.current.add(goalMessageKey);
-        processedIntakeMessageKeysRef.current.add(`goal_added:${goalMessageKey}`);
-        appendCoachMessage(`Added ${customText.trim()}. If there's another goal that matters, drop it in. Otherwise we can keep moving.`);
+        processedIntakeMessageKeysRef.current.add(addedTranscriptMessageKey);
+        appendCoachMessage({
+          text: `Added ${customText.trim()}. If there's another goal that matters, drop it in. Otherwise we can keep moving.`,
+          message_key: addedTranscriptMessageKey,
+          idempotency_key: addedTranscriptMessageKey,
+          message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+          transition_id: intakeMachineRef.current?.transition_id || "",
+          stage: intakeMachineRef.current?.stage || "",
+        });
+      }
+      return;
+    }
+    if ((responseKey === SECONDARY_GOAL_RESPONSE_KEYS.custom || isPresetEntryResponse) && outcome.keepCollecting) {
+      setDraft("");
+      if (responseKey !== SECONDARY_GOAL_RESPONSE_KEYS.custom) {
+        setShowSecondaryGoalCustomInput(false);
       }
       return;
     }
     setDraft("");
+    setShowSecondaryGoalCustomInput(false);
     setPendingSecondaryGoalPrompt(null);
     setPendingClarifyingQuestion(null);
     if (!outcome.rerunAssessment) {
       setGoalStackConfirmation(outcome.goalStackConfirmation);
       setPhase("review");
       appendCoachMessage(
-        response.key === SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly
+        isSkipResponse
           ? "Perfect. We'll keep the plan focused on the main goal."
           : stagedEntries.length
           ? "Perfect. I'll fold those extra goals into the review."
@@ -8177,126 +9152,335 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setAskedClarifyingQuestions([]);
     await runAssessment({ updatedAnswers: outcome.answers, askedQuestions: [] });
   };
-  const finalizePlan = async () => {
-    if (confirmBuildSubmitting) return;
+  const handleSecondaryGoalQuickOption = async (option = null) => {
+    if (!option?.key) return;
+    if (option.key === SECONDARY_GOAL_RESPONSE_KEYS.custom) {
+      if (showSecondaryGoalCustomInput) {
+        setDraft("");
+      }
+      setShowSecondaryGoalCustomInput((prev) => !prev);
+      return;
+    }
+    await submitSecondaryGoalResponse(option);
+  };
+  const jumpToNextRequiredDetail = () => {
     setConfirmBuildError("");
-    if (!confirmationState?.canConfirm && confirmationState?.nextQuestion?.prompt) {
-      setPendingClarifyingQuestion(confirmationState.nextQuestion);
+    const refreshedState = refreshReviewMachineState();
+    const refreshedConfirmation = refreshedState?.draft?.confirmationState || activeConfirmationState || null;
+    const nextAnchor = refreshedState?.draft?.missingAnchorsEngine?.currentAnchor || null;
+    if (nextAnchor?.field_id) {
+      setPendingClarifyingQuestion(null);
+      setPendingSecondaryGoalPrompt(null);
       setPhase("clarify");
-      appendCoachMessages(buildIntakeClarificationCoachMessages({
-        statusText: confirmationState.reason || "I still need one critical detail before I can build credibly.",
-        nextQuestion: confirmationState.nextQuestion,
-      }));
       return;
     }
-    if (!confirmationState?.canConfirm) {
-      const blockedReason = confirmationState?.reason || "I still need a little more grounded context before I can build your plan.";
-      setConfirmBuildError(blockedReason);
-      setPhase("review");
-      appendCoachMessage(blockedReason);
-      return;
-    }
-    setConfirmBuildSubmitting(true);
-    dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_CONFIRMED, {
-      now: new Date().toISOString(),
-    });
-    appendUserMessage("Looks good, build my plan");
-    setPhase("building");
-    const payload = {
-      ...answers,
-      goal_stack_confirmation: goalStackConfirmation,
-      timeline_assessment: assessmentText,
-      typedIntakePacket: assessmentBoundary?.typedIntakePacket || null,
-      aiInterpretationProposal: assessmentBoundary?.aiInterpretationProposal || null,
-      starting_fresh: startingFresh,
-    };
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 3200));
-      await onComplete(payload);
-    } catch (error) {
-      const failureMessage = sanitizeIntakeText(
-        error?.message
-          ? `I hit a problem while finishing onboarding: ${error.message}`
-          : "I hit a problem while finishing onboarding. Please try again."
-      );
-      setConfirmBuildError(failureMessage);
-      setConfirmBuildSubmitting(false);
-      setPhase("review");
-      appendCoachMessage(failureMessage);
+    if (refreshedConfirmation?.reason) {
+      setConfirmBuildError(refreshedConfirmation.reason);
     }
   };
+  const finalizePlan = async () => {
+    if (confirmBuildSubmitting || confirmBuildLockRef.current) return;
+    setConfirmBuildError("");
+    const refreshedState = refreshReviewMachineState();
+    const latestConfirmationState = refreshedState?.draft?.confirmationState || activeConfirmationState || null;
+    const latestAllowsProceed = latestConfirmationState?.status === "proceed" || latestConfirmationState?.status === "warn";
+    const latestCanConfirm = Boolean(latestConfirmationState?.canConfirm);
+    const latestRequiresAcknowledgement = Boolean(latestConfirmationState?.requiresAcknowledgement);
+    const acknowledgementMissing = latestRequiresAcknowledgement && !confirmWarningAcknowledged;
+    if ((!latestAllowsProceed || !latestCanConfirm) && latestConfirmationState?.next_required_field) {
+      jumpToNextRequiredDetail();
+      return;
+    }
+    if (!latestAllowsProceed || !latestCanConfirm || acknowledgementMissing) {
+      const blockedReason = acknowledgementMissing
+        ? "Please confirm that you understand this timeline is aggressive."
+        : latestConfirmationState?.reason || "I still need a little more grounded context before I can build your plan.";
+      const blockedTopic = acknowledgementMissing
+        ? "confirm_blocked_acknowledgement"
+        : `confirm_blocked_${String(latestConfirmationState?.next_required_field || latestConfirmationState?.status || "generic").replace(/\W+/g, "_").toLowerCase() || "generic"}`;
+      const blockedMessageKey = `review_note:${blockedTopic}`;
+      const currentTransitionId = intakeMachineRef.current?.transition_id || refreshedState?.transition_id || "";
+      const currentStage = intakeMachineRef.current?.stage || refreshedState?.stage || INTAKE_MACHINE_STATES.REVIEW_CONFIRM;
+      setConfirmBuildError(blockedReason);
+      setPhase("review");
+      appendCoachMessage({
+        text: blockedReason,
+        message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
+        transition_id: currentTransitionId,
+        stage: currentStage,
+        message_key: blockedMessageKey,
+        idempotency_key: blockedMessageKey,
+      });
+      return;
+    }
+    confirmBuildLockRef.current = true;
+    setConfirmBuildSubmitting(true);
+    const confirmedState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_CONFIRMED, {
+      acknowledged_warning: confirmWarningAcknowledged,
+      now: new Date().toISOString(),
+    });
+    appendUserMessage("Confirm and build my plan");
+    if (confirmedState?.draft?.commitRequested) {
+      setPhase("building");
+      return;
+    }
+    confirmBuildLockRef.current = false;
+    setConfirmBuildSubmitting(false);
+    setPhase("review");
+    setConfirmBuildError(confirmedState?.ui?.clearReason || "I couldn't lock the confirmed goal stack yet.");
+  };
+  useEffect(() => {
+    const commitValidation = validateIntakeCommitRequest(intakeMachine?.draft?.commitRequest || null);
+    if (!Boolean(intakeMachine?.draft?.commitRequested)) return;
+    if (!commitValidation.ok || !commitValidation.commitRequest) {
+      confirmBuildLockRef.current = false;
+      setConfirmBuildSubmitting(false);
+      setPhase("review");
+      if (commitValidation.reason) setConfirmBuildError(commitValidation.reason);
+      return;
+    }
+    const snapshotId = commitValidation.confirmation_snapshot_id;
+    if (!snapshotId) return;
+    if (committedCommitSnapshotIdsRef.current.has(snapshotId)) return;
+    if (activeCommitSnapshotIdRef.current === snapshotId) return;
+    activeCommitSnapshotIdRef.current = snapshotId;
+
+    const runCommit = async () => {
+      const payload = {
+        ...answers,
+        intake_commit: commitValidation.commitRequest,
+        goal_stack_confirmation: commitValidation.commitRequest?.goalStackConfirmation || goalStackConfirmation,
+        typedIntakePacket: commitValidation.commitRequest?.typedIntakePacket || assessmentBoundary?.typedIntakePacket || null,
+        aiInterpretationProposal: commitValidation.commitRequest?.aiInterpretationProposal || null,
+        timeline_assessment: assessmentText,
+        confirmation_snapshot_id: snapshotId,
+        starting_fresh: startingFresh,
+      };
+      try {
+        if (typeof window !== "undefined" && typeof window.dispatchEvent === "function" && typeof window.CustomEvent === "function") {
+          window.dispatchEvent(new window.CustomEvent("trainer:intake-commit", {
+            detail: {
+              phase: "start",
+              confirmationSnapshotId: snapshotId,
+            },
+          }));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3200));
+        await onComplete(payload);
+        sessionPersistenceDisabledRef.current = true;
+        safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
+        committedCommitSnapshotIdsRef.current.add(snapshotId);
+        if (typeof window !== "undefined" && typeof window.dispatchEvent === "function" && typeof window.CustomEvent === "function") {
+          window.dispatchEvent(new window.CustomEvent("trainer:intake-commit", {
+            detail: {
+              phase: "success",
+              confirmationSnapshotId: snapshotId,
+            },
+          }));
+        }
+        dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.COMMIT_COMPLETED, {
+          confirmation_snapshot_id: snapshotId,
+          now: new Date().toISOString(),
+        });
+        confirmBuildLockRef.current = false;
+        setConfirmBuildSubmitting(false);
+      } catch (error) {
+        const failureMessage = sanitizeIntakeText(
+          error?.message
+            ? `I hit a problem while finishing onboarding: ${error.message}`
+            : "I hit a problem while finishing onboarding. Please try again."
+        );
+        if (typeof window !== "undefined" && typeof window.dispatchEvent === "function" && typeof window.CustomEvent === "function") {
+          window.dispatchEvent(new window.CustomEvent("trainer:intake-commit", {
+            detail: {
+              phase: "failure",
+              confirmationSnapshotId: snapshotId,
+              message: failureMessage,
+            },
+          }));
+        }
+        dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.COMMIT_FAILED, {
+          confirmation_snapshot_id: snapshotId,
+          error: failureMessage,
+          now: new Date().toISOString(),
+        });
+        confirmBuildLockRef.current = false;
+        setConfirmBuildError(failureMessage);
+        setConfirmBuildSubmitting(false);
+        setPhase("review");
+        appendCoachMessage(failureMessage);
+      } finally {
+        if (activeCommitSnapshotIdRef.current === snapshotId) {
+          activeCommitSnapshotIdRef.current = "";
+        }
+      }
+    };
+
+    runCommit();
+  }, [
+    answers,
+    assessmentBoundary?.typedIntakePacket,
+    assessmentText,
+    goalStackConfirmation,
+    intakeMachine?.draft?.commitRequest,
+    intakeMachine?.draft?.commitRequested,
+    onComplete,
+    startingFresh,
+  ]);
   const goalStackReview = buildIntakeGoalStackReviewModel({
-    resolvedGoals: reviewGoals,
-    goalResolution: assessmentPreview?.goalResolution || null,
-    goalFeasibility: assessmentPreview?.goalFeasibility || null,
+    resolvedGoals: activeReviewGoals,
+    goalResolution: activeGoalResolution,
+    goalFeasibility: activeGoalFeasibility,
     goalStackConfirmation,
   });
-  const displayedPrimaryGoal = goalStackReview?.activeGoals?.[0] || null;
+  const goalReviewContract = goalStackReview?.reviewContract || activeReviewModel?.reviewContract || null;
+  const heardGoalRows = useMemo(() => {
+    const prioritizedGoals = [
+      ...(Array.isArray(goalStackReview?.activeGoals) ? goalStackReview.activeGoals : []),
+      ...(Array.isArray(goalStackReview?.backgroundGoals) ? goalStackReview.backgroundGoals : []),
+    ];
+    const seenGoalIds = new Set();
+    const rows = prioritizedGoals
+      .filter((goal) => {
+        const goalId = String(goal?.id || "").trim();
+        const goalSummary = sanitizeIntakeText(goal?.summary || "");
+        const dedupeKey = goalId || goalSummary.toLowerCase();
+        if (!dedupeKey || seenGoalIds.has(dedupeKey)) return false;
+        seenGoalIds.add(dedupeKey);
+        return Boolean(goalSummary);
+      })
+      .map((goal, index) => ({
+        id: String(goal?.id || `heard_goal_${index}`).trim(),
+        summary: sanitizeIntakeText(goal?.summary || ""),
+        detail: joinDisplayParts([
+          index === 0 ? "Leading now" : sanitizeIntakeText(goal?.roleLabel || "Also heard"),
+          sanitizeIntakeText(goal?.goalTypeLabel || "Goal"),
+        ]),
+      }));
+    const canRemove = rows.length > 1;
+    return rows.map((row) => ({
+      ...row,
+      canRemove,
+    }));
+  }, [goalStackReview]);
+  const displayedPrimaryGoal = goalReviewContract?.lead_goal || goalStackReview?.activeGoals?.[0] || null;
   const displayedTrackingLabels = Array.from(new Set(
     (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
   ));
+  const anchorCollectionViewModel = useMemo(() => buildAnchorCollectionViewModel({
+    machineState: intakeMachine,
+    maxVisibleCards: 3,
+  }), [intakeMachine]);
   const machineDebugView = useMemo(() => buildIntakeMachineDebugView(intakeMachine), [intakeMachine]);
-  const visibleMachineAnchorCards = phase === "clarify" && activeMachineAnchor?.field_id
-    ? (Array.isArray(intakeMachine?.draft?.missingAnchorsEngine?.missingAnchors) ? intakeMachine.draft.missingAnchorsEngine.missingAnchors.slice(0, 3) : [])
+  const parseDebugView = useMemo(() => buildIntakeParseDebugView({
+    state: intakeMachine,
+    debugMode: intakeDebugMode,
+    toggleEnabled: showParseDebug,
+  }), [intakeMachine, intakeDebugMode, showParseDebug]);
+  const visibleMachineAnchorCards = phase === "clarify" && anchorCollectionViewModel?.isVisible
+    ? (Array.isArray(anchorCollectionViewModel?.visibleCards) ? anchorCollectionViewModel.visibleCards : [])
     : [];
-  const isMachineAnchorClarification = phase === "clarify" && Boolean(activeMachineAnchor?.field_id);
+  const isMachineAnchorClarification = phase === "clarify" && Boolean(anchorCollectionViewModel?.isVisible);
+  const activeAnchorFailureCount = isMachineAnchorClarification
+    ? Number(intakeMachine?.anchorFailureCounts?.[activeMachineAnchor?.field_id] || 0)
+    : 0;
+  const activeAnchorStrictMode = isMachineAnchorClarification && activeAnchorFailureCount >= 2;
+  const allowNaturalAnchorMode = isMachineAnchorClarification && !activeAnchorStrictMode && activeMachineAnchor?.input_type !== "choice_chips";
+  const canEditLastAnchorAnswer = Boolean(
+    isMachineAnchorClarification
+    && Array.isArray(intakeMachine?.anchorBindingLog)
+    && intakeMachine.anchorBindingLog.length > 0
+  );
   const isStructuredClarification = isMachineAnchorClarification || (phase === "clarify" && isStructuredIntakeCompletenessQuestion(pendingClarifyingQuestion));
   const activeMachineAnchorSubmission = isMachineAnchorClarification ? buildAnchorSubmissionPayload(activeMachineAnchor) : null;
   const clarificationInputFields = isMachineAnchorClarification
     ? []
     : (Array.isArray(pendingClarifyingQuestion?.inputFields) ? pendingClarifyingQuestion.inputFields : []);
-  const clarificationPromptText = activeMachineAnchor?.question || pendingClarifyingQuestion?.prompt || "";
+  const clarificationPromptText = activeMachineAnchor?.field_id
+    ? (activeAnchorDisplayCopy?.questionText || activeMachineAnchor?.question || "")
+    : (pendingClarifyingQuestion?.prompt || "");
   const clarificationValidationMessage = activeMachineAnchor?.validation?.message || pendingClarifyingQuestion?.validation?.message || "";
+  useEffect(() => {
+    if (!intakeDebugMode && showParseDebug) setShowParseDebug(false);
+  }, [intakeDebugMode, showParseDebug]);
   const setLeadingGoal = (goalId) => {
-    setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
+    const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
       resolvedGoals: reviewGoals,
       goalFeasibility: assessmentPreview?.goalFeasibility || null,
       goalStackConfirmation: {
-        ...(prev || {}),
+        ...(goalStackConfirmation || {}),
         primaryGoalId: goalId,
-        removedGoalIds: (Array.isArray(prev?.removedGoalIds) ? prev.removedGoalIds : []).filter((id) => id !== goalId),
+        removedGoalIds: (Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []).filter((id) => id !== goalId),
         rolesByGoalId: {
-          ...(prev?.rolesByGoalId || {}),
+          ...(goalStackConfirmation?.rolesByGoalId || {}),
           [goalId]: GOAL_STACK_ROLES.primary,
         },
       },
-    }));
+    });
+    applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
   };
   const updateSecondaryGoalMode = (goalId, mode = GOAL_STACK_ROLES.maintained) => {
-    setGoalStackConfirmation((prev) => {
-      const removedGoalIds = new Set(Array.isArray(prev?.removedGoalIds) ? prev.removedGoalIds : []);
-      const rolesByGoalId = { ...(prev?.rolesByGoalId || {}) };
-      if (mode === "removed") {
-        removedGoalIds.add(goalId);
-        delete rolesByGoalId[goalId];
-      } else {
-        removedGoalIds.delete(goalId);
-        rolesByGoalId[goalId] = mode;
-      }
-      return buildIntakeGoalStackConfirmation({
-        resolvedGoals: reviewGoals,
-        goalFeasibility: assessmentPreview?.goalFeasibility || null,
-        goalStackConfirmation: {
-          ...(prev || {}),
-          removedGoalIds: [...removedGoalIds],
-          rolesByGoalId,
-        },
-      });
-    });
-  };
-  const toggleBackgroundPriority = () => {
-    setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
+    const removedGoalIds = new Set(Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []);
+    const rolesByGoalId = { ...(goalStackConfirmation?.rolesByGoalId || {}) };
+    if (mode === "removed") {
+      removedGoalIds.add(goalId);
+      delete rolesByGoalId[goalId];
+    } else {
+      removedGoalIds.delete(goalId);
+      rolesByGoalId[goalId] = mode;
+    }
+    const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
       resolvedGoals: reviewGoals,
       goalFeasibility: assessmentPreview?.goalFeasibility || null,
       goalStackConfirmation: {
-        ...(prev || {}),
-        keepResiliencePriority: prev?.keepResiliencePriority === false,
+        ...(goalStackConfirmation || {}),
+        removedGoalIds: [...removedGoalIds],
+        rolesByGoalId,
       },
-    }));
+    });
+    applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
+  };
+  const removeHeardGoal = (goalId = "") => {
+    const cleanGoalId = String(goalId || "").trim();
+    if (!cleanGoalId || heardGoalRows.length <= 1) return;
+    const removedGoalIds = new Set(Array.isArray(goalStackConfirmation?.removedGoalIds) ? goalStackConfirmation.removedGoalIds : []);
+    removedGoalIds.add(cleanGoalId);
+    const rolesByGoalId = { ...(goalStackConfirmation?.rolesByGoalId || {}) };
+    delete rolesByGoalId[cleanGoalId];
+    const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
+      resolvedGoals: reviewGoals,
+      goalFeasibility: assessmentPreview?.goalFeasibility || null,
+      goalStackConfirmation: {
+        ...(goalStackConfirmation || {}),
+        removedGoalIds: [...removedGoalIds],
+        rolesByGoalId,
+      },
+    });
+    applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
+  };
+  const toggleBackgroundPriority = () => {
+    const nextGoalStackConfirmation = buildIntakeGoalStackConfirmation({
+      resolvedGoals: reviewGoals,
+      goalFeasibility: assessmentPreview?.goalFeasibility || null,
+      goalStackConfirmation: {
+        ...(goalStackConfirmation || {}),
+        keepResiliencePriority: goalStackConfirmation?.keepResiliencePriority === false,
+      },
+    });
+    applyGoalStackConfirmationUpdate(nextGoalStackConfirmation);
   };
 
   return (
-    <div style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, rgba(0,194,255,0.12), transparent 36%), radial-gradient(110% 110% at 100% 0%, rgba(124,92,255,0.18), transparent 40%), linear-gradient(180deg,#05080f 0%, #0a1322 55%, #0d182b 100%)", padding:"1.25rem 1rem 1.5rem" }}>
+    <div
+      data-testid="intake-root"
+      data-intake-phase={phase}
+      data-intake-stage={String(intakeMachine?.stage || "")}
+      data-current-question-key={String(currentPrompt?.key || "")}
+      data-current-field-id={String(activeMachineAnchor?.field_id || "")}
+      data-current-anchor-id={String(activeMachineAnchor?.anchor_id || "")}
+      data-confirmation-status={String(activeConfirmationState?.status || "")}
+      style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, rgba(0,194,255,0.12), transparent 36%), radial-gradient(110% 110% at 100% 0%, rgba(124,92,255,0.18), transparent 40%), linear-gradient(180deg,#05080f 0%, #0a1322 55%, #0d182b 100%)", padding:"1.25rem 1rem 1.5rem" }}
+    >
       <div style={{ width:"100%", maxWidth:860, display:"grid", gridTemplateRows:"auto 1fr", gap:"1rem" }}>
         <div style={{ display:"flex", alignItems:"center", gap:"0.75rem", color:"#dbe7f6" }}>
           <div style={{ width:42, height:42, borderRadius:999, display:"grid", placeItems:"center", background:"linear-gradient(135deg,#13243a 0%, #1a3553 100%)", border:"1px solid rgba(111,148,198,0.28)", fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, letterSpacing:"0.08em" }}>
@@ -8308,9 +9492,15 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           </div>
         </div>
         <div style={{ border:"1px solid rgba(111,148,198,0.18)", borderRadius:24, background:"rgba(8,14,25,0.82)", boxShadow:"0 24px 54px rgba(0,0,0,0.36)", minHeight:0, overflow:"hidden", display:"grid", gridTemplateRows:"1fr auto" }}>
-          <div ref={scrollRef} style={{ padding:"1.1rem 1rem 0.8rem", overflowY:"auto", display:"grid", gap:"0.7rem", alignContent:"start" }}>
+          <div data-testid="intake-transcript" ref={scrollRef} style={{ padding:"1.1rem 1rem 0.8rem", overflowY:"auto", display:"grid", gap:"0.7rem", alignContent:"start" }}>
             {messages.map((message) => (
-              <div key={message.id} style={{ justifySelf:message.role === "user" ? "end" : "start", maxWidth:"min(78ch, 88%)" }}>
+              <div
+                key={message.id}
+                data-testid="intake-message"
+                data-message-role={message.role}
+                data-message-key={String(message.message_key || message.idempotency_key || "")}
+                style={{ justifySelf:message.role === "user" ? "end" : "start", maxWidth:"min(78ch, 88%)" }}
+              >
                 <div style={{
                   background:message.role === "user" ? "linear-gradient(135deg, rgba(0,194,255,0.22), rgba(0,194,255,0.08))" : "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
                   border:message.role === "user" ? "1px solid rgba(0,194,255,0.28)" : "1px solid rgba(111,148,198,0.18)",
@@ -8328,7 +9518,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
               </div>
             ))}
             {assessing && (
-              <div style={{ justifySelf:"start", maxWidth:"88%" }}>
+              <div data-testid="intake-assessing" style={{ justifySelf:"start", maxWidth:"88%" }}>
                 <div style={{ background:"linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))", border:"1px solid rgba(111,148,198,0.18)", borderRadius:"18px 18px 18px 6px", padding:"0.72rem 0.88rem", fontSize:"0.84rem", color:"#8fa5c8" }}>
                   Coach is sizing up the timeline...
                 </div>
@@ -8337,11 +9527,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           </div>
           <div style={{ borderTop:"1px solid rgba(111,148,198,0.14)", padding:"0.9rem 1rem 1rem", background:"rgba(7,12,21,0.92)" }}>
             {phase === "questions" && currentPrompt && !isCoachStreaming && (
-              <div style={{ display:"grid", gap:"0.6rem" }}>
+              <div data-testid="intake-question-step" style={{ display:"grid", gap:"0.6rem" }}>
                 {currentPrompt.type === "buttons" && (
                   <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min(currentPrompt.options.length, 4)}, minmax(0,1fr))`, gap:"0.45rem" }}>
                     {currentPrompt.options.map((option) => (
-                      <button key={option} className="btn" onClick={() => submitCurrentAnswer(option)} style={{ minHeight:46, fontSize:"0.68rem", color:"#dbe7f6", borderColor:"#324961" }}>
+                      <button key={option} data-testid={`intake-question-option-${toTestIdFragment(currentPrompt.key)}-${toTestIdFragment(option)}`} className="btn" onClick={() => submitCurrentAnswer(option)} style={{ minHeight:46, fontSize:"0.68rem", color:"#dbe7f6", borderColor:"#324961" }}>
                         {option}
                       </button>
                     ))}
@@ -8355,6 +9545,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         return (
                           <button
                             key={option}
+                            data-testid={`intake-question-option-${toTestIdFragment(currentPrompt.key)}-${toTestIdFragment(option)}`}
                             className="btn"
                             onClick={() => setEquipmentSelection((prev) => selected ? prev.filter((item) => item !== option) : [...prev, option])}
                             style={{ fontSize:"0.64rem", color:selected ? C.green : "#c4d4ec", borderColor:selected ? C.green+"45" : "#324961", background:selected ? "rgba(39,245,154,0.09)" : undefined }}
@@ -8365,9 +9556,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       })}
                     </div>
                     {equipmentSelection.includes("Other") && (
-                      <input ref={composerRef} value={equipmentOther} onChange={(e) => setEquipmentOther(e.target.value)} placeholder="Other home setup" />
+                      <input data-testid="intake-question-input-home-equipment-other" ref={composerRef} value={equipmentOther} onChange={(e) => setEquipmentOther(e.target.value)} placeholder="Other home setup" />
                     )}
-                    <button className="btn btn-primary" onClick={submitEquipmentAnswer} disabled={equipmentSelection.length === 0 || (equipmentSelection.includes("Other") && !equipmentOther.trim())}>
+                    <button data-testid="intake-question-continue" className="btn btn-primary" onClick={submitEquipmentAnswer} disabled={equipmentSelection.length === 0 || (equipmentSelection.includes("Other") && !equipmentOther.trim())}>
                       Continue
                     </button>
                   </div>
@@ -8375,6 +9566,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                 {(currentPrompt.type === "text" || currentPrompt.type === "text_optional") && (
                   <div style={{ display:"grid", gap:"0.5rem" }}>
                     <textarea
+                      data-testid={`intake-question-input-${toTestIdFragment(currentPrompt.key)}`}
                       ref={composerRef}
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
@@ -8383,11 +9575,16 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                       style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
                     />
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={() => submitCurrentAnswer(draft)} disabled={!draft.trim()}>
+                      <button data-testid="intake-question-send" className="btn btn-primary" onClick={() => submitCurrentAnswer(draft)} disabled={!draft.trim()}>
                         Send
                       </button>
+                      {currentPrompt.key === "goal_intent" && (
+                        <button data-testid="intake-question-foundation" className="btn" onClick={submitFoundationStart} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
+                          Start with a foundation plan
+                        </button>
+                      )}
                       {currentPrompt.type === "text_optional" && (
-                        <button className="btn" onClick={() => submitCurrentAnswer(currentPrompt.skipValue || currentPrompt.skipLabel)} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
+                        <button data-testid="intake-question-skip" className="btn" onClick={() => submitCurrentAnswer(currentPrompt.skipValue || currentPrompt.skipLabel)} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
                           {currentPrompt.skipLabel}
                         </button>
                       )}
@@ -8398,9 +9595,44 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             )}
 
             {(phase === "review" || phase === "clarify" || phase === "secondary_goal") && !isCoachStreaming && (
-              <div style={{ display:"grid", gap:"0.65rem" }}>
+              <div data-testid="intake-structured-step" style={{ display:"grid", gap:"0.65rem" }}>
+                {heardGoalRows.length > 0 && (
+                  <div data-testid="intake-heard-goals" style={{ border:"1px solid rgba(111,148,198,0.16)", borderRadius:16, padding:"0.78rem 0.84rem", background:"rgba(10,18,32,0.68)", display:"grid", gap:"0.5rem" }}>
+                    <div style={{ display:"grid", gap:"0.18rem" }}>
+                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>HERE'S WHAT I HEARD</div>
+                      <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                        {heardGoalRows.length > 1
+                          ? "If one of these is off, remove it before I ask for the next detail."
+                          : "This is the goal I’m building around right now."}
+                      </div>
+                    </div>
+                    <div style={{ display:"grid", gap:"0.45rem" }}>
+                      {heardGoalRows.map((goal) => (
+                        <div key={goal.id} data-testid="intake-heard-goal-row" data-goal-id={goal.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", border:"1px solid rgba(111,148,198,0.12)", borderRadius:14, padding:"0.62rem 0.68rem", background:"rgba(7,18,33,0.78)" }}>
+                          <div style={{ display:"grid", gap:"0.16rem", flex:"1 1 220px" }}>
+                            <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.35, fontWeight:600 }}>{goal.summary}</div>
+                            {goal.detail && (
+                              <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{goal.detail}</div>
+                            )}
+                          </div>
+                          {goal.canRemove && (
+                            <button
+                              data-testid={`intake-heard-goal-remove-${toTestIdFragment(goal.id)}`}
+                              className="btn"
+                              onClick={() => removeHeardGoal(goal.id)}
+                              disabled={assessing || naturalAnchorSubmitting || confirmBuildSubmitting}
+                              style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {phase === "clarify" ? (
-                  <div style={{ display:"grid", gap:"0.5rem" }}>
+                  <div data-testid="intake-clarify-step" style={{ display:"grid", gap:"0.5rem" }}>
                     <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>
                       {isMachineAnchorClarification || isStructuredClarification ? "One required detail" : "One targeted clarification"}
                     </div>
@@ -8412,8 +9644,28 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     )}
                     {isMachineAnchorClarification ? (
                       <div style={{ display:"grid", gap:"0.65rem" }}>
+                        <div style={{ border:"1px solid rgba(0,194,255,0.18)", borderRadius:18, padding:"0.78rem 0.84rem", background:"linear-gradient(180deg, rgba(0,194,255,0.08), rgba(15,23,42,0.72))" }}>
+                          <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>REQUIRED DETAILS</div>
+                          <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.4 }}>
+                            {anchorCollectionViewModel?.heading || "A few quick details before I lock this in."}
+                          </div>
+                          {anchorCollectionViewModel?.goalSummary && (
+                            <div style={{ fontSize:"0.52rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.5 }}>
+                              Goal: {anchorCollectionViewModel.goalSummary}
+                            </div>
+                          )}
+                          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
+                            {anchorCollectionViewModel?.progressLabel || ""}
+                          </div>
+                          <div style={{ fontSize:"0.49rem", color:"#64748b", marginTop:"0.12rem", lineHeight:1.45 }}>
+                            {anchorCollectionViewModel?.helperText || ""}
+                          </div>
+                        </div>
                         {visibleMachineAnchorCards.map((anchorCard, index) => {
                           const isActiveCard = index === 0;
+                          const displayedAnchorCopy = isActiveCard
+                            ? activeAnchorDisplayCopy
+                            : resolveCoachVoiceDisplayCopy({ anchor: anchorCard, phrasing: null });
                           const fieldId = anchorCard.field_id;
                           const fieldValue = String(clarificationValues?.[fieldId] || "");
                           const unitKey = `${fieldId}__unit`;
@@ -8429,6 +9681,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           return (
                             <div
                               key={anchorCard.anchor_id}
+                              data-testid={isActiveCard ? "intake-anchor-card-active" : "intake-anchor-card-upcoming"}
+                              data-field-id={fieldId}
+                              data-anchor-id={anchorCard.anchor_id}
                               style={{
                                 display:"grid",
                                 gap:"0.55rem",
@@ -8442,22 +9697,22 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                               <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"baseline" }}>
                                 <div style={{ display:"grid", gap:"0.18rem" }}>
                                   <div style={{ fontSize:"0.46rem", color:isActiveCard ? "#8fa5c8" : "#64748b", letterSpacing:"0.12em" }}>
-                                    {isActiveCard ? "ACTIVE FIELD" : "UP NEXT"}
+                                    {anchorCard.status_label || (isActiveCard ? "NOW" : "NEXT")}
                                   </div>
                                   <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.35 }}>{anchorCard.label}</div>
                                 </div>
                                 <div style={{ fontSize:"0.48rem", color:"#64748b" }}>
-                                  {index + 1} / {Math.max(visibleMachineAnchorCards.length, 1)}
+                                  {anchorCard.stack_position || index + 1} / {Math.max(anchorCollectionViewModel?.totalRemaining || visibleMachineAnchorCards.length, 1)}
                                 </div>
                               </div>
-                              {anchorCard.why_it_matters && (
+                              {displayedAnchorCopy?.helperText && (
                                 <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>
-                                  {anchorCard.why_it_matters}
+                                  {displayedAnchorCopy.helperText}
                                 </div>
                               )}
-                              {anchorCard.coach_voice_line && (
+                              {displayedAnchorCopy?.reassuranceLine && (
                                 <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                                  {anchorCard.coach_voice_line}
+                                  {displayedAnchorCopy.reassuranceLine}
                                 </div>
                               )}
                               {isActiveCard ? (
@@ -8470,6 +9725,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                           return (
                                             <button
                                               key={option.value}
+                                              data-testid={`intake-anchor-choice-${toTestIdFragment(fieldId)}-${toTestIdFragment(option.value)}`}
                                               className="btn"
                                               onClick={() => updateClarificationValue(fieldId, option.value)}
                                               style={{
@@ -8492,7 +9748,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       )}
                                     </div>
                                   )}
-                                  {anchorCard.input_type === "date_or_month" && (
+                                  {anchorEntryMode !== "natural" && anchorCard.input_type === "date_or_month" && (
                                     <div style={{ display:"grid", gap:"0.5rem" }}>
                                       <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
                                         {[
@@ -8503,6 +9759,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                           return (
                                             <button
                                               key={option.value}
+                                              data-testid={`intake-anchor-date-mode-${toTestIdFragment(option.value)}`}
                                               className="btn"
                                               onClick={() => updateClarificationValue(modeKey, option.value)}
                                               style={{
@@ -8519,6 +9776,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                         })}
                                       </div>
                                       <input
+                                        data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}`}
                                         ref={composerRef}
                                         type={selectedMode === "date" ? "date" : "month"}
                                         value={fieldValue}
@@ -8527,10 +9785,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       />
                                     </div>
                                   )}
-                                  {anchorCard.input_type === "number_with_unit" && (
+                                  {anchorEntryMode !== "natural" && anchorCard.input_type === "number_with_unit" && (
                                     <div style={{ display:"grid", gap:"0.5rem" }}>
                                       <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
                                         <input
+                                          data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}`}
                                           ref={composerRef}
                                           type="number"
                                           inputMode="decimal"
@@ -8553,6 +9812,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                               return (
                                                 <button
                                                   key={option.value}
+                                                  data-testid={`intake-anchor-unit-${toTestIdFragment(fieldId)}-${toTestIdFragment(option.value)}`}
                                                   className="btn"
                                                   onClick={() => updateClarificationValue(unitKey, option.value)}
                                                   style={{
@@ -8576,22 +9836,73 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       </div>
                                     </div>
                                   )}
-                                  {anchorCard.input_type === "strength_top_set" && (
-                                    <input
-                                      ref={composerRef}
-                                      type="text"
-                                      value={fieldValue}
-                                      onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
-                                      placeholder={anchorCard.placeholder || "Example: 185x5"}
-                                      style={{
-                                        fontSize:"0.86rem",
-                                        borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
-                                        boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
-                                      }}
-                                    />
+                                  {anchorEntryMode !== "natural" && anchorCard.input_type === "strength_top_set" && (
+                                    <div style={{ display:"grid", gap:"0.5rem" }}>
+                                      <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+                                        {[
+                                          { value: "top_set", label: "Weight + reps" },
+                                          { value: "estimated_max", label: "Single / estimated max" },
+                                        ].map((option) => {
+                                          const selected = String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === option.value;
+                                          return (
+                                            <button
+                                              key={option.value}
+                                              data-testid={`intake-anchor-mode-${toTestIdFragment(fieldId)}-${toTestIdFragment(option.value)}`}
+                                              className="btn"
+                                              onClick={() => updateClarificationValue(`${fieldId}__mode`, option.value)}
+                                              style={{
+                                                minHeight:40,
+                                                fontSize:"0.58rem",
+                                                color:selected ? "#07131f" : "#dbe7f6",
+                                                borderColor:selected ? "rgba(39,245,154,0.45)" : "#324961",
+                                                background:selected ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)",
+                                              }}
+                                            >
+                                              {option.label}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                      <div style={{ display:"grid", gridTemplateColumns:String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === "estimated_max" ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap:"0.5rem" }}>
+                                        <input
+                                          data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}-weight`}
+                                          ref={composerRef}
+                                          type="number"
+                                          inputMode="decimal"
+                                          min="1"
+                                          step="any"
+                                          value={clarificationValues?.[`${fieldId}__weight`] || ""}
+                                          onChange={(e) => updateClarificationValue(`${fieldId}__weight`, e.target.value)}
+                                          placeholder="Weight"
+                                          style={{
+                                            fontSize:"0.86rem",
+                                            borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
+                                            boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                          }}
+                                        />
+                                        {String(clarificationValues?.[`${fieldId}__mode`] || "top_set") !== "estimated_max" && (
+                                          <input
+                                            data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}-reps`}
+                                            type="number"
+                                            inputMode="numeric"
+                                            min="1"
+                                            step="1"
+                                            value={clarificationValues?.[`${fieldId}__reps`] || ""}
+                                            onChange={(e) => updateClarificationValue(`${fieldId}__reps`, e.target.value)}
+                                            placeholder="Reps"
+                                            style={{
+                                              fontSize:"0.86rem",
+                                              borderColor:clarificationFieldErrors?.[fieldId] ? "rgba(255,138,0,0.65)" : undefined,
+                                              boxShadow:clarificationFieldErrors?.[fieldId] ? "0 0 0 2px rgba(255,138,0,0.12)" : undefined,
+                                            }}
+                                          />
+                                        )}
+                                      </div>
+                                    </div>
                                   )}
-                                  {anchorCard.input_type !== "choice_chips" && anchorCard.input_type !== "date_or_month" && anchorCard.input_type !== "number_with_unit" && anchorCard.input_type !== "strength_top_set" && (
+                                  {anchorEntryMode !== "natural" && anchorCard.input_type !== "choice_chips" && anchorCard.input_type !== "date_or_month" && anchorCard.input_type !== "number_with_unit" && anchorCard.input_type !== "strength_top_set" && (
                                     <input
+                                      data-testid={`intake-anchor-input-${toTestIdFragment(fieldId)}`}
                                       ref={composerRef}
                                       type={anchorCard.input_type === "number" ? "number" : "text"}
                                       inputMode={anchorCard.input_type === "number" ? "decimal" : undefined}
@@ -8621,6 +9932,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                           className="btn"
                                           onClick={() => {
                                             if (anchorCard.input_type === "choice_chips") return;
+                                            if (anchorCard.input_type === "strength_top_set") {
+                                              applyStrengthStructuredValue(fieldId, parseStrengthTopSetDraft(example));
+                                              return;
+                                            }
                                             updateClarificationValue(fieldId, example);
                                           }}
                                           style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
@@ -8630,8 +9945,84 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                       ))}
                                     </div>
                                   )}
+                                  {anchorCapturePreview?.field_id === fieldId && (
+                                    <div data-testid="intake-anchor-capture-preview" style={{ border:"1px solid rgba(0,194,255,0.2)", borderRadius:14, padding:"0.62rem", background:"rgba(3,20,36,0.72)", display:"grid", gap:"0.22rem" }}>
+                                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.1em" }}>HERE'S WHAT I CAPTURED</div>
+                                      <div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.45 }}>
+                                        {anchorCapturePreview?.captureText || "Pending capture"}
+                                      </div>
+                                      {anchorCapturePreview?.question && (
+                                        <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                                          {anchorCapturePreview.question}
+                                        </div>
+                                      )}
+                                      {(anchorCapturePreview?.evidenceSpans || []).length > 0 && (
+                                        <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>
+                                          From your reply: {(anchorCapturePreview.evidenceSpans || []).map((item) => item.text).filter(Boolean).join(" • ")}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {anchorCard.input_type === "strength_top_set" && anchorEntryMode !== "natural" ? (
+                                    <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.62rem", background:"rgba(15,23,42,0.5)", display:"grid", gap:"0.18rem" }}>
+                                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.1em" }}>STRUCTURED CAPTURE</div>
+                                      <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                                        Use the fields above so I save one clean strength baseline for this lift and nothing else.
+                                      </div>
+                                    </div>
+                                  ) : activeAnchorStrictMode ? (
+                                    <div style={{ border:"1px solid rgba(255,138,0,0.22)", borderRadius:14, padding:"0.62rem", background:"rgba(38,24,7,0.38)", display:"grid", gap:"0.18rem" }}>
+                                      <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.1em" }}>STRICT MODE</div>
+                                      <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                                        Two parsing attempts missed. Use the field control above and one of the examples so I bind only this field.
+                                      </div>
+                                    </div>
+                                  ) : allowNaturalAnchorMode ? (
+                                    <div style={{ display:"grid", gap:"0.3rem" }}>
+                                      <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                                        <button
+                                          type="button"
+                                          data-testid="intake-anchor-toggle-structured"
+                                          className="btn"
+                                          onClick={() => setAnchorEntryMode("structured")}
+                                          style={{ fontSize:"0.5rem", color:anchorEntryMode === "structured" ? "#07131f" : "#dbe7f6", borderColor:anchorEntryMode === "structured" ? "rgba(0,194,255,0.42)" : "#324961", background:anchorEntryMode === "structured" ? "linear-gradient(135deg, rgba(0,194,255,0.9), rgba(127,221,255,0.72))" : "rgba(15,23,42,0.72)" }}
+                                        >
+                                          Guided field
+                                        </button>
+                                        <button
+                                          type="button"
+                                          data-testid="intake-anchor-toggle-natural"
+                                          className="btn"
+                                          onClick={() => setAnchorEntryMode("natural")}
+                                          style={{ fontSize:"0.5rem", color:anchorEntryMode === "natural" ? "#07131f" : "#dbe7f6", borderColor:anchorEntryMode === "natural" ? "rgba(39,245,154,0.42)" : "#324961", background:anchorEntryMode === "natural" ? "linear-gradient(135deg, rgba(39,245,154,0.92), rgba(118,255,208,0.72))" : "rgba(15,23,42,0.72)" }}
+                                        >
+                                          Type instead
+                                        </button>
+                                      </div>
+                                      {anchorEntryMode === "natural" ? (
+                                        <div style={{ display:"grid", gap:"0.3rem" }}>
+                                          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>TYPE THIS DETAIL</div>
+                                          <textarea
+                                            data-testid="intake-anchor-natural-input"
+                                            value={naturalAnchorDraft}
+                                            onChange={(e) => setNaturalAnchorDraft(e.target.value)}
+                                            placeholder={anchorCard.input_type === "date_or_month" ? "Example: October 2026 or May 18, 2027" : "Example: my bench is around 185 x 5 right now"}
+                                            rows={2}
+                                            style={{ minHeight:72, resize:"vertical", fontSize:"0.82rem", lineHeight:1.45 }}
+                                          />
+                                          <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>
+                                            I'll only try to capture this field from your reply. Everything else gets ignored.
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                                          Use the guided field above by default. Switch to <b>Type instead</b> only if that is easier.
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : null}
                                   {clarificationFieldErrors?.[fieldId] && (
-                                    <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[fieldId]}</div>
+                                    <div data-testid="intake-anchor-field-error" style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.45 }}>{clarificationFieldErrors[fieldId]}</div>
                                   )}
                                 </div>
                               ) : (
@@ -8645,7 +10036,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           );
                         })}
                         {clarificationFormError && (
-                          <div style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
+                          <div data-testid="intake-clarify-form-error" style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
                             {clarificationFormError}
                           </div>
                         )}
@@ -8659,6 +10050,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                                 {field.label}{field.required ? " *" : ""}
                               </div>
                               <input
+                                data-testid={`intake-structured-input-${toTestIdFragment(field.key)}`}
                                 ref={index === 0 ? composerRef : null}
                                 type={field.inputType === "number" ? "number" : "text"}
                                 inputMode={field.inputType === "number" ? "decimal" : undefined}
@@ -8684,7 +10076,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           ))}
                         </div>
                         {clarificationFormError && (
-                          <div style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
+                          <div data-testid="intake-clarify-form-error" style={{ fontSize:"0.54rem", color:C.amber, lineHeight:1.5 }}>
                             {clarificationFormError}
                           </div>
                         )}
@@ -8701,22 +10093,33 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                     )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
                       <button
+                        data-testid="intake-save-detail"
                         className="btn btn-primary"
                         onClick={submitClarification}
                         disabled={isMachineAnchorClarification
-                          ? !activeMachineAnchorSubmission?.raw_text
+                          ? !(anchorEntryMode === "natural" ? String(naturalAnchorDraft || "").trim() : activeMachineAnchorSubmission?.raw_text) || naturalAnchorSubmitting
                           : isStructuredClarification
                           ? clarificationInputFields.every((field) => !String(clarificationValues?.[field.key] || "").trim())
                           : !draft.trim()}
                       >
-                        Save this detail
+                        {naturalAnchorSubmitting ? "Capturing..." : "Save this detail"}
                       </button>
+                      {canEditLastAnchorAnswer && (
+                        <button
+                          data-testid="intake-edit-last-answer"
+                          className="btn"
+                          onClick={editLastAnchorAnswer}
+                          style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                        >
+                          Edit last answer
+                        </button>
+                      )}
                       {!activeMachineAnchor?.field_id && !pendingClarifyingQuestion?.required && (
-                        <button className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
+                        <button data-testid="intake-keep-goal" className="btn" onClick={() => { setPendingClarifyingQuestion(null); setPhase("review"); }} style={{ color:"#9fb4d3", borderColor:"#324961" }}>
                           Keep this goal
                         </button>
                       )}
-                      <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
+                      <button data-testid="intake-adjust-goal" className="btn" onClick={() => requestAdjustment()} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
                         Adjust this goal
                       </button>
                     </div>
@@ -8724,7 +10127,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                 ) : null}
 
                 {phase === "secondary_goal" ? (
-                  <div style={{ display:"grid", gap:"0.55rem" }}>
+                  <div data-testid="intake-secondary-goal-step" style={{ display:"grid", gap:"0.55rem" }}>
                     <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Anything else?</div>
                     <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>{pendingSecondaryGoalPrompt?.prompt || ""}</div>
                     {pendingSecondaryGoalPrompt?.helperText && (
@@ -8742,6 +10145,33 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                       </div>
                     )}
+                    <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
+                      {(Array.isArray(pendingSecondaryGoalPrompt?.quickOptions) ? pendingSecondaryGoalPrompt.quickOptions : []).map((option) => {
+                        const normalizedOptionValue = String(option?.value || "").trim().toLowerCase();
+                        const isSelected = Boolean(
+                          normalizedOptionValue
+                          && secondaryGoalEntries.some((goal) => String(goal || "").trim().toLowerCase() === normalizedOptionValue)
+                        );
+                        const isCustomOption = option?.key === SECONDARY_GOAL_RESPONSE_KEYS.custom;
+                        const isSkipOption = option?.key === SECONDARY_GOAL_RESPONSE_KEYS.skip;
+                        const isActive = isCustomOption ? showSecondaryGoalCustomInput : isSelected;
+                        return (
+                          <button
+                            key={option?.key || option?.label}
+                            data-testid={`intake-secondary-option-${toTestIdFragment(option?.key || option?.label)}`}
+                            className={isActive && !isSkipOption ? "btn btn-primary" : "btn"}
+                            onClick={() => handleSecondaryGoalQuickOption(option)}
+                            style={{
+                              color: isActive && !isSkipOption ? "#08111d" : (isSkipOption ? "#9fb4d3" : "#dbe7f6"),
+                              borderColor: isActive && !isSkipOption ? "#9fb4d3" : "#324961",
+                              background: isActive && !isSkipOption ? "#dbe7f6" : "transparent",
+                            }}
+                          >
+                            {option?.label || ""}
+                          </button>
+                        );
+                      })}
+                    </div>
                     {secondaryGoalEntries.length > 0 && (
                       <div style={{ display:"grid", gap:"0.3rem" }}>
                         <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>YOUR EXTRA GOALS</div>
@@ -8749,6 +10179,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                           {secondaryGoalEntries.map((goal) => (
                             <button
                               key={goal}
+                              data-testid={`intake-secondary-chip-${toTestIdFragment(goal)}`}
                               className="btn"
                               onClick={() => setSecondaryGoalEntries((prev) => prev.filter((item) => item !== goal))}
                               style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
@@ -8759,148 +10190,220 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                         </div>
                       </div>
                     )}
-                    <textarea
-                      ref={composerRef}
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      placeholder={pendingSecondaryGoalPrompt?.placeholder || "Example: bench 225"}
-                      rows={3}
-                      style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
-                    />
+                    {showSecondaryGoalCustomInput && (
+                      <div style={{ display:"grid", gap:"0.45rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:16, padding:"0.7rem", background:"rgba(8,14,25,0.46)" }}>
+                        <textarea
+                          data-testid="intake-secondary-custom-input"
+                          ref={composerRef}
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          placeholder={pendingSecondaryGoalPrompt?.placeholder || "Example: bench 225"}
+                          rows={3}
+                          style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
+                        />
+                        <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
+                          <button
+                            data-testid="intake-secondary-add-custom"
+                            className="btn btn-primary"
+                            onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.custom })}
+                            disabled={!draft.trim()}
+                          >
+                            Add custom goal
+                          </button>
+                          <button
+                            data-testid="intake-secondary-close-custom"
+                            className="btn"
+                            onClick={() => {
+                              setDraft("");
+                              setShowSecondaryGoalCustomInput(false);
+                            }}
+                            style={{ color:"#9fb4d3", borderColor:"#324961" }}
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
                       <button
-                        className="btn btn-primary"
-                        onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.addGoal })}
-                        disabled={!draft.trim()}
-                      >
-                        Add another goal
-                      </button>
-                      <button
+                        data-testid="intake-secondary-continue"
                         className="btn"
                         onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.done })}
                         style={{ color:"#dbe7f6", borderColor:"#324961" }}
                       >
                         {secondaryGoalEntries.length ? "Continue with these goals" : "Continue"}
                       </button>
-                      <button
-                        className="btn"
-                        onClick={() => submitSecondaryGoalResponse({ key: SECONDARY_GOAL_RESPONSE_KEYS.primaryOnly, label: "No, just this goal" })}
-                        style={{ color:"#9fb4d3", borderColor:"#324961" }}
-                      >
-                        Skip for now
-                      </button>
                     </div>
                   </div>
                 ) : null}
 
-                {reviewModel && (
-                  <div style={{ display:"grid", gap:"0.65rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:18, padding:"0.8rem", background:"rgba(8,14,25,0.58)" }}>
+                {activeReviewModel && !isMachineAnchorClarification && (
+                  <div data-testid="intake-review" style={{ display:"grid", gap:"0.65rem", border:"1px solid rgba(111,148,198,0.18)", borderRadius:18, padding:"0.8rem", background:"rgba(8,14,25,0.58)" }}>
                     <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.55rem" }}>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
                         <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>GOAL</div>
-                        <div style={{ fontSize:"0.68rem", color:"#f8fbff", lineHeight:1.35 }}>{displayedPrimaryGoal?.summary || reviewModel.primarySummary || "Goal preview pending"}</div>
+                        <div style={{ fontSize:"0.68rem", color:"#f8fbff", lineHeight:1.35 }}>{displayedPrimaryGoal?.summary || activeReviewModel.primarySummary || "Goal preview pending"}</div>
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                          {reviewModel.goalTypeLabel || "Goal"}
+                          {activeReviewModel.goalTypeLabel || "Goal"}
                         </div>
                         <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          How this looks: {reviewModel.realismLabel}
+                          How this looks: {activeReviewModel.realismLabel}
                         </div>
-                        <div style={{ fontSize:"0.5rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                          Plan status: {confirmationState?.statusLabel || "Review pending"}
+                        <div style={{ fontSize:"0.5rem", color:confirmationTone, marginTop:"0.14rem", lineHeight:1.5 }}>
+                          Where this stands: {confirmationStatusLabel}
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
                         <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>WHAT WE'LL TRACK</div>
                         <div style={{ display:"grid", gap:"0.18rem" }}>
-                          {(displayedTrackingLabels.length ? displayedTrackingLabels : (reviewModel.trackingLabels.length ? reviewModel.trackingLabels : ["First 30-day success definition"])).map((item) => (
+                          {(displayedTrackingLabels.length ? displayedTrackingLabels : (activeReviewModel.trackingLabels.length ? activeReviewModel.trackingLabels : ["First 30-day success definition"])).map((item) => (
                             <div key={item} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{item}</div>
                           ))}
                         </div>
                       </div>
                       <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>NEED BEFORE I BUILD</div>
-                        <div style={{ display:"grid", gap:"0.18rem" }}>
-                          {(reviewModel.unresolvedItems.length ? reviewModel.unresolvedItems : ["Nothing critical. I have enough to build from here."]).map((item) => (
-                            <div key={item} style={{ fontSize:"0.54rem", color:reviewModel.unresolvedItems.length ? C.amber : "#8fa5c8", lineHeight:1.5 }}>{item}</div>
-                          ))}
+                        <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>COACH CHECK</div>
+                        <div style={{ fontSize:"0.54rem", color:activeReviewModel.gateExplanationText ? confirmationTone : "#8fa5c8", lineHeight:1.55 }}>
+                          {activeReviewModel.gateExplanationText || "Nothing critical. I have enough to build from here."}
                         </div>
+                        {(activeReviewModel.gateFirstBlockAlternatives || []).length > 0 && (
+                          <div style={{ display:"grid", gap:"0.34rem", marginTop:"0.34rem" }}>
+                            {(activeReviewModel.gateFirstBlockAlternatives || []).map((option) => (
+                              <div key={option.key || option.label} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:10, background:"rgba(9,14,24,0.58)", padding:"0.5rem 0.55rem" }}>
+                                <div style={{ fontSize:"0.45rem", color:"#8fa5c8", letterSpacing:"0.1em", marginBottom:"0.14rem" }}>
+                                  {String(option.label || "Option").toUpperCase()}
+                                </div>
+                                <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>{option.summary}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {(activeReviewModel.gateSuggestedRevision?.requested_data || []).length > 0 && (
+                          <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.45 }}>
+                            What would change this: {(activeReviewModel.gateSuggestedRevision?.requested_data || []).join(" - ")}
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    {goalStackReview?.activeGoals?.length > 0 && (
+                    {goalReviewContract && (
                       <div style={{ display:"grid", gap:"0.55rem" }}>
-                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>FOCUS RIGHT NOW</div>
-                        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.55rem" }}>
-                          {goalStackReview.activeGoals.map((goal, index) => {
-                            const isPrimary = goal.role === GOAL_STACK_ROLES.primary || index === 0;
-                            return (
-                              <div key={goal.id || goal.summary} style={{ border:`1px solid ${isPrimary ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.14)"}`, borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                                <div style={{ fontSize:"0.46rem", color:isPrimary ? C.green : "#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>{isPrimary ? "Lead goal" : "Also keep"}</div>
-                                <div style={{ fontSize:"0.62rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
-                                <div style={{ fontSize:"0.51rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.55 }}>
-                                  What we'll measure: {(goal.trackingLabels.length ? goal.trackingLabels : ["First 30-day success definition"]).join(" - ")}
-                                </div>
-                                {goal.tradeoff && (
-                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                                    What to expect: {goal.tradeoff}
-                                  </div>
-                                )}
-                                {!goal.tradeoff && goal.reason && (
-                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.2rem", lineHeight:1.5 }}>
-                                    {goal.reason}
-                                  </div>
-                                )}
-                                <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.45rem" }}>
-                                  {!isPrimary && (
-                                    <button className="btn" onClick={() => setLeadingGoal(goal.id)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
-                                      Make this the lead goal
-                                    </button>
-                                  )}
-                                  {!isPrimary && (
-                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                      Keep as an also-keep goal
-                                    </button>
-                                  )}
-                                  {!isPrimary && (
-                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, "removed")} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
-                                      Remove
-                                    </button>
-                                  )}
-                                </div>
+                        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>REVIEW LANES</div>
+                        {(goalReviewContract?.lane_sections || []).map((section) => {
+                          const goals = Array.isArray(section?.goals) ? section.goals : [];
+                          return (
+                            <div
+                              key={section.lane_key}
+                              data-testid={`intake-review-lane-${toTestIdFragment(section.lane_key)}`}
+                              style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}
+                            >
+                              <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>
+                                {String(section?.title || "").toUpperCase()}
                               </div>
-                            );
-                          })}
-                        </div>
-                        {goalStackReview?.backgroundGoals?.length > 0 && (
-                          <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>NOT THE FOCUS RIGHT NOW</div>
-                            <div style={{ display:"grid", gap:"0.36rem" }}>
-                              {goalStackReview.backgroundGoals.map((goal) => (
-                                <div key={goal.id} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
-                                  <div style={{ fontSize:"0.58rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35 }}>{goal.summary}</div>
-                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
-                                    {goal.reason || "We’ll keep this in mind, but it won’t drive the plan right now."}
-                                  </div>
-                                  <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.45 }}>
-                                    What we'll watch: {(goal.trackingLabels.length ? goal.trackingLabels : ["Weekly check-ins"]).join(" - ")}
-                                  </div>
-                                  <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.38rem" }}>
-                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                      Also keep this
-                                    </button>
-                                    <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.deferred)} style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}>
-                                      Not the focus right now
-                                    </button>
-                                  </div>
+                              {goals.length > 0 ? (
+                                <div style={{ display:"grid", gap:"0.36rem" }}>
+                                  {goals.map((goal) => {
+                                    const isLeadLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.leadGoal;
+                                    const isMaintainedLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.maintainedGoals;
+                                    const isSupportLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.supportGoals;
+                                    const isDeferredLane = section.lane_key === GOAL_REVIEW_LANE_KEYS.deferredGoals;
+                                    const trackingLabel = isSupportLane ? "What we'll watch" : "What we'll measure";
+                                    return (
+                                      <div
+                                        key={goal.id || goal.summary}
+                                        data-testid="intake-review-goal-card"
+                                        data-goal-id={goal.id || ""}
+                                        data-goal-role={toTestIdFragment(goal.roleLabel || (isLeadLane ? "Lead" : isMaintainedLane ? "Maintained" : isSupportLane ? "Support (background)" : "Deferred"))}
+                                        style={{ border:`1px solid ${isLeadLane ? "rgba(39,245,154,0.28)" : "rgba(111,148,198,0.12)"}`, borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}
+                                      >
+                                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap" }}>
+                                          <div style={{ fontSize:"0.6rem", color:"#f8fbff", fontWeight:600, lineHeight:1.35, flex:"1 1 240px" }}>{goal.summary}</div>
+                                          <div style={{ fontSize:"0.46rem", color:isLeadLane ? C.green : isDeferredLane ? C.amber : "#9fb4d3", background:isLeadLane ? `${C.green}14` : isDeferredLane ? `${C.amber}14` : "#162131", border:`1px solid ${isLeadLane ? `${C.green}32` : isDeferredLane ? `${C.amber}32` : "#24344b"}`, padding:"0.16rem 0.4rem", borderRadius:999, letterSpacing:"0.08em", whiteSpace:"nowrap" }}>
+                                            {goal.roleLabel || (isLeadLane ? "Lead" : isMaintainedLane ? "Maintained" : isSupportLane ? "Support (background)" : "Deferred")}
+                                          </div>
+                                        </div>
+                                        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
+                                          {goal.rationale || goal.reason || goal.tradeoff || "We'll keep this lane deliberate and explicit."}
+                                        </div>
+                                        <div style={{ fontSize:"0.49rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.45 }}>
+                                          {trackingLabel}: {(goal.trackingLabels?.length ? goal.trackingLabels : [isSupportLane ? "Weekly check-ins" : "First 30-day success definition"]).join(" - ")}
+                                        </div>
+                                        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.4rem" }}>
+                                          {!isLeadLane && (
+                                            <button
+                                              data-testid={`intake-review-action-change-priority-${toTestIdFragment(goal.id || goal.summary)}`}
+                                              className="btn"
+                                              onClick={() => setLeadingGoal(goal.id)}
+                                              style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}
+                                            >
+                                              {goalReviewContract?.actions?.changePriority?.label || "Change priority"}
+                                            </button>
+                                          )}
+                                          {!isLeadLane && isMaintainedLane && (
+                                            <button
+                                              data-testid={`intake-review-action-support-${toTestIdFragment(goal.id || goal.summary)}`}
+                                              className="btn"
+                                              onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.background)}
+                                              style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
+                                            >
+                                              Support in background
+                                            </button>
+                                          )}
+                                          {!isLeadLane && (isSupportLane || isDeferredLane) && (
+                                            <button
+                                              data-testid={`intake-review-action-maintain-${toTestIdFragment(goal.id || goal.summary)}`}
+                                              className="btn"
+                                              onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)}
+                                              style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
+                                            >
+                                              Move to maintain
+                                            </button>
+                                          )}
+                                          {!isLeadLane && !isDeferredLane && (
+                                            <button
+                                              data-testid={`intake-review-action-defer-${toTestIdFragment(goal.id || goal.summary)}`}
+                                              className="btn"
+                                              onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.deferred)}
+                                              style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
+                                            >
+                                              Defer this
+                                            </button>
+                                          )}
+                                          <button
+                                            data-testid={`intake-review-action-edit-${toTestIdFragment(goal.id || goal.summary)}`}
+                                            className="btn"
+                                            onClick={() => requestAdjustment({ goalSummary: goal.summary, goalId: goal.id })}
+                                            style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}
+                                          >
+                                            {goalReviewContract?.actions?.editGoal?.label || "Edit a goal"}
+                                          </button>
+                                          {!isLeadLane && (
+                                            <button
+                                              data-testid={`intake-review-action-drop-${toTestIdFragment(goal.id || goal.summary)}`}
+                                              className="btn"
+                                              onClick={() => updateSecondaryGoalMode(goal.id, "removed")}
+                                              style={{ fontSize:"0.5rem", color:"#9fb4d3", borderColor:"#324961" }}
+                                            >
+                                              {goalReviewContract?.actions?.dropGoal?.label || "Drop a goal"}
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
-                              ))}
+                              ) : (
+                                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                                  {section?.empty_state || "Nothing is sitting in this lane right now."}
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        )}
-                        {goalStackReview.primaryTradeoff && (
-                          <div style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>WHAT TO EXPECT</div>
-                            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalStackReview.primaryTradeoff}</div>
+                          );
+                        })}
+                        {goalReviewContract?.tradeoff_statement && (
+                          <div data-testid="intake-tradeoff-statement" style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
+                            <div style={{ fontSize:"0.46rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.2rem" }}>TRADEOFF STATEMENT</div>
+                            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalReviewContract.tradeoff_statement}</div>
                           </div>
                         )}
                         {goalStackReview.backgroundPriority && (
@@ -8920,64 +10423,88 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                             </div>
                           </div>
                         )}
-                        {goalStackReview?.deferredGoals?.length > 0 && (
-                          <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(15,23,42,0.72)" }}>
-                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.24rem" }}>LATER, NOT NOW</div>
-                            <div style={{ display:"grid", gap:"0.28rem" }}>
-                              {goalStackReview.deferredGoals.map((goal) => (
-                                <div key={goal.id} style={{ border:"1px solid rgba(111,148,198,0.12)", borderRadius:12, padding:"0.62rem", background:"rgba(9,14,24,0.58)" }}>
-                                  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
-                                    <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.4 }}>{goal.summary}</div>
-                                    <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                                      <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.background)} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#324961" }}>
-                                        Not the focus right now
-                                      </button>
-                                      <button className="btn" onClick={() => updateSecondaryGoalMode(goal.id, GOAL_STACK_ROLES.maintained)} style={{ fontSize:"0.5rem", color:C.green, borderColor:`${C.green}45` }}>
-                                        Also keep this
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
-                                    {goal.reason || "This makes more sense after the current block has a cleaner focus."}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
                 )}
 
                 {phase === "review" ? (
-                  <div style={{ display:"grid", gap:"0.55rem" }}>
+                  <div data-testid="intake-review-actions" style={{ display:"grid", gap:"0.55rem" }}>
                     <div style={{ fontSize:"0.72rem", color:"#9fb4d3", letterSpacing:"0.05em" }}>Here’s the direction I’d build from.</div>
-                    {confirmationState?.headline && (
-                      <div style={{ fontSize:"0.56rem", color:confirmationState?.state === "blocked" || confirmationState?.state === "incomplete" ? C.amber : confirmationState?.state === "warn" ? "#facc15" : "#8fa5c8", lineHeight:1.55 }}>
-                        {confirmationState.headline}
+                    <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                      Before you confirm, use the lane cards above to change priority, edit a goal, or drop a goal.
+                    </div>
+                    {confirmationHeadline && (
+                      <div style={{ fontSize:"0.56rem", color:confirmationTone, lineHeight:1.55 }}>
+                        {confirmationHeadline}
                       </div>
                     )}
                     <div style={{ display:"flex", gap:"0.5rem", flexWrap:"wrap" }}>
-                      <button className="btn btn-primary" onClick={finalizePlan} disabled={!confirmationState?.ctaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting}>
-                        {confirmationState?.ctaLabel || "Confirm and build my plan"}
+                      <button
+                        data-testid="intake-confirm-build"
+                        className="btn btn-primary"
+                        onClick={finalizePlan}
+                        disabled={!confirmCtaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting}
+                      >
+                        {goalReviewContract?.actions?.confirm?.label || "Confirm and build my plan"}
                       </button>
-                      <button className="btn" onClick={requestAdjustment} style={{ color:"#dbe7f6", borderColor:"#324961" }}>
-                        Adjust this goal
+                      <button
+                        data-testid="intake-review-edit-goal"
+                        className="btn"
+                        onClick={() => requestAdjustment()}
+                        style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                      >
+                        {goalReviewContract?.actions?.editGoal?.label || "Edit a goal"}
                       </button>
                     </div>
-                    {(confirmationState?.state === "blocked" || confirmationState?.state === "incomplete") && (
-                      <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
-                        {confirmBuildError || confirmationState?.reason || "I still need one or two details before I can build this well."}
+                    {activeConfirmationState?.status === "warn" && (
+                      <label data-testid="intake-warning-ack" style={{ display:"flex", gap:"0.45rem", alignItems:"flex-start", fontSize:"0.54rem", color:"#facc15", lineHeight:1.5 }}>
+                        <input
+                          data-testid="intake-warning-ack-checkbox"
+                          type="checkbox"
+                          checked={confirmWarningAcknowledged}
+                          onChange={(e) => setConfirmWarningAcknowledged(Boolean(e.target.checked))}
+                          style={{ marginTop:2 }}
+                        />
+                        <span>I understand this is aggressive.</span>
+                      </label>
+                    )}
+                    {(activeConfirmationState?.status === "block" || activeConfirmationState?.status === "incomplete") && (
+                      <div data-testid="intake-confirmation-blocked" style={{ display:"grid", gap:"0.45rem" }}>
+                        <div data-testid="intake-confirmation-message" style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
+                          {confirmBuildError || activeConfirmationState?.reason || "I still need one or two details before I can build this well."}
+                        </div>
+                        {confirmationNeedsList.length > 0 && (
+                          <div data-testid="intake-needs-list" style={{ display:"grid", gap:"0.24rem" }}>
+                            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em" }}>WHAT I STILL NEED</div>
+                            {confirmationNeedsList.map((item) => (
+                              <div key={item} data-testid="intake-needs-item" style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                                • {item}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {activeConfirmationState?.next_required_field && (
+                          <div>
+                            <button
+                              data-testid="intake-go-next-detail"
+                              className="btn"
+                              onClick={jumpToNextRequiredDetail}
+                              style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                            >
+                              Go to the next detail
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
-                    {confirmationState?.state === "warn" && confirmationState?.reason && (
-                      <div style={{ fontSize:"0.56rem", color:"#facc15", lineHeight:1.55 }}>
-                        {confirmationState.reason}
+                    {activeConfirmationState?.status === "warn" && activeConfirmationState?.reason && (
+                      <div data-testid="intake-confirmation-message" style={{ fontSize:"0.56rem", color:"#facc15", lineHeight:1.55 }}>
+                        {activeConfirmationState.reason}
                       </div>
                     )}
-                    {confirmationState?.state === "ready" && confirmBuildError && (
-                      <div style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
+                    {activeConfirmationState?.status === "proceed" && confirmBuildError && (
+                      <div data-testid="intake-confirmation-message" style={{ fontSize:"0.56rem", color:C.amber, lineHeight:1.55 }}>
                         {confirmBuildError}
                       </div>
                     )}
@@ -8987,25 +10514,26 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             )}
 
             {phase === "adjust" && !isCoachStreaming && (
-              <div style={{ display:"grid", gap:"0.5rem" }}>
+              <div data-testid="intake-adjust-step" style={{ display:"grid", gap:"0.5rem" }}>
                 <textarea
+                  data-testid="intake-adjust-input"
                   ref={composerRef}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  placeholder="Tell me what you want to change..."
+                  placeholder={adjustmentTargetGoal?.summary ? `Tell me what should change about "${adjustmentTargetGoal.summary}"...` : "Tell me what you want to change..."}
                   rows={3}
                   style={{ minHeight:96, resize:"vertical", fontSize:"0.9rem", lineHeight:1.55 }}
                 />
-                <button className="btn btn-primary" onClick={submitAdjustment} disabled={!draft.trim()}>
+                <button data-testid="intake-adjust-submit" className="btn btn-primary" onClick={submitAdjustment} disabled={!draft.trim()}>
                   Update this goal
                 </button>
               </div>
             )}
 
             {phase === "building" && (
-              <div style={{ display:"grid", gap:"0.4rem" }}>
+              <div data-testid="intake-building" style={{ display:"grid", gap:"0.4rem" }}>
                 <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1rem", color:"#f8fbff" }}>Building your plan...</div>
-                <div style={{ fontSize:"0.84rem", color:"#9fb4d3" }}>{BUILD_STAGES[buildingStageIndex]}</div>
+                <div data-testid="intake-building-stage" style={{ fontSize:"0.84rem", color:"#9fb4d3" }}>{BUILD_STAGES[buildingStageIndex]}</div>
                 <div style={{ width:"100%", height:6, borderRadius:999, background:"rgba(111,148,198,0.14)", overflow:"hidden" }}>
                   <div style={{ width:`${((buildingStageIndex + 1) / BUILD_STAGES.length) * 100}%`, height:"100%", borderRadius:999, background:"linear-gradient(90deg, #00c2ff, #27f59a)", transition:"width 0.45s ease" }} />
                 </div>
@@ -9018,9 +10546,464 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, deviceSyncAudit }) {
+function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
+  const normalizedAppearance = normalizeAppearanceSettings(appearance);
+  const previewMode = normalizedAppearance.mode === "Light" ? "Light" : "Dark";
+  const handleThemeChange = (themeId) => {
+    if (typeof onPatchAppearance !== "function") return;
+    onPatchAppearance({
+      ...appearance,
+      theme: themeId,
+      mode: normalizedAppearance.mode,
+    });
+  };
+  const handleModeChange = (mode) => {
+    if (typeof onPatchAppearance !== "function") return;
+    onPatchAppearance({
+      ...appearance,
+      theme: normalizedAppearance.theme,
+      mode,
+    });
+  };
+
+  return (
+    <div style={{ display:"grid", gap:"0.55rem" }}>
+      <div style={{ fontSize:"0.54rem", color:"var(--text-soft)", lineHeight:1.55 }}>
+        Pick one curated identity, then choose how it should render. The preview cards show real surface, accent, and typography differences instead of just swatches.
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
+        {BRAND_THEME_OPTIONS.map((themeOption) => {
+          const selected = normalizedAppearance.theme === themeOption.id;
+          const previewTheme = buildBrandThemeState({
+            appearance: { theme: themeOption.id, mode: previewMode },
+            systemPrefersDark: previewMode === "Dark",
+          });
+          const previewVars = previewTheme.cssVars || {};
+          return (
+            <button
+              key={themeOption.id}
+              data-testid={`settings-theme-${toTestIdFragment(themeOption.id)}`}
+              className="btn"
+              onClick={() => handleThemeChange(themeOption.id)}
+              style={{
+                padding:"0.7rem",
+                textAlign:"left",
+                display:"grid",
+                gap:"0.38rem",
+                background:selected ? "var(--surface-1)" : "var(--surface-2)",
+                borderColor:selected ? "var(--border-strong)" : "var(--border)",
+                boxShadow:selected ? "var(--shadow-1)" : "none",
+              }}
+            >
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.45rem" }}>
+                <div>
+                  <div style={{ fontFamily:"var(--font-display)", fontSize:"0.72rem", color:"var(--text-strong)" }}>{themeOption.label}</div>
+                  <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", marginTop:"0.08rem" }}>{themeOption.mood}</div>
+                </div>
+                {selected && <span className="tag" style={{ fontSize:"0.42rem" }}>Selected</span>}
+              </div>
+              <div
+                style={{
+                  display:"grid",
+                  gap:"0.32rem",
+                  borderRadius:14,
+                  padding:"0.56rem",
+                  background:previewTheme.appBackground,
+                  border:`1px solid ${previewVars["--border"] || "var(--border)"}`,
+                  boxShadow:previewVars["--shadow-1"] || "none",
+                }}
+              >
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.3rem" }}>
+                  <div style={{ fontFamily:previewVars["--font-display"], fontSize:"0.66rem", color:previewVars["--text-strong"] }}>FORMA</div>
+                  <div style={{ fontSize:"0.4rem", color:previewVars["--badge-text"], background:previewVars["--badge-bg"], border:`1px solid ${previewVars["--badge-border"]}`, borderRadius:999, padding:"0.1rem 0.28rem" }}>
+                    {previewMode}
+                  </div>
+                </div>
+                <div style={{ display:"grid", gap:"0.18rem", background:previewVars["--panel"], border:`1px solid ${previewVars["--card-border"]}`, borderRadius:12, padding:"0.45rem" }}>
+                  <div style={{ fontSize:"0.52rem", color:previewVars["--text-strong"], lineHeight:1.35 }}>Today is crisp and readable.</div>
+                  <div style={{ fontSize:"0.44rem", color:previewVars["--text-soft"], lineHeight:1.45 }}>Session card, typography, and accents should feel like a different product identity.</div>
+                  <div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap", marginTop:"0.08rem" }}>
+                    <span style={{ fontSize:"0.4rem", color:previewVars["--badge-text"], background:previewVars["--badge-bg"], border:`1px solid ${previewVars["--badge-border"]}`, borderRadius:999, padding:"0.08rem 0.26rem" }}>
+                      45 min
+                    </span>
+                    <span style={{ fontSize:"0.4rem", color:previewVars["--accent"], background:previewVars["--accent-soft"], border:`1px solid ${previewVars["--border-strong"]}`, borderRadius:999, padding:"0.08rem 0.26rem" }}>
+                      Quality day
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"0.22rem" }}>
+                  {themeOption.preview.map((swatch, index) => (
+                    <div key={`${themeOption.id}_${index}`} style={{ height:10, borderRadius:999, background:swatch, border:"1px solid rgba(255,255,255,0.08)" }} />
+                  ))}
+                </div>
+              </div>
+              <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>{themeOption.description}</div>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem" }}>
+        {BRAND_THEME_MODES.map((mode) => {
+          const selected = normalizedAppearance.mode === mode;
+          return (
+            <button
+              key={mode}
+              data-testid={`settings-theme-mode-${toTestIdFragment(mode)}`}
+              className="btn"
+              onClick={() => handleModeChange(mode)}
+              style={{
+                fontSize:"0.52rem",
+                color:selected ? "var(--tab-active-text)" : "var(--text-soft)",
+                borderColor:selected ? "var(--border-strong)" : "var(--border)",
+                background:selected ? "var(--tab-active-bg)" : "var(--surface-2)",
+              }}
+            >
+              {mode}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+        Current direction: {PRODUCT_BRAND.name}. Curated themes stay deliberately different, and `System` follows your OS while `Dark` and `Light` stay intentionally separate surfaces.
+      </div>
+    </div>
+  );
+}
+
+function ProfileSetupGate({ personalization = {}, onComplete = async () => {} }) {
+  const settings = personalization?.settings || DEFAULT_PERSONALIZATION.settings;
+  const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
+  const activeTrainingContext = deriveTrainingContextFromPersonalization({ personalization });
+  const experienceOptions = [
+    { label: "Brand new", years: 0, helper: "Just starting or restarting" },
+    { label: "About 1 year", years: 1, helper: "Some consistency, still building basics" },
+    { label: "2-4 years", years: 3, helper: "Regular training background" },
+    { label: "5+ years", years: 5, helper: "Longer training history" },
+  ];
+  const [draft, setDraft] = useState({
+    name: profile?.name && profile.name !== "Athlete" ? profile.name : "",
+    units: settings?.units?.weight === "kg" ? "metric" : "imperial",
+    timezone: profile?.timezone || DEFAULT_TIMEZONE,
+    height: profile?.height || "",
+    weight: profile?.weight || "",
+    birthYear: profile?.birthYear || "",
+    trainingAgeYears: profile?.trainingAgeYears || "",
+    environmentMode: trainingEnvironmentToDisplayMode(activeTrainingContext?.environment?.value || "") || "Home",
+    equipmentAccess: activeTrainingContext?.equipmentAccess?.value || TRAINING_EQUIPMENT_VALUES.basicGym,
+    sessionLength: activeTrainingContext?.sessionDuration?.value || TRAINING_SESSION_DURATION_VALUES.min30,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const updateDraft = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
+  const canContinue = Boolean(
+    String(draft?.name || "").trim()
+    && String(draft?.timezone || "").trim()
+    && String(draft?.height || "").trim()
+    && String(draft?.weight || "").trim()
+    && String(draft?.birthYear || "").trim()
+  );
+
+  const handleContinue = async () => {
+    if (!canContinue) {
+      setError("Add name, timezone, height, weight, and birth year before continuing.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onComplete(draft);
+    } catch (nextError) {
+      setError(nextError?.message || "Profile setup could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div data-testid="profile-setup-gate" style={{ maxWidth:680, margin:"0 auto", minHeight:"100vh", display:"grid", placeItems:"center", padding:"1rem" }}>
+      <div className="card card-strong card-hero" style={{ width:"100%", borderColor:"var(--border-strong)" }}>
+        <div style={{ display:"grid", gap:"0.3rem", marginBottom:"0.9rem" }}>
+          <div className="sect-title">Profile Setup</div>
+          <div style={{ fontSize:"0.6rem", color:"var(--text-strong)", lineHeight:1.5 }}>
+            Set the person and training reality first. This is what lets FORMA stop guessing about your body, schedule, and setup before intake starts asking goal questions.
+          </div>
+          <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
+            {["Real name and timezone", "Body + units", "Training setup defaults"].map((label) => (
+              <span key={label} className="tag" style={{ fontSize:"0.44rem" }}>{label}</span>
+            ))}
+          </div>
+        </div>
+        <div style={{ display:"grid", gap:"0.6rem" }}>
+          <div style={{ border:"1px solid var(--border)", borderRadius:16, padding:"0.78rem", background:"var(--surface-2)", display:"grid", gap:"0.5rem" }}>
+            <div>
+              <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", marginBottom:"0.12rem" }}>About you</div>
+              <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+                These fields make reminders, units, and baseline assumptions line up with a real person instead of a blank demo profile.
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:"0.42rem" }}>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Display name</span>
+                <input data-testid="profile-setup-name" value={draft.name} onChange={(e)=>updateDraft("name", e.target.value)} placeholder="What should coach call you?" />
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Timezone</span>
+                <input data-testid="profile-setup-timezone" value={draft.timezone} onChange={(e)=>updateDraft("timezone", e.target.value)} placeholder="America/Chicago" />
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Units</span>
+                <select data-testid="profile-setup-units" value={draft.units} onChange={(e)=>updateDraft("units", e.target.value)}>
+                  <option value="imperial">Imperial</option>
+                  <option value="metric">Metric</option>
+                </select>
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Birth year</span>
+                <input data-testid="profile-setup-birth-year" type="number" value={draft.birthYear} onChange={(e)=>updateDraft("birthYear", e.target.value)} placeholder="1992" />
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Height</span>
+                <input data-testid="profile-setup-height" value={draft.height} onChange={(e)=>updateDraft("height", e.target.value)} placeholder={draft.units === "metric" ? "Height in cm" : "e.g. 5'10\""} />
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Current bodyweight</span>
+                <input data-testid="profile-setup-weight" type="number" step="0.1" value={draft.weight} onChange={(e)=>updateDraft("weight", e.target.value)} placeholder={draft.units === "metric" ? "Weight in kg" : "Weight in lb"} />
+              </label>
+            </div>
+          </div>
+
+          <div style={{ border:"1px solid var(--border)", borderRadius:16, padding:"0.78rem", background:"var(--surface-2)", display:"grid", gap:"0.5rem" }}>
+            <div>
+              <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", marginBottom:"0.12rem" }}>Training reality</div>
+              <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+                These defaults shape the sessions the planner will prescribe on day one. They should reflect your normal week, not your ideal week.
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.42rem" }}>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Usual environment</span>
+                <select data-testid="profile-setup-environment" value={draft.environmentMode} onChange={(e)=>updateDraft("environmentMode", e.target.value)}>
+                  {["Home", "Gym", "Both", "Varies a lot"].map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Equipment access</span>
+                <select data-testid="profile-setup-equipment" value={draft.equipmentAccess} onChange={(e)=>updateDraft("equipmentAccess", e.target.value)}>
+                  <option value={TRAINING_EQUIPMENT_VALUES.none}>No equipment</option>
+                  <option value={TRAINING_EQUIPMENT_VALUES.dumbbells}>Dumbbells</option>
+                  <option value={TRAINING_EQUIPMENT_VALUES.basicGym}>Basic gym</option>
+                  <option value={TRAINING_EQUIPMENT_VALUES.fullGym}>Full gym</option>
+                  <option value={TRAINING_EQUIPMENT_VALUES.mixed}>Mixed setup</option>
+                </select>
+              </label>
+              <label style={{ display:"grid", gap:"0.16rem" }}>
+                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Usual session length</span>
+                <select data-testid="profile-setup-session-length" value={draft.sessionLength} onChange={(e)=>updateDraft("sessionLength", e.target.value)}>
+                  <option value={TRAINING_SESSION_DURATION_VALUES.min20}>20 min</option>
+                  <option value={TRAINING_SESSION_DURATION_VALUES.min30}>30 min</option>
+                  <option value={TRAINING_SESSION_DURATION_VALUES.min45}>45 min</option>
+                  <option value={TRAINING_SESSION_DURATION_VALUES.min60Plus}>60+ min</option>
+                </select>
+              </label>
+            </div>
+            <div style={{ display:"grid", gap:"0.22rem" }}>
+              <div style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Years of consistent training</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.32rem" }}>
+                {experienceOptions.map((option) => {
+                  const selected = Number(draft.trainingAgeYears || 0) === option.years;
+                  return (
+                    <button
+                      key={option.label}
+                      type="button"
+                      className="btn"
+                      onClick={() => updateDraft("trainingAgeYears", String(option.years))}
+                      style={{
+                        textAlign:"left",
+                        display:"grid",
+                        gap:"0.12rem",
+                        borderColor:selected ? "var(--border-strong)" : "var(--border)",
+                        background:selected ? "var(--tab-active-bg)" : "var(--surface-1)",
+                        color:selected ? "var(--tab-active-text)" : "var(--text-soft)",
+                      }}
+                    >
+                      <span style={{ fontSize:"0.48rem", color:selected ? "var(--text-strong)" : "inherit" }}>{option.label}</span>
+                      <span style={{ fontSize:"0.43rem", lineHeight:1.4 }}>{option.helper}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <input data-testid="profile-setup-training-age" type="number" min="0" max="60" value={draft.trainingAgeYears} onChange={(e)=>updateDraft("trainingAgeYears", e.target.value)} placeholder="Or type the number of years directly" />
+              <div style={{ fontSize:"0.46rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+                A close estimate is enough. This only prevents the planner from treating a detrained beginner and a longtime lifter like the same person.
+              </div>
+            </div>
+          </div>
+          {error && <div style={{ fontSize:"0.52rem", color:"#fbbf24", lineHeight:1.45 }}>{error}</div>}
+          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
+            <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.55, maxWidth:430 }}>
+              Intake stays separate. This step only locks in the person, body defaults, and training setup the planner should trust before goal interpretation begins.
+            </div>
+            <button data-testid="profile-setup-save" className="btn btn-primary" onClick={handleContinue} disabled={!canContinue || saving} style={{ fontSize:"0.54rem" }}>
+              {saving ? "Saving..." : "Continue to intake"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricsBaselinesSection({
+  athleteProfile = null,
+  personalization = {},
+  logs = {},
+  bodyweights = [],
+  onPatchProfile = async () => null,
+  saveManualProgressInputs = async () => null,
+  onSaved = () => {},
+}) {
+  const todayKey = new Date().toISOString().split("T")[0];
+  const model = useMemo(() => buildMetricsBaselinesModel({
+    athleteProfile,
+    personalization,
+    bodyweights,
+    logs,
+  }), [athleteProfile, personalization, bodyweights, logs]);
+  const supportTier = useMemo(() => buildSupportTierModel({
+    goals: athleteProfile?.goals || [],
+    domainAdapterId: athleteProfile?.primaryGoal?.resolvedGoal?.primaryDomain || "",
+    goalCapabilityStack: athleteProfile?.goalCapabilityStack || null,
+  }), [athleteProfile]);
+  const [drafts, setDrafts] = useState({
+    bodyweight: "",
+    waist: "",
+    liftExercise: "",
+    liftWeight: "",
+    liftReps: "",
+    runDistance: "",
+    runDuration: "",
+    runPace: "",
+    swimDistance: "",
+    swimDuration: "",
+    swimNote: "",
+    jumpValue: "",
+    jumpUnit: "in",
+  });
+  const [savingKey, setSavingKey] = useState("");
+
+  const updateDraft = (key, value) => setDrafts((current) => ({ ...current, [key]: value }));
+  const upsertMetricSeries = (rows = [], nextRow = {}) => {
+    const safeDate = String(nextRow?.date || todayKey).trim() || todayKey;
+    return [
+      ...(Array.isArray(rows) ? rows : []).filter((row) => String(row?.date || "") !== safeDate),
+      { ...nextRow, date: safeDate, source: "user_override" },
+    ].sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
+  };
+  const saveEntry = async (key, runSave) => {
+    setSavingKey(key);
+    try {
+      await runSave();
+      onSaved("Saved. The planner can use that anchor on the next recompute.");
+    } finally {
+      setSavingKey("");
+    }
+  };
+
+  return (
+    <div data-testid="metrics-baselines-section" style={{ display:"grid", gap:"0.45rem", marginTop:"0.45rem" }}>
+      <div style={{ display:"grid", gap:"0.14rem" }}>
+        <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>
+          {supportTier.headline}. {supportTier.basisLine}
+        </div>
+        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+          Missing or low-confidence anchors: {model.missingCards.length}. Changing any saved metric here can adapt the plan.
+        </div>
+      </div>
+      <div style={{ display:"grid", gap:"0.35rem" }}>
+        {model.cards.map((card) => (
+          <div key={card.id} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+              <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>{card.label}</div>
+              <span style={{ fontSize:"0.44rem", color:card.missing ? C.amber : "#8fa5c8", background:card.missing ? `${C.amber}12` : "#172233", padding:"0.12rem 0.32rem", borderRadius:999 }}>{card.sourceLabel}</span>
+            </div>
+            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.45 }}>{card.value}</div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{card.detail}</div>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", lineHeight:1.45 }}>{card.planningImpact}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display:"grid", gap:"0.42rem" }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-bodyweight" value={drafts.bodyweight} onChange={(e)=>updateDraft("bodyweight", e.target.value)} placeholder="Current bodyweight" />
+          <button data-testid="metrics-save-bodyweight" className="btn" onClick={() => saveEntry("bodyweight", async () => onPatchProfile({ weight: drafts.bodyweight === "" ? "" : Number(drafts.bodyweight) || "" }))} disabled={!String(drafts.bodyweight || "").trim() || savingKey === "bodyweight"} style={{ fontSize:"0.5rem" }}>{savingKey === "bodyweight" ? "Saving..." : "Save"}</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-waist" value={drafts.waist} onChange={(e)=>updateDraft("waist", e.target.value)} placeholder="Waist (optional)" />
+          <button data-testid="metrics-save-waist" className="btn" onClick={() => saveEntry("waist", async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({ manualProgressInputs: current, type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.waist, entry: { date: todayKey, value: drafts.waist, note: "Saved from Metrics / Baselines" } })))} disabled={!String(drafts.waist || "").trim() || savingKey === "waist"} style={{ fontSize:"0.5rem" }}>{savingKey === "waist" ? "Saving..." : "Save"}</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1.2fr 0.8fr 0.6fr auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-lift-exercise" value={drafts.liftExercise} onChange={(e)=>updateDraft("liftExercise", e.target.value)} placeholder="Lift benchmark" />
+          <input data-testid="metrics-input-lift-weight" value={drafts.liftWeight} onChange={(e)=>updateDraft("liftWeight", e.target.value)} placeholder="Weight" />
+          <input data-testid="metrics-input-lift-reps" value={drafts.liftReps} onChange={(e)=>updateDraft("liftReps", e.target.value)} placeholder="Reps" />
+          <button data-testid="metrics-save-lift" className="btn" onClick={() => saveEntry("lift", async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({ manualProgressInputs: current, type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.liftBenchmark, entry: { date: todayKey, exercise: drafts.liftExercise || "Lift benchmark", weight: drafts.liftWeight, reps: drafts.liftReps, sets: 1, note: "Saved from Metrics / Baselines" } })))} disabled={!drafts.liftWeight || !drafts.liftReps || savingKey === "lift"} style={{ fontSize:"0.5rem" }}>{savingKey === "lift" ? "Saving..." : "Save"}</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"0.7fr 0.8fr 0.8fr auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-run-distance" value={drafts.runDistance} onChange={(e)=>updateDraft("runDistance", e.target.value)} placeholder="Run miles" />
+          <input data-testid="metrics-input-run-duration" value={drafts.runDuration} onChange={(e)=>updateDraft("runDuration", e.target.value)} placeholder="Minutes" />
+          <input data-testid="metrics-input-run-pace" value={drafts.runPace} onChange={(e)=>updateDraft("runPace", e.target.value)} placeholder="Pace" />
+          <button data-testid="metrics-save-run" className="btn" onClick={() => saveEntry("run", async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({ manualProgressInputs: current, type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.runBenchmark, entry: { date: todayKey, distanceMiles: drafts.runDistance, durationMinutes: drafts.runDuration, paceText: drafts.runPace, note: "Saved from Metrics / Baselines" } })))} disabled={(!drafts.runDistance && !drafts.runDuration && !drafts.runPace) || savingKey === "run"} style={{ fontSize:"0.5rem" }}>{savingKey === "run" ? "Saving..." : "Save"}</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"0.8fr 0.8fr 1fr auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-swim-distance" value={drafts.swimDistance} onChange={(e)=>updateDraft("swimDistance", e.target.value)} placeholder="Swim yards" />
+          <input data-testid="metrics-input-swim-duration" value={drafts.swimDuration} onChange={(e)=>updateDraft("swimDuration", e.target.value)} placeholder="Duration" />
+          <input data-testid="metrics-input-swim-note" value={drafts.swimNote} onChange={(e)=>updateDraft("swimNote", e.target.value)} placeholder="Swim note" />
+          <button data-testid="metrics-save-swim" className="btn" onClick={() => saveEntry("swim", async () => saveManualProgressInputs((current) => ({
+            ...(current || {}),
+            measurements: { ...(current?.measurements || {}) },
+            benchmarks: { ...(current?.benchmarks || {}) },
+            metrics: {
+              ...(current?.metrics || {}),
+              swim_benchmark: upsertMetricSeries(current?.metrics?.swim_benchmark || [], {
+                date: todayKey,
+                distance: drafts.swimDistance === "" ? null : Number(drafts.swimDistance) || null,
+                duration: drafts.swimDuration,
+                note: drafts.swimNote,
+              }),
+            },
+          })))} disabled={(!drafts.swimDistance && !drafts.swimDuration && !drafts.swimNote) || savingKey === "swim"} style={{ fontSize:"0.5rem" }}>{savingKey === "swim" ? "Saving..." : "Save"}</button>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 90px auto", gap:"0.35rem" }}>
+          <input data-testid="metrics-input-jump" value={drafts.jumpValue} onChange={(e)=>updateDraft("jumpValue", e.target.value)} placeholder="Vertical jump" />
+          <select value={drafts.jumpUnit} onChange={(e)=>updateDraft("jumpUnit", e.target.value)} style={{ fontSize:"0.54rem" }}>
+            <option value="in">in</option>
+            <option value="cm">cm</option>
+          </select>
+          <button data-testid="metrics-save-jump" className="btn" onClick={() => saveEntry("jump", async () => saveManualProgressInputs((current) => ({
+            ...(current || {}),
+            measurements: { ...(current?.measurements || {}) },
+            benchmarks: { ...(current?.benchmarks || {}) },
+            metrics: {
+              ...(current?.metrics || {}),
+              vertical_jump: upsertMetricSeries(current?.metrics?.vertical_jump || [], {
+                date: todayKey,
+                value: drafts.jumpValue === "" ? null : Number(drafts.jumpValue) || null,
+                unit: drafts.jumpUnit,
+              }),
+            },
+          })))} disabled={!drafts.jumpValue || savingKey === "jump"} style={{ fontSize:"0.5rem" }}>{savingKey === "jump" ? "Saving..." : "Save"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, storageStatus = null, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], focusSection = "" }) {
   const appleHealth = personalization?.connectedDevices?.appleHealth || {};
   const garmin = personalization?.connectedDevices?.garmin || {};
+  const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
+  const appleHealthSupportedMode = typeof window !== "undefined" && safeStorageGet(localStorage, "apple_health_supported", "0") === "1";
+  const appleHealthPromptSupported = debugMode || appleHealthSupportedMode;
   const [connectOpen, setConnectOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkMsg, setCheckMsg] = useState("");
@@ -9040,14 +11023,95 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const [garminImportText, setGarminImportText] = useState("");
   const [importMsg, setImportMsg] = useState("");
   const [locationMsg, setLocationMsg] = useState("");
+  const [selectedSettingsProgramId, setSelectedSettingsProgramId] = useState("");
+  const [selectedSettingsStyleId, setSelectedSettingsStyleId] = useState("");
+  const [selectedSettingsProgramFidelityMode, setSelectedSettingsProgramFidelityMode] = useState(PROGRAM_FIDELITY_MODES.adaptToMe);
+  const [planManagementNotice, setPlanManagementNotice] = useState("");
+  const [planManagementError, setPlanManagementError] = useState("");
+  const [goalChangeMode, setGoalChangeMode] = useState(GOAL_CHANGE_MODES.refineCurrentGoal);
+  const [goalChangeIntent, setGoalChangeIntent] = useState("");
+  const [goalChangePreview, setGoalChangePreview] = useState(null);
+  const [goalChangeError, setGoalChangeError] = useState("");
+  const [goalChangeNotice, setGoalChangeNotice] = useState("");
+  const [goalChangePreviewing, setGoalChangePreviewing] = useState(false);
+  const [goalChangeApplying, setGoalChangeApplying] = useState(false);
   const settings = personalization?.settings || DEFAULT_PERSONALIZATION.settings;
   const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
   const unitSettings = settings?.units || DEFAULT_PERSONALIZATION.settings.units;
   const trainingPrefs = settings?.trainingPreferences || DEFAULT_PERSONALIZATION.settings.trainingPreferences;
   const appearance = settings?.appearance || DEFAULT_PERSONALIZATION.settings.appearance;
   const notif = settings?.notifications || DEFAULT_PERSONALIZATION.settings.notifications;
+  const coachMemory = personalization?.coachMemory || DEFAULT_PERSONALIZATION.coachMemory || {};
+  const [coachMemoryDraft, setCoachMemoryDraft] = useState({
+    failurePatterns: (coachMemory.failurePatterns || []).join(", "),
+    commonBarriers: (coachMemory.commonBarriers || []).join(", "),
+    simplicityVsVariety: coachMemory.simplicityVsVariety || "",
+    preferredFoodPatterns: (coachMemory.preferredFoodPatterns || []).join(", "),
+  });
+  const [coachApiKey, setCoachApiKey] = useState(typeof window !== "undefined"
+    ? resolveStoredAiApiKey({ safeStorageGet, storageLike: localStorage })
+    : "");
+  const goals = athleteProfile?.goals || [];
+  const programsState = useMemo(
+    () => normalizeProgramsSelectionState(personalization?.programs || createDefaultProgramSelectionState()),
+    [personalization?.programs]
+  );
+  const programDefinitions = useMemo(() => listProgramDefinitions(), []);
+  const styleDefinitions = useMemo(() => listStyleDefinitions(), []);
+  const activeBasisSnapshot = useMemo(
+    () => buildActiveBasisSnapshot({ programsState }),
+    [programsState]
+  );
+  const activeProgramDefinition = activeBasisSnapshot?.activeProgramDefinition || null;
+  const activeStyleDefinition = activeBasisSnapshot?.activeStyleDefinition || null;
+  const selectedSettingsProgramDefinition = useMemo(
+    () => getProgramDefinitionById(selectedSettingsProgramId || "") || programDefinitions?.[0] || null,
+    [selectedSettingsProgramId, programDefinitions]
+  );
+  const selectedSettingsStyleDefinition = useMemo(
+    () => getStyleDefinitionById(selectedSettingsStyleId || "") || styleDefinitions?.[0] || null,
+    [selectedSettingsStyleId, styleDefinitions]
+  );
+  const settingsProgramCompatibility = useMemo(
+    () => assessProgramCompatibility({
+      programDefinition: selectedSettingsProgramDefinition,
+      athleteProfile,
+      personalization,
+      goals,
+      fidelityMode: selectedSettingsProgramFidelityMode,
+    }),
+    [selectedSettingsProgramDefinition, athleteProfile, personalization, goals, selectedSettingsProgramFidelityMode]
+  );
+  const settingsStyleCompatibility = useMemo(
+    () => assessStyleCompatibility({
+      styleDefinition: selectedSettingsStyleDefinition,
+      programDefinition: activeProgramDefinition,
+      athleteProfile,
+      goals,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+    }),
+    [selectedSettingsStyleDefinition, activeProgramDefinition, athleteProfile, goals, programsState?.activeProgramInstance]
+  );
+  const settingsPlanBasisExplanation = useMemo(
+    () => planComposer?.planningBasis?.planBasisExplanation || buildPlanBasisExplanation({
+      athleteProfile,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+      activeStyleSelection: programsState?.activeStyleSelection || null,
+      programDefinition: activeProgramDefinition,
+      styleDefinition: activeStyleDefinition,
+      compatibilityAssessment: programsState?.lastCompatibilityAssessment || null,
+    }),
+    [planComposer, athleteProfile, programsState?.activeProgramInstance, programsState?.activeStyleSelection, programsState?.lastCompatibilityAssessment, activeProgramDefinition, activeStyleDefinition]
+  );
 
   const patchSettings = async (patch = {}) => {
+    const nextIntensityPreference = String(patch?.trainingPreferences?.intensityPreference || "").trim().toLowerCase();
+    const shouldPatchIntensityPosture = [
+      TRAINING_INTENSITY_VALUES.conservative,
+      TRAINING_INTENSITY_VALUES.standard,
+      TRAINING_INTENSITY_VALUES.aggressive,
+      TRAINING_INTENSITY_VALUES.adaptive,
+    ].includes(nextIntensityPreference);
     const next = mergePersonalization(personalization, {
       settings: {
         ...(settings || {}),
@@ -9057,6 +11121,15 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         appearance: { ...(settings?.appearance || {}), ...(patch?.appearance || {}) },
         notifications: { ...(settings?.notifications || {}), ...(patch?.notifications || {}) },
       },
+      trainingContext: shouldPatchIntensityPosture
+        ? {
+          intensityPosture: {
+            value: nextIntensityPreference,
+            confirmed: nextIntensityPreference !== TRAINING_INTENSITY_VALUES.unknown,
+            source: TRAINING_CONTEXT_SOURCES.environmentEditor,
+          },
+        }
+        : undefined,
     });
     setPersonalization(next);
     await onPersist(next);
@@ -9065,6 +11138,40 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 
   const patchProfile = async (patch = {}) => {
     const next = mergePersonalization(personalization, { profile: { ...(profile || {}), ...(patch || {}) } });
+    setPersonalization(next);
+    await onPersist(next);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+  };
+
+  const saveAccountProfile = async () => {
+    const birthYear = accountProfileDraft.birthYear === "" ? "" : Number(accountProfileDraft.birthYear) || "";
+    const normalizedWeight = accountProfileDraft.weight === "" ? "" : Number(accountProfileDraft.weight) || "";
+    const normalizedHeight = accountProfileDraft.unitsHeight === "cm"
+      ? (accountProfileDraft.height === "" ? "" : Number(accountProfileDraft.height) || "")
+      : accountProfileDraft.height;
+    const trainingAgeYears = accountProfileDraft.trainingAgeYears === "" ? "" : Math.max(0, Number(accountProfileDraft.trainingAgeYears) || 0);
+    const next = mergePersonalization(personalization, {
+      profile: {
+        ...(profile || {}),
+        name: String(accountProfileDraft.name || "").trim(),
+        timezone: String(accountProfileDraft.timezone || "").trim() || DEFAULT_TIMEZONE,
+        birthYear,
+        age: birthYear ? Math.max(13, new Date().getFullYear() - birthYear) : "",
+        height: normalizedHeight,
+        weight: normalizedWeight,
+        bodyweight: normalizedWeight,
+        trainingAgeYears,
+      },
+      settings: {
+        ...(settings || {}),
+        units: {
+          ...(unitSettings || {}),
+          weight: accountProfileDraft.unitsWeight || unitSettings?.weight || "lbs",
+          height: accountProfileDraft.unitsHeight || unitSettings?.height || "ft_in",
+          distance: accountProfileDraft.unitsDistance || unitSettings?.distance || "miles",
+        },
+      },
+    });
     setPersonalization(next);
     await onPersist(next);
     setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
@@ -9168,8 +11275,69 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const lastGarminActivity = (garmin?.activities || []).slice(-1)[0];
   const profileWeightVal = profile?.weight ?? profile?.bodyweight ?? "";
   const profileHeightVal = profile?.height ?? "";
+  const profileBirthYearVal = profile?.birthYear ?? "";
+  const profileTimezoneVal = profile?.timezone || DEFAULT_TIMEZONE;
+  const buildAccountProfileDraft = () => ({
+    name: profile?.name || "",
+    timezone: profileTimezoneVal,
+    birthYear: profileBirthYearVal === "" ? "" : String(profileBirthYearVal),
+    height: profileHeightVal ?? "",
+    weight: profileWeightVal === "" ? "" : String(profileWeightVal),
+    trainingAgeYears: profile?.trainingAgeYears === "" || profile?.trainingAgeYears == null ? "" : String(profile.trainingAgeYears),
+    unitsWeight: unitSettings?.weight || "lbs",
+    unitsHeight: unitSettings?.height || "ft_in",
+    unitsDistance: unitSettings?.distance || "miles",
+  });
+  const [accountProfileDraft, setAccountProfileDraft] = useState(buildAccountProfileDraft);
+  const resolveSettingsSurfaceFromFocus = (focus = "") => {
+    if (focus === "metrics" || focus === "plan") return "plan";
+    if (focus === "advanced") return "advanced";
+    if (focus === "profile") return "profile";
+    if (focus === "preferences" || focus === "appearance") return "preferences";
+    return "account";
+  };
+  const [activeSettingsSurface, setActiveSettingsSurface] = useState(() => resolveSettingsSurfaceFromFocus(focusSection));
+  const [metricsDetailsOpen, setMetricsDetailsOpen] = useState(focusSection === "metrics");
   const garminLastSyncLabel = garmin?.lastSyncAt ? new Date(garmin.lastSyncAt).toLocaleString() : "never";
   const formatIntegrationTimestamp = (value) => value ? new Date(value).toLocaleString() : "never";
+  const settingsSaveColor = /^Cloud reload failed:/i.test(settingsSaveMsg) ? C.amber : C.green;
+  const accountSyncState = (() => {
+    const reason = storageStatus?.reason || "";
+    if (storageStatus?.mode === "cloud" || reason === STORAGE_STATUS_REASONS.synced) {
+      return {
+        label: "Cloud sync active",
+        detail: storageStatus?.detail || "Cloud data is up to date.",
+      };
+    }
+    if (reason === STORAGE_STATUS_REASONS.transient) {
+      return {
+        label: "Sync retrying",
+        detail: storageStatus?.detail || "Cloud sync is retrying while local data stays active.",
+      };
+    }
+    if (reason === STORAGE_STATUS_REASONS.providerUnavailable) {
+      return {
+        label: "Provider unavailable",
+        detail: storageStatus?.detail || "Cloud sync provider is unavailable or misconfigured.",
+      };
+    }
+    if (reason === STORAGE_STATUS_REASONS.authRequired) {
+      return {
+        label: "Sign-in needed",
+        detail: storageStatus?.detail || "Sign in again to resume cloud sync.",
+      };
+    }
+    if (reason === STORAGE_STATUS_REASONS.signedOut || reason === STORAGE_STATUS_REASONS.notSignedIn) {
+      return {
+        label: "Signed out",
+        detail: storageStatus?.detail || "Local data is active until you sign in again.",
+      };
+    }
+    return {
+      label: "Local mode",
+      detail: storageStatus?.detail || "Local data is active on this device.",
+    };
+  })();
   const integrationStateTone = (state = "idle") => {
     if (state === "operational") return { color: C.green, bg: `${C.green}14` };
     if (state === "pending") return { color: C.blue, bg: `${C.blue}14` };
@@ -9194,9 +11362,9 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     if (appleMode === "live" && appleHealth?.lastSyncStatus === "garmin_detected") {
       return {
         state: "operational",
-        label: "Operational",
-        summary: "Apple Health is live and recent Garmin-origin workouts were verified.",
-        detail: `Last verified check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
+        label: "Recent data found",
+        summary: "Apple Health permission was requested, and recent Garmin-origin workouts were found here.",
+        detail: `Last recorded check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
       };
     }
     if (appleMode === "live") {
@@ -9204,9 +11372,9 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         state: "pending",
         label: "Connected, awaiting verification",
         summary: appleHealth?.lastSyncStatus === "health_only"
-          ? "Apple Health is connected, but Garmin-origin workouts have not been verified yet."
-          : "Apple Health permissions were requested, but a recent live workout verification has not happened yet.",
-        detail: `Last check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
+          ? "Recent Apple Health workouts were found, but Garmin-origin entries were not confirmed here yet."
+          : "Apple Health permission was requested, but recent workout data has not been confirmed here yet.",
+        detail: `Last recorded check: ${formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}.`,
       };
     }
     if (appleMode === "manual_import") {
@@ -9221,8 +11389,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       return {
         state: "simulated",
         label: "Simulated on web",
-        summary: "Apple Health cannot be authorized in this web environment, so the app is using a simulated placeholder state.",
-        detail: "Use an iPhone-capable environment for a real Apple Health permission flow.",
+        summary: "This web environment is using a simulated Apple Health placeholder, not a real device link.",
+        detail: "A real Apple Health permission flow needs an iPhone-capable environment.",
       };
     }
     if (appleHealth?.skipped) {
@@ -9230,14 +11398,14 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         state: "unavailable",
         label: "Not enabled",
         summary: "Apple Health has been skipped or not enabled yet.",
-        detail: "Connect it when you want live workout/device context.",
+        detail: "No Apple Health data is being used right now.",
       };
     }
     return {
       state: "unavailable",
       label: "Not configured",
       summary: "Apple Health is not connected.",
-      detail: "No live permission flow or manual import is active.",
+      detail: "No Apple Health permission state or manual import is active.",
     };
   })();
   const garminMode = garmin?.connectionMode || (garmin?.status === "manual_import" ? "manual_import" : garmin?.status === "connected" ? "live" : "unavailable");
@@ -9245,8 +11413,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     if (garminMode === "live" && garmin?.lastSyncAt && (garmin?.activities || []).length > 0) {
       return {
         state: "operational",
-        label: "Operational",
-        summary: "Garmin Connect is live and recent activities have synced through the server integration.",
+        label: "Recent sync found",
+        summary: "Garmin authorization exists, and recent activities were pulled through the server-side connection.",
         detail: `Last sync: ${garminLastSyncLabel}.`,
       };
     }
@@ -9262,7 +11430,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       return {
         state: "manual",
         label: "Manual import only",
-        summary: "Garmin activity data exists from a manual import, not from the live server-side integration.",
+        summary: "Garmin activity data came from a manual import, not from the server-side connection.",
         detail: `Imported: ${formatIntegrationTimestamp(garmin?.importedAt)}.`,
       };
     }
@@ -9278,8 +11446,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     if (status === "granted") {
       return {
         state: "operational",
-        label: "Available",
-        summary: "Location access is available for travel context and local nutrition guidance.",
+        label: "Permission granted",
+        summary: "Location permission was granted for travel context and local nutrition suggestions.",
       };
     }
     if (status === "denied") {
@@ -9317,8 +11485,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       const msg = recent.length === 0
         ? "No Apple Health workouts found in last 7 days."
         : hasGarmin
-        ? `Connected: ${recent.length} workouts found, Garmin sessions detected.`
-        : `Apple Health connected: ${recent.length} workouts found, but Garmin source not detected yet.`;
+        ? `Recent Apple Health data found: ${recent.length} workouts, including Garmin-origin sessions.`
+        : `Recent Apple Health data found: ${recent.length} workouts, but Garmin-origin sessions were not detected.`;
       setCheckMsg(msg);
       await persistAppleHealth({ lastConnectionCheck: Date.now(), lastSyncStatus: hasGarmin ? "garmin_detected" : "health_only" });
     } finally {
@@ -9481,13 +11649,642 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash || ""}`;
     window.history.replaceState({}, "", nextUrl);
   }, []);
+  useEffect(() => {
+    if (!selectedSettingsProgramId && programDefinitions?.[0]?.id) setSelectedSettingsProgramId(programDefinitions[0].id);
+  }, [programDefinitions, selectedSettingsProgramId]);
+  useEffect(() => {
+    if (!selectedSettingsStyleId && styleDefinitions?.[0]?.id) setSelectedSettingsStyleId(styleDefinitions[0].id);
+  }, [styleDefinitions, selectedSettingsStyleId]);
+  useEffect(() => {
+    setCoachMemoryDraft({
+      failurePatterns: (coachMemory.failurePatterns || []).join(", "),
+      commonBarriers: (coachMemory.commonBarriers || []).join(", "),
+      simplicityVsVariety: coachMemory.simplicityVsVariety || "",
+      preferredFoodPatterns: (coachMemory.preferredFoodPatterns || []).join(", "),
+    });
+  }, [
+    coachMemory.failurePatterns,
+    coachMemory.commonBarriers,
+    coachMemory.simplicityVsVariety,
+    coachMemory.preferredFoodPatterns,
+  ]);
+  useEffect(() => {
+    setAccountProfileDraft(buildAccountProfileDraft());
+  }, [
+    profile?.name,
+    profileTimezoneVal,
+    profileBirthYearVal,
+    profileHeightVal,
+    profileWeightVal,
+    profile?.trainingAgeYears,
+    unitSettings?.weight,
+    unitSettings?.height,
+    unitSettings?.distance,
+  ]);
+  useEffect(() => {
+    if (focusSection === "metrics") setMetricsDetailsOpen(true);
+  }, [focusSection]);
+  useEffect(() => {
+    if (!focusSection) return;
+    setActiveSettingsSurface(resolveSettingsSurfaceFromFocus(focusSection));
+  }, [focusSection]);
+  const saveCoachSetup = async () => {
+    const updated = mergePersonalization(personalization, {
+      coachMemory: {
+        ...(personalization?.coachMemory || {}),
+        failurePatterns: coachMemoryDraft.failurePatterns.split(",").map((item) => item.trim()).filter(Boolean),
+        commonBarriers: coachMemoryDraft.commonBarriers.split(",").map((item) => item.trim()).filter(Boolean),
+        preferredFoodPatterns: coachMemoryDraft.preferredFoodPatterns.split(",").map((item) => item.trim()).filter(Boolean),
+        simplicityVsVariety: coachMemoryDraft.simplicityVsVariety || "",
+      },
+    });
+    setPersonalization(updated);
+    if (typeof window !== "undefined") safeStorageSet(localStorage, "coach_api_key", coachApiKey || "");
+    await onPersist(updated);
+    setSettingsSaveMsg(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+  };
+  const commitSettingsProgramsState = async (nextProgramsState, notice = "") => {
+    setPlanManagementError("");
+    setPlanManagementNotice(notice);
+    await saveProgramSelection(nextProgramsState);
+  };
+  const handleSettingsActivateProgram = async () => {
+    if (!selectedSettingsProgramDefinition?.id) return;
+    if (settingsProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
+      setPlanManagementNotice("");
+      setPlanManagementError(settingsProgramCompatibility?.blockedConstraints?.[0] || settingsProgramCompatibility?.reasons?.[0] || "This program is not a clean fit right now.");
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const nextProgramInstance = createProgramInstance({
+      programDefinition: selectedSettingsProgramDefinition,
+      userId: "local",
+      fidelityMode: selectedSettingsProgramFidelityMode,
+      compatibilityAssessment: settingsProgramCompatibility,
+      athleteProfile,
+      activationDate: nowIso,
+    });
+    const nextStyleSelection = selectedSettingsProgramFidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle
+      ? null
+      : programsState?.activeStyleSelection || null;
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: programsState?.activeProgramInstance ? "replaced_program" : "activated_program",
+      programDefinition: selectedSettingsProgramDefinition,
+      fidelityMode: selectedSettingsProgramFidelityMode,
+      reason: settingsProgramCompatibility?.reasons?.[0] || buildCompatibilityHeadline(settingsProgramCompatibility),
+      createdAt: nowIso,
+    });
+    await commitSettingsProgramsState({
+      ...programsState,
+      activeProgramInstance: nextProgramInstance,
+      activeStyleSelection: nextStyleSelection,
+      lastCompatibilityAssessment: settingsProgramCompatibility,
+      planBasisExplanation: buildPlanBasisExplanation({
+        athleteProfile,
+        activeProgramInstance: nextProgramInstance,
+        activeStyleSelection: nextStyleSelection,
+        programDefinition: selectedSettingsProgramDefinition,
+        styleDefinition: selectedSettingsProgramFidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle ? null : activeStyleDefinition,
+        compatibilityAssessment: settingsProgramCompatibility,
+      }),
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    }, `${selectedSettingsProgramDefinition.displayName} is now the active program basis.`);
+  };
+  const handleSettingsActivateStyle = async () => {
+    if (!selectedSettingsStyleDefinition?.id) return;
+    if (settingsStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
+      setPlanManagementNotice("");
+      setPlanManagementError(settingsStyleCompatibility?.blockedConstraints?.[0] || settingsStyleCompatibility?.reasons?.[0] || "This style does not fit the current plan basis.");
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const nextStyleSelection = createStyleSelection({
+      styleDefinition: selectedSettingsStyleDefinition,
+      userId: "local",
+      compatibleWithCurrentPlan: settingsStyleCompatibility?.outcome !== COMPATIBILITY_OUTCOMES.incompatible,
+      influenceLevel: STYLE_INFLUENCE_LEVELS.standard,
+      activationDate: nowIso,
+    });
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: programsState?.activeStyleSelection ? "replaced_style" : "activated_style",
+      styleDefinition: selectedSettingsStyleDefinition,
+      reason: settingsStyleCompatibility?.reasons?.[0] || buildCompatibilityHeadline(settingsStyleCompatibility),
+      createdAt: nowIso,
+    });
+    await commitSettingsProgramsState({
+      ...programsState,
+      activeStyleSelection: nextStyleSelection,
+      lastCompatibilityAssessment: settingsStyleCompatibility,
+      planBasisExplanation: buildPlanBasisExplanation({
+        athleteProfile,
+        activeProgramInstance: programsState?.activeProgramInstance || null,
+        activeStyleSelection: nextStyleSelection,
+        programDefinition: activeProgramDefinition,
+        styleDefinition: selectedSettingsStyleDefinition,
+        compatibilityAssessment: settingsStyleCompatibility,
+      }),
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    }, `${selectedSettingsStyleDefinition.displayName} is now the active style layer.`);
+  };
+  const handleSettingsClearProgramLayer = async () => {
+    if (!programsState?.activeProgramInstance && !programsState?.activeStyleSelection) return;
+    const nowIso = new Date().toISOString();
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: "cleared_basis",
+      programDefinition: activeProgramDefinition,
+      styleDefinition: activeStyleDefinition,
+      fidelityMode: programsState?.activeProgramInstance?.fidelityMode || "",
+      reason: "Returned to the default goal-driven basis.",
+      createdAt: nowIso,
+    });
+    await commitSettingsProgramsState({
+      ...programsState,
+      activeProgramInstance: null,
+      activeStyleSelection: null,
+      lastCompatibilityAssessment: null,
+      planBasisExplanation: buildPlanBasisExplanation({
+        athleteProfile,
+        activeProgramInstance: null,
+        activeStyleSelection: null,
+        programDefinition: null,
+        styleDefinition: null,
+        compatibilityAssessment: null,
+      }),
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    }, "Program and style basis cleared. The planner is back on the default goal-driven basis.");
+  };
+  const handleSettingsGoalPreview = async () => {
+    const cleanGoalText = sanitizeIntakeText(goalChangeIntent || "");
+    if (!cleanGoalText) {
+      setGoalChangeError("Add the goal in plain English first.");
+      setGoalChangePreview(null);
+      return;
+    }
+    setGoalChangePreviewing(true);
+    setGoalChangeError("");
+    setGoalChangeNotice("");
+    try {
+      const preview = await previewGoalChange({
+        rawGoalText: cleanGoalText,
+        changeMode: goalChangeMode,
+      });
+      if (!preview?.orderedResolvedGoals?.length) {
+        setGoalChangeError("Preview could not resolve a clean goal stack.");
+        setGoalChangePreview(null);
+      } else {
+        setGoalChangePreview(preview);
+      }
+    } catch (error) {
+      setGoalChangeError(error?.message || "Goal preview failed.");
+      setGoalChangePreview(null);
+    } finally {
+      setGoalChangePreviewing(false);
+    }
+  };
+  const handleSettingsGoalApply = async () => {
+    if (!goalChangePreview?.orderedResolvedGoals?.length) {
+      setGoalChangeError("Preview the goal change before confirming it.");
+      return;
+    }
+    setGoalChangeApplying(true);
+    setGoalChangeError("");
+    setGoalChangeNotice("");
+    try {
+      const result = await applyGoalChange({
+        rawGoalText: goalChangeIntent,
+        changeMode: goalChangeMode,
+        previewBundle: goalChangePreview,
+      });
+      if (!result?.ok) {
+        setGoalChangeError(result?.error || "Goal change could not be applied.");
+        return;
+      }
+      setGoalChangeNotice(`${goalChangePreview?.modeMeta?.label || "Goal change"} applied.`);
+      setGoalChangeIntent("");
+      setGoalChangePreview(null);
+    } catch (error) {
+      setGoalChangeError(error?.message || "Goal change could not be applied.");
+    } finally {
+      setGoalChangeApplying(false);
+    }
+  };
+  const handleReloadCloud = async () => {
+    try {
+      await onReloadCloudData?.();
+      setSettingsSaveMsg("Reloaded cloud data.");
+    } catch (error) {
+      setSettingsSaveMsg(`Cloud reload failed: ${error?.message || "unknown error"}`);
+    }
+  };
   return (
-    <div className="fi">
+    <div className="fi" data-testid="settings-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      <div className="card card-subtle">
+        <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.7rem" }}>
+          <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:0 }}>SETTINGS</div>
+          <div style={{ fontSize:"0.55rem", color:"#8ea4c7", lineHeight:1.55 }}>
+            Account controls, plan management, appearance, integrations, and advanced setup live here instead of inside the main training tabs.
+          </div>
+          {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:settingsSaveColor }}>{settingsSaveMsg}</div>}
+        </div>
+
+        <div style={{ display:"grid", gap:"0.75rem" }}>
+          <div data-testid="settings-surface-nav" style={{ display:"grid", gap:"0.35rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              Pick one management surface at a time so Settings stays focused instead of turning into one long admin page.
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:"0.35rem" }}>
+              {[
+                { key: "account", label: "Account & sync", helper: "Identity, cloud state, and dangerous actions" },
+                { key: "profile", label: "Profile", helper: "Body, units, and athlete basics" },
+                { key: "plan", label: "Plan Management", helper: "Programs, goals, and baselines" },
+                { key: "preferences", label: "Preferences", helper: "Environment, check-ins, and appearance" },
+                { key: "advanced", label: "Advanced", helper: "Coach setup and integrations" },
+              ].map((surface) => {
+                const selected = activeSettingsSurface === surface.key;
+                return (
+                  <button
+                    key={surface.key}
+                    type="button"
+                    className="btn"
+                    data-testid={`settings-surface-${surface.key}`}
+                    onClick={()=>setActiveSettingsSurface(surface.key)}
+                    style={{
+                      textAlign:"left",
+                      display:"grid",
+                      gap:"0.12rem",
+                      color:selected ? "#0f172a" : "#dbe7f6",
+                      background:selected ? "#dbe7f6" : "#0f172a",
+                      borderColor:selected ? "#dbe7f6" : "#243752",
+                    }}
+                  >
+                    <span style={{ fontSize:"0.52rem" }}>{surface.label}</span>
+                    <span style={{ fontSize:"0.44rem", color:selected ? "#334155" : "#8fa5c8", lineHeight:1.4 }}>{surface.helper}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {activeSettingsSurface === "account" && (
+          <section data-testid="settings-account-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.45rem" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div className="sect-title" style={{ color:"#dbe7f6", marginBottom:0 }}>Account & sync</div>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                {authSession?.user?.email
+                  ? `Signed in as ${authSession.user.email}.`
+                  : "You are currently using this device without a signed-in cloud account."}
+              </div>
+              <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                {`Cloud sync: ${accountSyncState.label}`}
+              </div>
+              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                {accountSyncState.detail}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+              {authSession?.user?.email ? (
+                <>
+                  <button className="btn" onClick={handleReloadCloud} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>
+                    Reload cloud data
+                  </button>
+                  <button data-testid="settings-logout" className="btn" onClick={onLogout} style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324761" }}>
+                    Sign out
+                  </button>
+                  <button data-testid="settings-delete-account" className="btn" onClick={()=>{ setDeleteOpen((value)=>!value); setDeleteStep(1); setDeleteConfirm(""); }} style={{ fontSize:"0.48rem", color:C.red, borderColor:C.red+"35" }}>
+                    Delete account
+                  </button>
+                </>
+              ) : (
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                  Local mode is active. Sign in from the auth gate if you want cloud sync and account controls.
+                </div>
+              )}
+            </div>
+            {authSession?.user?.email && deleteOpen && (
+              <div style={{ border:"1px solid #3b2a39", borderRadius:8, padding:"0.45rem", display:"grid", gap:"0.3rem" }}>
+                {deleteStep === 1 ? (
+                  <>
+                    <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>This removes the signed-in FORMA account, not just local app rows. Export first if you may want this history later.</div>
+                    <button data-testid="settings-delete-account-export" className="btn" onClick={()=>{ exportData(); setDeleteStep(2); }} style={{ width:"fit-content", fontSize:"0.48rem" }}>Export first, then continue</button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>Type <b>DELETE</b> to permanently remove the account.</div>
+                    <input data-testid="settings-delete-account-confirm" value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} placeholder="DELETE" />
+                    <button data-testid="settings-delete-account-submit" className="btn" disabled={deleteConfirm !== "DELETE"} onClick={onDeleteAccount} style={{ width:"fit-content", fontSize:"0.48rem", color:C.red, borderColor:C.red+"35" }}>Confirm delete account</button>
+                  </>
+                )}
+              </div>
+            )}
+            <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem", display:"grid", gap:"0.4rem" }}>
+              <div style={{ display:"grid", gap:"0.14rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>BACKUP AND RESET</div>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                  Export before destructive changes, keep a backup code if you want an offline restore path, and start fresh only when you really mean to reset the plan.
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                <button className="btn" onClick={exportData} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>Export data</button>
+                <button className="btn" onClick={handleCopyBackup} style={{ fontSize:"0.48rem", color:"#dbe7f6" }}>Copy backup code</button>
+                <button className="btn" onClick={onStartFresh} style={{ fontSize:"0.48rem", color:"#9fb2d2", borderColor:"#324761" }}>Start new plan</button>
+              </div>
+              {!!backupMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{backupMsg}</div>}
+              <textarea value={backupCode} onChange={e=>setBackupCode(e.target.value)} placeholder="Paste backup code to restore" style={{ minHeight:62, fontSize:"0.5rem" }} />
+              <button className="btn" onClick={handleRestoreRequest} style={{ width:"fit-content", fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>Validate restore code</button>
+            </div>
+          </section>
+          )}
+
+          {activeSettingsSurface === "profile" && (
+          <section data-testid="settings-profile-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>PROFILE</div>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                Save the athlete basics the planner keeps referring back to: identity, units, body metrics, and plain-English training experience.
+              </div>
+            </div>
+            <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem", display:"grid", gap:"0.4rem" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.35rem" }}>
+                <input value={accountProfileDraft.name} onChange={e=>setAccountProfileDraft((current) => ({ ...current, name: e.target.value }))} placeholder="Display name" />
+                <input value={accountProfileDraft.timezone} onChange={e=>setAccountProfileDraft((current) => ({ ...current, timezone: e.target.value }))} placeholder="Timezone" />
+                <input type="number" value={accountProfileDraft.birthYear} onChange={e=>setAccountProfileDraft((current) => ({ ...current, birthYear: e.target.value }))} placeholder="Birth year" />
+                <input type="number" step="0.1" value={accountProfileDraft.weight} onChange={e=>setAccountProfileDraft((current) => ({ ...current, weight: e.target.value }))} placeholder={`Weight (${accountProfileDraft.unitsWeight || unitSettings?.weight || "lbs"})`} />
+                {accountProfileDraft.unitsHeight === "cm" ? (
+                  <input type="number" value={accountProfileDraft.height} onChange={e=>setAccountProfileDraft((current) => ({ ...current, height: e.target.value }))} placeholder="Height (cm)" />
+                ) : (
+                  <input value={accountProfileDraft.height} onChange={e=>setAccountProfileDraft((current) => ({ ...current, height: e.target.value }))} placeholder={"Height (e.g. 5'10\")"} />
+                )}
+                <input type="number" min="0" max="60" value={accountProfileDraft.trainingAgeYears} onChange={e=>setAccountProfileDraft((current) => ({ ...current, trainingAgeYears: e.target.value }))} placeholder="Years of consistent training" />
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:"0.35rem" }}>
+                <select value={accountProfileDraft.unitsWeight} onChange={e=>setAccountProfileDraft((current) => ({ ...current, unitsWeight: e.target.value }))}>
+                  <option value="lbs">Weight: lbs</option>
+                  <option value="kg">Weight: kg</option>
+                </select>
+                <select value={accountProfileDraft.unitsHeight} onChange={e=>setAccountProfileDraft((current) => ({ ...current, unitsHeight: e.target.value }))}>
+                  <option value="ft_in">Height: ft-in</option>
+                  <option value="cm">Height: cm</option>
+                </select>
+                <select value={accountProfileDraft.unitsDistance} onChange={e=>setAccountProfileDraft((current) => ({ ...current, unitsDistance: e.target.value }))}>
+                  <option value="miles">Distance: miles</option>
+                  <option value="kilometers">Distance: km</option>
+                </select>
+              </div>
+              <button className="btn" onClick={saveAccountProfile} style={{ width:"fit-content", fontSize:"0.49rem", color:"#dbe7f6", borderColor:"#324761" }}>
+                Save profile
+              </button>
+            </div>
+          </section>
+          )}
+
+          {activeSettingsSurface === "plan" && (
+          <section data-testid="settings-plan-management" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.4rem" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>PLAN MANAGEMENT</div>
+              <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                Programs, styles, and goal changes live here so Program can stay focused on reading the week.
+              </div>
+            </div>
+            {focusSection === "metrics" && (
+              <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.5 }}>
+                Opened from Program because missing or low-confidence baselines are limiting how specific adaptation can be.
+              </div>
+            )}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
+              <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
+                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT BASIS</div>
+                <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45, marginTop:"0.12rem" }}>
+                  {settingsPlanBasisExplanation?.basisSummary || "Goal-driven default"}
+                </div>
+                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                  {settingsPlanBasisExplanation?.personalizationSummary || "No separate program or style layer is active."}
+                </div>
+              </div>
+              <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
+                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>ACTIVE LAYERS</div>
+                <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.12rem", lineHeight:1.5 }}>
+                  Program: {activeProgramDefinition?.displayName || "None"}
+                </div>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
+                  Style: {activeStyleDefinition?.displayName || "None"}
+                </div>
+                <button className="btn" onClick={handleSettingsClearProgramLayer} style={{ width:"fit-content", marginTop:"0.3rem", fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+                  Clear basis
+                </button>
+              </div>
+            </div>
+            {(planManagementNotice || planManagementError) && (
+              <div style={{ fontSize:"0.52rem", color:planManagementError ? C.amber : C.green, lineHeight:1.5 }}>
+                {planManagementError || planManagementNotice}
+              </div>
+            )}
+            <details>
+              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Programs and styles</summary>
+              <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+                <select value={selectedSettingsProgramId} onChange={(e)=>setSelectedSettingsProgramId(e.target.value)} style={{ fontSize:"0.54rem" }}>
+                  {programDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName}</option>)}
+                </select>
+                <select value={selectedSettingsProgramFidelityMode} onChange={(e)=>setSelectedSettingsProgramFidelityMode(e.target.value)} style={{ fontSize:"0.52rem" }}>
+                  <option value={PROGRAM_FIDELITY_MODES.adaptToMe}>Adapt to me</option>
+                  <option value={PROGRAM_FIDELITY_MODES.strict}>Mostly as written</option>
+                  <option value={PROGRAM_FIDELITY_MODES.useAsStyle}>Use as style</option>
+                </select>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{selectedSettingsProgramDefinition?.summary || "Select a program."}</div>
+                {settingsProgramCompatibility?.headline && <div style={{ fontSize:"0.48rem", color:settingsProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : "#8fa5c8", lineHeight:1.45 }}>{settingsProgramCompatibility.headline}</div>}
+                <button className="btn btn-primary" onClick={handleSettingsActivateProgram} style={{ width:"fit-content", fontSize:"0.5rem" }}>Use this program</button>
+                <div style={{ borderTop:"1px solid #1e293b", paddingTop:"0.35rem", display:"grid", gap:"0.35rem" }}>
+                  <select value={selectedSettingsStyleId} onChange={(e)=>setSelectedSettingsStyleId(e.target.value)} style={{ fontSize:"0.54rem" }}>
+                    {styleDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName}</option>)}
+                  </select>
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{selectedSettingsStyleDefinition?.summary || "Select a style."}</div>
+                  {settingsStyleCompatibility?.headline && <div style={{ fontSize:"0.48rem", color:settingsStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : "#8fa5c8", lineHeight:1.45 }}>{settingsStyleCompatibility.headline}</div>}
+                  <button className="btn" onClick={handleSettingsActivateStyle} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Apply style</button>
+                </div>
+              </div>
+            </details>
+            <details>
+              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Goal changes</summary>
+              <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+                <select value={goalChangeMode} onChange={(e)=>setGoalChangeMode(e.target.value)} style={{ fontSize:"0.54rem" }}>
+                  <option value={GOAL_CHANGE_MODES.refineCurrentGoal}>Refine current goal</option>
+                  <option value={GOAL_CHANGE_MODES.reprioritizeGoalStack}>Re-prioritize goals</option>
+                  <option value={GOAL_CHANGE_MODES.startNewGoalArc}>Start new goal arc</option>
+                </select>
+                <input value={goalChangeIntent} onChange={(e)=>setGoalChangeIntent(e.target.value)} placeholder="Describe the goal change in plain English" />
+                <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                  <button className="btn btn-primary" onClick={handleSettingsGoalPreview} disabled={goalChangePreviewing || goalChangeApplying} style={{ fontSize:"0.5rem" }}>
+                    {goalChangePreviewing ? "Previewing..." : "Preview"}
+                  </button>
+                  <button className="btn" onClick={handleSettingsGoalApply} disabled={goalChangeApplying || !goalChangePreview?.orderedResolvedGoals?.length} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>
+                    {goalChangeApplying ? "Applying..." : "Confirm"}
+                  </button>
+                </div>
+                {(goalChangeError || goalChangeNotice) && <div style={{ fontSize:"0.48rem", color:goalChangeError ? C.amber : C.green, lineHeight:1.45 }}>{goalChangeError || goalChangeNotice}</div>}
+                {goalChangePreview?.orderedResolvedGoals?.length > 0 && (
+                  <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem" }}>
+                    {goalChangePreview.orderedResolvedGoals.map((goal) => (
+                      <div key={goal.id || goal.name} style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                        {goal.priority ? `${goal.priority}. ` : ""}{goal.name}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </details>
+            <details data-testid="settings-metrics-baselines" open={metricsDetailsOpen} onToggle={e=>setMetricsDetailsOpen(e.currentTarget.open)}>
+              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Metrics / baselines</summary>
+              <MetricsBaselinesSection
+                athleteProfile={athleteProfile}
+                personalization={personalization}
+                logs={logs}
+                bodyweights={bodyweights}
+                onPatchProfile={patchProfile}
+                saveManualProgressInputs={saveManualProgressInputs}
+                onSaved={setSettingsSaveMsg}
+              />
+            </details>
+          </section>
+          )}
+
+          {activeSettingsSurface === "preferences" && (
+          <section data-testid="settings-preferences-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
+            <div className="sect-title" style={{ color:C.purple, marginBottom:0 }}>APP PREFERENCES</div>
+            <button className="btn" onClick={()=>setShowEnvEditor((value)=>!value)} style={{ justifyContent:"space-between", fontSize:"0.54rem", color:"#dbe7f6" }}>
+              Default environment: {trainingPrefs?.defaultEnvironment || "Home"} <span>{showEnvEditor ? "Hide" : "Edit"}</span>
+            </button>
+            {showEnvEditor && (
+              <div style={{ display:"grid", gap:"0.3rem", border:"1px solid #243752", borderRadius:9, padding:"0.45rem" }}>
+                <select value={trainingPrefs?.defaultEnvironment || "Home"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, defaultEnvironment: e.target.value } })}>
+                  {["Home","Gym","Travel"].map((mode)=><option key={mode} value={mode}>{mode}</option>)}
+                </select>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Day-specific changes still happen from Today.</div>
+              </div>
+            )}
+            <select value={trainingPrefs?.weeklyCheckinDay || "Sun"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, weeklyCheckinDay: e.target.value } })}>
+              {["Sun","Mon","Sat"].map((day)=><option key={day} value={day}>Weekly check-in day: {day}</option>)}
+            </select>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.28rem" }}>
+              {[["Conservative","Lower risk"],["Standard","Balanced"],["Aggressive","Higher risk"]].map(([mode, desc]) => (
+                <button key={mode} className="btn" onClick={()=>patchSettings({ trainingPreferences: { ...trainingPrefs, intensityPreference: mode } })} style={{ fontSize:"0.5rem", color:trainingPrefs?.intensityPreference===mode?C.green:"#9fb2d2", borderColor:trainingPrefs?.intensityPreference===mode?C.green+"35":"#324961", textAlign:"left" }}>
+                  <div>{mode}</div>
+                  <div style={{ fontSize:"0.44rem", color:"#7f94b3", marginTop:"0.1rem" }}>{desc}</div>
+                </button>
+              ))}
+            </div>
+            <div style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
+            <div className="sect-title" style={{ color:C.amber, marginBottom:0 }}>APPEARANCE</div>
+            <AppearanceThemeSection appearance={appearance} onPatchAppearance={(nextAppearance) => patchSettings({ appearance: nextAppearance })} />
+            </div>
+            <div style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.3rem" }}>
+              <div className="sect-title" style={{ color:"#dbe7f6", marginBottom:0 }}>NOTIFICATIONS</div>
+              <label style={{ fontSize:"0.52rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.allOff)} onChange={e=>patchSettings({ notifications: { ...notif, allOff: e.target.checked } })} /> All notifications off</label>
+              <label style={{ fontSize:"0.52rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.weeklyReminderOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, weeklyReminderOn: e.target.checked } })} /> Weekly check-in reminder</label>
+              <label style={{ fontSize:"0.52rem", color:"#cbd5e1" }}><input type="checkbox" checked={Boolean(notif?.proactiveNudgeOn)} disabled={notif?.allOff} onChange={e=>patchSettings({ notifications: { ...notif, proactiveNudgeOn: e.target.checked } })} /> Coach proactive nudge</label>
+            </div>
+          </section>
+          )}
+
+          {activeSettingsSurface === "advanced" && (
+          <section data-testid="settings-advanced-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.6rem" }}>
+            <details open>
+              <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Advanced coach setup</summary>
+              <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+                <input value={coachMemoryDraft.failurePatterns} onChange={e=>setCoachMemoryDraft((current) => ({ ...current, failurePatterns: e.target.value }))} placeholder="Failure patterns" />
+                <input value={coachMemoryDraft.commonBarriers} onChange={e=>setCoachMemoryDraft((current) => ({ ...current, commonBarriers: e.target.value }))} placeholder="Common barriers" />
+                <input value={coachMemoryDraft.preferredFoodPatterns} onChange={e=>setCoachMemoryDraft((current) => ({ ...current, preferredFoodPatterns: e.target.value }))} placeholder="Food patterns" />
+                <input value={coachMemoryDraft.simplicityVsVariety} onChange={e=>setCoachMemoryDraft((current) => ({ ...current, simplicityVsVariety: e.target.value }))} placeholder="Simplicity vs variety" />
+                <details>
+                  <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>Advanced AI provider key</summary>
+                  <div style={{ marginTop:"0.3rem", display:"grid", gap:"0.2rem" }}>
+                    <input value={coachApiKey} onChange={e=>setCoachApiKey(e.target.value)} placeholder="Anthropic key (optional)" />
+                    <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>Hidden by default so Coach stays out of configuration mode.</div>
+                  </div>
+                </details>
+                <button className="btn" onClick={saveCoachSetup} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Save coach setup</button>
+              </div>
+            </details>
+
+            <details open>
+              <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Integrations and imports</summary>
+              <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                  Apple Health, Garmin, and location stay de-emphasized until they are clearly live and useful.
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.35rem" }}>
+                  {[["Apple Health", appleIntegration],["Garmin Connect", garminIntegration],["Location", locationIntegration]].map(([label, state]) => {
+                    const tone = integrationStateTone(state.state);
+                    return (
+                      <div key={label} style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.48rem 0.52rem" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.3rem", alignItems:"center", flexWrap:"wrap" }}>
+                          <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>{label}</div>
+                          <span style={{ fontSize:"0.45rem", color:tone.color, background:tone.bg, padding:"0.12rem 0.34rem", borderRadius:999 }}>{state.label}</span>
+                        </div>
+                        <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.45 }}>{state.summary}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                  <button className="btn" onClick={requestAppleHealth} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>Connect Apple Health</button>
+                  <button className="btn" onClick={connectGarmin} disabled={garminBusy !== ""} style={{ fontSize:"0.48rem", color:C.green, borderColor:C.green+"35" }}>{garminBusy === "connect" ? "Connecting..." : "Connect Garmin"}</button>
+                  <button className="btn" onClick={requestLocationAccess} style={{ fontSize:"0.48rem", color:C.amber, borderColor:C.amber+"35" }}>Request location</button>
+                </div>
+                {!!checkMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{checkMsg}</div>}
+                {!!garminMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{garminMsg}</div>}
+                {!!locationMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{locationMsg}</div>}
+                <details>
+                  <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>Manual imports</summary>
+                  <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.35rem" }}>
+                    <textarea value={appleImportText} onChange={e=>setAppleImportText(e.target.value)} placeholder="Apple Health JSON import" style={{ minHeight:62, fontSize:"0.5rem" }} />
+                    <button className="btn" onClick={()=>importDeviceData("apple")} style={{ width:"fit-content", fontSize:"0.47rem", color:C.blue, borderColor:C.blue+"35" }}>Import Apple JSON</button>
+                    <textarea value={garminImportText} onChange={e=>setGarminImportText(e.target.value)} placeholder="Garmin JSON import" style={{ minHeight:62, fontSize:"0.5rem" }} />
+                    <button className="btn" onClick={()=>importDeviceData("garmin")} style={{ width:"fit-content", fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>Import Garmin JSON</button>
+                    {!!importMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{importMsg}</div>}
+                  </div>
+                </details>
+              </div>
+            </details>
+          </section>
+          )}
+        </div>
+      </div>
+
+      {connectOpen && (
+        <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
+          <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
+            <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
+              {PRODUCT_BRAND.name} can read Apple Health workouts and device context that some recommendations use. You can revoke access any time.
+            </div>
+            <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
+            <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
+              Skip for now
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showRestoreConfirm && (
+        <div onClick={()=>setShowRestoreConfirm(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
+          <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f", display:"grid", gap:"0.45rem" }}>
+            <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.6 }}>
+              Restore replaces current local data with the backup payload.
+            </div>
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+              <button className="btn btn-primary" onClick={confirmRestore}>Restore backup</button>
+              <button className="btn" onClick={()=>setShowRestoreConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+  if (false) return (
+    <div className="fi" data-testid="today-tab">
       <div className="card card-subtle">
         <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
-        {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:C.green, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
+        {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:settingsSaveColor, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
         <div style={{ fontSize:"0.56rem", color:"#8ea4c7", lineHeight:1.7, marginBottom:"1rem" }}>
-          Manage profile, devices, preferences, appearance, notifications, and privacy in one place.
+          Review profile, device status, preferences, appearance, notifications, and privacy in one place.
         </div>
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.4rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>PROFILE</div>
@@ -9537,7 +12334,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>INTEGRATIONS</div>
           <div style={{ fontSize:"0.55rem", color:"#8ea4c7", lineHeight:1.6, marginBottom:"0.5rem" }}>
-            Live integrations, manual imports, simulated states, and unavailable services are shown separately so device status is easier to trust.
+            Connection states, manual imports, and simulated placeholders are shown separately so it is clearer what is actually active.
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:"0.4rem", marginBottom:"0.55rem" }}>
             {[
@@ -9558,7 +12355,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             })}
           </div>
           <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5, marginBottom:"0.55rem" }}>
-            Current data use: {(deviceSyncAudit?.utilization || ["No live device utilization signals are available yet."]).slice(0, 3).join(" ")}
+            Current device signals in use: {(deviceSyncAudit?.utilization || ["No device signals are being used yet."]).slice(0, 3).join(" ")}
           </div>
 
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:"0.6rem" }}>
@@ -9570,23 +12367,31 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.55 }}>{appleIntegration.summary}</div>
               <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>{appleIntegration.detail}</div>
               <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.18rem", lineHeight:1.5 }}>
-                Permission requested: {formatIntegrationTimestamp(appleHealth?.permissionRequestedAt)} · Last check: {formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}
+                Permission request recorded: {formatIntegrationTimestamp(appleHealth?.permissionRequestedAt)} · Last check: {formatIntegrationTimestamp(appleHealth?.lastConnectionCheck)}
               </div>
-              <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.12rem", lineHeight:1.5 }}>Active data types: {activeAppleTypes}</div>
-              <div style={{ marginTop:"0.35rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
-                  {appleMode === "live" || appleMode === "simulated" ? "Reconnect Apple Health" : "Connect Apple Health"}
-                </button>
-                <button className="btn" onClick={checkConnection} disabled={checking || appleMode === "manual_import"} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
-                  {checking ? "Checking..." : "Verify sync"}
-                </button>
-                <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
-                  I enabled permissions
-                </button>
-              </div>
-              <div style={{ marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
-                {sanitizeDisplayText("iPhone path: Settings → Privacy & Security → Health → Personal Trainer → Allow all categories.")}
-              </div>
+              <div style={{ fontSize:"0.48rem", color:"#6f85a7", marginTop:"0.12rem", lineHeight:1.5 }}>Granted categories: {activeAppleTypes}</div>
+              {appleHealthPromptSupported ? (
+                <>
+                  <div style={{ marginTop:"0.35rem", display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                    <button className="btn" onClick={()=>setConnectOpen(true)} style={{ fontSize:"0.52rem", color:C.green, borderColor:C.green+"40" }}>
+                      {appleMode === "live" || appleMode === "simulated" ? "Reconnect Apple Health" : "Connect Apple Health"}
+                    </button>
+                    <button className="btn" onClick={checkConnection} disabled={checking || appleMode === "manual_import"} style={{ fontSize:"0.52rem", color:C.blue, borderColor:C.blue+"35" }}>
+                      {checking ? "Checking..." : "Check recent data"}
+                    </button>
+                    <button className="btn" onClick={()=>persistAppleHealth({ permissionConfirmedAt: Date.now(), lastSyncStatus: "permissions_confirmed" })} style={{ fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>
+                      I enabled permissions
+                    </button>
+                  </div>
+                  <div style={{ marginTop:"0.22rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
+                    {sanitizeDisplayText(`iPhone path: Settings → Privacy & Security → Health → ${PRODUCT_BRAND.name} → Allow all categories.`)}
+                  </div>
+                </>
+              ) : (
+                <div style={{ marginTop:"0.3rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                  Apple Health connection is currently hidden in the normal live product flow. Manual import remains available for restore/testing.
+                </div>
+              )}
               {checkMsg && <div style={{ marginTop:"0.22rem", fontSize:"0.51rem", color:"#cbd5e1" }}>{checkMsg}</div>}
             </div>
 
@@ -9628,9 +12433,9 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               <span style={{ fontSize:"0.46rem", color:integrationStateTone(locationIntegration.state).color, background:integrationStateTone(locationIntegration.state).bg, padding:"0.14rem 0.38rem", borderRadius:999 }}>{locationIntegration.label}</span>
             </div>
             <div style={{ fontSize:"0.52rem", color:"#9fb2d2", lineHeight:1.6 }}>{locationIntegration.summary}</div>
-            <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Enable location permission</button>
+            <button className="btn" onClick={requestLocationAccess} style={{ marginTop:"0.35rem", fontSize:"0.52rem", color:C.amber, borderColor:C.amber+"35" }}>Request location permission</button>
             <div style={{ marginTop:"0.2rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.6 }}>
-              {sanitizeDisplayText("iPhone path: Settings → Privacy & Security → Location Services → Personal Trainer → While Using App.")}
+              {sanitizeDisplayText(`iPhone path: Settings → Privacy & Security → Location Services → ${PRODUCT_BRAND.name} → While Using App.`)}
             </div>
             {!!locationMsg && <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#cbd5e1" }}>{locationMsg}</div>}
           </div>
@@ -9640,13 +12445,13 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
             <div style={{ marginTop:"0.38rem", display:"grid", gap:"0.5rem" }}>
               <div style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
                 <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>Apple Health JSON import</div>
-                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only when you are restoring or testing data without a live Apple Health link.</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only for restore or testing when there is no confirmed Apple Health link.</div>
                 <textarea value={appleImportText} onChange={e=>setAppleImportText(e.target.value)} placeholder='{"workouts":{"2026-04-07":{"distanceMiles":3.2,"avgHr":148}}}' style={{ minHeight:62, fontSize:"0.5rem" }} />
                 <button className="btn" onClick={()=>importDeviceData("apple")} style={{ width:"fit-content", fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"35" }}>Import Apple JSON</button>
               </div>
               <div style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
                 <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>Garmin JSON import</div>
-                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only when you need Garmin activity data without the live server-side connection.</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this only for restore or testing when there is no confirmed Garmin server-side connection.</div>
                 <textarea value={garminImportText} onChange={e=>setGarminImportText(e.target.value)} placeholder='{"activities":[{"startTime":"2026-04-07T07:30:00Z","type":"Run","distanceMiles":4.1}]}' style={{ minHeight:62, fontSize:"0.5rem" }} />
                 <button className="btn" onClick={()=>importDeviceData("garmin")} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Import Garmin JSON</button>
               </div>
@@ -9660,7 +12465,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.35rem" }}>
                 {appleMode === "simulated" && (
                   <div style={{ fontSize:"0.5rem", color:"#9fb2d2", lineHeight:1.6 }}>
-                    Apple Health is currently marked `simulated_web`, which is a web-only placeholder and should not be treated like a live connection.
+                    Apple Health is currently marked `simulated_web`, which is a web-only placeholder and should not be read like a real connection.
                   </div>
                 )}
                 <div style={{ fontSize:"0.5rem", color:"#9fb2d2", lineHeight:1.6 }}>
@@ -9713,18 +12518,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>APPEARANCE</div>
-          <div style={{ display:"grid", gap:"0.3rem" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.25rem" }}>
-              {["System","Light","Dark"].map((t) => (
-                <button key={t} className="btn" onClick={()=>patchSettings({ appearance: { ...appearance, theme: t } })} style={{ fontSize:"0.52rem", color:appearance?.theme===t?C.green:"#9fb2d2", borderColor:appearance?.theme===t?C.green+"35":"#324961" }}>{t}</button>
-              ))}
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:"0.28rem" }}>
-              {[["Green","#27f59a"],["Blue","#00c2ff"],["Orange","#ff8a00"],["Red","#ff3d81"],["Purple","#7c5cff"],["Neutral","#94a3b8"]].map(([name,color]) => (
-                <button key={name} onClick={()=>patchSettings({ appearance: { ...appearance, palette: name } })} style={{ height:24, borderRadius:7, border:appearance?.palette===name?`2px solid ${color}`:"1px solid #324961", background:color, cursor:"pointer" }} title={name} />
-              ))}
-            </div>
-          </div>
+          <AppearanceThemeSection appearance={appearance} onPatchAppearance={(nextAppearance) => patchSettings({ appearance: nextAppearance })} />
         </div>
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
@@ -9777,11 +12571,11 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
           </button>
         </div>
       </div>
-      {connectOpen && (
+      {appleHealthPromptSupported && connectOpen && (
         <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
           <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
             <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
-              Personal Trainer can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
+              {PRODUCT_BRAND.name} may read Apple Health workouts and device context if permission is granted. We never share this data. You can revoke access anytime in iOS Settings.
             </div>
             <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
             <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
@@ -9910,7 +12704,7 @@ function OnboardingCoachLegacy({ onComplete }) {
     <div className="fi">
       <div className="card card-subtle">
         <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:"0.5rem" }}>SETTINGS</div>
-        {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:C.green, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
+        {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:settingsSaveColor, marginBottom:"0.32rem" }}>{settingsSaveMsg}</div>}
         <div style={{ fontSize:"0.56rem", color:"#8ea4c7", lineHeight:1.7, marginBottom:"1rem" }}>
           Manage profile, devices, preferences, appearance, notifications, and privacy in one place.
         </div>
@@ -10001,7 +12795,7 @@ function OnboardingCoachLegacy({ onComplete }) {
               : "Not connected yet."}
           </div>
           <div style={{ marginTop:"0.24rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.7 }}>
-            {sanitizeDisplayText("iPhone permission path: Settings → Privacy & Security → Health → Personal Trainer (or browser app) → Allow all categories.")}
+            {sanitizeDisplayText(`iPhone permission path: Settings → Privacy & Security → Health → ${PRODUCT_BRAND.name} (or browser app) → Allow all categories.`)}
           </div>
           <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#6f85a7" }}>Active data types: {activeAppleTypes}</div>
           {checkMsg && <div style={{ marginTop:"0.25rem", fontSize:"0.53rem", color:"#cbd5e1" }}>{checkMsg}</div>}
@@ -10064,18 +12858,7 @@ function OnboardingCoachLegacy({ onComplete }) {
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
           <div className="sect-title" style={{ color:C.amber, marginBottom:"0.35rem" }}>APPEARANCE</div>
-          <div style={{ display:"grid", gap:"0.3rem" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.25rem" }}>
-              {["System","Light","Dark"].map((t) => (
-                <button key={t} className="btn" onClick={()=>patchSettings({ appearance: { ...appearance, theme: t } })} style={{ fontSize:"0.52rem", color:appearance?.theme===t?C.green:"#9fb2d2", borderColor:appearance?.theme===t?C.green+"35":"#324961" }}>{t}</button>
-              ))}
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:"0.28rem" }}>
-              {[["Green","#27f59a"],["Blue","#00c2ff"],["Orange","#ff8a00"],["Red","#ff3d81"],["Purple","#7c5cff"],["Neutral","#94a3b8"]].map(([name,color]) => (
-                <button key={name} onClick={()=>patchSettings({ appearance: { ...appearance, palette: name } })} style={{ height:24, borderRadius:7, border:appearance?.palette===name?`2px solid ${color}`:"1px solid #324961", background:color, cursor:"pointer" }} title={name} />
-              ))}
-            </div>
-          </div>
+          <AppearanceThemeSection appearance={appearance} onPatchAppearance={(nextAppearance) => patchSettings({ appearance: nextAppearance })} />
         </div>
 
         <div style={{ borderTop:"1px solid #233851", marginTop:"0.75rem", paddingTop:"0.75rem" }}>
@@ -10126,7 +12909,7 @@ function OnboardingCoachLegacy({ onComplete }) {
         <div onClick={()=>setConnectOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.72)", display:"grid", placeItems:"center", zIndex:60, padding:"1rem" }}>
           <div onClick={e=>e.stopPropagation()} className="card card-soft" style={{ width:"100%", maxWidth:520, borderColor:"#30455f" }}>
             <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.7, marginBottom:"0.6rem" }}>
-              Personal Trainer can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
+              {PRODUCT_BRAND.name} can read Apple Health workouts and device context that some recommendations use. We never share this data. You can revoke access anytime in iOS Settings.
             </div>
             <button className="btn btn-primary" onClick={requestAppleHealth} style={{ width:"100%", marginBottom:"0.45rem" }}>Connect Apple Health</button>
             <button className="btn" onClick={async ()=>{ await persistAppleHealth({ skipped: true }); setConnectOpen(false); }} style={{ width:"100%", fontSize:"0.52rem", color:"#93a8c8", borderColor:"#324761" }}>
@@ -10258,7 +13041,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
 }
 
 // TODAY TAB
-function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, loading, storageStatus, authError }) {
+function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, onGoProgram = () => {}, onGoLog = () => {}, loading, storageStatus, authError }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const userProfile = athleteProfile?.userProfile || {};
   const planDayRecovery = planDay?.resolved?.recovery || null;
@@ -10457,14 +13240,14 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     : environmentSelection?.equipment === "mixed"
     ? "Mixed equipment"
     : environmentSelection?.equipment === "unknown"
-    ? "Setup unconfirmed"
+    ? "Setup not confirmed"
     : "Dumbbells";
   const timeLabel = environmentSelection?.time === "60+"
     ? "60+ min"
     : environmentSelection?.time === "45+"
     ? "45+ min"
     : environmentSelection?.time === "unknown"
-    ? "Time unconfirmed"
+    ? "Time not confirmed"
     : `${environmentSelection?.time || "30"} min`;
   const injuryLevel = personalization.injuryPainState.level;
   const injuryBadge = injuryLevel === "none" ? null : injuryLevel === "mild_tightness" ? { label: "Mild", color: C.blue } : injuryLevel === "moderate_pain" ? { label: "Moderate", color: C.amber } : { label: "Pain/Stop", color: C.red };
@@ -10474,6 +13257,18 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
   const environmentSourceLabel = describeTrainingContextSource(activeTrainingContext?.environment?.source);
   const equipmentSourceLabel = describeTrainingContextSource(activeTrainingContext?.equipmentAccess?.source);
   const durationSourceLabel = describeTrainingContextSource(activeTrainingContext?.sessionDuration?.source);
+  const toPlainContextSource = (label = "") => {
+    if (label === "Confirmed in intake") return "Confirmed in profile";
+    if (label === "Edited by user") return "Set by you";
+    if (label === "Recovered from older settings") return "Recovered from earlier settings";
+    if (label === "Inferred from older profile") return "Inferred from older profile";
+    if (label === "Historical carry-over") return "Carried over from earlier training";
+    if (label === "Default placeholder") return "Fallback default";
+    return label || "Source unclear";
+  };
+  const plainEnvironmentSourceLabel = toPlainContextSource(environmentSourceLabel);
+  const plainEquipmentSourceLabel = toPlainContextSource(equipmentSourceLabel);
+  const plainDurationSourceLabel = toPlainContextSource(durationSourceLabel);
   const issueContextLabel = activeIssueContext?.active
     ? `${activeIssueContext.area || "Issue"} ${String(activeIssueContext.level || "").replaceAll("_", " ")}`
     : activeIssueContext?.historicalNotes
@@ -10514,10 +13309,23 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
         ? "device recovery signals"
         : null,
     ],
-    limitation: !historicalLogs.length ? "Recent training history is still limited." : "",
+      limitation: !historicalLogs.length ? "Recent training history is still limited." : "",
   });
+  const livePlanningBasis = planDay?.week?.planningBasis || planComposer?.planningBasis || null;
+  const livePlanBasisExplanation = livePlanningBasis?.planBasisExplanation || null;
+  const liveChangeSummary = planDay?.week?.changeSummary || currentPlanWeek?.changeSummary || planComposer?.changeSummary || null;
+  const todayChangeLine = sanitizeDisplayText(
+    liveChangeSummary?.surfaceLine
+    || [liveChangeSummary?.headline, liveChangeSummary?.preserved].filter(Boolean).join(" ")
+    || ""
+  );
   const strTrack = displayWorkout?.strengthTrack || todayWorkout?.strengthTrack || (environmentSelection?.neutral ? "" : "home");
   const strSess = displayWorkout?.strSess || todayWorkout?.strSess || "A";
+  const strengthSetupLabel = sanitizeDisplayText(
+    displayWorkout?.strengthTrackLabel
+    || todayWorkout?.strengthTrackLabel
+    || (strTrack === "hotel" ? "Gym" : strTrack === "program" ? "Program" : "Home")
+  );
   const displayRun = sanitizeWorkoutRun(displayWorkout?.run);
   const todayPrescriptionSummary = buildDayPrescriptionDisplay({
     training: displayWorkout,
@@ -10528,8 +13336,9 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       programBlock: planDay?.week?.programBlock || null,
     },
     provenance: planDay?.provenance || null,
+    prescribedExercises: buildStrengthPrescriptionEntriesForLogging(displayWorkout),
   });
-  const strExercises = (STRENGTH[strSess]?.[strTrack] || []).map(sanitizeWorkoutEntry);
+  const strExercises = buildStrengthPrescriptionEntriesForLogging(displayWorkout);
   const prehabExercises = activeIssueContext?.active ? ACHILLES.map(sanitizeWorkoutEntry) : [];
   const hasStrength = displayWorkout?.type === "run+strength" || displayWorkout?.type === "strength+prehab";
   const hasPrehab = displayWorkout?.type === "strength+prehab" && activeIssueContext?.active;
@@ -10708,7 +13517,6 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     validationLayer?.coachNudge || null,
   ].filter(Boolean);
   const readinessBadgeLabel = readinessInfluence?.stateLabel || displayWorkout?.variantBadge || readinessInfluence?.badge || "On plan";
-  const readinessSourceLabel = readinessInfluence?.source || (todayUsesDeviceRecovery ? "device" : "plan");
   const shortProvenance = normalizeCoachOneLine(todayProvenance || "");
   const todayTrust = buildTrustSummary({
     explicitUserInput: Boolean(readinessMetrics?.hasTodayRecoveryInput),
@@ -10725,31 +13533,44 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     todayTrust.level === "grounded" ? "match" : todayTrust.level === "partial" ? "changed" : "recovery"
   , C);
   const rationaleHeadline = normalizeCoachOneLine(primaryAdjustment?.summary || readinessInfluence?.coachLine || conciseFocus);
-  const rationaleSupport = normalizeCoachOneLine(primaryAdjustment?.reason || readinessInfluence?.userVisibleLine || shortProvenance);
+  const rationaleSupport = normalizeCoachOneLine(primaryAdjustment?.reason || livePlanBasisExplanation?.todayLine || readinessInfluence?.userVisibleLine || shortProvenance);
   const successHeadline = normalizeCoachOneLine(displayWorkout?.success || conciseSuccess || "Complete the session and log it.");
-  const successSupport = normalizeCoachOneLine(
-    displayWorkout?.intensityGuidance
-      ? `Keep intensity at ${displayWorkout.intensityGuidance}.`
-      : readinessInfluence?.recoveryLine
-      ? readinessInfluence.recoveryLine
-      : displayWorkout?.recoveryRecommendation
-      ? displayWorkout.recoveryRecommendation
-      : displayWorkout?.compressionWhy
-      ? displayWorkout.compressionWhy
-      : displayWorkout?.extendedFinisher
-      ? displayWorkout.extendedFinisher
-      : ""
-  );
+  const planBasisHeadline = normalizeCoachOneLine(livePlanBasisExplanation?.todayLine || livePlanBasisExplanation?.basisSummary || "");
+  const planBasisSupportLine = normalizeCoachOneLine(livePlanBasisExplanation?.personalizationSummary || "");
+  const planBasisCompromiseLine = normalizeCoachOneLine(livePlanBasisExplanation?.compromiseSummary || livePlanningBasis?.compromiseLine || "");
+  const planBasisModeLabel = livePlanBasisExplanation?.effectiveFidelityMode === "strict"
+    ? "Run mostly as written"
+    : livePlanBasisExplanation?.effectiveFidelityMode === "style_only"
+    ? "Style-led"
+    : livePlanBasisExplanation?.effectiveFidelityMode === "adapted"
+    ? "Adapted"
+    : "";
+  const readinessBasisLine = (() => {
+    if (readinessMetrics?.hasTodayRecoveryInput) return "Using today's check-in first.";
+    if (todayUsesDeviceRecovery) return "Using recent device recovery signals.";
+    if (readinessMetrics?.hasRecoveryHistory) return "Using recent logged training and recovery.";
+    if (readinessMetrics?.countableCount) return "Using recent logged training.";
+    return "Using the current plan with limited recent data.";
+  })();
+  const reducedLoadSourceLine = ["recovery", "reduced_load"].includes(readinessState)
+    ? `Reduced load is based on ${readinessMetrics?.hasTodayRecoveryInput
+        ? "today's check-in"
+        : todayUsesDeviceRecovery
+        ? "recent device recovery signals"
+        : readinessMetrics?.hasRecoveryHistory
+        ? "recent recovery history"
+        : readinessMetrics?.countableCount
+        ? "recent training load"
+        : "the current plan"
+      }.`
+    : "";
   const recoveryPrescription = planDayRecovery?.prescription || null;
   const actualRecovery = planDayRecovery?.actual || null;
-  const recoveryPrescriptionLine = recoveryPrescription?.summary || planDayRecovery?.recoveryLine || "Recovery posture follows the current daily decision.";
+  const recoveryPrescriptionLine = recoveryPrescription?.summary || planDayRecovery?.recoveryLine || "Recovery guidance currently follows today's daily decision.";
   const recoveryActualLine = actualRecovery?.loggedAt
     ? actualRecovery.summary
     : "Recovery actuals have not been logged yet.";
-  const supplementPlanLine = Array.isArray(planDaySupplements?.plan?.items) && planDaySupplements.plan.items.length
-    ? planDaySupplements.plan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
-    : "No supplement plan prescribed today.";
-  const supplementActualLine = planDaySupplements?.actual?.summary || "Supplement adherence will appear after nutrition logging.";
+  const supplementActualLine = planDaySupplements?.actual?.summary || "Supplement adherence can appear here after nutrition logging.";
   const tomorrowPreviewText = `${tomorrowWorkout?.label || "Rest"}${tomorrowWorkout?.run ? ` - ${tomorrowWorkout.run.d}` : ""}`;
   const primaryActionSummary = sessionVariant === "short"
     ? "Short version active"
@@ -10772,8 +13593,290 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     }
     return storageStatus?.detail || "Cloud sync unavailable right now. Using local data safely.";
   })();
+  const todayLoggedLine = checkinAck
+    || (todayLog?.ts
+      ? `Saved ${new Date(todayLog.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. ${sanitizeStatusLabel(todayLog?.checkin?.status, "logged")}.`
+      : "");
+  const showTransientSyncLine = !authError
+    && storageStatus?.mode === "local"
+    && storageStatus?.reason === STORAGE_STATUS_REASONS.transient;
+  const showStorageBanner = !authError
+    && storageStatus?.mode === "local"
+    && storageStatus?.reason !== STORAGE_STATUS_REASONS.transient;
+  const todaySessionMeta = [
+    displayRun?.t || (hasStrength ? `Strength ${strSess}` : sanitizeStatusLabel(displayWorkout?.type, "session")),
+    displayRun?.d || displayWorkout?.strengthDuration || "",
+    displayRun ? `${runPace}/mi` : sanitizeDisplayText(displayWorkout?.intensityGuidance || ""),
+    hasStrength ? strengthSetupLabel : "",
+  ].filter(Boolean);
+  const handleSaveTodayQuickCheckin = async () => {
+    if (checkin.status === "not_logged" || checkinSaving) return;
+    setCheckinSaving(true);
+    setCheckinAck("");
+    setTodayDataError("");
+    try {
+      const parsed = parseMicroCheckin(checkin.note || "");
+      const basePayload = parsed ? { ...checkin, ...parsed } : { ...checkin };
+      const readinessUpdate = deriveReadinessAdjustedCheckin(basePayload);
+      const strengthPerformance = hasStrength
+        ? Object.values(strengthInputs || {})
+            .map((row) => ({
+              ...row,
+              weightUsed: row?.bodyweightOnly || row?.bandTension ? null : toFiniteNumber(row?.weightUsed ?? row?.actualWeight, null),
+              actualWeight: row?.bodyweightOnly || row?.bandTension ? null : toFiniteNumber(row?.actualWeight ?? row?.weightUsed, null),
+              repsCompleted: Number(row?.repsCompleted || row?.actualReps || 0),
+              actualReps: Number(row?.actualReps || row?.repsCompleted || 0),
+              actualSets: Number(row?.actualSets || row?.prescribedSets || 0),
+            }))
+            .filter((row) => row.exercise && Number(row.actualReps || 0) > 0 && Number(row.actualSets || 0) > 0)
+        : [];
+      const payload = {
+        ...basePayload,
+        ...(readinessUpdate.adjusted || {}),
+        readiness: readinessUpdate.readiness || basePayload.readiness || DEFAULT_DAILY_CHECKIN.readiness,
+        strengthPerformance,
+      };
+      await saveDailyCheckin(todayKey, payload);
+      if (checkin.bodyweight && !Number.isNaN(parseFloat(checkin.bodyweight))) {
+        const entry = { date: todayKey, w: parseFloat(checkin.bodyweight) };
+        const nextBW = [...bodyweights.filter((item) => item.date !== todayKey), entry].sort((a, b) => a.date.localeCompare(b.date));
+        await saveBodyweights(nextBW);
+      }
+      const savedTime = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const statusLine = payload.status === "completed_as_planned"
+        ? "Marked complete as planned."
+        : payload.status === "completed_modified"
+        ? "Marked complete with changes."
+        : payload.status === "partial_completed"
+        ? "Marked partially complete."
+        : payload.status === "skipped"
+        ? "Marked skipped."
+        : "Saved.";
+      setCheckinAck(`Saved ${savedTime}. ${statusLine}`);
+      setPostSaveInsight(
+        payload.status === "skipped"
+          ? `Tomorrow ${tomorrowHasSession ? `stays scheduled as ${tomorrowWorkout?.label || "planned"}.` : "is unchanged."}`
+          : (reducedLoadSourceLine || "Tomorrow is unchanged.")
+      );
+    } catch {
+      setCheckinAck("");
+      setTodayDataError("Save did not finish. Try again. Your local data is still available.");
+    } finally {
+      setCheckinSaving(false);
+    }
+  };
 
   return (
+    <div className="fi" data-testid="today-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      {authError && (
+        <div className="card card-soft" style={{ borderColor:C.amber+"35", fontSize:"0.54rem", color:C.amber }}>
+          {authError}
+        </div>
+      )}
+      {showStorageBanner && (
+        <div className="card card-soft" style={{ borderColor:"#2a3b56", fontSize:"0.52rem", color:"#8fa5c8" }}>
+          {storageBannerCopy}
+        </div>
+      )}
+
+      <div data-testid="today-session-card" className="card card-strong card-hero" style={{ borderColor:cardColor+"30" }}>
+        <div style={{ display:"grid", gap:"0.28rem" }}>
+          <div className="sect-title" style={{ color:cardColor, marginBottom:0 }}>TODAY</div>
+          <div style={{ fontSize:"1rem", color:"#f8fafc", lineHeight:1.25 }}>{displayWorkout?.label || "Rest day"}</div>
+          <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
+            {todaySessionMeta.map((item) => (
+              <span key={item} style={{ fontSize:"0.46rem", color:"#dbe7f6", background:"#132033", padding:"0.14rem 0.38rem", borderRadius:999 }}>
+                {item}
+              </span>
+            ))}
+            <span style={{ fontSize:"0.46rem", color:readinessTone, background:readinessTone+"15", padding:"0.14rem 0.38rem", borderRadius:999 }}>
+              {readinessBadgeLabel}
+            </span>
+          </div>
+          {showTransientSyncLine && (
+            <div data-testid="today-sync-status" style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {storageStatus?.detail || "Sync is retrying quietly in the background. Local data stays active."}
+            </div>
+          )}
+          <div style={{ fontSize:"0.55rem", color:"#dbe7f6", lineHeight:1.5 }}>
+            {successHeadline}
+          </div>
+          {!!todayChangeLine && (
+            <div data-testid="today-change-summary" style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {todayChangeLine}
+            </div>
+          )}
+          {!!planBasisHeadline && (
+            <div data-testid="today-plan-basis" style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              Plan basis: {planBasisHeadline}
+            </div>
+          )}
+          {todayLoggedLine && (
+            <div data-testid="today-save-status" role="status" style={{ fontSize:"0.52rem", color:C.green, lineHeight:1.45 }}>
+              {todayLoggedLine}
+            </div>
+          )}
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.55rem" }}>
+          <button className="btn btn-primary" onClick={onGoLog} style={{ fontSize:"0.54rem" }}>Log workout</button>
+          <button className="btn" onClick={onGoProgram} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>View week</button>
+        </div>
+      </div>
+
+      <div data-testid="today-full-workout">
+        <PlannedSessionDetailCard
+          session={{
+            day: "Today",
+            title: displayWorkout?.label || "Today's session",
+            summary: todayPrescriptionSummary,
+          }}
+          accentColor={cardColor}
+        />
+      </div>
+
+      <div className="card card-action" data-testid="today-quick-log" style={{ borderColor:C.green+"30", background:"#0d1410" }}>
+        <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>LOG TODAY</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            Save the outcome fast. Use the full Log tab only if you want more detail.
+          </div>
+        </div>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            {CHECKIN_STATUS_OPTIONS.map((opt) => (
+              <button key={opt.key} className="btn" onClick={()=>setCheckin((current) => ({ ...current, status: opt.key }))} style={{ fontSize:"0.5rem", color:checkin.status===opt.key?C.green:"#64748b", borderColor:checkin.status===opt.key?C.green+"40":"#1e293b" }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            {CHECKIN_FEEL_OPTIONS.map((opt) => (
+              <button key={opt.key} className="btn" onClick={()=>setCheckin((current) => ({ ...current, sessionFeel: opt.key }))} style={{ fontSize:"0.5rem", color:checkin.sessionFeel===opt.key?C.blue:"#64748b", borderColor:checkin.sessionFeel===opt.key?C.blue+"40":"#1e293b" }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 92px auto", gap:"0.35rem" }}>
+            <input value={checkin.note || ""} onChange={e=>setCheckin((current) => ({ ...current, note: e.target.value }))} placeholder="Optional note" />
+            <input type="number" step="0.1" value={checkin.bodyweight || ""} onChange={e=>setCheckin((current) => ({ ...current, bodyweight: e.target.value }))} placeholder="BW" />
+            <button data-testid="today-save-log" className="btn btn-primary" disabled={checkin.status === "not_logged" || checkinSaving} onClick={handleSaveTodayQuickCheckin} style={{ fontSize:"0.52rem", opacity:(checkin.status === "not_logged" || checkinSaving) ? 0.45 : 1 }}>
+              {checkinSaving ? "Saving..." : "Save"}
+            </button>
+          </div>
+          {postSaveInsight && <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{postSaveInsight}</div>}
+          {todayDataError && <div role="alert" style={{ fontSize:"0.5rem", color:C.amber }}>{todayDataError}</div>}
+        </div>
+        <details style={{ marginTop:"0.45rem" }}>
+          <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>Add recovery detail</summary>
+          <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.35rem" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.3rem" }}>
+              <input type="number" step="0.5" value={checkin?.actualRecovery?.sleepHours || ""} onChange={e=>setCheckin((current) => ({ ...current, actualRecovery: { ...(current?.actualRecovery || {}), sleepHours: e.target.value } }))} placeholder="Sleep hrs" />
+              <input type="number" step="1" value={checkin?.actualRecovery?.mobilityMinutes || ""} onChange={e=>setCheckin((current) => ({ ...current, actualRecovery: { ...(current?.actualRecovery || {}), mobilityMinutes: e.target.value } }))} placeholder="Mobility min" />
+              <input type="number" step="1" value={checkin?.actualRecovery?.tissueWorkMinutes || ""} onChange={e=>setCheckin((current) => ({ ...current, actualRecovery: { ...(current?.actualRecovery || {}), tissueWorkMinutes: e.target.value } }))} placeholder="Tissue work" />
+            </div>
+            {hasStrength && (
+              <div style={{ display:"grid", gap:"0.28rem" }}>
+                {strExercises.slice(0, 4).map((ex) => {
+                  const key = normalizeExerciseKey(ex?.ex || "");
+                  const row = strengthInputs?.[key] || {};
+                  return (
+                    <div key={key} style={{ display:"grid", gridTemplateColumns:"1fr 72px 62px 62px", gap:"0.25rem", alignItems:"center" }}>
+                      <div style={{ fontSize:"0.48rem", color:"#cbd5e1", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{ex.ex}</div>
+                      <input type="number" step="2.5" placeholder="lb" value={row.weightUsed || ""} onChange={e=>setStrengthInputs((prev) => ({ ...prev, [key]: { ...prev[key], exercise: ex.ex, weightUsed: e.target.value, actualWeight: e.target.value } }))} />
+                      <input type="number" placeholder="sets" value={row.actualSets || ""} onChange={e=>setStrengthInputs((prev) => ({ ...prev, [key]: { ...prev[key], exercise: ex.ex, actualSets: e.target.value } }))} />
+                      <input type="number" placeholder="reps" value={row.repsCompleted || ""} onChange={e=>setStrengthInputs((prev) => ({ ...prev, [key]: { ...prev[key], exercise: ex.ex, repsCompleted: e.target.value, actualReps: e.target.value } }))} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </details>
+      </div>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Why today?</summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+          <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{rationaleHeadline}</div>
+          {!!rationaleSupport && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{rationaleSupport}</div>}
+          {!!planBasisHeadline && <div data-testid="today-plan-basis-detail" style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>Plan basis: {planBasisHeadline}</div>}
+          {!!planBasisSupportLine && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{planBasisSupportLine}</div>}
+          {!!planBasisCompromiseLine && <div style={{ fontSize:"0.49rem", color:C.amber, lineHeight:1.45 }}>Tradeoff: {planBasisCompromiseLine}</div>}
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Recovery: {recoveryPrescriptionLine}</div>
+          {!!programBlockLine && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Current block: {programBlockLine}</div>}
+          <PlannedSessionDetailCard
+            session={{
+              day: "Today",
+              title: displayWorkout?.label || "Today's session",
+              summary: todayPrescriptionSummary,
+            }}
+            accentColor={cardColor}
+          />
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Adjust today</summary>
+        <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+          <div style={{ display:"grid", gap:"0.18rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>Today's setup override</div>
+            <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
+              {["Home", "Gym", "Travel"].map((mode) => {
+                const selected = environmentSelection?.scope === "today" && String(environmentSelection?.mode || "").toLowerCase() === mode.toLowerCase();
+                return (
+                  <button
+                    key={mode}
+                    className="btn"
+                    onClick={async ()=>setEnvironmentMode({ mode, scope:"today" })}
+                    style={{
+                      fontSize:"0.5rem",
+                      color:selected ? "#0f172a" : C.blue,
+                      background:selected ? C.blue : "transparent",
+                      borderColor:`${C.blue}35`,
+                    }}
+                  >
+                    {mode}
+                  </button>
+                );
+              })}
+              {environmentSelection?.scope === "today" && (
+                <button className="btn" onClick={async ()=>setEnvironmentMode({ scope:"today", clearTodayOverride:true })} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+                  Use default setup
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>
+              Temporary for today only. If this preset supports substitutions, the session refreshes immediately.
+            </div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+            <button className="btn" onClick={()=>setSessionVariant((value)=>value === "short" ? "standard" : "short")} style={{ fontSize:"0.5rem", color: sessionVariant === "short" ? "#0f172a" : C.green, background: sessionVariant === "short" ? C.green : "transparent", borderColor:C.green+"30" }}>
+              {sessionVariant === "short" ? "Short version active" : "Shorten to 20 min"}
+            </button>
+            <button className="btn" onClick={()=>setSessionVariant((value)=>value === "extended" ? "standard" : "extended")} style={{ fontSize:"0.5rem", color: sessionVariant === "extended" ? "#0f172a" : C.amber, background: sessionVariant === "extended" ? C.amber : "transparent", borderColor:C.amber+"35" }}>
+              {sessionVariant === "extended" ? "Extended version active" : "Extend by 15 min"}
+            </button>
+          </div>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            <button className="btn" onClick={async ()=>{
+              if (tomorrowHasSession) { setShiftChoiceOpen(true); return; }
+              const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" });
+              setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 });
+            }} style={{ fontSize:"0.5rem", color:C.blue, borderColor:C.blue+"30" }}>Move to tomorrow</button>
+            {shiftUndo && <button className="btn" onClick={async ()=>{ await restoreShiftTodayWorkout(shiftUndo); setShiftUndo(null); }} style={{ fontSize:"0.5rem", color:C.amber, borderColor:C.amber+"35" }}>Undo move</button>}
+          </div>
+          {shiftChoiceOpen && (
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+              <button className="btn" onClick={async ()=>{ const undo = await shiftTodayWorkout({ daysForward: 1, mode: "replace" }); setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 }); setShiftChoiceOpen(false); }} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>Replace tomorrow</button>
+              <button className="btn" onClick={async ()=>{ const undo = await shiftTodayWorkout({ daysForward: 1, mode: "add_second" }); setShiftUndo({ ...undo, expiresAt: Date.now() + 60000 }); setShiftChoiceOpen(false); }} style={{ fontSize:"0.48rem", color:C.green, borderColor:C.green+"35" }}>Add second session</button>
+              <button className="btn" onClick={()=>setShiftChoiceOpen(false)} style={{ fontSize:"0.48rem" }}>Cancel</button>
+            </div>
+          )}
+        </div>
+      </details>
+    </div>
+  );
+  if (false) return (
     <div className="fi">
       {loading && (
         <div className="card card-soft" style={{ marginBottom:"0.7rem", borderColor:"#2a3b56", fontSize:"0.56rem", color:"#9fb2d2" }}>
@@ -10797,6 +13900,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       )}
 
       <div
+        data-testid="today-session-card"
         onClick={toggleCard}
         style={{ marginBottom:"0.75rem", background:"#0f172a", border:`1px solid ${cardColor}22`, boxShadow:`0 18px 42px ${cardColor}10`, borderRadius:16, padding:"1rem 1.05rem", cursor:"pointer", transition:"border-color 0.15s", userSelect:"none" }}
       >
@@ -10818,6 +13922,21 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           {currentProgramBlock?.dominantEmphasis?.label && (
             <span style={{ fontSize:"0.48rem", color:"#dbeafe", background:"#1d3557", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
               {currentProgramBlock.dominantEmphasis.label}
+            </span>
+          )}
+          {livePlanningBasis?.activeProgramName && (
+            <span style={{ fontSize:"0.48rem", color:"#dbe7f6", background:"#132033", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
+              {livePlanningBasis.activeProgramName}
+            </span>
+          )}
+          {livePlanningBasis?.activeStyleName && (
+            <span style={{ fontSize:"0.48rem", color:"#c7d8ee", background:"#15263f", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
+              {livePlanningBasis.activeStyleName}
+            </span>
+          )}
+          {planBasisModeLabel && (
+            <span style={{ fontSize:"0.48rem", color:"#f8fafc", background:"#23344e", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:500 }}>
+              {planBasisModeLabel}
             </span>
           )}
           <span style={{ fontSize:"0.48rem", color:readinessTone, background:readinessTone+"15", padding:"0.15rem 0.45rem", borderRadius:6, fontWeight:600, letterSpacing:"0.04em" }}>
@@ -10870,13 +13989,13 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
             </div>
             <div>
               <div style={{ fontSize:"0.49rem", color:"#64748b", letterSpacing:"0.08em" }}>SETUP</div>
-              <div className="mono" style={{ fontSize:"0.82rem", color:C.blue, fontWeight:600 }}>{strTrack === "hotel" ? "Gym" : "Home"}</div>
+              <div className="mono" style={{ fontSize:"0.82rem", color:C.blue, fontWeight:600 }}>{strengthSetupLabel}</div>
             </div>
           </div>
         )}
         {hasStrength && displayRun && (
           <div style={{ fontSize:"0.56rem", color:"#94a3b8", marginTop:"0.45rem" }}>
-            + Strength {strSess} ({strTrack === "hotel" ? "Gym" : "Home"}) - {displayWorkout?.strengthDuration || "20-30 min"}
+            + Strength {strSess} ({strengthSetupLabel}) - {displayWorkout?.strengthDuration || "20-30 min"}
           </div>
         )}
 
@@ -10899,13 +14018,12 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
                   {displayRun.t} - {displayRun.d} at {runPace}/mi
                 </div>
                 {displayWorkout?.environmentNote && <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.2rem" }}>{displayWorkout.environmentNote}</div>}
-                {readinessInfluence?.recoveryLine && <div style={{ fontSize:"0.54rem", color:readinessTone, marginTop:"0.2rem" }}>{readinessInfluence.recoveryLine}</div>}
               </div>
             )}
 
             {hasStrength && (
               <div style={{ marginBottom: hasPrehab ? "0.85rem" : 0 }}>
-                <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>STRENGTH {strSess} - {strTrack === "hotel" ? "GYM" : "HOME"}</div>
+                <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.4rem" }}>STRENGTH {strSess} - {String(strengthSetupLabel || "Home").toUpperCase()}</div>
                 <div style={{ display:"grid", gap:"0.3rem" }}>
                   {strExercises.map((ex, i) => (
                     <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.5rem", padding:"0.35rem 0", borderBottom: i < strExercises.length - 1 ? "1px solid #1e293b20" : "none" }}>
@@ -10976,9 +14094,9 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
       <div className="card card-soft" style={{ marginBottom:"0.8rem", borderColor:contextStatusTone+"30", background:"rgba(8,14,25,0.82)" }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"flex-start", flexWrap:"wrap" }}>
           <div>
-            <div className="sect-title" style={{ color:contextStatusTone, marginBottom:"0.18rem" }}>ACTIVE PLANNING CONTEXT</div>
+            <div className="sect-title" style={{ color:contextStatusTone, marginBottom:"0.18rem" }}>ACTIVE CONTEXT</div>
             <div style={{ fontSize:"0.55rem", color:"#9fb4d3", lineHeight:1.55 }}>
-              This is the setup the planner is using right now.
+              What Today is using right now.
             </div>
           </div>
           <button
@@ -10995,15 +14113,15 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
             }}
             style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
           >
-            Inspect / edit
+            Review / edit
           </button>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:"0.45rem", marginTop:"0.55rem" }}>
           {[
-            { label: "Environment", value: trainingContextSummary.environmentLabel, meta: environmentSourceLabel },
-            { label: "Equipment", value: trainingContextSummary.equipmentLabel, meta: equipmentSourceLabel },
-            { label: "Session window", value: trainingContextSummary.sessionLabel, meta: durationSourceLabel },
-            { label: "Issue context", value: issueContextLabel, meta: activeIssueContext?.active ? "Active in planning" : activeIssueContext?.historicalNotes ? "Stale note kept out" : "Neutral" },
+            { label: "Environment", value: trainingContextSummary.environmentLabel, meta: plainEnvironmentSourceLabel },
+            { label: "Equipment", value: trainingContextSummary.equipmentLabel, meta: plainEquipmentSourceLabel },
+            { label: "Session window", value: trainingContextSummary.sessionLabel, meta: plainDurationSourceLabel },
+            { label: "Issue context", value: issueContextLabel, meta: activeIssueContext?.active ? "Active in plan" : activeIssueContext?.historicalNotes ? "Older note kept out" : "No active issue" },
           ].map((item) => (
             <div key={item.label} style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:12, padding:"0.65rem", background:"rgba(15,23,42,0.72)" }}>
               <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.18rem" }}>{item.label}</div>
@@ -11014,7 +14132,7 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
         </div>
         {activeIssueContext?.historicalNotes && !activeIssueContext?.active && (
           <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55, marginTop:"0.5rem" }}>
-            Historical note: {activeIssueContext.historicalNotes}
+            Older note kept out of today's plan: {activeIssueContext.historicalNotes}
           </div>
         )}
       </div>
@@ -11027,7 +14145,9 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
               <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>{readinessBadgeLabel}</div>
               <span style={{ fontSize:"0.46rem", color:todayTrustTone.color, background:todayTrustTone.bg, padding:"0.14rem 0.4rem", borderRadius:999 }}>{todayTrust.label}</span>
             </div>
-            {!!successSupport && <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{successSupport}</div>}
+            <div style={{ marginTop:"0.18rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {reducedLoadSourceLine || readinessBasisLine}
+            </div>
           </div>
           <div className="card card-soft" style={{ borderColor:C.green+"26", background:"#0d1711" }}>
             <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.26rem" }}>WIN TODAY</div>
@@ -11053,16 +14173,20 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
 
         <details className="card card-soft" style={{ borderColor:"#2b3f5e", background:"#0d1420", marginBottom:0 }}>
           <summary style={{ cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.45rem", listStyle:"none" }}>
-            <span style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>Why and recovery</span>
+            <span style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>Why this setup</span>
             <span style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Optional</span>
           </summary>
           <div style={{ marginTop:"0.55rem", display:"grid", gap:"0.4rem" }}>
             <div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.5 }}>{rationaleHeadline}</div>
             {!!rationaleSupport && <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{rationaleSupport}</div>}
-            {!!programBlockLine && <div style={{ fontSize:"0.5rem", color:"#93c5fd", lineHeight:1.45 }}>Block posture: {programBlockLine}</div>}
+            {!!planBasisHeadline && <div data-testid="today-plan-basis" style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>Plan basis: {planBasisHeadline}</div>}
+            {!!planBasisSupportLine && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{planBasisSupportLine}</div>}
+            {!!planBasisCompromiseLine && <div style={{ fontSize:"0.49rem", color:C.amber, lineHeight:1.45 }}>Compromise: {planBasisCompromiseLine}</div>}
             <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>Recovery: {recoveryPrescriptionLine}</div>
-            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{supplementPlanLine}</div>
-            <div style={{ fontSize:"0.48rem", color:"#64748b", lineHeight:1.4 }}>Source: {readinessSourceLabel}{shortProvenance ? ` - ${shortProvenance}` : ""}</div>
+            {!!programBlockLine && <div style={{ fontSize:"0.49rem", color:"#93c5fd", lineHeight:1.45 }}>Current block: {programBlockLine}</div>}
+            <div style={{ fontSize:"0.48rem", color:"#64748b", lineHeight:1.4 }}>
+              Support basis: {readinessBasisLine}{shortProvenance ? ` ${shortProvenance}` : ""}
+            </div>
           </div>
         </details>
       </div>
@@ -11520,7 +14644,19 @@ class ProgramTabErrorBoundary extends React.Component {
 function PlannedSessionDetailCard({ session = null, accentColor = "#00c2ff" }) {
   if (!session?.summary) return null;
   const summary = session.summary;
-  const exercisePreview = summary.exercisePreview || { available: false, rows: [], note: "" };
+  const sessionPlan = summary.sessionPlan || {
+    available: Boolean(summary.exercisePreview?.available),
+    sections: summary.exercisePreview?.available ? [{
+      key: "session_plan",
+      title: "Session plan",
+      rows: (summary.exercisePreview?.rows || []).map((row) => ({
+        title: row.exercise,
+        detail: row.structure,
+        note: row.movementNote,
+      })),
+    }] : [],
+    note: summary.exercisePreview?.note || "",
+  };
   return (
     <div style={{ border:`1px solid ${accentColor}30`, borderRadius:12, background:"#0b1220", padding:"0.75rem 0.8rem", display:"grid", gap:"0.42rem" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap" }}>
@@ -11557,27 +14693,38 @@ function PlannedSessionDetailCard({ session = null, accentColor = "#00c2ff" }) {
         note={summary.movementNote || ""}
         accentColor={accentColor}
       />
-      {(exercisePreview.available || exercisePreview.note) && (
-        <div style={{ border:`1px solid ${accentColor}22`, borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.28rem" }}>
-          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>EXERCISE PREVIEW</div>
-          {exercisePreview.available ? (
-            <div style={{ display:"grid", gap:"0.22rem" }}>
-              {(exercisePreview.rows || []).map((row, index) => (
-                <div key={`${row.exercise}_${index}`} style={{ display:"grid", gap:"0.06rem" }}>
-                  <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>
-                    {row.exercise}{row.structure ? ` · ${row.structure}` : ""}
-                  </div>
-                  {!!row.movementNote && (
-                    <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{row.movementNote}</div>
+      {(sessionPlan.available || sessionPlan.note) && (
+        <div data-testid="planned-session-plan" style={{ border:`1px solid ${accentColor}22`, borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.32rem" }}>
+          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em" }}>SESSION PLAN</div>
+          {sessionPlan.available ? (
+            <div style={{ display:"grid", gap:"0.4rem" }}>
+              {(sessionPlan.sections || []).map((section, sectionIndex) => (
+                <div key={`${section?.key || "section"}_${sectionIndex}`} style={{ display:"grid", gap:"0.24rem" }}>
+                  {((sessionPlan.sections || []).length > 1 || section?.title) && (
+                    <div style={{ fontSize:"0.46rem", color:accentColor, letterSpacing:"0.08em" }}>
+                      {sanitizeDisplayText(section?.title || "Session block")}
+                    </div>
                   )}
+                  <div style={{ display:"grid", gap:"0.22rem" }}>
+                    {(section?.rows || []).map((row, index) => (
+                      <div key={`${row?.title || "row"}_${index}`} style={{ display:"grid", gap:"0.06rem" }}>
+                        <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                          {sanitizeDisplayText(row?.title || "Planned block")}{row?.detail ? ` · ${sanitizeDisplayText(row.detail)}` : ""}
+                        </div>
+                        {!!row?.note && (
+                          <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{sanitizeDisplayText(row.note)}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
           ) : (
-            <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5 }}>{exercisePreview.note}</div>
+            <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.5 }}>{sessionPlan.note}</div>
           )}
-          {!!exercisePreview.available && !!exercisePreview.note && (
-            <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>{exercisePreview.note}</div>
+          {!!sessionPlan.available && !!sessionPlan.note && (
+            <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>{sessionPlan.note}</div>
           )}
         </div>
       )}
@@ -11798,13 +14945,19 @@ function GoalAnchorQuickEntryPanel({
   );
 }
 
-function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, saveBodyweights = async () => null, saveManualProgressInputs = async () => null, todayWorkout: legacyTodayWorkout }) {
+function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, saveBodyweights = async () => null, saveManualProgressInputs = async () => null, saveProgramSelection = async () => null, todayWorkout: legacyTodayWorkout, onManagePlan = () => {} }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const goalBuckets = athleteProfile?.goalBuckets || {};
   const activeTimeBoundGoal = athleteProfile?.activeTimeBoundGoal || null;
   const goalState = athleteProfile?.goalState || {};
   const manualProgressInputs = personalization?.manualProgressInputs || {};
+  const programsState = useMemo(
+    () => normalizeProgramsSelectionState(personalization?.programs || createDefaultProgramSelectionState()),
+    [personalization?.programs]
+  );
+  const programDefinitions = useMemo(() => listProgramDefinitions(), []);
+  const styleDefinitions = useMemo(() => listStyleDefinitions(), []);
   const planDayWeek = planDay?.week || null;
   const [openWeek, setOpenWeek] = useState(currentWeek);
   const weeklyDraft = weeklyCheckins?.[String(currentWeek)] || { energy: 3, stress: 3, confidence: 3 };
@@ -11823,10 +14976,22 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const [goalReviewNotice, setGoalReviewNotice] = useState("");
   const [goalReviewSaving, setGoalReviewSaving] = useState(false);
   const [selectedProgramSessionKey, setSelectedProgramSessionKey] = useState("");
+  const [catalogMode, setCatalogMode] = useState("programs");
+  const [selectedCatalogProgramId, setSelectedCatalogProgramId] = useState("");
+  const [selectedCatalogStyleId, setSelectedCatalogStyleId] = useState("");
+  const [selectedProgramFidelityMode, setSelectedProgramFidelityMode] = useState(PROGRAM_FIDELITY_MODES.adaptToMe);
+  const [programSelectionNotice, setProgramSelectionNotice] = useState("");
+  const [programSelectionError, setProgramSelectionError] = useState("");
   const scheduleEntries = personalization?.environmentConfig?.schedule || [];
   const weeklyProgress = Math.max(0, Math.min(100, Math.round((((Number(miniWeekly.energy) || 0) + (Number(miniWeekly.confidence) || 0) + (6 - (Number(miniWeekly.stress) || 0))) / 15) * 100)));
   const weeklyGoalHit = (Number(miniWeekly.energy) || 0) >= 4 && (Number(miniWeekly.confidence) || 0) >= 4 && (Number(miniWeekly.stress) || 0) <= 3;
   useEffect(() => { setMiniWeekly(weeklyDraft); }, [currentWeek, weeklyCheckins?.[String(currentWeek)]?.ts]);
+  useEffect(() => {
+    if (!selectedCatalogProgramId && programDefinitions?.[0]?.id) setSelectedCatalogProgramId(programDefinitions[0].id);
+  }, [programDefinitions, selectedCatalogProgramId]);
+  useEffect(() => {
+    if (!selectedCatalogStyleId && styleDefinitions?.[0]?.id) setSelectedCatalogStyleId(styleDefinitions[0].id);
+  }, [styleDefinitions, selectedCatalogStyleId]);
   const arbitration = arbitrateGoals({ goals, momentum, personalization });
   const signals = computeAdaptiveSignals({ logs, bodyweights, personalization });
   const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon : [];
@@ -12049,6 +15214,98 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     goalReviewHistory: personalization?.goalReviewHistory || [],
     now: new Date(),
   }), [goals, goalProgressTracking, currentProgramBlock, personalization?.goalChangeHistory, personalization?.goalReviewHistory]);
+  const activeBasisSnapshot = useMemo(
+    () => buildActiveBasisSnapshot({ programsState }),
+    [programsState]
+  );
+  const activeProgramDefinition = activeBasisSnapshot?.activeProgramDefinition || null;
+  const activeStyleDefinition = activeBasisSnapshot?.activeStyleDefinition || null;
+  const selectedProgramDefinition = useMemo(
+    () => getProgramDefinitionById(selectedCatalogProgramId || "") || programDefinitions?.[0] || null,
+    [selectedCatalogProgramId, programDefinitions]
+  );
+  const selectedStyleDefinition = useMemo(
+    () => getStyleDefinitionById(selectedCatalogStyleId || "") || styleDefinitions?.[0] || null,
+    [selectedCatalogStyleId, styleDefinitions]
+  );
+  const catalogViewModel = useMemo(
+    () => buildProgramCatalogViewModel({
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+      activeStyleSelection: programsState?.activeStyleSelection || null,
+    }),
+    [programsState?.activeProgramInstance, programsState?.activeStyleSelection]
+  );
+  const selectedProgramCompatibility = useMemo(
+    () => assessProgramCompatibility({
+      programDefinition: selectedProgramDefinition,
+      athleteProfile,
+      personalization,
+      goals,
+      fidelityMode: selectedProgramFidelityMode,
+    }),
+    [selectedProgramDefinition, athleteProfile, personalization, goals, selectedProgramFidelityMode]
+  );
+  const selectedStyleCompatibility = useMemo(
+    () => assessStyleCompatibility({
+      styleDefinition: selectedStyleDefinition,
+      programDefinition: activeProgramDefinition,
+      athleteProfile,
+      goals,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+    }),
+    [selectedStyleDefinition, activeProgramDefinition, athleteProfile, goals, programsState?.activeProgramInstance]
+  );
+  const livePlanBasisExplanation = useMemo(
+    () => planComposer?.planningBasis?.planBasisExplanation || buildPlanBasisExplanation({
+      athleteProfile,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+      activeStyleSelection: programsState?.activeStyleSelection || null,
+      programDefinition: activeProgramDefinition,
+      styleDefinition: activeStyleDefinition,
+      compatibilityAssessment: programsState?.lastCompatibilityAssessment || null,
+    }),
+    [athleteProfile, programsState?.activeProgramInstance, programsState?.activeStyleSelection, programsState?.lastCompatibilityAssessment, activeProgramDefinition, activeStyleDefinition, planComposer]
+  );
+  const liveProgramAdherence = planComposer?.planningBasis?.adherence || null;
+  const selectedProgramCardExplanation = useMemo(
+    () => buildProgramCardExplanation({ programDefinition: selectedProgramDefinition }),
+    [selectedProgramDefinition]
+  );
+  const selectedStyleCardExplanation = useMemo(
+    () => buildStyleCardExplanation({ styleDefinition: selectedStyleDefinition }),
+    [selectedStyleDefinition]
+  );
+  const selectedProgramActivationCopy = useMemo(
+    () => buildActivationConfirmationCopy({
+      programDefinition: selectedProgramDefinition,
+      fidelityMode: selectedProgramFidelityMode,
+      compatibilityAssessment: selectedProgramCompatibility,
+    }),
+    [selectedProgramDefinition, selectedProgramFidelityMode, selectedProgramCompatibility]
+  );
+  const selectedStyleActivationCopy = useMemo(
+    () => buildActivationConfirmationCopy({
+      styleDefinition: selectedStyleDefinition,
+      compatibilityAssessment: selectedStyleCompatibility,
+    }),
+    [selectedStyleDefinition, selectedStyleCompatibility]
+  );
+  const selectedProgramWarningCopy = useMemo(
+    () => buildCompatibilityWarningCopy({ compatibilityAssessment: selectedProgramCompatibility }),
+    [selectedProgramCompatibility]
+  );
+  const selectedStyleWarningCopy = useMemo(
+    () => buildCompatibilityWarningCopy({ compatibilityAssessment: selectedStyleCompatibility }),
+    [selectedStyleCompatibility]
+  );
+  const selectedStyleOverlayPreview = useMemo(
+    () => buildStyleOverlayPreview({
+      styleDefinition: selectedStyleDefinition,
+      influenceLevel: STYLE_INFLUENCE_LEVELS.standard,
+      programDefinition: activeProgramDefinition,
+    }),
+    [selectedStyleDefinition, activeProgramDefinition]
+  );
   const getGoalProgressTone = (status = "") => {
     if (status === GOAL_PROGRESS_STATUSES.onTrack) return { color: C.green, bg: `${C.green}14`, border: `${C.green}36` };
     if (status === GOAL_PROGRESS_STATUSES.reviewBased) return { color: C.blue, bg: `${C.blue}14`, border: `${C.blue}32` };
@@ -12095,6 +15352,10 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const programTrustTone = buildReviewBadgeTone(
     programTrust.level === "grounded" ? "match" : programTrust.level === "partial" ? "changed" : "recovery"
   , C);
+  const programWeekBasisLine = buildProgramWeekExplanation({
+    basisExplanation: livePlanBasisExplanation,
+    currentBlockLabel: currentProgramBlock?.label || currentPhaseMeta?.name || "",
+  });
   const plannedSessionsThisWeek = getProgramWeekSessions(currentWeek, (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek) || null).length;
   const currentWeekStart = new Date();
   currentWeekStart.setHours(0, 0, 0, 0);
@@ -12185,6 +15446,20 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const futureWeekRows = (displayHorizon || []).filter((h) => Number(h?.absoluteWeek || 0) > currentWeek);
   const selectedCurrentWeekSession = currentWeekSessions.find((session) => session.key === selectedProgramSessionKey) || null;
   const activeGoalsList = (goals || []).filter((goal) => goal?.active);
+  const metricsBaselinesModel = useMemo(() => buildMetricsBaselinesModel({
+    athleteProfile,
+    personalization,
+    bodyweights,
+    logs,
+  }), [athleteProfile, personalization, bodyweights, logs]);
+  const supportTierModel = useMemo(() => (
+    planComposer?.supportTier
+    || buildSupportTierModel({
+      goals,
+      domainAdapterId: planComposer?.domainAdapter?.id || "",
+      goalCapabilityStack: planComposer?.goalCapabilityStack || null,
+    })
+  ), [planComposer, goals]);
   const currentWeekLabel = currentWeekRow?.weekLabel || currentWeekModel?.label || `Week ${currentWeek}`;
   const blockSummaryLine = currentProgramBlock?.summary || currentWeekModel?.summary || planComposer?.programBlock?.summary || arbitration.allocationNarrative;
   const committedWeekHistoryPreview = committedWeekHistory.slice(0, 6);
@@ -12195,6 +15470,52 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     currentProgramBlock?.nutritionPosture?.mode ? `nutrition ${String(currentProgramBlock.nutritionPosture.mode).replaceAll("_", " ")}` : null,
     currentWeeklyIntent?.nutritionEmphasis || null,
   ].filter(Boolean);
+  const compressWeekCopy = (text = "", maxLen = 165) => {
+    const normalized = String(text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+    if (normalized.length <= maxLen) return normalized;
+    return `${normalized.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
+  };
+  const currentWeekPurposeLine = compressWeekCopy(currentWeeklyIntent?.focus || currentWeekLabel, 140);
+  const currentWeekMattersLine = compressWeekCopy(weeklyCoachBrief || blockSummaryLine || "Current week plan", 165);
+  const currentWeekChangesLine = compressWeekCopy(
+    currentWeekModel?.changeSummary?.surfaceLine
+      || currentWeekModel?.changeSummary?.headline
+      || badWeekTriage
+      || (Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0
+        ? currentWeekModel.constraints.slice(0, 2).join(" - ")
+        : hierarchyIntentBits.join(" - ")),
+    165
+  ) || "No major week-level change flags are active.";
+  const currentWeekWinLine = compressWeekCopy(weeklyConsistencyAnchor, 165);
+  const currentWeekMetaLine = [
+    `${sessionsCompletedThisWeek}/${Math.max(1, plannedSessionsThisWeek)} sessions done`,
+    nextWeekType,
+    currentWeekModel?.adjusted ? "plan adjusted" : "",
+    metricsBaselinesModel?.missingCards?.length ? `${metricsBaselinesModel.missingCards.length} anchor${metricsBaselinesModel.missingCards.length === 1 ? "" : "s"} missing` : "",
+  ].filter(Boolean).join(" - ");
+  const currentWeekContextLine = currentCommittedWeekReview
+    ? `Saved week snapshot for ${currentCommittedWeekReview.label}.`
+    : "This week's saved history appears once the week closes.";
+  const humanizeGoalReviewPrompt = (key = "") => {
+    if (key === "are_we_progressing") return "Is this still moving in the right direction?";
+    if (key === "is_goal_still_right") return "Is this still the right goal?";
+    if (key === "are_metrics_still_useful") return "Are we tracking the right things?";
+    return "Does anything need to change?";
+  };
+  const humanizeGoalReviewVerdict = (verdict = "") => {
+    if (verdict === "aligned") return "on track";
+    if (verdict === "mixed") return "mixed";
+    if (verdict === "refine") return "needs tightening";
+    if (verdict === "reprioritize") return "needs a priority shift";
+    if (verdict === "review") return "worth reviewing";
+    return String(verdict || "review").replaceAll("_", " ");
+  };
+  const goalReviewRecommendationLine = [
+    goalReview?.recommendation?.label || "Keep current goal",
+    goalReview?.recommendation?.reason || "",
+  ].filter(Boolean).join(". ");
+  const goalReviewSummaryLine = goalReview?.summary || "Use this check-in to confirm the goal, the signals you're tracking, and anything that still needs tightening.";
   const handleGoalChangePreview = async () => {
     const cleanGoalText = sanitizeIntakeText(goalChangeIntent || "");
     if (!cleanGoalText) {
@@ -12280,7 +15601,341 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     }
   };
 
+  const commitProgramsState = async (nextProgramsState, notice = "") => {
+    setProgramSelectionError("");
+    setProgramSelectionNotice(notice);
+    await saveProgramSelection(nextProgramsState);
+  };
+
+  const handleActivateProgram = async (fidelityMode = PROGRAM_FIDELITY_MODES.adaptToMe) => {
+    if (!selectedProgramDefinition?.id) return;
+    const compatibilityAssessment = assessProgramCompatibility({
+      programDefinition: selectedProgramDefinition,
+      athleteProfile,
+      personalization,
+      goals,
+      fidelityMode,
+    });
+    if (compatibilityAssessment?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
+      setProgramSelectionNotice("");
+      setProgramSelectionError(compatibilityAssessment?.blockedConstraints?.[0] || compatibilityAssessment?.reasons?.[0] || "This program is not a clean fit right now.");
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const nextProgramInstance = createProgramInstance({
+      programDefinition: selectedProgramDefinition,
+      userId: "local",
+      fidelityMode,
+      compatibilityAssessment,
+      athleteProfile,
+      activationDate: nowIso,
+    });
+    const nextStyleSelection = fidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle
+      ? null
+      : programsState?.activeStyleSelection || null;
+    const nextExplanation = buildPlanBasisExplanation({
+      athleteProfile,
+      activeProgramInstance: nextProgramInstance,
+      activeStyleSelection: nextStyleSelection,
+      programDefinition: selectedProgramDefinition,
+      styleDefinition: fidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle ? null : activeStyleDefinition,
+      compatibilityAssessment,
+    });
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: programsState?.activeProgramInstance ? "replaced_program" : "activated_program",
+      programDefinition: selectedProgramDefinition,
+      fidelityMode,
+      reason: compatibilityAssessment?.reasons?.[0] || buildCompatibilityHeadline(compatibilityAssessment),
+      createdAt: nowIso,
+    });
+    await commitProgramsState({
+      ...programsState,
+      activeProgramInstance: nextProgramInstance,
+      activeStyleSelection: nextStyleSelection,
+      lastCompatibilityAssessment: compatibilityAssessment,
+      planBasisExplanation: nextExplanation,
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    }, `${selectedProgramDefinition.displayName} is now active in ${String(fidelityMode || "").replaceAll("_", " ")} mode.`);
+  };
+
+  const handleActivateStyle = async () => {
+    if (!selectedStyleDefinition?.id) return;
+    const compatibilityAssessment = assessStyleCompatibility({
+      styleDefinition: selectedStyleDefinition,
+      programDefinition: activeProgramDefinition,
+      athleteProfile,
+      goals,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+    });
+    if (compatibilityAssessment?.outcome === COMPATIBILITY_OUTCOMES.incompatible) {
+      setProgramSelectionNotice("");
+      setProgramSelectionError(compatibilityAssessment?.blockedConstraints?.[0] || compatibilityAssessment?.reasons?.[0] || "This style does not fit the current program layer.");
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const nextStyleSelection = createStyleSelection({
+      styleDefinition: selectedStyleDefinition,
+      userId: "local",
+      compatibleWithCurrentPlan: compatibilityAssessment?.outcome !== COMPATIBILITY_OUTCOMES.incompatible,
+      influenceLevel: STYLE_INFLUENCE_LEVELS.standard,
+      activationDate: nowIso,
+    });
+    const nextExplanation = buildPlanBasisExplanation({
+      athleteProfile,
+      activeProgramInstance: programsState?.activeProgramInstance || null,
+      activeStyleSelection: nextStyleSelection,
+      programDefinition: activeProgramDefinition,
+      styleDefinition: selectedStyleDefinition,
+      compatibilityAssessment,
+    });
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: programsState?.activeStyleSelection ? "replaced_style" : "activated_style",
+      styleDefinition: selectedStyleDefinition,
+      reason: compatibilityAssessment?.reasons?.[0] || buildCompatibilityHeadline(compatibilityAssessment),
+      createdAt: nowIso,
+    });
+    await commitProgramsState({
+      ...programsState,
+      activeStyleSelection: nextStyleSelection,
+      lastCompatibilityAssessment: compatibilityAssessment,
+      planBasisExplanation: nextExplanation,
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    }, `${selectedStyleDefinition.displayName} is now the active style layer.`);
+  };
+
+  const handleClearProgramLayer = async () => {
+    if (!programsState?.activeProgramInstance && !programsState?.activeStyleSelection) return;
+    const nowIso = new Date().toISOString();
+    const nextHistoryEntry = buildProgramSelectionHistoryEntry({
+      action: "cleared_basis",
+      programDefinition: activeProgramDefinition,
+      styleDefinition: activeStyleDefinition,
+      fidelityMode: programsState?.activeProgramInstance?.fidelityMode || "",
+      reason: "Returned to the default goal-driven basis.",
+      createdAt: nowIso,
+    });
+    const nextState = {
+      ...programsState,
+      activeProgramInstance: null,
+      activeStyleSelection: null,
+      lastCompatibilityAssessment: null,
+      planBasisExplanation: buildPlanBasisExplanation({
+        athleteProfile,
+        activeProgramInstance: null,
+        activeStyleSelection: null,
+        programDefinition: null,
+        styleDefinition: null,
+        compatibilityAssessment: null,
+      }),
+      selectionHistory: [nextHistoryEntry, ...(programsState?.selectionHistory || [])].slice(0, 20),
+    };
+    await commitProgramsState(nextState, "Program and style basis cleared. The plan is back on the default goal-driven logic.");
+  };
+
   return (
+    <div className="fi" data-testid="program-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      <div className="card card-strong card-hero" style={{ borderColor:C.blue+"30" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.55rem", flexWrap:"wrap" }}>
+          <div style={{ minWidth:0 }}>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.16rem" }}>PROGRAM</div>
+            <div style={{ fontSize:"0.8rem", color:"#f8fafc", lineHeight:1.35 }}>{currentWeekLabel}</div>
+            <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.16rem", lineHeight:1.55 }}>
+              {currentWeekPurposeLine}
+            </div>
+            <div data-testid="program-change-summary" style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>
+              {currentWeekChangesLine}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+            <span style={{ fontSize:"0.48rem", color:programTrustTone.color, background:programTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{programTrust.label}</span>
+            <span style={{ fontSize:"0.48rem", color:currentWeekModel?.adjusted ? C.green : "#8fa5c8", background:currentWeekModel?.adjusted ? `${C.green}14` : "#1e293b", padding:"0.16rem 0.42rem", borderRadius:999 }}>
+              {currentWeekModel?.adjusted ? "Adjusted week" : "Normal week"}
+            </span>
+          </div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.4rem", marginTop:"0.55rem" }}>
+          <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>PLAN BASIS</div>
+            <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.14rem", lineHeight:1.5 }}>
+              {livePlanBasisExplanation?.basisSummary || "Goal-driven default"}
+            </div>
+            {!!liveProgramAdherence?.summary && (
+              <div style={{ fontSize:"0.48rem", color:liveProgramAdherence?.state === "off_program" ? C.amber : "#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
+                {liveProgramAdherence.summary}
+              </div>
+            )}
+          </div>
+          <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>ACTIVE GOALS</div>
+            <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.14rem", lineHeight:1.5 }}>
+              {activeGoalsList.length ? activeGoalsList.map((goal) => goal.name).join(" • ") : "No active goals"}
+            </div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
+              {currentWeekMetaLine}
+            </div>
+          </div>
+          <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>METRICS + SUPPORT</div>
+            <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.14rem", lineHeight:1.5 }}>
+              {supportTierModel?.shortLabel || "Support tier"}{metricsBaselinesModel?.missingCards?.length ? ` • ${metricsBaselinesModel.missingCards.length} anchor${metricsBaselinesModel.missingCards.length === 1 ? "" : "s"} missing` : ""}
+            </div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
+              {metricsBaselinesModel?.missingCards?.[0]
+                ? `${metricsBaselinesModel.missingCards[0].label} is still missing, so the planner is staying conservative there.`
+                : supportTierModel?.honestyLine || "The current planning lane has enough anchors to stay more specific."}
+            </div>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.55rem" }}>
+          <button className="btn" onClick={()=>onManagePlan("plan")} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+            Manage program + goals
+          </button>
+          {metricsBaselinesModel?.missingCards?.length > 0 && (
+            <button data-testid="program-fix-metrics" className="btn" onClick={()=>onManagePlan("metrics")} style={{ fontSize:"0.52rem", color:C.amber, borderColor:`${C.amber}35` }}>
+              Fix missing baselines
+            </button>
+          )}
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", alignSelf:"center" }}>
+            {currentWeekContextLine}
+          </div>
+        </div>
+      </div>
+
+      <div className="card card-subtle" data-testid="program-this-week">
+        <div style={{ display:"grid", gap:"0.14rem", marginBottom:"0.55rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>CURRENT WEEK DETAIL</div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+            {currentWeekWinLine}
+          </div>
+        </div>
+        <div style={{ display:"grid", gap:"0.4rem" }}>
+          {(currentWeekSessions ?? []).map((session) => (
+            <button
+              key={session.key || `current_${session.day}_${session.title}`}
+              className="btn"
+              onClick={() => setSelectedProgramSessionKey((prev) => prev === session.key ? "" : session.key)}
+              style={{
+                border:`1px solid ${selectedProgramSessionKey === session.key ? `${C.green}55` : "#22324a"}`,
+                borderRadius:12,
+                background:"#0f172a",
+                padding:"0.6rem 0.65rem",
+                textAlign:"left",
+                display:"grid",
+                gap:"0.12rem",
+              }}
+            >
+              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+                <div style={{ display:"flex", gap:"0.28rem", alignItems:"center", minWidth:0 }}>
+                  {session.icon && <InlineGlyph name={session.icon} color={C.green} size={12} />}
+                  <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{session.day} · {sanitizeDisplayText(session.title)}</div>
+                </div>
+                {session.live && <span style={{ fontSize:"0.44rem", color:C.green, background:`${C.green}14`, padding:"0.12rem 0.32rem", borderRadius:999 }}>Today view</span>}
+              </div>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{sanitizeDisplayText(session.detail || "Planned session")}</div>
+            </button>
+          ))}
+        </div>
+        {selectedCurrentWeekSession && (
+          <div style={{ marginTop:"0.55rem" }}>
+            <PlannedSessionDetailCard session={selectedCurrentWeekSession} accentColor={C.green} />
+          </div>
+        )}
+      </div>
+
+      <div className="card card-subtle" data-testid="program-future-weeks">
+        <div style={{ display:"grid", gap:"0.14rem", marginBottom:"0.55rem" }}>
+          <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>NEXT WEEKS</div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+            These are projected weeks. They are for scanning the direction of the block, not micro-managing every future day.
+          </div>
+        </div>
+        <div style={{ display:"grid", gap:"0.45rem" }}>
+          {futureWeekRows.map((weekRow) => {
+            const weekSessions = getProgramWeekSessions(weekRow.absoluteWeek, weekRow);
+            const selectedFutureSession = weekSessions.find((session) => session.key === selectedProgramSessionKey) || null;
+            const isExpanded = openWeek === weekRow.absoluteWeek;
+            const focusLine = weekRow?.planWeek?.weeklyIntent?.focus || weekRow?.focus || "Projected week";
+            const summaryLine = weekSessions.length > 0
+              ? weekSessions.slice(0, 3).map((session) => `${session.day} ${session.title}`).join(" • ")
+              : focusLine;
+            return (
+              <div key={weekRow.absoluteWeek} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem 0.65rem", display:"grid", gap:"0.32rem" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+                  <div>
+                    <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{sanitizeDisplayText(weekRow.weekLabel || `Week ${weekRow.absoluteWeek}`)}</div>
+                    <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.45 }}>{focusLine}</div>
+                  </div>
+                  <button className="btn" onClick={()=>setOpenWeek(openWeek === weekRow.absoluteWeek ? null : weekRow.absoluteWeek)} style={{ fontSize:"0.48rem" }}>
+                    {isExpanded ? "Hide" : "View"}
+                  </button>
+                </div>
+                {!isExpanded && <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.45 }}>{summaryLine}</div>}
+                {isExpanded && (
+                  <div style={{ display:"grid", gap:"0.35rem" }}>
+                    {weekSessions.map((session) => (
+                      <button
+                        key={session.key || `${weekRow.absoluteWeek}_${session.day}_${session.title}`}
+                        className="btn"
+                        onClick={() => setSelectedProgramSessionKey((prev) => prev === session.key ? "" : session.key)}
+                        style={{
+                          border:`1px solid ${selectedProgramSessionKey === session.key ? `${C.blue}55` : "#22324a"}`,
+                          borderRadius:10,
+                          background:"#111827",
+                          padding:"0.5rem 0.55rem",
+                          textAlign:"left",
+                          display:"grid",
+                          gap:"0.1rem",
+                        }}
+                      >
+                        <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.4 }}>{session.day} · {sanitizeDisplayText(session.title)}</div>
+                        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.4 }}>{sanitizeDisplayText(session.detail || "Planned session")}</div>
+                      </button>
+                    ))}
+                    {selectedFutureSession && <PlannedSessionDetailCard session={selectedFutureSession} accentColor={C.blue} />}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.56rem", color:"#dbe7f6" }}>Why this week and what changed</summary>
+        <div style={{ display:"grid", gap:"0.28rem", marginTop:"0.45rem" }}>
+          <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.5 }}>{currentWeekPurposeLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>What changed: {currentWeekChangesLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Win the week: {currentWeekWinLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{programTrust.summary}</div>
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.56rem", color:"#dbe7f6" }}>Saved week history</summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+          {committedWeekHistoryPreview.length === 0 ? (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              No saved week history yet.
+            </div>
+          ) : (
+            committedWeekHistoryPreview.map((entry) => (
+              <div key={entry.weekKey} style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem" }}>
+                <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.45 }}>{entry.label}</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.45 }}>
+                  {[
+                    entry?.plannedSessionCount ? `${entry.plannedSessionCount} planned` : null,
+                    entry?.loggedSessionCount ? `${entry.loggedSessionCount} logged` : null,
+                    entry?.weeklyCheckin?.ts ? "weekly check-in saved" : null,
+                  ].filter(Boolean).join(" • ") || "History saved"}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </details>
+    </div>
+  );
+  if (false) return (
     <div className="fi">
       <div style={{ display:"grid", gap:"0.85rem" }}>
         <section className="card card-strong card-hero" style={{ borderColor:C.blue+"30" }}>
@@ -12351,6 +16006,319 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                 ))}
               </div>
             )}
+          </div>
+        </section>
+
+        <section className="card card-subtle" style={{ borderColor:"#2c3f63", background:"linear-gradient(180deg, rgba(12,18,32,0.96) 0%, rgba(9,14,24,0.96) 100%)" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.75rem", flexWrap:"wrap", marginBottom:"0.8rem" }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>PROGRAMS + STYLES</div>
+              <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>Choose a concrete program, add a style bias, or stay fully goal-driven.</div>
+              <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.6, maxWidth:760 }}>
+                This gives the plan a transparent basis. Safety, schedule, equipment, injury context, and your real goal stack still outrank any template.
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", alignItems:"center" }}>
+              <div style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.16rem 0.48rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                {PROGRAM_SOURCE_BASIS_LABELS[activeProgramDefinition?.sourceBasis || activeStyleDefinition?.sourceBasis || "evidence_informed_default"] || "Evidence-informed default"}
+              </div>
+              <div style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.16rem 0.48rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                {SOURCE_CONFIDENCE_LABELS[livePlanBasisExplanation?.sourceConfidence || "high"] || "High confidence"}
+              </div>
+              <button className="btn" onClick={handleClearProgramLayer} style={{ fontSize:"0.5rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+                Clear active basis
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1.05fr 0.95fr", gap:"0.7rem", marginBottom:"0.75rem" }}>
+            <div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.8rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>CURRENT BASIS</div>
+              <div style={{ fontSize:"0.68rem", color:"#f8fafc", fontWeight:600, lineHeight:1.3 }}>
+                {livePlanBasisExplanation?.basisSummary || "Your plan is following the default goal-driven logic."}
+              </div>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.22rem", lineHeight:1.62 }}>
+                {livePlanBasisExplanation?.personalizationSummary || "No separate program or style layer is active."}
+              </div>
+              {!!programWeekBasisLine && (
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.26rem", lineHeight:1.55 }}>{programWeekBasisLine}</div>
+              )}
+              {!!liveProgramAdherence?.summary && (
+                <div style={{ fontSize:"0.5rem", color:liveProgramAdherence?.state === "off_program" ? C.amber : "#8fa5c8", marginTop:"0.22rem", lineHeight:1.55 }}>
+                  Adherence: {liveProgramAdherence.summary}
+                </div>
+              )}
+              {(livePlanBasisExplanation?.caveats || []).slice(0, 2).map((line, index) => (
+                <div key={`basis_caveat_${index}`} style={{ fontSize:"0.5rem", color:C.amber, marginTop:"0.22rem", lineHeight:1.5 }}>{line}</div>
+              ))}
+            </div>
+
+            <div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.8rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>ACTIVE LAYERS</div>
+              <div style={{ display:"grid", gap:"0.46rem" }}>
+                <div style={{ border:"1px solid #1f2d43", borderRadius:12, background:"#0b1322", padding:"0.62rem" }}>
+                  <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.14rem" }}>PROGRAM</div>
+                  <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>
+                    {activeProgramDefinition?.displayName || "No named program selected"}
+                  </div>
+                  <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                    {activeProgramDefinition
+                      ? `${String(livePlanBasisExplanation?.effectiveFidelityMode || programsState?.activeProgramInstance?.fidelityMode || PROGRAM_FIDELITY_MODES.adaptToMe).replaceAll("_", " ")} • ${PROGRAM_SOURCE_BASIS_LABELS[activeProgramDefinition?.sourceBasis] || "Source-backed"}`
+                      : "The planner is using the default goal-driven basis."}
+                  </div>
+                  {!!liveProgramAdherence?.state && activeProgramDefinition && (
+                    <div style={{ fontSize:"0.48rem", color:liveProgramAdherence?.state === "off_program" ? C.amber : "#94a3b8", marginTop:"0.12rem", lineHeight:1.45 }}>
+                      {liveProgramAdherence.state === "aligned"
+                        ? "Current training is still close to the selected backbone."
+                        : liveProgramAdherence.state === "drifting"
+                        ? "Recent training is drifting from the written backbone."
+                        : liveProgramAdherence.state === "off_program"
+                        ? "Recent training no longer matches the program closely enough to call it literal."
+                        : "Adherence is still forming."}
+                    </div>
+                  )}
+                </div>
+                <div style={{ border:"1px solid #1f2d43", borderRadius:12, background:"#0b1322", padding:"0.62rem" }}>
+                  <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.14rem" }}>STYLE</div>
+                  <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>
+                    {activeStyleDefinition?.displayName || "No extra style layer selected"}
+                  </div>
+                  <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                    {activeStyleDefinition
+                      ? `${activeStyleDefinition.styleBiases?.weeklyFeel || activeStyleDefinition.summary}`
+                      : "Choose a style only if you want the plan to tilt a certain way without changing the goal hierarchy."}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {(programSelectionNotice || programSelectionError) && (
+            <div style={{ fontSize:"0.52rem", color:programSelectionError ? C.amber : C.green, lineHeight:1.5, marginBottom:"0.65rem" }}>
+              {programSelectionError || programSelectionNotice}
+            </div>
+          )}
+
+          <div style={{ display:"flex", gap:"0.4rem", marginBottom:"0.75rem", flexWrap:"wrap" }}>
+            {[
+              { key: "programs", label: "Browse programs" },
+              { key: "styles", label: "Browse styles" },
+            ].map((tabOption) => {
+              const selected = catalogMode === tabOption.key;
+              return (
+                <button
+                  key={tabOption.key}
+                  className="btn"
+                  onClick={() => setCatalogMode(tabOption.key)}
+                  style={{
+                    color:selected ? "#f8fafc" : "#cbd5e1",
+                    borderColor:selected ? `${C.blue}55` : "#2b3d55",
+                    background:selected ? "rgba(59,130,246,0.16)" : "#0f172a",
+                    fontSize:"0.52rem",
+                  }}
+                >
+                  {tabOption.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1.02fr 0.98fr", gap:"0.75rem", alignItems:"start" }}>
+            <div style={{ display:"grid", gap:"0.65rem" }}>
+              {(catalogMode === "programs" ? catalogViewModel.programSections : catalogViewModel.styleSections).map((section) => (
+                <div key={section.key} style={{ display:"grid", gap:"0.45rem" }}>
+                  <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.12em" }}>{section.title}</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.5rem" }}>
+                    {section.items.map((item) => {
+                      const selected = catalogMode === "programs"
+                        ? item.id === (selectedProgramDefinition?.id || "")
+                        : item.id === (selectedStyleDefinition?.id || "");
+                      return (
+                        <button
+                          key={item.id}
+                          className="btn"
+                          onClick={() => {
+                            setProgramSelectionNotice("");
+                            setProgramSelectionError("");
+                            if (catalogMode === "programs") setSelectedCatalogProgramId(item.id);
+                            else setSelectedCatalogStyleId(item.id);
+                          }}
+                          style={{
+                            textAlign:"left",
+                            minHeight:150,
+                            padding:"0.72rem 0.75rem",
+                            borderRadius:14,
+                            borderColor:selected ? `${C.blue}55` : item.isActive ? `${C.green}40` : "#24344b",
+                            background:selected ? "rgba(37, 99, 235, 0.14)" : item.isActive ? "rgba(34,197,94,0.08)" : "#0f172a",
+                            display:"grid",
+                            gap:"0.24rem",
+                          }}
+                        >
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.35rem" }}>
+                            <div style={{ fontSize:"0.62rem", color:"#f8fafc", fontWeight:600, lineHeight:1.3 }}>{item.displayName}</div>
+                            {item.isActive && (
+                              <div style={{ fontSize:"0.42rem", color:C.green, background:"rgba(34,197,94,0.12)", border:`1px solid ${C.green}3d`, padding:"0.14rem 0.35rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                                ACTIVE
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{item.categoryLabel}</div>
+                          <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>{item.summary}</div>
+                          <div style={{ fontSize:"0.48rem", color:"#93c5fd", lineHeight:1.45 }}>
+                            {item.commitmentLine || item.emphasisLine || item.sourceBasisLabel}
+                          </div>
+                          <div style={{ fontSize:"0.46rem", color:"#64748b", lineHeight:1.45 }}>
+                            {item.sourceBasisLabel} • {item.sourceConfidenceLabel}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ border:"1px solid #24344b", borderRadius:16, background:"#0b1322", padding:"0.85rem" }}>
+              {catalogMode === "programs" && selectedProgramDefinition ? (
+                <div style={{ display:"grid", gap:"0.58rem" }}>
+                  <div>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>PROGRAM PREVIEW</div>
+                    <div style={{ fontSize:"0.74rem", color:"#f8fafc", fontWeight:600, lineHeight:1.25 }}>{selectedProgramCardExplanation?.title || selectedProgramDefinition.displayName}</div>
+                    <div style={{ fontSize:"0.56rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.58 }}>{selectedProgramCardExplanation?.summary || selectedProgramDefinition.summary}</div>
+                  </div>
+
+                  <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedProgramCardExplanation?.basisLine}
+                    </div>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedProgramCardExplanation?.confidenceLine}
+                    </div>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedProgramCardExplanation?.commitmentLine}
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                    Target user: <span style={{ color:"#dbe7f6" }}>{selectedProgramDefinition.targetUser}</span>
+                  </div>
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                    Weekly shape: <span style={{ color:"#dbe7f6" }}>{(selectedProgramDefinition.weeklyStructureTemplate || []).map((session) => session.focus).slice(0, 4).join(" • ")}</span>
+                  </div>
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                    Required setup: <span style={{ color:"#dbe7f6" }}>{(selectedProgramDefinition.requiredEquipment || []).join(", ") || "No special setup"}</span>
+                  </div>
+
+                  <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.68rem" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.18rem" }}>COMPATIBILITY</div>
+                    <div style={{ fontSize:"0.6rem", color:selectedProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : selectedProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.caution ? "#93c5fd" : C.green, fontWeight:600, lineHeight:1.35 }}>
+                      {selectedProgramActivationCopy?.headline || buildCompatibilityHeadline(selectedProgramCompatibility)}
+                    </div>
+                    <div style={{ fontSize:"0.53rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.55 }}>
+                      {selectedProgramActivationCopy?.body || selectedProgramWarningCopy?.body || "This is a clean fit right now."}
+                    </div>
+                    {(selectedProgramWarningCopy?.details || []).slice(0, 2).map((line, index) => (
+                      <div key={`program_change_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{line}</div>
+                    ))}
+                  </div>
+
+                  <div style={{ display:"grid", gap:"0.32rem" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>ACTIVATE AS</div>
+                    <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                      {[
+                        { key: PROGRAM_FIDELITY_MODES.runAsWritten, label: "Run mostly as written", enabled: selectedProgramDefinition?.fidelityModeSupport?.run_as_written },
+                        { key: PROGRAM_FIDELITY_MODES.adaptToMe, label: "Adapt to me", enabled: selectedProgramDefinition?.fidelityModeSupport?.adapt_to_me },
+                        { key: PROGRAM_FIDELITY_MODES.useAsStyle, label: "Use as a style", enabled: selectedProgramDefinition?.fidelityModeSupport?.use_as_style },
+                      ].filter((mode) => mode.enabled).map((mode) => {
+                        const selected = selectedProgramFidelityMode === mode.key;
+                        return (
+                          <button
+                            key={mode.key}
+                            className="btn"
+                            onClick={() => setSelectedProgramFidelityMode(mode.key)}
+                            style={{
+                              fontSize:"0.5rem",
+                              color:selected ? "#f8fafc" : "#cbd5e1",
+                              borderColor:selected ? `${C.blue}55` : "#2b3d55",
+                              background:selected ? "rgba(59,130,246,0.14)" : "#0f172a",
+                            }}
+                          >
+                            {mode.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                      {selectedProgramActivationCopy?.detail || selectedProgramDefinition.explanationTemplate?.adaptationSummary}
+                    </div>
+                  </div>
+
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => handleActivateProgram(selectedProgramFidelityMode)}
+                    disabled={selectedProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible}
+                    style={{ width:"100%" }}
+                  >
+                    Activate {selectedProgramDefinition.displayName}
+                  </button>
+                </div>
+              ) : catalogMode === "styles" && selectedStyleDefinition ? (
+                <div style={{ display:"grid", gap:"0.58rem" }}>
+                  <div>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.12em", marginBottom:"0.2rem" }}>STYLE PREVIEW</div>
+                    <div style={{ fontSize:"0.74rem", color:"#f8fafc", fontWeight:600, lineHeight:1.25 }}>{selectedStyleCardExplanation?.title || selectedStyleDefinition.displayName}</div>
+                    <div style={{ fontSize:"0.56rem", color:"#dbe7f6", marginTop:"0.2rem", lineHeight:1.58 }}>{selectedStyleCardExplanation?.summary || selectedStyleDefinition.summary}</div>
+                  </div>
+
+                  <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedStyleCardExplanation?.basisLine}
+                    </div>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedStyleCardExplanation?.confidenceLine}
+                    </div>
+                    <div style={{ fontSize:"0.44rem", color:"#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.14rem 0.42rem", borderRadius:999, letterSpacing:"0.08em" }}>
+                      {selectedStyleCardExplanation?.emphasisLine}
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                    What it changes: <span style={{ color:"#dbe7f6" }}>{selectedStyleOverlayPreview?.biasSummary || selectedStyleDefinition.summary}</span>
+                  </div>
+                  <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                    Exercise bias: <span style={{ color:"#dbe7f6" }}>{(selectedStyleDefinition.exerciseSelectionBias || []).join(" • ")}</span>
+                  </div>
+
+                  <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.68rem" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.18rem" }}>COMPATIBILITY</div>
+                    <div style={{ fontSize:"0.6rem", color:selectedStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : selectedStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.caution ? "#93c5fd" : C.green, fontWeight:600, lineHeight:1.35 }}>
+                      {selectedStyleActivationCopy?.headline || buildCompatibilityHeadline(selectedStyleCompatibility)}
+                    </div>
+                    <div style={{ fontSize:"0.53rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.55 }}>
+                      {selectedStyleActivationCopy?.body || selectedStyleWarningCopy?.body || "This style can layer onto the current plan."}
+                    </div>
+                    {(selectedStyleWarningCopy?.details || []).slice(0, 2).map((line, index) => (
+                      <div key={`style_change_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{line}</div>
+                    ))}
+                  </div>
+
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                    {selectedStyleActivationCopy?.detail || selectedStyleDefinition.explanationTemplate?.overlaySummary}
+                  </div>
+
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleActivateStyle}
+                    disabled={selectedStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible}
+                    style={{ width:"100%" }}
+                  >
+                    Use {selectedStyleDefinition.displayName}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ fontSize:"0.56rem", color:"#94a3b8", lineHeight:1.55 }}>Choose a program or style to preview it here.</div>
+              )}
+            </div>
           </div>
         </section>
 
@@ -12429,13 +16397,13 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
               <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>GOAL REVIEW</div>
               <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>{goalReview?.headline || "Goal review snapshot"}</div>
               <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.14rem", lineHeight:1.55 }}>
-                {goalReview?.due?.summary || "Use canonical goal and progress data to keep the review lightweight."}
+                {goalReview?.due?.summary || "Quick check on whether the goal still fits and the tracking still makes sense."}
               </div>
-              <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{goalReview?.summary}</div>
+              <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{goalReviewSummaryLine}</div>
             </div>
             <div style={{ display:"grid", gap:"0.22rem", justifyItems:"end" }}>
               <div style={{ fontSize:"0.48rem", color:goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.dueNow ? C.amber : "#8fa5c8", background:"#0f172a", border:"1px solid #24344b", padding:"0.2rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>
-                {String(goalReview?.due?.dueState || "not_due").replaceAll("_", " ")}
+                {goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.dueNow ? "review due" : goalReview?.due?.dueState === GOAL_REVIEW_DUE_STATES.soon ? "review soon" : "not due"}
               </div>
               {latestGoalReviewEvent?.effectiveDate && (
                 <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.06em" }}>last reviewed {latestGoalReviewEvent.effectiveDate}</div>
@@ -12450,10 +16418,10 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                 <div key={item?.key} style={{ border:`1px solid ${tone.border}`, borderRadius:12, background:"#0f172a", padding:"0.7rem" }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.35rem", marginBottom:"0.28rem" }}>
                     <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.45 }}>
-                      {item?.key === "are_we_progressing" ? "Are we progressing?" : item?.key === "is_goal_still_right" ? "Is the goal still right?" : item?.key === "are_metrics_still_useful" ? "Are the metrics still useful?" : "Should we refine or re-prioritize?"}
+                      {humanizeGoalReviewPrompt(item?.key)}
                     </div>
                     <div style={{ fontSize:"0.45rem", color:tone.color, background:tone.bg, border:`1px solid ${tone.border}`, padding:"0.14rem 0.38rem", borderRadius:999, letterSpacing:"0.08em", whiteSpace:"nowrap" }}>
-                      {String(item?.verdict || "review").replaceAll("_", " ")}
+                      {humanizeGoalReviewVerdict(item?.verdict)}
                     </div>
                   </div>
                   <div style={{ fontSize:"0.56rem", color:"#f8fafc", lineHeight:1.5 }}>{item?.answer}</div>
@@ -12465,17 +16433,17 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
 
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginTop:"0.7rem" }}>
             <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
-              Recommendation: <span style={{ color:"#dbe7f6" }}>{goalReview?.recommendation?.label || "Keep current goal"}</span>. {goalReview?.recommendation?.reason || ""}
+              Recommendation: <span style={{ color:"#dbe7f6" }}>{goalReviewRecommendationLine}</span>
             </div>
             <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
               <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.keepCurrentGoal)} disabled={goalReviewSaving} style={{ borderColor:"#2b3d55", color:"#dbe7f6" }}>
-                {goalReviewSaving ? "Saving..." : "Looks Right"}
+                {goalReviewSaving ? "Saving..." : "Keep it"}
               </button>
               <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.refineCurrentGoal)} disabled={goalReviewSaving} style={{ borderColor:`${C.blue}40`, color:C.blue }}>
-                Refine Goal
+                Tighten it
               </button>
               <button className="btn" onClick={() => handleMarkGoalReview(GOAL_REVIEW_RECOMMENDATIONS.reprioritizeGoalStack)} disabled={goalReviewSaving} style={{ borderColor:`${C.amber}40`, color:C.amber }}>
-                Re-prioritize
+                Shift priority
               </button>
             </div>
           </div>
@@ -12648,26 +16616,46 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                   </div>
                 )}
 
-                <details style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(8,14,25,0.58)" }}>
-                  <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>INTAKE DEBUG</summary>
-                  <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.65rem" }}>
-                    <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.55 }}>
-                      State: {machineDebugView?.state || "pending"}
-                    </div>
-                    <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>
-                      Missing anchors: {(machineDebugView?.missing_anchors?.length || 0)
-                        ? machineDebugView.missing_anchors.map((item) => item.field_id).join(", ")
-                        : "none"}
-                    </div>
-                    <div style={{ display:"grid", gap:"0.28rem" }}>
-                      {(machineDebugView?.last_events || []).map((entry) => (
-                        <div key={entry.transition_id} style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.5 }}>
-                          {entry.type} | {entry.stage_before} -> {entry.stage_after}{entry.field_id ? ` | ${entry.field_id}` : ""}
+                {intakeDebugMode && (
+                  <details style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(8,14,25,0.58)" }}>
+                    <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>INTAKE DEBUG</summary>
+                    <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.65rem" }}>
+                      <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.55 }}>
+                        State: {machineDebugView?.state || "pending"}
+                      </div>
+                      <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>
+                        Missing anchors: {(machineDebugView?.missing_anchors?.length || 0)
+                          ? machineDebugView.missing_anchors.map((item) => item.field_id).join(", ")
+                          : "none"}
+                      </div>
+                      <label style={{ display:"inline-flex", alignItems:"center", gap:"0.4rem", fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                        <input
+                          type="checkbox"
+                          checked={showParseDebug}
+                          onChange={(e) => setShowParseDebug(e.target.checked)}
+                        />
+                        Show parse debug
+                      </label>
+                      {parseDebugView.visible && (
+                        <div style={{ display:"grid", gap:"0.24rem", border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.55rem" }}>
+                          <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                            field_id: {parseDebugView.field_id || "none"}
+                          </div>
+                          <pre style={{ margin:0, whiteSpace:"pre-wrap", wordBreak:"break-word", fontSize:"0.47rem", lineHeight:1.45, color:"#dbe7f6", fontFamily:"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" }}>
+                            {JSON.stringify(parseDebugView.parsed_value, null, 2)}
+                          </pre>
                         </div>
-                      ))}
+                      )}
+                      <div style={{ display:"grid", gap:"0.28rem" }}>
+                        {(machineDebugView?.last_events || []).map((entry) => (
+                          <div key={entry.transition_id} style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.5 }}>
+                            {entry.type} | {entry.stage_before}{" -> "}{entry.stage_after}{entry.field_id ? ` | ${entry.field_id}` : ""}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                </details>
+                  </details>
+                )}
               </div>
             )}
           </div>
@@ -12678,13 +16666,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
             <div>
               <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>CURRENT WEEK DETAIL</div>
               <div style={{ fontSize:"1rem", color:"#f8fafc", fontWeight:650 }}>{sanitizeDisplayText(currentWeekLabel)}</div>
-              <div style={{ fontSize:"0.55rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Current committed plan week. Today can still reflect live PlanDay adjustments.</div>
-              <div style={{ fontSize:"0.5rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>
-                {currentCommittedWeekReview
-                  ? `Durable PlanWeek snapshot saved for ${currentCommittedWeekReview.label}. Future horizon rows remain projected until their week becomes current.`
-                  : "Durable week history will populate as each week becomes current. Older data can still fall back to derived week context where no snapshot exists yet."}
-              </div>
-              <div style={{ fontSize:"0.5rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>{programTrust.summary}</div>
+              <div style={{ fontSize:"0.55rem", color:"#8fa5c8", marginTop:"0.12rem" }}>Your current plan week. Today may still reflect live day-level adjustments.</div>
             </div>
             <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
               <div style={{ fontSize:"0.5rem", color:C.green, background:C.green+"14", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>CURRENT</div>
@@ -12693,14 +16675,39 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
           </div>
 
           <div style={{ display:"grid", gridTemplateColumns:"1.1fr 0.9fr", gap:"0.8rem", marginBottom:"0.75rem" }}>
-            <div style={{ display:"grid", gap:"0.45rem" }}>
-              <div style={{ fontSize:"0.6rem", color:"#dbe7f6", lineHeight:1.55 }}>{currentWeeklyIntent?.focus || "Current week plan"}</div>
-              <div style={{ fontSize:"0.54rem", color:"#94a3b8", lineHeight:1.55 }}>{weeklyCoachBrief}</div>
-              <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>{weeklyConsistencyAnchor}</div>
-              {!!badWeekTriage && <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.55 }}>{badWeekTriage}</div>}
-              {Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0 && (
-                <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>Constraints: {currentWeekModel.constraints.slice(0, 4).join(" - ")}</div>
-              )}
+            <div style={{ display:"grid", gap:"0.42rem" }}>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WEEK PURPOSE</div>
+                <div style={{ fontSize:"0.62rem", color:"#dbe7f6", lineHeight:1.45 }}>{currentWeekPurposeLine}</div>
+              </div>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WHAT MATTERS MOST</div>
+                <div style={{ fontSize:"0.54rem", color:"#cbd5e1", lineHeight:1.5 }}>{currentWeekMattersLine}</div>
+              </div>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WHAT CHANGES THIS WEEK</div>
+                <div style={{ fontSize:"0.53rem", color:badWeekTriage ? C.amber : "#8fa5c8", lineHeight:1.5 }}>{currentWeekChangesLine}</div>
+              </div>
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>WIN THE WEEK</div>
+                <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.5 }}>{currentWeekWinLine}</div>
+              </div>
+              <div style={{ fontSize:"0.5rem", color:"#94a3b8", lineHeight:1.45 }}>{currentWeekContextLine}</div>
+              {!!currentWeekMetaLine && <div style={{ fontSize:"0.49rem", color:"#7f93b2", lineHeight:1.4 }}>{currentWeekMetaLine}</div>}
+              <details>
+                <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>Week context</summary>
+                <div style={{ marginTop:"0.28rem", display:"grid", gap:"0.2rem" }}>
+                  <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>
+                    {currentCommittedWeekReview
+                      ? `A saved week snapshot exists for ${currentCommittedWeekReview.label}. Future weeks stay projected until they become current.`
+                      : "Saved week history appears as each week becomes current. Older weeks can still fall back to derived context when no snapshot exists yet."}
+                  </div>
+                  <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>{programTrust.summary}</div>
+                  {Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0 && (
+                    <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>Constraints: {currentWeekModel.constraints.slice(0, 4).join(" - ")}</div>
+                  )}
+                </div>
+              </details>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:"0.45rem" }}>
               <div style={{ border:"1px solid #1f3026", borderRadius:10, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
@@ -12850,7 +16857,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                       <div style={{ fontSize:"0.5rem", color:previewTone, marginTop:"0.12rem", letterSpacing:"0.08em" }}>{projectionLabel}</div>
                       {weekIntent?.focus && <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.18rem" }}>{weekIntent.focus}</div>}
                       <div style={{ fontSize:"0.53rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.55 }}>
-                        {hasCanonicalSessions ? "Built from PlanWeek structure. Day details may still change when that week becomes current." : "Direction derived from templates and current planning inputs. Day detail is not final yet."}
+                        {hasCanonicalSessions ? "Built from the saved week structure. Day details may still change when that week becomes current." : "Direction derived from templates and current planning inputs. Day detail is not final yet."}
                       </div>
                     </div>
                     <button className="btn" onClick={()=>setOpenWeek(openWeek===h.absoluteWeek ? null : h.absoluteWeek)} style={{ fontSize:"0.5rem" }}>{isExpanded ? "Hide" : "View"}</button>
@@ -12904,15 +16911,15 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
         <section className="card card-subtle" style={{ borderColor:C.green+"20", background:"#0d1318" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:"0.6rem", flexWrap:"wrap", marginBottom:"0.7rem" }}>
             <div>
-              <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>COMMITTED WEEK HISTORY</div>
-              <div style={{ fontSize:"0.58rem", color:"#8fa5c8", lineHeight:1.55 }}>These cards come from durable `PlanWeek` records, not reconstructed template guesses.</div>
+              <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>SAVED WEEK HISTORY</div>
+              <div style={{ fontSize:"0.58rem", color:"#8fa5c8", lineHeight:1.55 }}>These cards come from saved week records, not reconstructed template guesses.</div>
             </div>
-            <div style={{ fontSize:"0.5rem", color:C.green, background:C.green+"14", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>COMMITTED</div>
+            <div style={{ fontSize:"0.5rem", color:C.green, background:C.green+"14", padding:"0.18rem 0.5rem", borderRadius:999, letterSpacing:"0.08em" }}>SAVED</div>
           </div>
 
           {committedWeekHistoryPreview.length === 0 ? (
             <div style={{ fontSize:"0.55rem", color:"#94a3b8", lineHeight:1.6 }}>
-              No durable week history has been saved yet. The current week will be committed automatically once the canonical `PlanWeek` snapshot is present; older data may still rely on compatibility fallbacks.
+              No saved week history is available yet. The current week will appear here once a saved week record exists; older data can still rely on compatibility fallbacks.
             </div>
           ) : (
             <div style={{ display:"grid", gap:"0.5rem" }}>
@@ -12931,7 +16938,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                         <span style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#172233", padding:"0.12rem 0.35rem", borderRadius:999 }}>{String(entry?.status || "planned").replaceAll("_", " ")}</span>
                       </div>
                     </div>
-                    <div style={{ fontSize:"0.52rem", color:"#93c5fd", marginTop:"0.14rem", lineHeight:1.5 }}>{entry.focus || entry.summary || "Committed week snapshot"}</div>
+                    <div style={{ fontSize:"0.52rem", color:"#93c5fd", marginTop:"0.14rem", lineHeight:1.5 }}>{entry.focus || entry.summary || "Saved week overview"}</div>
                     <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.55 }}>
                       {entry.startDate && entry.endDate ? `${entry.startDate} to ${entry.endDate}` : "Week window unavailable"}
                       {reviewBits.length ? ` - ${reviewBits.join(" - ")}` : ""}
@@ -12968,13 +16975,17 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     "5": { title: "Best", tip: "Flag this. Worth knowing when these happen." },
   };
   const today = new Date().toISOString().split("T")[0];
-  const [quick, setQuick] = useState({ status:"", feel:"3", note:"", bodyweight:"" });
   const [detailed, setDetailed] = useState({
     date: today,
     family: WORKOUT_LOG_FAMILIES.generic,
     sessionType: sanitizeDisplayText(todayWorkout?.type || plannedWorkout?.type || "session"),
     sessionLabel: sanitizeDisplayText(todayWorkout?.label || plannedWorkout?.label || "Session"),
     prescribedLabel: sanitizeDisplayText(todayWorkout?.label || plannedWorkout?.label || ""),
+    plannedSummary: buildDayPrescriptionDisplay({
+      training: todayWorkout || plannedWorkout || null,
+      includeWhy: false,
+      prescribedExercises: buildStrengthPrescriptionEntriesForLogging(todayWorkout || plannedWorkout || null),
+    }),
     feel: "3",
     location: "home",
     notes: "",
@@ -12984,7 +16995,9 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   });
   const [saved, setSaved] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
+  const [savedAtLabel, setSavedAtLabel] = useState("");
   const [feelTooltip, setFeelTooltip] = useState("");
+  const [quickDetailsOpen, setQuickDetailsOpen] = useState(false);
   const [detailedOpen, setDetailedOpen] = useState(false);
   const [pendingDeleteDate, setPendingDeleteDate] = useState("");
   const [selectedReviewDate, setSelectedReviewDate] = useState(today);
@@ -13019,6 +17032,8 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     manualProgressInputs,
     now: new Date(),
   }), [goals, logs, bodyweights, dailyCheckins, weeklyCheckins, manualProgressInputs]);
+  const quickCapture = useMemo(() => buildWorkoutQuickCaptureModel({ draft: detailed }), [detailed]);
+  const quickCaptureHasValues = useMemo(() => hasWorkoutQuickCaptureValues({ draft: detailed }), [detailed]);
   const archivedPlanAudits = useMemo(
     () => (planArchives || []).map((archive) => buildArchivedPlanAudit({ archive })).filter(Boolean),
     [planArchives]
@@ -13197,6 +17212,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   const openHistoryEntry = (date, log = {}) => {
     setSelectedReviewDate(date);
     setDetailed(buildDetailedDraft(date, log));
+    setQuickDetailsOpen(false);
     setDetailedOpen(true);
     setPendingDeleteDate("");
   };
@@ -13222,11 +17238,13 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     };
     await saveLogs({ ...logs, [today]: entry }, { changedDateKey: today });
     setSaved(true);
-    setSavedMsg("Prescribed workout completed.");
-    setTimeout(()=>setSaved(false), 1800);
+    setSavedMsg("Workout completed as prescribed.");
+    setSavedAtLabel(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+    setQuickDetailsOpen(false);
+    setTimeout(()=>setSaved(false), 4000);
   };
 
-  const saveDetailed = async () => {
+  const persistWorkoutLog = async ({ source = "full" } = {}) => {
     if (!detailed.date) return;
     const existing = logs?.[detailed.date] || {};
     const nextEntry = buildWorkoutLogEntryFromDraft({
@@ -13239,9 +17257,22 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     });
     await saveLogs({ ...logs, [detailed.date]: nextEntry }, { changedDateKey: detailed.date });
     setSaved(true);
-    setSavedMsg(detailed.date < today ? "Custom workout saved. Edited." : "Custom workout saved.");
+    setSavedAtLabel(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+    if (source === "quick") {
+      setSavedMsg(detailed.date < today ? "Quick workout log saved. Edited." : "Quick workout log saved.");
+      setQuickDetailsOpen(false);
+    } else {
+      setSavedMsg(detailed.date < today ? "Workout details saved. Edited." : "Workout details saved.");
+    }
     setDetailed(buildDetailedDraft(detailed.date, nextEntry));
-    setTimeout(()=>setSaved(false), 1800);
+    setTimeout(()=>setSaved(false), 4000);
+  };
+  const saveDetailed = async () => {
+    await persistWorkoutLog({ source: "full" });
+  };
+  const saveQuickCapture = async () => {
+    if (!quickCaptureHasValues) return;
+    await persistWorkoutLog({ source: "quick" });
   };
 
   const delLog = async (date) => {
@@ -13261,12 +17292,315 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   }, []);
 
   return (
+    <div className="fi" data-testid="log-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      <div className="card card-action" style={{ borderColor:C.green+"40", background:"#0d1711" }}>
+        <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.5rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>LOG WORKOUT</div>
+          <div style={{ fontSize:"0.52rem", color:"#94a3b8", lineHeight:1.45 }}>
+            Save today fast, then add actual details only if you need them.
+          </div>
+          {savedMsg && (
+            <div data-testid="log-save-status" role="status" style={{ fontSize:"0.52rem", color:C.green, lineHeight:1.45 }}>
+              {saved ? `Saved ${savedAtLabel}. ${savedMsg}` : savedMsg}
+            </div>
+          )}
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginBottom:"0.35rem" }}>
+          <button data-testid="log-complete-prescribed" className="btn btn-primary" onClick={savePrescribed} style={{ fontSize:"0.54rem" }}>{quickCapture.completeActionLabel}</button>
+          <button data-testid="log-save-quick" className="btn" onClick={saveQuickCapture} disabled={!quickCaptureHasValues} style={{ fontSize:"0.52rem", color:quickCaptureHasValues ? "#dbe7f6" : "#64748b", borderColor:quickCaptureHasValues ? "#2b4765" : "#1e293b" }}>
+            {quickCapture.saveActionLabel}
+          </button>
+          <button className="btn" onClick={()=>setDetailedOpen((value) => !value)} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b4765" }}>
+            {detailedOpen ? "Hide detailed workout log" : "Open detailed workout log"}
+          </button>
+        </div>
+        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+          {quickCapture.helperLine} {quickCapture.supportLine}
+        </div>
+        <details open={quickDetailsOpen} onToggle={e=>setQuickDetailsOpen(e.currentTarget.open)} style={{ marginTop:"0.45rem" }}>
+          <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>
+            {quickDetailsOpen ? "Hide quick detail fields" : quickCapture.detailToggleLabel}
+          </summary>
+          <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.4rem" }}>
+            {!!quickCapture.run?.enabled && (
+              <div style={{ display:"grid", gap:"0.3rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Run actuals</div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.35rem" }}>
+                  <input value={detailed.run?.duration || ""} onChange={e=>setDetailed({ ...detailed, run: { ...(detailed.run || {}), enabled: true, duration: e.target.value } })} placeholder="Time" />
+                  <input type="number" step="0.1" value={detailed.run?.distance || ""} onChange={e=>setDetailed({ ...detailed, run: { ...(detailed.run || {}), enabled: true, distance: e.target.value } })} placeholder="Miles" />
+                  <input value={detailed.run?.pace || ""} onChange={e=>setDetailed({ ...detailed, run: { ...(detailed.run || {}), enabled: true, pace: e.target.value } })} placeholder="Pace" />
+                </div>
+              </div>
+            )}
+            {!!quickCapture.strength?.enabled && (quickCapture.strength.rows || []).length > 0 && (
+              <div style={{ display:"grid", gap:"0.28rem" }}>
+                {(quickCapture.strength.rows || []).slice(0, 4).map((row) => (
+                  <div key={`quick_strength_row_${row.rowIndex}`} style={{ display:"grid", gridTemplateColumns:"1fr 80px 62px 62px", gap:"0.3rem", alignItems:"center" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#dbe7f6", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{row.exercise}</div>
+                    <input type="number" step="2.5" value={detailed.strength?.rows?.[row.rowIndex]?.actualWeight || ""} onChange={e=>updateStrengthRow(row.rowIndex, { actualWeight: e.target.value, mode: "weighted" })} placeholder="Weight" />
+                    <input type="number" value={detailed.strength?.rows?.[row.rowIndex]?.actualSets || ""} onChange={e=>updateStrengthRow(row.rowIndex, { actualSets: e.target.value })} placeholder="Sets" />
+                    <input type="number" value={detailed.strength?.rows?.[row.rowIndex]?.actualReps || ""} onChange={e=>updateStrengthRow(row.rowIndex, { actualReps: e.target.value })} placeholder="Reps" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </details>
+      </div>
+
+      <details className="card" open={detailedOpen} onToggle={e=>setDetailedOpen(e.currentTarget.open)}>
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Detailed workout log</summary>
+        <div style={{ marginTop:"0.45rem", display:"grid", gap:"0.55rem" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem" }}>
+            <input type="date" value={detailed.date} onChange={e=>setDetailed(buildDetailedDraft(e.target.value, logs?.[e.target.value] || {}))} />
+            <input value={detailed.sessionLabel || ""} onChange={e=>setDetailed({ ...detailed, sessionLabel:e.target.value })} placeholder="Workout label" />
+          </div>
+          {(detailed.prescribedLabel || detailed.sessionType) && (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              Planned: {detailed.prescribedLabel || sanitizeStatusLabel(detailed.sessionType)}
+            </div>
+          )}
+          {!!detailed?.plannedSummary && (
+            <PlannedSessionDetailCard
+              session={{
+                day: detailed.date === today ? "Today" : detailed.date,
+                title: detailed.plannedSummary?.sessionLabel || detailed.prescribedLabel || detailed.sessionLabel || "Planned session",
+                summary: detailed.plannedSummary,
+              }}
+              accentColor={C.blue}
+            />
+          )}
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            Planned and actual stay separate. This form is seeded from the same stored workout shown on Today and Program.
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"120px 1fr", gap:"0.35rem" }}>
+            <input value={detailed.location || ""} onChange={e=>setDetailed({ ...detailed, location:e.target.value })} placeholder="Location" />
+            <input value={detailed.notes || ""} onChange={e=>setDetailed({ ...detailed, notes:e.target.value })} placeholder="Notes" />
+          </div>
+          <button className="btn btn-primary" onClick={saveDetailed} style={{ width:"fit-content", fontSize:"0.52rem" }}>Save workout log</button>
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Planned vs actual review</summary>
+        <div style={{ marginTop:"0.45rem", display:"grid", gap:"0.45rem" }}>
+          <select value={selectedReviewDate} onChange={(e)=>setSelectedReviewDate(e.target.value)} style={{ fontSize:"0.54rem", minWidth:150 }}>
+            {(reviewDateKeys || []).slice(0, 60).map((dateKey) => (
+              <option key={dateKey} value={dateKey}>{dateKey}</option>
+            ))}
+          </select>
+          <HistoryAuditDayReviewCard
+            title="DAY REVIEW"
+            subtitle="Prescription and actual stay separate."
+            review={selectedDayReview}
+            palette={C}
+            sanitizeDisplayText={sanitizeDisplayText}
+            sanitizeStatusLabel={sanitizeStatusLabel}
+            buildReviewBadgeTone={reviewBadgeTone}
+            summarizeExecutionDelta={summarizeExecutionDelta}
+            formatReviewTimestamp={formatReviewTimestamp}
+            buildSessionSummary={buildSessionSummary}
+            buildNutritionActualSummary={buildNutritionActualSummary}
+            buildRecoveryActualSummary={buildRecoveryActualSummary}
+            cleanHistorySessionName={cleanHistorySessionName}
+            describeProvenanceRecord={describeProvenanceRecord}
+          />
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Recent history</summary>
+        <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+          {history.slice(0, 12).map(([date, log]) => (
+            <div key={date} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.45rem", alignItems:"center", border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.48rem 0.55rem" }}>
+              <button className="btn" onClick={()=>openHistoryEntry(date, log)} style={{ border:"none", background:"transparent", padding:0, textAlign:"left", minWidth:0 }}>
+                <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.4 }}>{new Date(date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})} · {cleanHistorySessionName(log?.type || "Session")}</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.4 }}>{summarizeExecutionDelta(getPlanComparison(date, log))}</div>
+              </button>
+              {pendingDeleteDate === date ? (
+                <div style={{ display:"flex", gap:"0.25rem", alignItems:"center", flexWrap:"wrap" }}>
+                  <button className="btn" onClick={()=>delLog(date)} style={{ fontSize:"0.46rem", color:C.red, borderColor:C.red+"30", padding:"0.1rem 0.32rem" }}>Delete</button>
+                  <button className="btn" onClick={()=>setPendingDeleteDate("")} style={{ fontSize:"0.46rem", padding:"0.1rem 0.32rem" }}>Cancel</button>
+                </div>
+              ) : (
+                <button className="btn" onClick={()=>setPendingDeleteDate(date)} style={{ fontSize:"0.46rem", color:C.red, borderColor:C.red+"30" }}>DEL</button>
+              )}
+            </div>
+          ))}
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>SAVED WEEK HISTORY</summary>
+        <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+          {committedWeekReviews.length === 0 ? (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              No saved week history is available yet. Older data can still rely on daily reviews and weekly check-ins until saved week records are available.
+            </div>
+          ) : (
+            committedWeekReviews.slice(0, 8).map((entry) => (
+              <div key={entry.weekKey} style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"center" }}>
+                  <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.45 }}>{entry.label}</div>
+                  <div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap", alignItems:"center" }}>
+                    {entry?.isCurrentWeek && <span style={{ fontSize:"0.46rem", color:C.green, background:C.green+"14", padding:"0.12rem 0.35rem", borderRadius:999 }}>current</span>}
+                    <span style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#172233", padding:"0.12rem 0.35rem", borderRadius:999 }}>{String(entry?.status || "planned").replaceAll("_", " ")}</span>
+                  </div>
+                </div>
+                <div style={{ fontSize:"0.5rem", color:"#93c5fd", marginTop:"0.12rem", lineHeight:1.5 }}>{entry.focus || entry.summary || "Saved week overview"}</div>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.45 }}>
+                  {entry.startDate && entry.endDate ? `${entry.startDate} to ${entry.endDate}` : "Week window unavailable"} • {entry?.plannedSessionCount || 0} planned • {entry?.loggedSessionCount || 0} logged
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </details>
+    </div>
+  );
+  if (false) return (
     <div className="fi">
       <div className="card card-action" style={{ marginBottom:"0.8rem", borderColor:C.green+"40", background:"#0d1711" }}>
         <div className="sect-title" style={{ color:C.green, marginBottom:"0.35rem" }}>LOG WORKOUT</div>
-        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Pick the fast path, or add details if you need them.</div>
-        <div style={{ display:"grid", gap:"0.4rem" }}>
-          <button className="btn btn-primary" onClick={savePrescribed} style={{ fontSize:"0.55rem" }}>Mark Prescribed Workout Complete</button>
+        <div style={{ fontSize:"0.58rem", color:"#94a3b8", marginBottom:"0.45rem" }}>Finish fast with one tap, then add only the actual details you want to keep.</div>
+        <div style={{ display:"grid", gap:"0.45rem" }}>
+          <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+            <button className="btn btn-primary" onClick={savePrescribed} style={{ fontSize:"0.55rem" }}>{quickCapture.completeActionLabel}</button>
+            <button
+              className="btn"
+              onClick={()=>setQuickDetailsOpen((current) => !current)}
+              style={{ fontSize:"0.55rem", borderColor:"#2b4765", color:"#c7d8ee" }}
+            >
+              {quickDetailsOpen ? "Hide quick details" : quickCapture.detailToggleLabel}
+            </button>
+          </div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+            {quickCapture.helperLine} {quickCapture.supportLine}
+          </div>
+          {quickDetailsOpen && (
+            <div style={{ display:"grid", gap:"0.55rem", padding:"0.55rem", border:"1px solid #1e293b", borderRadius:10, background:"#0f172a" }}>
+              {!!quickCapture.run?.enabled && (
+                <div style={{ display:"grid", gap:"0.3rem" }}>
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Quick run details</div>
+                  {!!quickCapture.run?.summary && (
+                    <div style={{ fontSize:"0.48rem", color:"#94a3b8", lineHeight:1.45 }}>{quickCapture.run.summary}</div>
+                  )}
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.35rem" }}>
+                    <input
+                      value={detailed.run?.duration || ""}
+                      onChange={e=>setDetailed({
+                        ...detailed,
+                        run: { ...(detailed.run || {}), enabled: true, duration: e.target.value },
+                      })}
+                      placeholder="Time"
+                    />
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={detailed.run?.distance || ""}
+                      onChange={e=>setDetailed({
+                        ...detailed,
+                        run: { ...(detailed.run || {}), enabled: true, distance: e.target.value },
+                      })}
+                      placeholder="Miles"
+                    />
+                    <input
+                      value={detailed.run?.pace || ""}
+                      onChange={e=>setDetailed({
+                        ...detailed,
+                        run: { ...(detailed.run || {}), enabled: true, pace: e.target.value },
+                      })}
+                      placeholder="Pace"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {!!quickCapture.strength?.enabled && (quickCapture.strength.rows || []).length > 0 && (
+                <div style={{ display:"grid", gap:"0.35rem" }}>
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Quick lift details</div>
+                  {(quickCapture.strength.rows || []).map((row) => (
+                    <div key={`quick_strength_row_${row.rowIndex}`} style={{ display:"grid", gap:"0.24rem", padding:"0.4rem", border:"1px solid #1e293b", borderRadius:8, background:"#101826" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+                        <div style={{ fontSize:"0.52rem", color:"#e2e8f0" }}>{row.exercise}</div>
+                        {!!row.prescribedSummary && (
+                          <div style={{ fontSize:"0.45rem", color:"#8fa5c8" }}>Prescribed: {row.prescribedSummary}</div>
+                        )}
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"minmax(90px,1fr) 90px 90px", gap:"0.35rem" }}>
+                        {row.mode === "band" ? (
+                          <select value={detailed.strength?.rows?.[row.rowIndex]?.bandTension || ""} onChange={e=>updateStrengthRow(row.rowIndex, { bandTension: e.target.value, mode: "band" })}>
+                            <option value="">Band</option>
+                            {BAND_TENSION_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+                          </select>
+                        ) : row.bodyweightOnly ? (
+                          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid #1e293b", borderRadius:8, minHeight:34 }}>BW</div>
+                        ) : (
+                          <input
+                            type="number"
+                            step="2.5"
+                            value={detailed.strength?.rows?.[row.rowIndex]?.actualWeight || ""}
+                            onChange={e=>updateStrengthRow(row.rowIndex, { actualWeight: e.target.value, mode: "weighted" })}
+                            placeholder="Weight"
+                          />
+                        )}
+                        <input
+                          type="number"
+                          value={detailed.strength?.rows?.[row.rowIndex]?.actualSets || ""}
+                          onChange={e=>updateStrengthRow(row.rowIndex, { actualSets: e.target.value })}
+                          placeholder="Sets"
+                        />
+                        <input
+                          type="number"
+                          value={detailed.strength?.rows?.[row.rowIndex]?.actualReps || ""}
+                          onChange={e=>updateStrengthRow(row.rowIndex, { actualReps: e.target.value })}
+                          placeholder="Reps"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  {!!quickCapture.strength?.hiddenRowCount && (
+                    <div style={{ fontSize:"0.47rem", color:"#94a3b8", lineHeight:1.45 }}>
+                      {quickCapture.strength.hiddenRowCount} more exercise{quickCapture.strength.hiddenRowCount > 1 ? "s" : ""} are available in full details.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!!quickCapture.generic?.enabled && (
+                <div style={{ display:"grid", gap:"0.3rem" }}>
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Quick session details</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem" }}>
+                    <input
+                      value={detailed.generic?.reps || ""}
+                      onChange={e=>setDetailed({
+                        ...detailed,
+                        generic: { ...(detailed.generic || {}), visible: true, reps: e.target.value },
+                      })}
+                      placeholder="Reps"
+                    />
+                    <input
+                      value={detailed.generic?.weight || ""}
+                      onChange={e=>setDetailed({
+                        ...detailed,
+                        generic: { ...(detailed.generic || {}), visible: true, weight: e.target.value },
+                      })}
+                      placeholder="Weight"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display:"flex", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+                <button className="btn btn-primary" onClick={saveQuickCapture} disabled={!quickCaptureHasValues} style={{ width:"fit-content", fontSize:"0.53rem", opacity: quickCaptureHasValues ? 1 : 0.6 }}>
+                  {quickCapture.saveActionLabel}
+                </button>
+                {!quickCaptureHasValues && (
+                  <div style={{ fontSize:"0.47rem", color:"#94a3b8" }}>Add time, distance, or actual lift numbers to save a quick log.</div>
+                )}
+              </div>
+            </div>
+          )}
           {saved && <div className="completion-pop" style={{ fontSize:"0.57rem", color:C.green, display:"inline-flex", alignItems:"center", gap:"0.3rem", background:"rgba(39,245,154,0.1)", border:"1px solid rgba(39,245,154,0.38)", borderRadius:999, padding:"0.18rem 0.5rem" }}><span className="mono">OK</span> {savedMsg}</div>}
         </div>
       </div>
@@ -13284,7 +17618,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       </div>
 
       <details className="card" style={{ marginBottom:"0.8rem" }} open={detailedOpen} onToggle={e=>setDetailedOpen(e.currentTarget.open)}>
-        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:C.blue, letterSpacing:"0.08em" }}>Log Workout Details</summary>
+        <summary style={{ cursor:"pointer", fontSize:"0.58rem", color:C.blue, letterSpacing:"0.08em" }}>Open Full Detail Capture</summary>
         <div style={{ marginTop:"0.55rem", display:"grid", gap:"0.55rem" }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem" }}>
             <input
@@ -13603,9 +17937,9 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
       </div>
 
       <HistoryAuditWeekHistorySection
-        title="COMMITTED WEEK HISTORY"
+        title="SAVED WEEK HISTORY"
         entries={committedWeekReviews}
-        emptyState="No durable `PlanWeek` history has been saved yet. Older data can still rely on prescribed-day history and weekly check-ins until committed week snapshots are available."
+        emptyState="No saved week history is available yet. Older data can still rely on prescribed-day history and weekly check-ins until saved week records are available."
         palette={C}
       />
 
@@ -13653,13 +17987,13 @@ const buildSundayStoreGroceryList = ({ store, nutritionLayer, realWorldNutrition
 const buildLocationAwareOrderSuggestion = ({ nearby = [] }) => {
   const nameList = (nearby || []).map(n => String(n?.name || "").toLowerCase());
   if (nameList.some(n => n.includes("chipotle"))) {
-    return "You're near Chipotle: double chicken, fajita veggies, black beans, no sour cream = 54g protein, on plan.";
+    return "Nearby option: Chipotle with double chicken, fajita veggies, and black beans keeps protein high and fits today's target.";
   }
   if (nameList.some(n => n.includes("cava"))) {
-    return "You're near CAVA: greens + grains, double chicken, hummus on side = ~48g protein, on plan.";
+    return "Nearby option: CAVA with greens + grains, double chicken, and hummus on the side keeps the meal balanced and protein-forward.";
   }
   if (nameList.some(n => n.includes("panera"))) {
-    return "You're near Panera: teriyaki chicken bowl + Greek yogurt = ~42g protein, on plan.";
+    return "Nearby option: Panera with a teriyaki chicken bowl plus Greek yogurt is an easy protein-forward fallback.";
   }
   return null;
 };
@@ -13671,12 +18005,20 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
   const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
   const planDayWeek = planDay?.week || null;
-  const localFoodContext = personalization?.localFoodContext || { city: "Chicago", groceryOptions: ["Trader Joe's"] };
+  const localFoodContext = personalization?.localFoodContext || {};
   const savedLocation = personalization?.connectedDevices?.location || {};
-  const resolvedLocationLabel = localFoodContext.city || localFoodContext.locationLabel || (savedLocation?.status === "granted" ? "Nearby area" : "Chicago");
-  const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || "Trader Joe's");
   const favorites = nutritionFavorites || DEFAULT_NUTRITION_FAVORITES;
-  const [nutritionCheck, setNutritionCheck] = useState({ status: "on_track", deviationKind: "followed", issue: "", note: "" });
+  const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
+  const locationUnavailable = !locationPermissionGranted && ["denied", "unavailable"].includes(String(localFoodContext?.locationStatus || savedLocation?.status || "").toLowerCase());
+  const showNearbySection = locationPermissionGranted;
+  const resolvedLocationLabel = showNearbySection
+    ? localFoodContext.city || localFoodContext.locationLabel || "Nearby area"
+    : "";
+  const hasSavedStorePreference = Boolean(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0]);
+  const [store, setStore] = useState(localFoodContext.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0] || "Saved default");
+  const EMPTY_NUTRITION_CHECK = { deviationKind: "", issue: "", note: "" };
+  const [nutritionCheck, setNutritionCheck] = useState(EMPTY_NUTRITION_CHECK);
+  const [nutritionSaveAck, setNutritionSaveAck] = useState("");
   const [lastKey, setLastKey] = useState("");
   const [showNutritionWhy, setShowNutritionWhy] = useState(false);
   const [openMealKey, setOpenMealKey] = useState("");
@@ -13693,12 +18035,14 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const [newSupplementTiming, setNewSupplementTiming] = useState("");
   const goalContext = getGoalContext(goals) || { primary: null, secondary: [] };
   const dayType = nutritionLayer?.dayType || todayWorkout?.nutri || "easyRun";
-  const city = resolvedLocationLabel;
-  const nearby = (getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" }) || [])
+  const city = showNearbySection ? resolvedLocationLabel : "";
+  const nearby = (showNearbySection
+    ? getPlaceRecommendations({ city, dayType, favorites, mode: "nearby", query: "" })
+    : [])
     .map((x, i) => ({ id: x?.id || `nearby_${i}_${x?.name || "option"}`, name: x?.name || "Nearby option", meal: x?.meal || "Protein + carbs + produce" }))
     .filter(x => x.id !== lastKey)
     .slice(0, 2);
-  const locationAwareOrder = buildLocationAwareOrderSuggestion({ nearby });
+  const locationAwareOrder = showNearbySection ? buildLocationAwareOrderSuggestion({ nearby }) : null;
   const basket = buildGroceryBasket({ store, city, days: 3, dayType });
   const fastest = nearby[0] || { name: "Saved default", meal: "Protein shake + fruit + sandwich", tag: "fallback" };
   const travelBreakfast = ["Starbucks: egg bites + oatmeal + banana", "Hotel breakfast: eggs + Greek yogurt + fruit", "Airport: wrap + extra protein + water"];
@@ -13735,7 +18079,10 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     : (["easy", "otf", "strength"].includes(workoutType) || ["easyRun", "otf", "strength"].includes(dayType))
     ? 18
     : 8;
-  const hydrationTargetOz = Math.max(80, Math.round((latestWeight * 0.5) + intensityBonus));
+  const storedHydrationTargetOz = Number(nutritionLayer?.targets?.hydrationTargetOz || nutritionLayer?.hydrationTargetOz || 0) || 0;
+  const inferredHydrationTargetOz = Math.max(80, Math.round((latestWeight * 0.5) + intensityBonus));
+  const hydrationTargetOz = storedHydrationTargetOz || inferredHydrationTargetOz;
+  const hydrationTargetLabel = storedHydrationTargetOz ? `Target ${hydrationTargetOz} oz` : `Suggested ${hydrationTargetOz} oz`;
   const hydrationPct = Math.max(0, Math.min(100, Math.round(((hydrationOz || 0) / hydrationTargetOz) * 100)));
 
   const proteinLevel = `${Math.round(resolvedTargets.p)}g`;
@@ -13764,9 +18111,6 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     : recoveryDay
     ? joinDisplayParts(["Recovery day", "keep protein high and appetite decisions simple."])
     : joinDisplayParts(["Steady day", "balanced meals and consistency win."]);
-  const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
-  const locationUnavailable = !locationPermissionGranted && ["denied", "unavailable"].includes(String(localFoodContext?.locationStatus || savedLocation?.status || "").toLowerCase());
-  const showNearbySection = locationPermissionGranted;
   const shoppingDay = Number(favorites?.shoppingDay ?? 0);
   const todayDow = new Date().getDay();
   const showSundayGrocerySection = todayDow === shoppingDay || todayDow === ((shoppingDay + 6) % 7);
@@ -13850,16 +18194,20 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   });
 
   const todayKey = new Date().toISOString().split("T")[0];
-  const actualNutritionToday = planDay?.resolved?.nutrition?.actual || nutritionActualLogs?.[todayKey] || normalizeActualNutritionLog({ dateKey: todayKey, feedback: {} });
+  const actualNutritionToday = nutritionActualLogs?.[todayKey] || planDay?.resolved?.nutrition?.actual || normalizeActualNutritionLog({ dateKey: todayKey, feedback: {} });
   const nutritionComparison = planDay?.resolved?.nutrition?.comparison || compareNutritionPrescriptionToActual({
     nutritionPrescription: nutritionLayer,
     actualNutritionLog: actualNutritionToday,
   });
   const nutritionGoalName = goalContext?.primary?.name || "current goal";
+  const currentSessionLabel = sanitizeDisplayText(todayWorkout?.label || todayWorkout?.type || dayType || "session");
+  const nutritionBasisLabel = planDay?.resolved?.nutrition?.prescription
+    ? "stored nutrition target for today"
+    : "suggested nutrition defaults for today";
   const nutritionProvenance = buildProvenanceText({
     inputs: [
-      "today's training demand",
-      `your ${nutritionGoalName}`,
+      nutritionBasisLabel,
+      `your current goal (${nutritionGoalName})`,
       "time of day",
       actualNutritionToday?.loggedAt ? "your logged nutrition today" : null,
     ],
@@ -13867,12 +18215,18 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   });
   const recoveryPrescription = planDay?.resolved?.recovery?.prescription || null;
   const supplementPlan = planDay?.resolved?.supplements?.plan || null;
-  const supplementPrescriptionLine = Array.isArray(supplementPlan?.items) && supplementPlan.items.length
-    ? supplementPlan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
-    : "No explicit supplement plan stored for today.";
-  const hydrationSupportLine = recoveryPrescription?.hydrationSupport?.summary || "Hydration support follows today's nutrition target.";
+  const hasStoredSupplementPlan = Array.isArray(supplementPlan?.items) && supplementPlan.items.length > 0;
+  const showSupplementChecklist = hasStoredSupplementPlan && supplementRows.length > 0;
+  const supplementPrescriptionLine = hasStoredSupplementPlan
+    ? `Stored plan: ${supplementPlan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")}`
+    : supplementRows.length
+    ? "No explicit supplement plan is stored for today. The checklist below is suggested support only."
+    : "No explicit supplement plan is stored for today.";
+  const hydrationSupportLine = storedHydrationTargetOz
+    ? recoveryPrescription?.hydrationSupport?.summary || `Stored hydration target: ${Math.round(storedHydrationTargetOz)} oz.`
+    : "No explicit hydration target is stored for today. The tracker below uses a suggested baseline from bodyweight and session load.";
   const weeklyNutritionHeadline = weeklyNutritionReview?.coaching?.headline || "Weekly nutrition review will populate as actual logs accumulate.";
-  const weeklyPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned-vs-actual nutrition remains separate.";
+  const weeklyPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned nutrition guidance and logged actual intake stay separate.";
   const weeklyAdherenceLine = weeklyNutritionReview?.adherence?.summary || "Adherence trend is still forming.";
   const weeklyHydrationLine = weeklyNutritionReview?.hydration?.summary || "Hydration consistency is still forming.";
   const weeklySupplementLine = weeklyNutritionReview?.supplements?.summary || "Supplement adherence is still forming.";
@@ -13895,10 +18249,15 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     strengthDay,
   });
   useEffect(() => {
-    if (!actualNutritionToday?.loggedAt) return;
+    if (!actualNutritionToday?.loggedAt) {
+      setNutritionCheck(EMPTY_NUTRITION_CHECK);
+      setHydrationOz(0);
+      setHydrationNudgedAt(null);
+      setSupplementTaken({});
+      return;
+    }
     setNutritionCheck({
-      status: actualNutritionToday?.quickStatus || "on_track",
-      deviationKind: actualNutritionToday?.deviationKind || "followed",
+      deviationKind: actualNutritionToday?.deviationKind || "",
       issue: actualNutritionToday?.issue || "",
       note: actualNutritionToday?.note || "",
     });
@@ -13912,21 +18271,49 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     setShowHydrationNudge(true);
     const nudgedAt = Date.now();
     setHydrationNudgedAt(nudgedAt);
-    saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt: nudgedAt });
   }, [hydrationPct, hydrationNudgedAt, showHydrationNudge, todayKey]);
   const requestFridgeMeal = () => {
     const reply = deriveFridgeCoachMealSuggestion({ fridgeInput, dayType });
     setFridgeCoachReply(reply.coachLine || "");
   };
+  const announceNutritionSave = (message = "Saved nutrition update.") => {
+    const stamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    setNutritionSaveAck(`Saved ${stamp}. ${message}`);
+    setTimeout(() => setNutritionSaveAck(""), 4000);
+  };
+  const hasExplicitNutritionSignal = (payload = {}) => {
+    const safePayload = payload || {};
+    return Boolean(
+      String(safePayload?.deviationKind || "").trim()
+      || String(safePayload?.issue || "").trim()
+      || String(safePayload?.note || "").trim()
+      || Number(safePayload?.hydrationOz || 0) > 0
+      || Object.values(safePayload?.supplementTaken || {}).some(Boolean)
+    );
+  };
+  const persistNutritionFeedback = async (payload, successMessage = "Saved nutrition update.") => {
+    if (!hasExplicitNutritionSignal(payload)) return;
+    await saveNutritionActualLog(todayKey, payload);
+    announceNutritionSave(successMessage);
+  };
+  const nutritionQuickLogReady = hasExplicitNutritionSignal({
+    ...nutritionCheck,
+    hydrationOz,
+    supplementTaken,
+  });
   const logHydration = async (oz = 12) => {
-    const nextOz = Math.min(hydrationTargetOz, (hydrationOz || 0) + oz);
-    setHydrationOz(nextOz);
-    await saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz: nextOz, hydrationTargetOz, hydrationNudgedAt });
+    const nextHydration = applyHydrationQuickAdd({
+      currentOz: hydrationOz,
+      targetOz: hydrationTargetOz,
+      incrementOz: oz,
+    });
+    setHydrationOz(nextHydration.hydrationOz);
+    await persistNutritionFeedback({ ...nutritionCheck, hydrationOz: nextHydration.hydrationOz, hydrationTargetOz, hydrationNudgedAt }, "Hydration saved.");
   };
   const toggleSupplementTaken = async (name) => {
     const nextTaken = { ...supplementTaken, [name]: !supplementTaken?.[name] };
     setSupplementTaken(nextTaken);
-    await saveNutritionActualLog(todayKey, { ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken: nextTaken });
+    await persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken: nextTaken }, "Supplement update saved.");
   };
   const addCustomSupplement = async () => {
     if (!newSupplementName.trim() || !newSupplementTiming.trim()) return;
@@ -13937,10 +18324,12 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
     await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
     setNewSupplementName("");
     setNewSupplementTiming("");
+    announceNutritionSave("Supplement defaults saved.");
   };
   const removeCustomSupplement = async (name) => {
     const nextStack = (favorites?.supplementStack || []).filter((x) => String(x?.name || "").toLowerCase() !== String(name || "").toLowerCase());
     await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
+    announceNutritionSave("Supplement defaults saved.");
   };
 
   const nutritionTone = buildReviewBadgeTone(nutritionComparison?.adherence || nutritionComparison?.deviationKind, C);
@@ -13951,13 +18340,145 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   const complianceLine = actualNutritionToday?.loggedAt
     ? sanitizeDisplayText(nutritionComparison?.summary || "Nutrition logged.")
     : "Log a quick outcome once the day settles so today's prescription and actual intake stay separated.";
+  const savedFallbackMeal = sanitizeDisplayText(
+    favorites?.safeMeals?.[0]?.meal
+    || favorites?.safeMeals?.[0]?.name
+    || favorites?.defaultMeals?.[0]?.meal
+    || favorites?.defaultMeals?.[0]?.name
+    || ""
+  );
   const fastFallback = locationAwareOrder || (showNearbySection
     ? `${fastest.name}: ${fastest.meal}`
     : nutritionLayer?.travelMode
     ? travelBreakfast[0]
+    : savedFallbackMeal
+    ? `Saved default: ${savedFallbackMeal}`
     : "Use your default: protein + carb + fruit + water.");
+  const weeklyGrocerySupportLine = basket?.headline
+    ? `Grocery: ${basket.headline}`
+    : groceryExecutionSupport?.summary
+    ? `Grocery support: ${groceryExecutionSupport.summary}`
+    : hasSavedStorePreference
+    ? `${store}: ${(groceryHooks?.priorityItems || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`
+    : `Suggested staples: ${(groceryHooks?.priorityItems || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`;
 
   return (
+    <div className="fi" data-testid="nutrition-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      <div data-testid="nutrition-daily-target" className="card card-soft card-action" style={{ borderColor:C.blue+"28" }}>
+        <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.5rem" }}>
+          <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>TODAY'S NUTRITION TARGET</div>
+          <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.5 }}>{directiveSentence}</div>
+          {nutritionSaveAck && <div data-testid="nutrition-save-status" role="status" style={{ fontSize:"0.5rem", color:C.green, lineHeight:1.45 }}>{nutritionSaveAck}</div>}
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.35rem" }}>
+          {[["Protein", proteinLevel, C.red], ["Carbs", carbLevel, C.green], ["Calories", calorieLevel, C.amber]].map(([label, value, tone]) => (
+            <div key={label} style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem 0.55rem" }}>
+              <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>{label}</div>
+              <div style={{ fontSize:"0.62rem", color:tone, marginTop:"0.12rem" }}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45, marginTop:"0.45rem" }}>
+          {comparisonLabel}. {complianceLine}
+        </div>
+      </div>
+
+      <div data-testid="nutrition-quick-log" className="card card-action" style={{ borderColor:C.green+"30", background:"#0d1410" }}>
+        <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>DAILY ACTUAL CHECK</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            Log what actually happened. The app derives adherence from this outcome instead of asking you to rate the same day twice.
+          </div>
+        </div>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ display:"grid", gap:"0.18rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>How did the day compare with the plan?</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.3rem" }}>
+              {[["followed","Followed plan"],["under_fueled","Under-fueled"],["over_indulged","Ate more than planned"],["deviated","Different than plan"]].map(([key, label]) => (
+                <button key={key} className="btn" onClick={()=>setNutritionCheck((current)=>({ ...current, deviationKind:key, issue:key === "followed" ? "" : current.issue }))} style={{ fontSize:"0.54rem", borderColor:nutritionCheck.deviationKind===key?C.green:"#1e293b", color:nutritionCheck.deviationKind===key?C.green:"#64748b", background:nutritionCheck.deviationKind===key?`${C.green}12`:"transparent" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ display:"grid", gap:"0.18rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>Main friction, if anything</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", gap:"0.3rem" }}>
+              {[["","None"],["hunger","Hunger"],["convenience","Convenience"],["travel","Travel"]].map(([key, label]) => (
+                <button key={label} className="btn" onClick={()=>setNutritionCheck((current)=>({ ...current, issue:key }))} style={{ fontSize:"0.54rem", borderColor:(nutritionCheck.issue||"")===key?C.blue:"#1e293b", color:(nutritionCheck.issue||"")===key?C.blue:"#64748b", background:(nutritionCheck.issue||"")===key?`${C.blue}12`:"transparent" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+            <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck((current)=>({ ...current, note:e.target.value }))} placeholder="Quick note (optional)" />
+            <button data-testid="nutrition-save-quick" className="btn btn-primary" disabled={!nutritionQuickLogReady} onClick={()=>persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken }, actualNutritionToday?.loggedAt ? "Nutrition log updated." : "Nutrition log saved.")} style={{ fontSize:"0.52rem", opacity:nutritionQuickLogReady ? 1 : 0.5 }}>
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="card card-subtle">
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>HYDRATION / SUPPLEMENTS</div>
+        <div style={{ display:"grid", gap:"0.42rem" }}>
+          <button className="btn" onClick={()=>logHydration(12)} style={{ width:"100%", display:"block", textAlign:"left", borderColor:"#2a3b56", padding:"0.42rem 0.46rem" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:"0.56rem", color:"#dbe7f6", marginBottom:"0.22rem" }}>
+              <span>{Math.round(hydrationOz)} oz logged</span>
+              <span style={{ color:"#8fa5c8" }}>{hydrationTargetLabel}</span>
+            </div>
+            <div style={{ width:"100%", height:10, borderRadius:999, background:"#0f172a", border:"1px solid #243752", overflow:"hidden" }}>
+              <div style={{ width:`${hydrationPct}%`, height:"100%", background: hydrationPct >= 100 ? C.green : C.blue, transition:"width 180ms ease" }} />
+            </div>
+            <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#8fa5c8" }}>Tap to add 12 oz</div>
+          </button>
+          {!showSupplementChecklist && (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              No supplement checklist is shown until a stored supplement plan is attached to today.
+            </div>
+          )}
+          {showSupplementChecklist && (
+            <div style={{ display:"grid", gap:"0.3rem" }}>
+              {supplementRows.map((supp, i) => (
+                <div key={`${supp.name}_${i}`} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.35rem", alignItems:"center" }}>
+                    <button className="btn" onClick={()=>toggleSupplementTaken(supp.name)} style={{ width:24, minWidth:24, height:24, padding:0, borderColor:"#2d435f", color:supplementTaken?.[supp.name] ? C.green : "#64748b", background:"transparent", fontSize:"0.62rem" }}>
+                      {supplementTaken?.[supp.name] ? "✓" : ""}
+                    </button>
+                    <div>
+                      <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>{supp.name}</div>
+                      <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.08rem" }}>{supp.instruction}</div>
+                    </div>
+                    <button className="btn" onClick={()=>setOpenSupplementInfo(prev => prev === supp.name ? "" : supp.name)} style={{ fontSize:"0.48rem", padding:"0.12rem 0.34rem", color:"#8fa5c8", borderColor:"#2c3e58" }}>{openSupplementInfo === supp.name ? "Hide" : "Why"}</button>
+                  </div>
+                  {openSupplementInfo === supp.name && (
+                    <div style={{ marginTop:"0.28rem", fontSize:"0.51rem", color:"#9fb2d2", lineHeight:1.55 }}>
+                      {supplementInfoByName[supp.name]?.plain}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Meal guide and why</summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+          <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.5 }}>{whyThisToday}</div>
+          {[breakfast, lunch, dinner, snack].filter(Boolean).map((meal, index) => (
+            <div key={`${meal}_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {["Breakfast", "Lunch", "Dinner", "Snack"][index]}: {meal}
+            </div>
+          ))}
+        </div>
+      </details>
+
+    </div>
+  );
+  if (false) return (
     <div className="fi">
       <div className="card card-soft card-action" style={{ marginBottom:"0.8rem", borderColor:C.blue+"28" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.45rem", flexWrap:"wrap", marginBottom:"0.45rem" }}>
@@ -13990,11 +18511,11 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
             <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
               <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>TRAINING LINK</div>
-              <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{sanitizeDisplayText(todayWorkout?.type || dayType || "session")}</div>
+              <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{currentSessionLabel}</div>
               <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{macroShiftLine}</div>
             </div>
             <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>PRESCRIPTION BASIS</div>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>GUIDANCE BASIS</div>
               <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.55 }}>{nutritionProvenance}</div>
             </div>
           </div>
@@ -14032,7 +18553,9 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
               <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>
                 {nutritionLayer?.travelMode
                   ? travelBreakfast[0]
-                  : `${store}: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`}
+                  : hasSavedStorePreference
+                  ? `${store}: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`
+                  : `Suggested staples: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`}
               </div>
             </div>
           </div>
@@ -14103,12 +18626,12 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
       </div>
 
       <div className="card" style={{ marginBottom:"0.8rem", borderColor:C.blue+"24" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>RECOVERY + SUPPLEMENT PRESCRIPTION</div>
+        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>RECOVERY + SUPPLEMENT GUIDANCE</div>
         <div style={{ display:"grid", gap:"0.34rem" }}>
           <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.45rem 0.5rem" }}>
             <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>RECOVERY</div>
             <div style={{ fontSize:"0.55rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>
-              {recoveryPrescription?.summary || "Recovery posture is attached to today's PlanDay."}
+              {recoveryPrescription?.summary || "Recovery guidance is currently attached to today's PlanDay."}
             </div>
             <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{hydrationSupportLine}</div>
           </div>
@@ -14125,14 +18648,19 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
           <button className="btn" onClick={()=>logHydration(12)} style={{ width:"100%", display:"block", textAlign:"left", borderColor:"#2a3b56", padding:"0.42rem 0.46rem" }}>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:"0.56rem", color:"#dbe7f6", marginBottom:"0.22rem" }}>
               <span>{Math.round(hydrationOz)} oz logged</span>
-              <span style={{ color:"#8fa5c8" }}>Target {hydrationTargetOz} oz</span>
+              <span style={{ color:"#8fa5c8" }}>{hydrationTargetLabel}</span>
             </div>
             <div style={{ width:"100%", height:10, borderRadius:999, background:"#0f172a", border:"1px solid #243752", overflow:"hidden" }}>
               <div style={{ width:`${hydrationPct}%`, height:"100%", background: hydrationPct >= 100 ? C.green : C.blue, transition:"width 180ms ease" }} />
             </div>
             <div style={{ marginTop:"0.2rem", fontSize:"0.5rem", color:"#8fa5c8" }}>Tap to add 12 oz</div>
           </button>
-          {supplementRows.length > 0 && (
+          {!showSupplementChecklist && (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              No supplement checklist is shown until a stored supplement plan is attached to today.
+            </div>
+          )}
+          {showSupplementChecklist && (
             <div style={{ display:"grid", gap:"0.3rem" }}>
               {supplementRows.map((supp, i) => (
                 <div key={`${supp.name}_${i}`} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
@@ -14252,7 +18780,7 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
 }
 
 // COACH TAB (REDESIGNED)
-function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, athleteProfile = null, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, weeklyNutritionReview = null, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onPersist }) {
+function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorkout: legacyTodayWorkout, bodyweights, personalization, athleteProfile = null, momentum, arbitration, expectations, memoryInsights, compoundingCoachMemory, recalibration, strengthLayer, patterns, proactiveTriggers, onApplyTrigger, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, weeklyNutritionReview = null, setPersonalization, coachActions, setCoachActions, coachPlanAdjustments, setCoachPlanAdjustments, weekNotes, setWeekNotes, planAlerts, setPlanAlerts, onOpenSettings = () => {}, onPersist }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const goalState = athleteProfile?.goalState || {};
@@ -14260,6 +18788,8 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
   const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
   const realWorldNutrition = planDay?.resolved?.nutrition?.reality || legacyRealWorldNutrition;
   const planDayWeek = planDay?.week || null;
+  const livePlanningBasis = planDayWeek?.planningBasis || planComposer?.planningBasis || null;
+  const livePlanBasisExplanation = livePlanningBasis?.planBasisExplanation || null;
   const canonicalCoachRecovery = planDay?.resolved?.recovery || null;
   const canonicalCoachSupplements = planDay?.resolved?.supplements || null;
   const todayKey = new Date().toISOString().split("T")[0];
@@ -14271,6 +18801,39 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
   const coachPhase = planDayWeek?.phase || todayWorkout?.week?.phase || WEEKS[(currentWeek - 1) % WEEKS.length]?.phase || "BASE";
   const coachWeekFocus = planDayWeek?.weeklyIntent?.focus || planDayWeek?.planWeek?.weeklyIntent?.focus || "";
   const coachWeekSummary = planDayWeek?.summary || planDayWeek?.planWeek?.summary || "";
+  const activeGoalsOrdered = [...(goals || [])]
+    .filter((goal) => goal?.active)
+    .sort((a, b) => (a?.priority || 99) - (b?.priority || 99));
+  const currentPrimaryGoal = activeGoalsOrdered[0]?.name || arbitration?.priorityStack?.primary || "Consistency";
+  const currentSupportGoals = activeGoalsOrdered.slice(1, 3).map((goal) => goal?.name).filter(Boolean);
+  const currentBlockLabel = sanitizeDisplayText(
+    planDayWeek?.programBlock?.label
+    || planDayWeek?.label
+    || `${coachPhase} block`
+  );
+  const currentPlanFocus = sanitizeDisplayText(
+    livePlanBasisExplanation?.coachLine
+    || planDayWeek?.weeklyIntent?.focus
+    || planDayWeek?.successDefinition
+    || coachWeekFocus
+    || coachWeekSummary
+    || planDayWeek?.programBlock?.summary
+    || "Current week plan"
+  );
+  const coachPlanLine = joinDisplayParts([
+    currentPrimaryGoal ? `Goal: ${currentPrimaryGoal}` : "",
+    currentSupportGoals.length ? `Support: ${currentSupportGoals.join(" / ")}` : "",
+    livePlanningBasis?.activeProgramName ? `Basis: ${livePlanningBasis.activeProgramName}` : "",
+    livePlanningBasis?.activeStyleName ? `Style: ${livePlanningBasis.activeStyleName}` : "",
+    currentBlockLabel,
+  ]);
+  const liveFidelityLabel = livePlanBasisExplanation?.effectiveFidelityMode === "strict"
+    ? "run mostly as written"
+    : livePlanBasisExplanation?.effectiveFidelityMode === "style_only"
+    ? "style-led"
+    : livePlanBasisExplanation?.effectiveFidelityMode === "adapted"
+    ? "adapted"
+    : "";
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -14299,18 +18862,6 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
   useEffect(() => {
     safeStorageSet(localStorage, "coach_feedback_log", JSON.stringify(feedbackLog.slice(0, 100)));
   }, [feedbackLog]);
-
-  useEffect(() => {
-    const packet = deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
-    validateDeterministicCoachPacketInvariant(packet, "deterministicCoachPacket.status");
-    setMessages([{
-      role:"assistant",
-      text: packet?.coachBrief || packet?.recommendations?.[0] || packet?.notices?.[0] || "Coach ready.",
-      source: "deterministic",
-      ts: Date.now(),
-      helpful: null,
-    }]);
-  }, []);
 
   const commitAction = async (action) => {
     const commitResult = coordinateCoachActionCommit({
@@ -14344,10 +18895,8 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
 
   const getSessionContextPrompt = () => {
     const activeGoals = (arbitration?.priorityStack?.ordered || []).filter(Boolean);
-    const primaryGoal = activeGoals[0] || goalState?.primaryGoal || "Consistency";
+    const primaryGoal = activeGoals[0] || currentPrimaryGoal || goalState?.primaryGoal || "Consistency";
     const secondaryGoals = activeGoals.slice(1, 4).join(", ") || "None listed";
-    const deadline = goalState?.deadline || "";
-    const daysRemaining = deadline ? Math.max(0, Math.ceil((new Date(deadline) - new Date()) / 86400000)) : "N/A";
     const todayDetails = todayWorkout?.run
       ? `${todayWorkout.run.t || "Run"} · ${todayWorkout.run.d || "target pending"}`
       : `${todayWorkout?.type || "session"} · ${todayWorkout?.strengthDuration || todayWorkout?.fallback || "as prescribed"}`;
@@ -14375,10 +18924,12 @@ function CoachTab({ planDay = null, logs, dailyCheckins, currentWeek, todayWorko
 
 Current user state:
 - Goals: ${primaryGoal} | ${secondaryGoals}
-- Phase: ${coachPhase} · Week ${currentWeek}
-- Weekly intent: ${coachWeekFocus || coachWeekSummary || "Current week plan"}
-- Days to race/deadline: ${daysRemaining}
+- Current block: ${currentBlockLabel}
+- Weekly intent: ${currentPlanFocus}
 - Today's prescription: ${todayWorkout?.label || "Session"} · ${todayDetails}
+- Plan basis: ${livePlanBasisExplanation?.basisSummary || "Goal-driven default logic"}
+- Basis detail: ${livePlanBasisExplanation?.personalizationSummary || "No named program or style layer is active."}
+- Fidelity: ${liveFidelityLabel || "goal-driven"}
 - Achilles status: ${injury}
 - Last 5 sessions: ${last5}
 - Consistency last 2 weeks: ${consistency}
@@ -14414,9 +18965,63 @@ Rules for every response:
       "I'm traveling today": `${label}. Travel preset is active when needed. Today's prescription: ${todayWorkout?.label || "session"}.`,
       "I feel amazing this week": `${label}. Last 3 sessions: ${last3 || "none"}. Current phase: ${coachPhase}.`,
       "I slept badly": `${label}. Today's session type: ${todayWorkout?.type || "unknown"}. Readiness context: energy ${personalization?.trainingState?.fatigueScore || "n/a"}.`,
-      "I want to push harder": `${label}. Phase ${coachPhase}, days to goal ${goalState?.deadline ? Math.max(0, Math.ceil((new Date(goalState.deadline) - new Date()) / 86400000)) : "N/A"}, last feels ${(dated.slice(-5).map(([,l]) => l?.feel || 3).join(", ") || "none")}.`,
+      "I want to push harder": `${label}. Current block: ${currentBlockLabel}. Primary goal: ${currentPrimaryGoal}. Last feels ${(dated.slice(-5).map(([,l]) => l?.feel || 3).join(", ") || "none")}.`,
     };
     return map[label] || label;
+  };
+
+  const stripCoachRecommendationTone = (text = "") => String(text || "")
+    .replace(/^[^:]+:\s*/i, "")
+    .replace(/\s*\[[^\]]+\]\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const formatCoachActionLabel = (action = null) => {
+    const actionType = String(action?.type || "");
+    if (!actionType) return "";
+    if (actionType === COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME) return "Apply the condensed version";
+    if (actionType === COACH_TOOL_ACTIONS.REPLACE_SPEED_EASY) return "Swap the hard run for an easy version";
+    if (actionType === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS) return "Switch to travel meals";
+    if (actionType === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) return "Use the matching nutrition day";
+    if (actionType === COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS) return "Apply a small progression";
+    if (actionType === COACH_TOOL_ACTIONS.SET_PAIN_STATE) return "Save the pain flag";
+    if (actionType === COACH_TOOL_ACTIONS.SWAP_TODAY_RECOVERY) return "Swap today to recovery";
+    if (actionType === COACH_TOOL_ACTIONS.MOVE_LONG_RUN) return "Move the long run";
+    return sanitizeStatusLabel(actionType, "coach action");
+  };
+  const buildCompactCoachFallbackText = (packet = null) => {
+    const summary = packet?.summary || {};
+    const recommendation = stripCoachRecommendationTone(packet?.recommendations?.[0] || "");
+    const actionLabel = formatCoachActionLabel(packet?.actions?.[0] || null);
+    return [
+      summary?.headline || recommendation || sanitizeDisplayText(packet?.notices?.[0] || "Coach update ready."),
+      summary?.recommendedAction ? `Action: ${summary.recommendedAction}` : null,
+      summary?.whyNow ? `Why: ${summary.whyNow}` : sanitizeDisplayText(packet?.effects?.[0] || packet?.notices?.[0] || ""),
+      summary?.watchFor ? `Watch: ${summary.watchFor}` : null,
+      actionLabel ? `Deterministic action available: ${actionLabel}.` : "No state changes happen until you accept a recommendation.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  };
+
+  const renderCoachMessageContent = (message = {}) => {
+    const summary = message?.packet?.summary || null;
+    const actionLabel = formatCoachActionLabel(message?.packet?.actions?.[0] || null);
+    if (message?.role === "assistant" && summary) {
+      return (
+        <div style={{ display:"grid", gap:"0.14rem" }}>
+          <div className="coach-copy" style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>{summary.headline}</div>
+          {!!summary.recommendedAction && <div style={{ fontSize:"0.49rem", color:"#cbd5e1", lineHeight:1.45 }}><span style={{ color:"#8fa5c8" }}>Action:</span> {summary.recommendedAction}</div>}
+          {!!summary.whyNow && <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}><span style={{ color:"#64748b" }}>Why:</span> {summary.whyNow}</div>}
+          {!!summary.watchFor && <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}><span style={{ color:"#64748b" }}>Watch:</span> {summary.watchFor}</div>}
+          {!!actionLabel && <div style={{ fontSize:"0.47rem", color:C.blue, lineHeight:1.45 }}>Available deterministic action: {actionLabel}</div>}
+        </div>
+      );
+    }
+    return (
+      <div className="coach-copy" style={{ fontSize:"0.54rem", color:message.role==="user"?"#a9bddc":"#dbe7f6", whiteSpace:"pre-wrap", lineHeight:1.5 }}>
+        {message.text || "Coach update ready."}
+      </div>
+    );
   };
 
   const streamCoachResponse = async ({ userMsg, history }) => {
@@ -14453,11 +19058,11 @@ Rules for every response:
       coachMode,
       userMsg,
       history,
-      deterministicText: deterministic?.coachBrief || deterministic?.recommendations?.[0] || deterministic?.notices?.[0] || "Coach update ready.",
+      deterministicText: buildCompactCoachFallbackText(deterministic),
       packetArgs: coachPacketArgs,
       fetchImpl: fetch,
       onText: (text) => setStreamingText(text),
-    });
+    }).then((result) => ({ ...result, deterministicPacket: deterministic }));
   };
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, pendingActions, loading]);
@@ -14510,11 +19115,14 @@ Rules for every response:
     setStreamingCursor(true);
     if (preset) await persistReadinessPromptSignal(preset);
     const ts = Date.now();
-    const nextHistory = [...messages, { role:"user", text:userMsg, ts }].slice(-20);
+    const nextHistory = [...messages, { role:"user", text:userMsg, ts }].slice(-12);
     setMessages(nextHistory);
-    const historyForModel = nextHistory.filter(m => m.role === "user" || m.role === "assistant").slice(-20).map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.text || m.response || "" }));
+    const historyForModel = nextHistory.filter(m => m.role === "user" || m.role === "assistant").slice(-12).map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.text || m.response || "" }));
     const streamed = await streamCoachResponse({ userMsg, history: historyForModel });
-    setMessages(m => [...m, { role:"assistant", text: streamed.text, source: streamed.source, ts: Date.now(), helpful: null }].slice(-20));
+    const deterministicPacket = streamed.source === "deterministic" || streamed.source === "deterministic-fallback"
+      ? (streamed.deterministicPacket || null)
+      : null;
+    setMessages(m => [...m, { role:"assistant", text: streamed.text, source: streamed.source, ts: Date.now(), helpful: null, packet: deterministicPacket }].slice(-12));
     setLoading(false);
     setStreamingCursor(false);
     setStreamingText("");
@@ -14548,7 +19156,7 @@ Rules for every response:
   const recoveryAdjustedToday = coachReadiness?.state === "recovery" || todayWorkout?.type === "rest" || todayWorkout?.type === "recovery" || /recovery/i.test(String(todayWorkout?.label || ""));
   const reducedLoadToday = coachReadiness?.state === "reduced_load" || Boolean(todayWorkout?.minDay);
   const progressionReadyToday = coachReadiness?.state === "progression" || /progression-ready/i.test(String(todayWorkout?.label || ""));
-  const goalPriority = arbitration?.priorityStack?.primary || "Consistency";
+  const goalPriority = currentPrimaryGoal;
   const recentEntries = Array.from(new Set([...(Object.keys(logs || {})), ...(Object.keys(dailyCheckins || {}))]))
     .sort((a, b) => a.localeCompare(b))
     .slice(-7)
@@ -14666,7 +19274,7 @@ Rules for every response:
       : lowRecoverySignal
       ? `latest recovery check-in is strained (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
       : highRecoverySignal
-      ? `latest recovery check-in is supportive (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
+      ? `latest recovery check-in looked supportive (sleep ${latestSleep || "-"}, stress ${latestStress || "-"}, soreness ${latestSoreness || "-"})`
       : `latest session felt ${feelDescriptor}`;
 
     let watching = "";
@@ -14705,6 +19313,47 @@ Rules for every response:
 
     return { watch: watching, doToday, noticed };
   })();
+
+  useEffect(() => {
+    const packet = deterministicCoachPacket({ input: "status", todayWorkout, currentWeek, logs, bodyweights, personalization, learning: learningLayer, salvage: salvageLayer, planComposer, optimizationLayer, failureMode, momentum, strengthLayer, nutritionLayer, nutritionActual, nutritionComparison, arbitration, expectations, memoryInsights, coachMemoryContext: compoundingCoachMemory, realWorldNutrition, recalibration });
+    validateDeterministicCoachPacketInvariant(packet, "deterministicCoachPacket.status");
+    const seededMessage = {
+      role:"assistant",
+      text: buildCompactCoachFallbackText(packet),
+      source: "deterministic",
+      ts: Date.now(),
+      helpful: null,
+      packet,
+      seedKey: `${todayKey}_${currentWeek}_${todayWorkout?.label || todayWorkout?.type || "session"}_${coachDecisionMode}_${goalPriority}`,
+    };
+    setMessages((prev) => {
+      const hasUserConversation = prev.some((message) => message.role === "user");
+      if (hasUserConversation) return prev;
+      if (!prev.length) return [seededMessage];
+      if (prev.length === 1 && prev[0]?.role === "assistant") {
+        const previousSeedKey = String(prev[0]?.seedKey || "");
+        if (previousSeedKey !== seededMessage.seedKey || String(prev[0]?.text || "") !== seededMessage.text) {
+          return [seededMessage];
+        }
+      }
+      return prev;
+    });
+  }, [
+    todayKey,
+    currentWeek,
+    todayWorkout?.label,
+    todayWorkout?.type,
+    coachDecisionMode,
+    goalPriority,
+    coachPhase,
+    currentBlockLabel,
+    currentPlanFocus,
+    coachWeekSummary,
+    nutritionLayer?.dayType,
+    recentCompletedCount,
+    recentSkippedCount,
+    recentModifiedCount,
+  ]);
 
   useEffect(() => {
     const isSunday = new Date().getDay() === 0;
@@ -14768,47 +19417,197 @@ Rules for every response:
   const coachTrustTone = buildReviewBadgeTone(
     coachTrust.level === "grounded" ? "match" : coachTrust.level === "partial" ? "changed" : "recovery"
   , C);
-  const boundaryLine = "Coach can recommend and prepare accepted actions, but state only changes when you explicitly apply a recommendation.";
+  const boundaryLine = "Recommendations stay separate from your plan until you apply one.";
   const recentAcceptedAction = (coachActions || []).find((action) => action?.acceptedBy) || null;
   const weeklyNutritionCoachLine = weeklyNutritionReview?.coaching?.coachLine || "Weekly nutrition signal is still forming.";
-  const weeklyNutritionPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned-vs-actual nutrition remains separate.";
+  const weeklyNutritionPlannedVsActualLine = weeklyNutritionReview?.coaching?.plannedVsActualLine || "Planned nutrition guidance and logged actual intake stay separate.";
   const weeklyNutritionActionLine = weeklyNutritionReview?.adaptation?.actions?.[0] || "Keep logging intake and hydration so future nutrition changes stay deterministic.";
-  const recoveryPrescriptionLine = canonicalCoachRecovery?.prescription?.summary || canonicalCoachRecovery?.recoveryLine || "Recovery posture is attached to today's decision.";
+  const recoveryPrescriptionLine = canonicalCoachRecovery?.prescription?.summary || canonicalCoachRecovery?.recoveryLine || "Recovery guidance is currently attached to today's decision.";
   const supplementCoachLine = Array.isArray(canonicalCoachSupplements?.plan?.items) && canonicalCoachSupplements.plan.items.length
     ? canonicalCoachSupplements.plan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")
     : "No explicit supplement plan stored for today.";
+  const compressCoachCopy = (text = "", maxLen = 180) => {
+    const normalized = String(text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+    if (normalized.length <= maxLen) return normalized;
+    return `${normalized.slice(0, Math.max(0, maxLen - 1)).trim()}...`;
+  };
+  const coachRecommendationLine = compressCoachCopy(coachDecision.stance, 140);
+  const coachWhyLine = compressCoachCopy(coachDecision.why, 170);
+  const coachNextLine = compressCoachCopy(coachSnapshot.doToday, 150);
+  const coachWatchLine = compressCoachCopy(coachSnapshot.watch, 120);
+  const coachNoticedLine = compressCoachCopy(coachSnapshot.noticed, 145);
+  const latestAssistantSummary = compressCoachCopy(latestAssistantMessage?.text || "Coach update ready.", 180);
+  const acceptedActionHeadline = recentAcceptedAction
+    ? `${sanitizeStatusLabel(recentAcceptedAction.type, "accepted")} by ${sanitizeDisplayText(recentAcceptedAction.acceptedBy || "gate")}`
+    : "No accepted coach action yet.";
+  const acceptedActionSummary = compressCoachCopy(
+    recentAcceptedAction
+      ? sanitizeDisplayText(recentAcceptedAction.reason || recentAcceptedAction.rationale || "Accepted action saved.")
+      : boundaryLine,
+    170
+  );
+  const supportNutritionLine = compressCoachCopy(weeklyNutritionActionLine, 140);
+  const supportRecoveryLine = compressCoachCopy(recoveryPrescriptionLine, 140);
+  const supportSupplementLine = compressCoachCopy(supplementCoachLine, 120);
+  const latestWeeklyReviewLine = compressCoachCopy(sundayArchive[0]?.paragraph || weeklyNotice, 180);
+  const latestNoteMatchesSummary = latestAssistantSummary === coachRecommendationLine || latestAssistantSummary === coachNextLine;
+  const coachPrimaryPrompts = quickPrompts.filter((prompt) => [
+    "I missed yesterday",
+    "I'm traveling today",
+    "I slept badly",
+    "I want to push harder",
+  ].includes(prompt));
 
   return (
+    <div className="fi" data-testid="coach-tab" style={{ display:"grid", gap:"0.75rem" }}>
+      <div className="card card-strong card-hero" style={{ borderColor:C.blue+"38" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.35rem" }}>
+          <div>
+            <div className="sect-title" style={{ color:C.blue, marginBottom:"0.16rem" }}>TODAY'S CALL</div>
+            <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.45 }}>{coachRecommendationLine}</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>{coachPlanLine || coachProvenance}</div>
+          </div>
+          <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+            <span style={{ fontSize:"0.48rem", color:decisionTone.color, background:decisionTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachDecisionMode}</span>
+            <span style={{ fontSize:"0.48rem", color:coachTrustTone.color, background:coachTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachTrust.label}</span>
+          </div>
+        </div>
+        <div className="coach-copy" style={{ display:"grid", gap:"0.18rem", fontSize:"0.54rem", lineHeight:1.55 }}>
+          <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachWhyLine}</div>
+          <div><span style={{ color:"#94a3b8" }}>Next:</span> {coachNextLine}</div>
+          <div><span style={{ color:"#94a3b8" }}>Watching:</span> {coachWatchLine}</div>
+        </div>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.5rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>SUGGESTED ACTIONS</div>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            <button className={`btn ${coachDecision.options?.[0]?.primary ? "btn-primary" : ""}`} onClick={()=>applyDecisionOption(coachDecision.options?.[0])} style={{ fontSize:"0.54rem" }}>
+              {coachDecision.options?.[0]?.label || "Keep full session"}
+            </button>
+            {coachDecision.options?.[1] && (
+              <button className="btn" onClick={()=>applyDecisionOption(coachDecision.options?.[1])} style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+                {coachDecision.options[1].label}
+              </button>
+            )}
+          </div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{boundaryLine}</div>
+        </div>
+      </div>
+
+      <div className="card card-action" data-testid="coach-primary-entry" style={{ borderColor:C.green+"30" }}>
+        <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.35rem" }}>
+          <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>ASK COACH</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            Ask for a decision, a plan explanation, or a safe next move. Quick prompts should lead to meaningfully different guidance, not the same speech with swapped wording.
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem", marginBottom:"0.35rem" }}>
+          {coachPrimaryPrompts.map((prompt) => (
+            <button key={prompt} className="btn" onClick={()=>send(prompt)} style={{ whiteSpace:"nowrap", fontSize:"0.52rem" }}>{prompt}</button>
+          ))}
+        </div>
+        <div style={{ display:"flex", gap:"0.45rem" }}>
+          <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Ask coach what to do next" style={{ flex:1 }} disabled={loading} />
+          <button className="btn btn-primary" onClick={()=>send()} disabled={loading} style={{ opacity:loading?0.5:1 }}>Send</button>
+        </div>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+          {messages.slice(-4).map((message, index) => (
+            <div
+              key={`${index}_${message.role}`}
+              data-testid="coach-message"
+              data-message-role={message.role}
+              style={{ justifySelf:message.role==="user"?"end":"start", maxWidth:"92%", background:message.role==="user"?"#15263f":"#101b2d", border:message.role==="user"?"1px solid #325178":"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}
+            >
+              {renderCoachMessageContent(message)}
+            </div>
+          ))}
+          {loading && <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Coach is drafting a response...</div>}
+        </div>
+      </div>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Accepted action and support details</summary>
+        <div style={{ display:"grid", gap:"0.28rem", marginTop:"0.45rem" }}>
+          <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.45 }}>{acceptedActionHeadline}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>{acceptedActionSummary}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Nutrition: {supportNutritionLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Recovery: {supportRecoveryLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>Supplements: {supportSupplementLine}</div>
+          <div style={{ fontSize:"0.47rem", color:"#64748b", lineHeight:1.45 }}>{boundaryLine}</div>
+        </div>
+      </details>
+
+      <details className="card">
+        <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Recent conversation</summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
+          {messages.slice(-12).map((message, index) => (
+            <div
+              key={`${index}_${message.role}`}
+              data-testid="coach-message"
+              data-message-role={message.role}
+              style={{ justifySelf:message.role==="user"?"end":"start", maxWidth:"92%", background:message.role==="user"?"#15263f":"#101b2d", border:message.role==="user"?"1px solid #325178":"1px solid #2a3f5f", borderRadius:10, padding:"0.45rem 0.55rem" }}
+            >
+              {renderCoachMessageContent(message)}
+              {message.source && <div style={{ fontSize:"0.44rem", color:"#8fa5c8", marginTop:"0.16rem" }}>Source: {formatCoachResponseSource(message.source)}</div>}
+            </div>
+          ))}
+          {latestWeeklyReviewLine && <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{latestWeeklyReviewLine}</div>}
+        </div>
+      </details>
+    </div>
+  );
+  if (false) return (
     <div className="fi" style={{ display:"grid", gap:"0.75rem" }}>
       <div className="card card-strong card-hero" style={{ borderColor:C.blue+"38" }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.35rem" }}>
           <div>
             <div className="sect-title" style={{ color:C.blue, marginBottom:"0.16rem" }}>COACH SUMMARY</div>
-            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{coachProvenance}</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{coachPlanLine || coachProvenance}</div>
           </div>
           <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
             <span style={{ fontSize:"0.48rem", color:decisionTone.color, background:decisionTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachDecisionMode}</span>
             <span style={{ fontSize:"0.48rem", color:"#8fa5c8", background:"#0f172a", padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachReadiness?.state ? sanitizeStatusLabel(coachReadiness.state, "steady") : "steady"}</span>
+            {liveFidelityLabel && <span style={{ fontSize:"0.48rem", color:"#dbe7f6", background:"#15263f", padding:"0.16rem 0.42rem", borderRadius:999 }}>{liveFidelityLabel}</span>}
             <span style={{ fontSize:"0.48rem", color:coachTrustTone.color, background:coachTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{coachTrust.label}</span>
           </div>
         </div>
-        <div className="coach-copy" style={{ display:"grid", gap:"0.22rem", fontSize:"0.61rem", lineHeight:1.65 }}>
-          <div><span style={{ color:"#94a3b8" }}>Watching:</span> {coachSnapshot.watch}</div>
-          <div><span style={{ color:"#94a3b8" }}>Recommendation:</span> {coachDecision.stance}</div>
-          <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachDecision.why}</div>
-          <div><span style={{ color:"#94a3b8" }}>Next:</span> {coachSnapshot.doToday}</div>
+        <div style={{ fontSize:"0.72rem", color:"#f8fbff", lineHeight:1.45, marginBottom:"0.18rem" }}>{coachRecommendationLine}</div>
+        <div className="coach-copy" style={{ display:"grid", gap:"0.18rem", fontSize:"0.56rem", lineHeight:1.6 }}>
+          <div><span style={{ color:"#94a3b8" }}>Why:</span> {coachWhyLine}</div>
+          <div><span style={{ color:"#94a3b8" }}>Take:</span> {coachNextLine}</div>
+          <div><span style={{ color:"#94a3b8" }}>Plan:</span> {compressCoachCopy(currentPlanFocus, 150)}</div>
+          {!!livePlanBasisExplanation?.basisSummary && <div><span style={{ color:"#94a3b8" }}>Basis:</span> {compressCoachCopy(livePlanBasisExplanation.basisSummary, 150)}</div>}
         </div>
-        <div style={{ marginTop:"0.22rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{coachTrust.summary}</div>
-        <div style={{ marginTop:"0.38rem", fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.55 }}>{boundaryLine}</div>
+        <div style={{ marginTop:"0.22rem", fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
+          {coachNoticedLine ? `${coachNoticedLine} ` : ""}Watch: {coachWatchLine}
+        </div>
+        <div style={{ marginTop:"0.22rem", display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT PLAN</div>
+            <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{currentBlockLabel}</div>
+            <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{compressCoachCopy(currentPlanFocus, 130)}</div>
+            {!!livePlanBasisExplanation?.personalizationSummary && (
+              <div style={{ fontSize:"0.46rem", color:"#94a3b8", marginTop:"0.12rem", lineHeight:1.5 }}>
+                {compressCoachCopy(livePlanBasisExplanation.personalizationSummary, 140)}
+              </div>
+            )}
+            {!!livePlanningBasis?.adherence?.summary && (
+              <div style={{ fontSize:"0.46rem", color:livePlanningBasis?.adherence?.state === "off_program" ? C.amber : "#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
+                {compressCoachCopy(livePlanningBasis.adherence.summary, 140)}
+              </div>
+            )}
+          </div>
+          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>LAST ACCEPTED</div>
+            <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.5 }}>{acceptedActionHeadline}</div>
+            <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{acceptedActionSummary}</div>
+          </div>
+        </div>
       </div>
 
       <div className="card card-action" style={{ borderColor:C.green+"30" }}>
-        <div className="sect-title" style={{ color:C.green, marginBottom:"0.32rem" }}>SUGGESTED ACTIONS</div>
+        <div className="sect-title" style={{ color:C.green, marginBottom:"0.32rem" }}>TAKE ACTION</div>
         <div style={{ display:"grid", gap:"0.38rem" }}>
-          <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.46rem 0.5rem" }}>
-            <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.55 }}>{coachDecision.stance}</div>
-            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>{coachDecision.watch}</div>
-          </div>
           <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap" }}>
             {coachDecision.options.slice(0, 2).map((opt, i) => (
               <button key={`${opt.label}_${i}`} className={`btn ${opt.primary ? "btn-primary" : ""}`} onClick={()=>applyDecisionOption(opt)} style={{ fontSize:"0.56rem" }}>
@@ -14816,59 +19615,43 @@ Rules for every response:
               </button>
             ))}
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
-            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LATEST COACH OUTPUT</div>
-              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>{latestAssistantMessage?.text || "Coach update ready."}</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{boundaryLine}</div>
+          <details>
+            <summary style={{ cursor:"pointer", fontSize:"0.53rem", color:"#8fa5c8" }}>Latest output</summary>
+            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem", marginTop:"0.32rem" }}>
+              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.55 }}>
+                {latestNoteMatchesSummary ? "Latest output already matches the current coach summary." : latestAssistantSummary}
+              </div>
               {latestAssistantMessage?.source && <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.14rem" }}>Source: {formatCoachResponseSource(latestAssistantMessage.source)}</div>}
             </div>
-            <div style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.44rem 0.48rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>LAST ACCEPTED CHANGE</div>
-              <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.14rem", lineHeight:1.55 }}>
-                {recentAcceptedAction ? `${sanitizeStatusLabel(recentAcceptedAction.type, "accepted")} by ${sanitizeDisplayText(recentAcceptedAction.acceptedBy || "gate")}` : "No accepted coach action yet."}
-              </div>
-              <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                {recentAcceptedAction ? sanitizeDisplayText(recentAcceptedAction.reason || recentAcceptedAction.rationale || "Accepted action saved.") : boundaryLine}
-              </div>
-            </div>
-          </div>
+          </details>
         </div>
       </div>
 
-      <div className="card" style={{ borderColor:C.amber+"26" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"flex-start", marginBottom:"0.32rem" }}>
+      <details className="card" style={{ borderColor:C.amber+"26" }}>
+        <summary style={{ cursor:"pointer", display:"flex", justifyContent:"space-between", gap:"0.35rem", flexWrap:"wrap", alignItems:"center", listStyle:"none" }}>
           <div>
-            <div className="sect-title" style={{ color:C.amber, marginBottom:"0.14rem" }}>NUTRITION THIS WEEK</div>
-            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyNutritionPlannedVsActualLine}</div>
+            <div className="sect-title" style={{ color:C.amber, marginBottom:"0.14rem" }}>SUPPORT SIGNALS</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              Nutrition: {supportNutritionLine} · Recovery: {supportRecoveryLine}
+            </div>
           </div>
           <span style={{ fontSize:"0.48rem", color:"#fbbf24", background:"#2b2007", padding:"0.16rem 0.42rem", borderRadius:999 }}>
             {sanitizeStatusLabel(weeklyNutritionReview?.adaptation?.mode, "hold")}
           </span>
+        </summary>
+        <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.42rem" }}>
+          <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{compressCoachCopy(weeklyNutritionCoachLine, 160)}</div>
+          <div style={{ fontSize:"0.51rem", color:"#c7d5ea", lineHeight:1.5 }}>Nutrition move: {supportNutritionLine}</div>
+          <div style={{ fontSize:"0.51rem", color:"#dbe7f6", lineHeight:1.5 }}>Recovery move: {supportRecoveryLine}</div>
+          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>Supplements: {supportSupplementLine}</div>
         </div>
-        <div style={{ display:"grid", gap:"0.3rem" }}>
-          <div style={{ fontSize:"0.57rem", color:"#dbe7f6", lineHeight:1.55 }}>{weeklyNutritionCoachLine}</div>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyNutritionReview?.adaptation?.support || "Nutrition review stays descriptive until the signal is strong enough to support deterministic change."}</div>
-          <div style={{ fontSize:"0.51rem", color:"#c7d5ea", lineHeight:1.5 }}>Next practical move: {weeklyNutritionActionLine}</div>
-        </div>
-      </div>
-
-      <div className="card" style={{ borderColor:C.blue+"24" }}>
-        <div className="sect-title" style={{ color:C.blue, marginBottom:"0.28rem" }}>RECOVERY + SUPPLEMENTS TODAY</div>
-        <div style={{ display:"grid", gap:"0.24rem" }}>
-          <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>{recoveryPrescriptionLine}</div>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{supplementCoachLine}</div>
-          <div style={{ fontSize:"0.48rem", color:"#64748b", lineHeight:1.5 }}>
-            {canonicalCoachRecovery?.actual?.loggedAt
-              ? canonicalCoachRecovery.actual.summary
-              : "Recovery actuals will update after check-in and nutrition logging."}
-          </div>
-        </div>
-      </div>
+      </details>
 
       <div className="card" style={{ marginBottom:"0.05rem" }}>
         <div className="sect-title" style={{ color:C.amber, marginBottom:"0.32rem" }}>COACH INPUT</div>
         <div style={{ display:"grid", gap:"0.38rem" }}>
-          <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Ask for a recommendation or use a quick decision prompt.</div>
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8" }}>Ask for a decision, or use a quick prompt.</div>
           <div style={{ display:"flex", gap:"0.35rem", overflowX:"auto", paddingBottom:"0.2rem" }}>
             {quickPrompts.slice(0, 6).map(q => (
               <button key={q} className="btn" onClick={()=>send(q)} style={{ whiteSpace:"nowrap", fontSize:"0.55rem" }}>{q}</button>
@@ -14924,7 +19707,7 @@ Rules for every response:
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))", gap:"0.75rem" }}>
-        <details className="card card-subtle" open>
+        <details className="card card-subtle">
           <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.blue }}>MEMORY / SETTINGS</summary>
           <div style={{ paddingTop:"0.55rem", display:"grid", gap:"0.45rem" }}>
             <div style={{ fontSize:"0.53rem", color:"#8fa5c8", lineHeight:1.55 }}>Coach memory and environment presets shape recommendations, but they do not mutate plan state until you accept an action.</div>
@@ -14966,18 +19749,17 @@ Rules for every response:
           </div>
         </details>
 
-        <details className="card card-subtle" open>
-          <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.purple }}>WEEKLY REVIEW / REFLECTION</summary>
+        <details className="card card-subtle">
+          <summary style={{ cursor:"pointer", fontSize:"0.62rem", color:C.purple }}>WEEKLY CONTEXT</summary>
           <div style={{ paddingTop:"0.55rem", display:"grid", gap:"0.38rem" }}>
             <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.6 }}>
-              {sundayArchive[0]?.paragraph || "This section auto-generates on Sundays and archives each weekly review."}
+              {latestWeeklyReviewLine || "This section auto-generates on Sundays and archives each weekly review."}
             </div>
-            <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.55 }}>{weeklyNotice}</div>
             {sundayArchive.length > 0 && (
               <div style={{ maxHeight:170, overflowY:"auto", border:"1px solid #23344e", borderRadius:9, padding:"0.35rem 0.45rem", display:"grid", gap:"0.28rem", background:"#0f172a" }}>
                 {sundayArchive.map((r, idx) => (
                   <div key={`${r.date}_${idx}`} style={{ fontSize:"0.54rem", color:"#9fb2d2", lineHeight:1.55 }}>
-                    <span className="mono" style={{ color:"#64748b" }}>{r.date}</span> - {r.paragraph}
+                    <span className="mono" style={{ color:"#64748b" }}>{r.date}</span> - {compressCoachCopy(r.paragraph, 180)}
                   </div>
                 ))}
               </div>

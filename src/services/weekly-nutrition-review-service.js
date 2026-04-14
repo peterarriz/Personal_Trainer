@@ -340,12 +340,12 @@ export const buildWeeklyNutritionReview = ({
     prescribed: {
       daysWithPrescription: prescribedDays.length,
       hardTrainingDays: prescribedHardTrainingDays.length,
-      coverageLine: `${prescribedDays.length}/${dateKeys.length} days had a stored nutrition prescription.`,
+      coverageLine: `${prescribedDays.length}/${dateKeys.length} days had stored or generated nutrition guidance.`,
     },
     actual: {
       loggedDays: actualDays.length,
       unloggedDays: Math.max(0, dateKeys.length - actualDays.length),
-      coverageLine: `${actualDays.length}/${dateKeys.length} days logged actual nutrition.`,
+      coverageLine: `${actualDays.length}/${dateKeys.length} days had logged actual nutrition.`,
     },
     adherence: {
       highDays: Number(adherenceCounts.high || 0),

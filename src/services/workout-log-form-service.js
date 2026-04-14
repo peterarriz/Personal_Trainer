@@ -1,4 +1,5 @@
 import { sanitizeDisplayCopy } from "./text-format-service.js";
+import { buildDayPrescriptionDisplay } from "./day-prescription-display-service.js";
 import {
   getExercisePerformanceRecordsForLog,
   getSessionPerformanceRecordsForLog,
@@ -57,6 +58,8 @@ const normalizeNumericText = (value = "") => {
   return String(value).trim();
 };
 
+const joinQuickParts = (parts = []) => parts.filter(Boolean).join(" · ");
+
 const buildStrengthSubstitutionMeta = ({ exercise = "", prescribedExercise = "" } = {}) => {
   const actualKey = normalizePerformanceExerciseKey(exercise || "");
   const prescribedKey = normalizePerformanceExerciseKey(prescribedExercise || "");
@@ -108,6 +111,25 @@ const inferFallbackFamily = ({ training = null, logEntry = {}, exerciseRecords =
   if (hasRunData && hasStrengthData) return WORKOUT_LOG_FAMILIES.mixed;
   if (hasRunData) return WORKOUT_LOG_FAMILIES.run;
   if (hasStrengthData) return WORKOUT_LOG_FAMILIES.strength;
+  return WORKOUT_LOG_FAMILIES.generic;
+};
+
+const inferPlannedFamily = ({ training = null, prescribedExercises = [] } = {}) => {
+  const typeText = String(training?.type || "").toLowerCase();
+  const labelText = String(training?.label || "").toLowerCase();
+  const raw = `${typeText} ${labelText} ${training?.run?.t || ""}`.trim();
+  const hasRunPlan = Boolean(
+    training?.run
+    || /run|tempo|interval|easy|long|aerobic|cardio|stride/.test(raw)
+  );
+  const hasStrengthPlan = Boolean(
+    Array.isArray(prescribedExercises) && prescribedExercises.length > 0
+    || training?.strSess
+    || /strength|push|pull|bench|squat|deadlift|press|row|lift|prehab/.test(raw)
+  );
+  if (hasRunPlan && hasStrengthPlan) return WORKOUT_LOG_FAMILIES.mixed;
+  if (hasRunPlan) return WORKOUT_LOG_FAMILIES.run;
+  if (hasStrengthPlan) return WORKOUT_LOG_FAMILIES.strength;
   return WORKOUT_LOG_FAMILIES.generic;
 };
 
@@ -326,27 +348,39 @@ export const buildWorkoutLogFormRecommendation = ({
     || fallbackTraining
     || null;
   const resolvedPrescribedExercises = resolvePrescribedExercises({ training, prescribedExercises });
+  const plannedFamily = inferPlannedFamily({
+    training,
+    prescribedExercises: resolvedPrescribedExercises,
+  });
   const sessionRecord = getSessionPerformanceRecordsForLog(logEntry || {}, { dateKey: safeDateKey })[0] || null;
-  const previewStrength = buildStrengthRows({ prescribedExercises: resolvedPrescribedExercises, logEntry, dateKey: safeDateKey });
-  const family = inferFallbackFamily({
+  const strengthSourceLogEntry = plannedFamily === WORKOUT_LOG_FAMILIES.run ? {} : logEntry;
+  const previewStrength = buildStrengthRows({ prescribedExercises: resolvedPrescribedExercises, logEntry: strengthSourceLogEntry, dateKey: safeDateKey });
+  const fallbackFamily = inferFallbackFamily({
     training,
     logEntry,
     exerciseRecords: previewStrength.rows,
     sessionRecord,
   });
+  const family = plannedFamily !== WORKOUT_LOG_FAMILIES.generic ? plannedFamily : fallbackFamily;
   const strength = buildStrengthDraft({
     family,
     prescribedExercises: resolvedPrescribedExercises,
-    logEntry,
+    logEntry: strengthSourceLogEntry,
     dateKey: safeDateKey,
   });
   const run = buildRunDraft({ training, logEntry, sessionRecord });
   const firstStrengthRow = strength.rows[0] || null;
+  const genericVisible = family === WORKOUT_LOG_FAMILIES.generic || (family === WORKOUT_LOG_FAMILIES.strength && !strength.hasPrescribedStructure && strength.rows.length === 0);
   const generic = {
-    visible: family === WORKOUT_LOG_FAMILIES.generic || (family === WORKOUT_LOG_FAMILIES.strength && !strength.hasPrescribedStructure && strength.rows.length === 0),
-    reps: normalizeNumericText(logEntry?.reps ?? logEntry?.pushups ?? firstStrengthRow?.actualReps ?? ""),
-    weight: normalizeNumericText(logEntry?.weight ?? firstStrengthRow?.actualWeight ?? ""),
+    visible: genericVisible,
+    reps: genericVisible ? normalizeNumericText(logEntry?.reps ?? logEntry?.pushups ?? firstStrengthRow?.actualReps ?? "") : "",
+    weight: genericVisible ? normalizeNumericText(logEntry?.weight ?? firstStrengthRow?.actualWeight ?? "") : "",
   };
+  const plannedSummary = buildDayPrescriptionDisplay({
+    training,
+    includeWhy: false,
+    prescribedExercises: resolvedPrescribedExercises,
+  });
   const sections = {
     run: {
       enabled: family === WORKOUT_LOG_FAMILIES.run || family === WORKOUT_LOG_FAMILIES.mixed,
@@ -373,6 +407,7 @@ export const buildWorkoutLogFormRecommendation = ({
     date: safeDateKey,
     recommendedMode: family,
     family,
+    plannedFamily,
     sessionType: sanitizeText(training?.type || logEntry?.actualSession?.sessionType || family || "session"),
     sessionLabel: sanitizeText(
       logEntry?.actualSession?.sessionLabel
@@ -382,6 +417,7 @@ export const buildWorkoutLogFormRecommendation = ({
       || "Session"
     ),
     prescribedLabel: sanitizeText(training?.label || ""),
+    plannedSummary,
     recommendedFields,
     sections,
     prefilledExerciseRows: strength.rows,
@@ -420,6 +456,107 @@ export const buildWorkoutLogDraft = ({
     feel: String(logEntry?.feel || "3"),
     location: sanitizeText(logEntry?.location || "home") || "home",
     notes: sanitizeText(logEntry?.notes || ""),
+  };
+};
+
+const QUICK_CAPTURE_STRENGTH_ROW_LIMIT = 3;
+
+const buildQuickStrengthRowSummary = (row = {}) => joinQuickParts([
+  row?.prescribedSetsText ? `${sanitizeText(row.prescribedSetsText)} sets` : "",
+  sanitizeText(row?.prescribedRepsText || ""),
+  row?.prescribedWeight !== null && row?.prescribedWeight !== undefined ? `${row.prescribedWeight} lb` : "",
+  row?.bodyweightOnly ? "BW" : "",
+  sanitizeText(row?.bandTension || ""),
+]);
+
+const hasValidStrengthQuickRow = (row = {}) => (
+  Math.max(0, Number(row?.actualSets || 0) || 0) > 0
+  && Math.max(0, Number(row?.actualReps || 0) || 0) > 0
+);
+
+export const hasWorkoutQuickCaptureValues = ({ draft = {} } = {}) => {
+  const hasRunValue = Boolean(
+    normalizeRunField(draft?.run?.duration || "")
+    || normalizeRunField(draft?.run?.distance || "")
+    || sanitizeText(draft?.run?.pace || "")
+  );
+  const hasStrengthValue = (draft?.strength?.rows || []).some((row) => hasValidStrengthQuickRow(row));
+  const hasGenericValue = Boolean(
+    normalizeNumericText(draft?.generic?.reps || "")
+    || normalizeNumericText(draft?.generic?.weight || "")
+  );
+  return hasRunValue || hasStrengthValue || hasGenericValue;
+};
+
+export const buildWorkoutQuickCaptureModel = ({ draft = {} } = {}) => {
+  const family = draft?.family || WORKOUT_LOG_FAMILIES.generic;
+  const prescribedLabel = sanitizeText(draft?.prescribedLabel || "");
+  const sessionLabel = sanitizeText(draft?.sessionLabel || "Session") || "Session";
+  const allStrengthRows = Array.isArray(draft?.strength?.rows) ? draft.strength.rows : [];
+  const quickStrengthRows = allStrengthRows
+    .slice(0, QUICK_CAPTURE_STRENGTH_ROW_LIMIT)
+    .map((row, index) => {
+      const exercise = sanitizeText(row?.exercise || row?.prescribedExercise || `Exercise ${index + 1}`) || `Exercise ${index + 1}`;
+      const mode = row?.mode || inferPerformanceExerciseMode(exercise, row?.mode || "");
+      return {
+        rowIndex: index,
+        exercise,
+        prescribedExercise: sanitizeText(row?.prescribedExercise || ""),
+        prescribedSummary: buildQuickStrengthRowSummary(row),
+        actualSets: normalizeNumericText(row?.actualSets || ""),
+        actualReps: normalizeNumericText(row?.actualReps || ""),
+        actualWeight: normalizeNumericText(row?.actualWeight || ""),
+        bandTension: sanitizeText(row?.bandTension || ""),
+        bodyweightOnly: Boolean(row?.bodyweightOnly || mode === "bodyweight"),
+        mode,
+      };
+    });
+  return {
+    family,
+    completeActionLabel: prescribedLabel ? "Quick complete" : "Mark complete",
+    detailToggleLabel: family === WORKOUT_LOG_FAMILIES.run
+      ? "Add quick run details"
+      : family === WORKOUT_LOG_FAMILIES.strength
+        ? "Add quick sets and reps"
+        : family === WORKOUT_LOG_FAMILIES.mixed
+          ? "Add quick actual details"
+          : "Add quick details",
+    saveActionLabel: family === WORKOUT_LOG_FAMILIES.run
+      ? "Save quick run log"
+      : family === WORKOUT_LOG_FAMILIES.strength
+        ? "Save quick strength log"
+        : family === WORKOUT_LOG_FAMILIES.mixed
+          ? "Save quick workout log"
+          : "Save quick log",
+    helperLine: prescribedLabel
+      ? `Planned today: ${prescribedLabel}.`
+      : `Logging: ${sessionLabel}.`,
+    supportLine: "Actual details stay separate from what was prescribed.",
+    run: {
+      enabled: Boolean(draft?.sections?.run?.enabled),
+      fields: [
+        { id: "duration", label: "Time", inputType: "duration", placeholder: "Time", value: normalizeRunField(draft?.run?.duration || "") },
+        { id: "distance", label: "Distance", inputType: "number", placeholder: "Miles", value: normalizeRunField(draft?.run?.distance || "") },
+        { id: "pace", label: "Pace", inputType: "pace", placeholder: "Pace", value: sanitizeText(draft?.run?.pace || "") },
+      ],
+      summary: joinQuickParts([
+        sanitizeText(draft?.run?.purpose || ""),
+        sanitizeText(draft?.run?.structure || ""),
+      ]),
+    },
+    strength: {
+      enabled: Boolean(draft?.sections?.strength?.enabled),
+      rows: quickStrengthRows,
+      hiddenRowCount: Math.max(0, allStrengthRows.length - quickStrengthRows.length),
+      hasPrescribedStructure: Boolean(draft?.strength?.hasPrescribedStructure),
+    },
+    generic: {
+      enabled: Boolean(draft?.sections?.generic?.enabled),
+      fields: [
+        { id: "reps", label: "Reps", inputType: "number", placeholder: "Reps", value: normalizeNumericText(draft?.generic?.reps || "") },
+        { id: "weight", label: "Weight", inputType: "number", placeholder: "Weight", value: normalizeNumericText(draft?.generic?.weight || "") },
+      ],
+    },
   };
 };
 

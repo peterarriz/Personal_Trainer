@@ -212,7 +212,7 @@ test("generateTodayPlan uses confirmed training context and calls out unknown du
       training_location: "Home",
       home_equipment: ["Dumbbells"],
       session_length: "45",
-      coaching_style: "Push me hard",
+      coaching_style: "Push me (with guardrails)",
     },
   });
 

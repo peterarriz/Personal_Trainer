@@ -5,7 +5,7 @@ const {
   buildDayPrescriptionDisplay,
 } = require("../src/services/day-prescription-display-service.js");
 
-test("strength placeholder sessions expand into concise prescription detail", () => {
+test("strength placeholder sessions expose a usable canonical session plan instead of summary-only fallback", () => {
   const summary = buildDayPrescriptionDisplay({
     training: {
       type: "strength+prehab",
@@ -25,8 +25,12 @@ test("strength placeholder sessions expand into concise prescription detail", ()
   assert.match(summary.structure, /40-55 min strength progression/i);
   assert.match(summary.expectedDuration, /40-55 min/i);
   assert.match(summary.movementNote, /second full-body strength template/i);
-  assert.equal(summary.exercisePreview.available, false);
-  assert.match(summary.exercisePreview.note, /not stored/i);
+  assert.equal(summary.sessionPlan.available, true);
+  assert.equal(summary.sessionPlan.rows.length, 1);
+  assert.equal(summary.sessionPlan.rows[0].title, "Strength B");
+  assert.match(summary.sessionPlan.rows[0].detail, /40-55 min strength progression/i);
+  assert.equal(summary.exercisePreview.available, true);
+  assert.equal(summary.exercisePreview.note, "");
   assert.match(summary.why, /strength lane moving/i);
 });
 
@@ -47,6 +51,9 @@ test("run sessions infer useful duration and keep interval structure legible", (
   assert.match(summary.structure, /intervals:/i);
   assert.match(summary.structure, /8min/i);
   assert.match(summary.expectedDuration, /3[0-9]-4[0-9] min/i);
+  assert.equal(summary.sessionPlan.available, true);
+  assert.equal(summary.sessionPlan.rows.length, 3);
+  assert.equal(summary.sessionPlan.rows[1].title, "Main interval set");
 });
 
 test("unclear movement names get a short explanation note", () => {
@@ -83,7 +90,7 @@ test("strength sessions surface exercise-level detail when prescribed rows exist
   assert.equal(summary.exercisePreview.rows[1].structure, "4 x 15");
 });
 
-test("exercise preview limits itself to a compact first few rows", () => {
+test("exercise preview keeps the full prescribed structure available for Today execution", () => {
   const summary = buildDayPrescriptionDisplay({
     training: {
       type: "strength",
@@ -99,6 +106,6 @@ test("exercise preview limits itself to a compact first few rows", () => {
   });
 
   assert.equal(summary.exercisePreview.available, true);
-  assert.equal(summary.exercisePreview.rows.length, 4);
-  assert.match(summary.exercisePreview.note, /first few prescribed exercises/i);
+  assert.equal(summary.exercisePreview.rows.length, 5);
+  assert.equal(summary.exercisePreview.note, "");
 });

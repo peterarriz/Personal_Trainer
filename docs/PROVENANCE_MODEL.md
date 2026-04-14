@@ -33,6 +33,24 @@ Replace freeform "reason" text as the only explanation path with small, durable 
 }
 ```
 
+### Deterministic change summary
+
+Weekly and daily planning surfaces also carry a short deterministic `changeSummary` alongside richer provenance:
+
+```js
+{
+  didChange: true,
+  inputType: "workout_log",
+  horizon: "immediate_to_short",
+  headline: "Tempo Run was carried forward after the earlier skip.",
+  detail: "The next lower-priority slot was replaced so the week's backbone stays intact.",
+  preserved: "The longer endurance backbone stays preserved.",
+  surfaceLine: "Tempo Run was carried forward after the earlier skip. The longer endurance backbone stays preserved."
+}
+```
+
+This is not a replacement for provenance events. It is the short user-facing explanation contract for Today and Program.
+
 ## Actor Rules
 
 - `user`: direct user-applied overrides, quick prompts, manual context changes
@@ -90,3 +108,8 @@ Replace freeform "reason" text as the only explanation path with small, durable 
 - Use `details` for machine-usable context, not long prose.
 - Use `summary` as a derived convenience field, not the source of truth.
 - New durable adjustment records should include either inline `provenance` or a sidecar provenance map when the stored value is primitive-like.
+
+## 2026-04-13 Hardening Notes
+
+- Coach fallback phrasing may change, but provenance still belongs to deterministic accepted actions, not to wording-only AI responses.
+- Program and day adjustments should remain traceable even when cloud save is degraded or retried locally.

@@ -15,16 +15,43 @@ module.exports = async (req, res) => {
   try {
     const body = await readJsonBody(req);
     const statePacket = body?.statePacket || null;
+    const requestType = body?.requestType || "goal_interpretation";
     if (!statePacket || typeof statePacket !== "object") {
       return sendJson(res, 400, {
         code: "missing_state_packet",
         message: "A typed intake state packet is required.",
       });
     }
+    if (requestType === "missing_field_extraction") {
+      const extractionRequest = body?.extractionRequest || {};
+      if (!String(extractionRequest?.utterance || "").trim()) {
+        return sendJson(res, 400, {
+          code: "missing_extraction_utterance",
+          message: "A user utterance is required for intake field extraction.",
+        });
+      }
+      if (!Array.isArray(extractionRequest?.missingFields || extractionRequest?.missing_fields) || !(extractionRequest?.missingFields || extractionRequest?.missing_fields)?.length) {
+        return sendJson(res, 400, {
+          code: "missing_extraction_fields",
+          message: "At least one eligible missing field is required for intake field extraction.",
+        });
+      }
+    }
+    if (requestType === "clarifying_question_generation") {
+      const coachVoiceRequest = body?.coachVoiceRequest || {};
+      if (!String(coachVoiceRequest?.field_id || "").trim() || !String(coachVoiceRequest?.question_template || "").trim()) {
+        return sendJson(res, 400, {
+          code: "missing_coach_voice_request",
+          message: "A deterministic intake field and question template are required for coach-voice phrasing.",
+        });
+      }
+    }
 
     const gatewayResult = await runIntakeProviderGateway({
       statePacket,
-      requestType: body?.requestType || "goal_interpretation",
+      requestType,
+      extractionRequest: body?.extractionRequest || null,
+      coachVoiceRequest: body?.coachVoiceRequest || null,
       requestedProvider: body?.provider || "",
       requestedModel: body?.model || "",
       fetchImpl: fetch,
@@ -38,10 +65,20 @@ module.exports = async (req, res) => {
       });
     }
 
-    return sendJson(res, 200, {
-      interpretation: gatewayResult.interpretation,
-      meta: gatewayResult.meta,
-    });
+    return sendJson(res, 200, requestType === "missing_field_extraction"
+      ? {
+          extraction: gatewayResult.extraction,
+          meta: gatewayResult.meta,
+        }
+      : requestType === "clarifying_question_generation"
+      ? {
+          phrasing: gatewayResult.phrasing,
+          meta: gatewayResult.meta,
+        }
+      : {
+          interpretation: gatewayResult.interpretation,
+          meta: gatewayResult.meta,
+        });
   } catch (error) {
     return sendJson(res, 500, {
       code: "intake_gateway_unhandled_error",
