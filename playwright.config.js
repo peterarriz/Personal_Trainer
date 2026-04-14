@@ -14,9 +14,10 @@ module.exports = defineConfig({
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "retain-on-failure",
+    serviceWorkers: "block",
   },
   webServer: {
-    command: "npm run build && npx serve . -l 4173",
+    command: "cmd /c \"set VITE_SUPABASE_URL=https://example.supabase.co&& set VITE_SUPABASE_ANON_KEY=anon-key&& npm.cmd run build&& npx.cmd serve . -l 4173\"",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
