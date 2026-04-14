@@ -126,6 +126,14 @@ import {
   validateIntakeCompletenessAnswer,
 } from "./services/intake-completeness-service.js";
 import {
+  BASELINE_METRIC_KEYS,
+  buildManualProgressInputsFromIntake,
+  createBaselineSaveMeta,
+  STARTING_CAPACITY_META,
+  STARTING_CAPACITY_VALUES,
+  SWIM_ACCESS_REALITY_VALUES,
+} from "./services/intake-baseline-service.js";
+import {
   joinDisplayParts,
   sanitizeDisplayCopy,
 } from "./services/text-format-service.js";
@@ -5969,10 +5977,14 @@ export default function TrainerDashboard() {
     } catch(e) { logDiag("saveBodyweights fallback", e.message); applyStorageStatus(classifyStorageError(e)); }
   };
 
-  const saveManualProgressInputs = async (update) => {
+  const saveManualProgressInputs = async (update, options = {}) => {
     const currentInputs = personalization?.manualProgressInputs || DEFAULT_PERSONALIZATION.manualProgressInputs;
     const nextInputs = typeof update === "function" ? update(currentInputs) : (update || currentInputs);
-    const nextPersonalization = mergePersonalization(personalization, { manualProgressInputs: nextInputs });
+    const profilePatch = options?.profilePatch && typeof options.profilePatch === "object" ? options.profilePatch : null;
+    const nextPersonalization = mergePersonalization(personalization, {
+      manualProgressInputs: nextInputs,
+      ...(profilePatch ? { profile: { ...(personalization?.profile || {}), ...profilePatch } } : {}),
+    });
     setPersonalization(nextPersonalization);
     try {
       await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
@@ -7151,9 +7163,18 @@ Keep it plain and specific.`;
       resolvedGoals: orderedResolvedGoals,
       planStartDate: todayKey,
     });
+    const intakeBaselineCapture = buildManualProgressInputsFromIntake({
+      answers,
+      resolvedGoals: orderedResolvedGoals,
+      manualProgressInputs: personalization?.manualProgressInputs || DEFAULT_PERSONALIZATION.manualProgressInputs,
+      profile: personalization?.profile || DEFAULT_PERSONALIZATION.profile,
+      todayKey,
+      now: Date.now(),
+    });
     const nextPersonalizationBase = mergePersonalization(personalization, {
       profile: {
         ...personalization.profile,
+        ...(intakeBaselineCapture.profilePatch || {}),
         profileSetupComplete: true,
         onboardingComplete: true,
         preferredTrainingStyle: coachingStyle,
@@ -7171,6 +7192,7 @@ Keep it plain and specific.`;
         },
       },
       trainingContext,
+      manualProgressInputs: intakeBaselineCapture.manualProgressInputs,
       injuryPainState: {
         ...personalization.injuryPainState,
         level: constraints.length === 0 ? "none" : "mild_tightness",
@@ -10291,6 +10313,34 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           ))}
         </div>
       ) : null}
+      {visibleMachineAnchorCards.length > 0 ? (
+        <div data-testid="intake-anchor-stack" style={{ display:"grid", gap:"0.45rem" }}>
+          {visibleMachineAnchorCards.map((card) => (
+            <div
+              key={card.anchor_id || card.field_id}
+              data-testid={card.is_active ? "intake-anchor-stack-card-active" : "intake-anchor-stack-card-next"}
+              style={{
+                border:`1px solid ${card.is_active ? "rgba(0,194,255,0.24)" : "rgba(111,148,198,0.12)"}`,
+                borderRadius:18,
+                padding:"0.72rem 0.8rem",
+                background:card.is_active ? "rgba(7,18,33,0.88)" : "rgba(8,14,25,0.72)",
+                display:"grid",
+                gap:"0.26rem",
+              }}
+            >
+              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+                <div style={{ fontSize:"0.48rem", color:card.is_active ? "#dbe7f6" : "#8fa5c8", letterSpacing:"0.12em" }}>{card.status_label || (card.is_active ? "NOW" : "NEXT")}</div>
+                <div style={{ fontSize:"0.46rem", color:"#8fa5c8" }}>Saved as intake baseline</div>
+              </div>
+              <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.45 }}>{card.label}</div>
+              <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>{card.why_it_matters}</div>
+              {!card.is_active && card.placeholder ? (
+                <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{card.placeholder}</div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
         <div style={{ fontSize:"0.56rem", color:"#f8fbff", lineHeight:1.55 }}>{clarificationPromptText}</div>
         {clarificationValidationMessage ? (
@@ -10303,6 +10353,19 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             data-anchor-id={activeMachineAnchor?.anchor_id || ""}
             style={{ display:"grid", gap:"0.6rem", border:"1px solid rgba(0,194,255,0.24)", borderRadius:18, padding:"0.85rem", background:"rgba(7,18,33,0.92)" }}
           >
+            <div style={{ display:"grid", gap:"0.24rem" }}>
+              {activeMachineAnchor?.why_it_matters ? (
+                <div data-testid="intake-anchor-why-it-matters" style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                  {activeMachineAnchor.why_it_matters}
+                </div>
+              ) : null}
+              <div data-testid="intake-anchor-provenance" style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                Saved as an intake baseline with provenance so you can edit it later in Settings without restarting.
+              </div>
+              {activeMachineAnchor?.coach_voice_line ? (
+                <div style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.45 }}>{activeMachineAnchor.coach_voice_line}</div>
+              ) : null}
+            </div>
             {allowNaturalAnchorMode ? (
               <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
                 <button
@@ -11125,6 +11188,22 @@ function MetricsBaselinesSection({
     domainAdapterId: athleteProfile?.primaryGoal?.resolvedGoal?.primaryDomain || "",
     goalCapabilityStack: athleteProfile?.goalCapabilityStack || null,
   }), [athleteProfile]);
+  const relevantCardIds = useMemo(
+    () => new Set((model.cards || []).map((card) => String(card?.id || "").trim()).filter(Boolean)),
+    [model.cards]
+  );
+  const orderedCards = useMemo(() => [...(model.cards || [])].sort((left, right) => {
+    const leftMissing = left?.missing ? 1 : 0;
+    const rightMissing = right?.missing ? 1 : 0;
+    const leftRequired = left?.requiredNow ? 1 : 0;
+    const rightRequired = right?.requiredNow ? 1 : 0;
+    return (
+      (rightMissing + rightRequired) - (leftMissing + leftRequired)
+      || rightRequired - leftRequired
+      || rightMissing - leftMissing
+      || String(left?.label || "").localeCompare(String(right?.label || ""))
+    );
+  }), [model.cards]);
   const [drafts, setDrafts] = useState({
     bodyweight: "",
     waist: "",
@@ -11135,113 +11214,474 @@ function MetricsBaselinesSection({
     runDuration: "",
     runPace: "",
     swimDistance: "",
+    swimDistanceUnit: "yd",
     swimDuration: "",
-    swimNote: "",
+    swimAccessReality: "",
+    startingCapacity: "",
     jumpValue: "",
     jumpUnit: "in",
   });
   const [savingKey, setSavingKey] = useState("");
+  const requiredNowCards = useMemo(
+    () => orderedCards.filter((card) => card?.requiredNow),
+    [orderedCards]
+  );
+  const requiredNowMissingCards = useMemo(
+    () => requiredNowCards.filter((card) => card?.missing),
+    [requiredNowCards]
+  );
 
   const updateDraft = (key, value) => setDrafts((current) => ({ ...current, [key]: value }));
-  const upsertMetricSeries = (rows = [], nextRow = {}) => {
+  const upsertMetricSeries = (rows = [], nextRow = {}, meta = null) => {
     const safeDate = String(nextRow?.date || todayKey).trim() || todayKey;
     return [
       ...(Array.isArray(rows) ? rows : []).filter((row) => String(row?.date || "") !== safeDate),
-      { ...nextRow, date: safeDate, source: "user_override" },
+      {
+        ...nextRow,
+        date: safeDate,
+        source: meta?.source || "user_override",
+        note: meta?.note || nextRow?.note || "",
+        provenance: meta?.provenance || nextRow?.provenance || null,
+      },
     ].sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
   };
-  const saveEntry = async (key, runSave) => {
+  const saveEntry = async (key, runSave, nextDraftPatch = null) => {
     setSavingKey(key);
     try {
       await runSave();
-      onSaved("Saved. The planner can use that anchor on the next recompute.");
+      if (nextDraftPatch && typeof nextDraftPatch === "object") {
+        setDrafts((current) => ({ ...current, ...nextDraftPatch }));
+      }
+      onSaved("Saved. Future plans can use this baseline without rewriting history.");
     } finally {
       setSavingKey("");
     }
   };
+  const getCardTone = (card = null) => {
+    if (card?.missing && card?.requiredNow) {
+      return {
+        border: `${C.amber}55`,
+        background: "linear-gradient(180deg, rgba(245, 158, 11, 0.12), rgba(15, 23, 42, 0.92))",
+        accent: C.amber,
+      };
+    }
+    if (card?.missing) {
+      return {
+        border: "#30445f",
+        background: "#0f172a",
+        accent: "#8fa5c8",
+      };
+    }
+    return {
+      border: "#22324a",
+      background: "#0f172a",
+      accent: C.green,
+    };
+  };
+  const renderBadge = (label, { color = "#8fa5c8", background = "#111827", borderColor = "#23344d" } = {}) => (
+    <span style={{ fontSize:"0.44rem", color, background, border:`1px solid ${borderColor}`, padding:"0.12rem 0.32rem", borderRadius:999 }}>
+      {label}
+    </span>
+  );
+  const renderEditorBlock = (title, supporting, children, testId = "") => (
+    <div data-testid={testId || undefined} style={{ border:"1px solid #22324a", borderRadius:14, background:"#0b1220", padding:"0.62rem", display:"grid", gap:"0.38rem" }}>
+      <div style={{ display:"grid", gap:"0.12rem" }}>
+        <div style={{ fontSize:"0.5rem", color:"#e2e8f0", lineHeight:1.45 }}>{title}</div>
+        <div style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.45 }}>{supporting}</div>
+      </div>
+      {children}
+    </div>
+  );
 
   return (
     <div data-testid="metrics-baselines-section" style={{ display:"grid", gap:"0.45rem", marginTop:"0.45rem" }}>
-      <div style={{ display:"grid", gap:"0.14rem" }}>
-        <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>
-          {supportTier.headline}. {supportTier.basisLine}
+      <div style={{ border:"1px solid #22324a", borderRadius:16, background:"linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(11, 18, 32, 0.98))", padding:"0.7rem", display:"grid", gap:"0.36rem" }}>
+        <div style={{ display:"grid", gap:"0.16rem" }}>
+          <div style={{ fontSize:"0.44rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>BASELINE ANCHORS</div>
+          <div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.45 }}>
+            {supportTier.headline}. {supportTier.basisLine}
+          </div>
+          <div style={{ fontSize:"0.48rem", color:"#9fb2d2", lineHeight:1.45 }}>
+            Only the anchors that materially change the first block need attention now. Everything else can be refined later without touching history.
+          </div>
         </div>
-        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
-          Missing or low-confidence anchors: {model.missingCards.length}. Changing any saved metric here can adapt the plan.
+        <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
+          {renderBadge(`${orderedCards.length} anchor${orderedCards.length === 1 ? "" : "s"} tracked`, {
+            color: "#dbe7f6",
+            background: "#111827",
+            borderColor: "#22324a",
+          })}
+          {renderBadge(`${model.missingCards.length} missing`, {
+            color: model.missingCards.length ? C.amber : C.green,
+            background: model.missingCards.length ? `${C.amber}12` : `${C.green}12`,
+            borderColor: model.missingCards.length ? `${C.amber}30` : `${C.green}30`,
+          })}
+          {renderBadge(`${requiredNowMissingCards.length} needed now`, {
+            color: requiredNowMissingCards.length ? "#f8d79b" : "#9fb2d2",
+            background: requiredNowMissingCards.length ? `${C.amber}16` : "#111827",
+            borderColor: requiredNowMissingCards.length ? `${C.amber}35` : "#22324a",
+          })}
         </div>
+        {requiredNowMissingCards.length ? (
+          <div data-testid="metrics-required-summary" style={{ fontSize:"0.48rem", color:C.amber, lineHeight:1.45 }}>
+            Needed now: {requiredNowMissingCards.map((card) => card.label).join(", ")}. {model.requiredNowCopy}
+          </div>
+        ) : (
+          <div style={{ fontSize:"0.48rem", color:C.green, lineHeight:1.45 }}>
+            The current anchors are strong enough to keep the next block specific without sending you into Settings cleanup first.
+          </div>
+        )}
+        {model.lowConfidenceCount > 0 ? (
+          <div style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            Low-confidence areas still exist, but only the required anchors above materially change the starting plan.
+          </div>
+        ) : null}
       </div>
       <div style={{ display:"grid", gap:"0.35rem" }}>
-        {model.cards.map((card) => (
-          <div key={card.id} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
-              <div style={{ fontSize:"0.54rem", color:"#e2e8f0" }}>{card.label}</div>
-              <span style={{ fontSize:"0.44rem", color:card.missing ? C.amber : "#8fa5c8", background:card.missing ? `${C.amber}12` : "#172233", padding:"0.12rem 0.32rem", borderRadius:999 }}>{card.sourceLabel}</span>
+        {orderedCards.map((card) => {
+          const tone = getCardTone(card);
+          return (
+            <div
+              key={card.id}
+              data-testid={`metrics-card-${card.id}`}
+              style={{ border:`1px solid ${tone.border}`, borderRadius:14, background:tone.background, padding:"0.62rem", display:"grid", gap:"0.28rem" }}
+            >
+              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+                <div style={{ display:"grid", gap:"0.16rem" }}>
+                  <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.4 }}>{card.label}</div>
+                  <div style={{ fontSize:"0.6rem", color:card.missing ? "#f8d79b" : "#dbe7f6", lineHeight:1.4 }}>
+                    {card.value}
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:"0.24rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+                  {renderBadge(card.requiredNow ? "Needed now" : "Can wait", {
+                    color: card.requiredNow ? "#f8d79b" : "#8fa5c8",
+                    background: card.requiredNow ? `${C.amber}12` : "#111827",
+                    borderColor: card.requiredNow ? `${C.amber}30` : "#23344d",
+                  })}
+                  {renderBadge(card.sourceLabel, {
+                    color: card.missing ? tone.accent : "#9fb2d2",
+                    background: card.missing ? `${tone.accent}12` : "#172233",
+                    borderColor: card.missing ? `${tone.accent}25` : "#23344d",
+                  })}
+                </div>
+              </div>
+              <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{card.detail}</div>
+              <div style={{ fontSize:"0.47rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                Why it matters: {card.whyItMatters}
+              </div>
+              <div style={{ fontSize:"0.46rem", color:card.missing ? tone.accent : "#94a3b8", lineHeight:1.45 }}>
+                {card.missing
+                  ? `If still missing: ${card.missingImpact || card.planningImpact}`
+                  : `Planning effect: ${card.planningImpact}`}
+              </div>
+              <div data-testid={`metrics-card-provenance-${card.id}`} style={{ fontSize:"0.45rem", color:"#9fb2d2", lineHeight:1.4 }}>
+                {card.provenanceSummary}
+              </div>
+              <details data-testid={`metrics-card-audit-${card.id}`} style={{ marginTop:"0.04rem" }}>
+                <summary style={{ cursor:"pointer", fontSize:"0.46rem", color:"#8fa5c8" }}>Audit detail</summary>
+                <div style={{ display:"grid", gap:"0.18rem", marginTop:"0.3rem" }}>
+                  {card.lastUpdatedLabel ? (
+                    <div style={{ fontSize:"0.45rem", color:"#dbe7f6", lineHeight:1.4 }}>
+                      Active baseline updated {card.lastUpdatedLabel}.
+                    </div>
+                  ) : null}
+                  <div style={{ fontSize:"0.45rem", color:"#8fa5c8", lineHeight:1.4 }}>
+                    {card.missing ? "No active row is saved yet, so the planner is leaning on a conservative fallback." : "This active row influences future plan updates only."}
+                  </div>
+                  <div style={{ fontSize:"0.45rem", color:"#8fa5c8", lineHeight:1.4 }}>{card.planningImpact}</div>
+                </div>
+              </details>
             </div>
-            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.45 }}>{card.value}</div>
-            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{card.detail}</div>
-            <div style={{ fontSize:"0.46rem", color:"#64748b", lineHeight:1.45 }}>{card.planningImpact}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-      <div style={{ display:"grid", gap:"0.42rem" }}>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
-          <input data-testid="metrics-input-bodyweight" value={drafts.bodyweight} onChange={(e)=>updateDraft("bodyweight", e.target.value)} placeholder="Current bodyweight" />
-          <button data-testid="metrics-save-bodyweight" className="btn" onClick={() => saveEntry("bodyweight", async () => onPatchProfile({ weight: drafts.bodyweight === "" ? "" : Number(drafts.bodyweight) || "" }))} disabled={!String(drafts.bodyweight || "").trim() || savingKey === "bodyweight"} style={{ fontSize:"0.5rem" }}>{savingKey === "bodyweight" ? "Saving..." : "Save"}</button>
+      <div style={{ display:"grid", gap:"0.42rem", border:"1px solid #22324a", borderRadius:16, background:"#0f172a", padding:"0.68rem" }}>
+        <div style={{ display:"grid", gap:"0.14rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>Save or update anchors</div>
+          <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            These edits shape future plans only. Past plans and logged work stay untouched.
+          </div>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
-          <input data-testid="metrics-input-waist" value={drafts.waist} onChange={(e)=>updateDraft("waist", e.target.value)} placeholder="Waist (optional)" />
-          <button data-testid="metrics-save-waist" className="btn" onClick={() => saveEntry("waist", async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({ manualProgressInputs: current, type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.waist, entry: { date: todayKey, value: drafts.waist, note: "Saved from Metrics / Baselines" } })))} disabled={!String(drafts.waist || "").trim() || savingKey === "waist"} style={{ fontSize:"0.5rem" }}>{savingKey === "waist" ? "Saving..." : "Save"}</button>
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1.2fr 0.8fr 0.6fr auto", gap:"0.35rem" }}>
-          <input data-testid="metrics-input-lift-exercise" value={drafts.liftExercise} onChange={(e)=>updateDraft("liftExercise", e.target.value)} placeholder="Lift benchmark" />
-          <input data-testid="metrics-input-lift-weight" value={drafts.liftWeight} onChange={(e)=>updateDraft("liftWeight", e.target.value)} placeholder="Weight" />
-          <input data-testid="metrics-input-lift-reps" value={drafts.liftReps} onChange={(e)=>updateDraft("liftReps", e.target.value)} placeholder="Reps" />
-          <button data-testid="metrics-save-lift" className="btn" onClick={() => saveEntry("lift", async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({ manualProgressInputs: current, type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.liftBenchmark, entry: { date: todayKey, exercise: drafts.liftExercise || "Lift benchmark", weight: drafts.liftWeight, reps: drafts.liftReps, sets: 1, note: "Saved from Metrics / Baselines" } })))} disabled={!drafts.liftWeight || !drafts.liftReps || savingKey === "lift"} style={{ fontSize:"0.5rem" }}>{savingKey === "lift" ? "Saving..." : "Save"}</button>
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"0.7fr 0.8fr 0.8fr auto", gap:"0.35rem" }}>
-          <input data-testid="metrics-input-run-distance" value={drafts.runDistance} onChange={(e)=>updateDraft("runDistance", e.target.value)} placeholder="Run miles" />
-          <input data-testid="metrics-input-run-duration" value={drafts.runDuration} onChange={(e)=>updateDraft("runDuration", e.target.value)} placeholder="Minutes" />
-          <input data-testid="metrics-input-run-pace" value={drafts.runPace} onChange={(e)=>updateDraft("runPace", e.target.value)} placeholder="Pace" />
-          <button data-testid="metrics-save-run" className="btn" onClick={() => saveEntry("run", async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({ manualProgressInputs: current, type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.runBenchmark, entry: { date: todayKey, distanceMiles: drafts.runDistance, durationMinutes: drafts.runDuration, paceText: drafts.runPace, note: "Saved from Metrics / Baselines" } })))} disabled={(!drafts.runDistance && !drafts.runDuration && !drafts.runPace) || savingKey === "run"} style={{ fontSize:"0.5rem" }}>{savingKey === "run" ? "Saving..." : "Save"}</button>
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"0.8fr 0.8fr 1fr auto", gap:"0.35rem" }}>
-          <input data-testid="metrics-input-swim-distance" value={drafts.swimDistance} onChange={(e)=>updateDraft("swimDistance", e.target.value)} placeholder="Swim yards" />
-          <input data-testid="metrics-input-swim-duration" value={drafts.swimDuration} onChange={(e)=>updateDraft("swimDuration", e.target.value)} placeholder="Duration" />
-          <input data-testid="metrics-input-swim-note" value={drafts.swimNote} onChange={(e)=>updateDraft("swimNote", e.target.value)} placeholder="Swim note" />
-          <button data-testid="metrics-save-swim" className="btn" onClick={() => saveEntry("swim", async () => saveManualProgressInputs((current) => ({
-            ...(current || {}),
-            measurements: { ...(current?.measurements || {}) },
-            benchmarks: { ...(current?.benchmarks || {}) },
-            metrics: {
-              ...(current?.metrics || {}),
-              swim_benchmark: upsertMetricSeries(current?.metrics?.swim_benchmark || [], {
-                date: todayKey,
-                distance: drafts.swimDistance === "" ? null : Number(drafts.swimDistance) || null,
-                duration: drafts.swimDuration,
-                note: drafts.swimNote,
-              }),
-            },
-          })))} disabled={(!drafts.swimDistance && !drafts.swimDuration && !drafts.swimNote) || savingKey === "swim"} style={{ fontSize:"0.5rem" }}>{savingKey === "swim" ? "Saving..." : "Save"}</button>
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 90px auto", gap:"0.35rem" }}>
-          <input data-testid="metrics-input-jump" value={drafts.jumpValue} onChange={(e)=>updateDraft("jumpValue", e.target.value)} placeholder="Vertical jump" />
-          <select value={drafts.jumpUnit} onChange={(e)=>updateDraft("jumpUnit", e.target.value)} style={{ fontSize:"0.54rem" }}>
-            <option value="in">in</option>
-            <option value="cm">cm</option>
-          </select>
-          <button data-testid="metrics-save-jump" className="btn" onClick={() => saveEntry("jump", async () => saveManualProgressInputs((current) => ({
-            ...(current || {}),
-            measurements: { ...(current?.measurements || {}) },
-            benchmarks: { ...(current?.benchmarks || {}) },
-            metrics: {
-              ...(current?.metrics || {}),
-              vertical_jump: upsertMetricSeries(current?.metrics?.vertical_jump || [], {
-                date: todayKey,
-                value: drafts.jumpValue === "" ? null : Number(drafts.jumpValue) || null,
-                unit: drafts.jumpUnit,
-              }),
-            },
-          })))} disabled={!drafts.jumpValue || savingKey === "jump"} style={{ fontSize:"0.5rem" }}>{savingKey === "jump" ? "Saving..." : "Save"}</button>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.42rem" }}>
+          {relevantCardIds.has("bodyweight") && renderEditorBlock(
+            "Current bodyweight",
+            "Save a usable bodyweight baseline now. This updates future planning without touching historical logs.",
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+                <input data-testid="metrics-input-bodyweight" value={drafts.bodyweight} onChange={(e)=>updateDraft("bodyweight", e.target.value)} placeholder="Current bodyweight" />
+                <button
+                  data-testid="metrics-save-bodyweight"
+                  className="btn"
+                  onClick={() => saveEntry("bodyweight", async () => saveManualProgressInputs(
+                    (current) => upsertGoalAnchorQuickEntry({
+                      manualProgressInputs: current,
+                      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.bodyweight,
+                      entry: {
+                        date: todayKey,
+                        value: drafts.bodyweight,
+                        unit: "lb",
+                        note: "Saved from Metrics / Baselines",
+                      },
+                    }),
+                    {
+                      profilePatch: {
+                        weight: drafts.bodyweight === "" ? "" : Number(drafts.bodyweight) || "",
+                        bodyweight: drafts.bodyweight === "" ? "" : Number(drafts.bodyweight) || "",
+                      },
+                    }
+                  ), { bodyweight: "" })}
+                  disabled={!String(drafts.bodyweight || "").trim() || savingKey === "bodyweight"}
+                  style={{ fontSize:"0.5rem" }}
+                >
+                  {savingKey === "bodyweight" ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </>,
+            "metrics-editor-bodyweight"
+          )}
+
+          {relevantCardIds.has("waist") && renderEditorBlock(
+            "Waist proxy",
+            "Useful when appearance or physique goals need a clean non-scale proxy.",
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+                <input data-testid="metrics-input-waist" value={drafts.waist} onChange={(e)=>updateDraft("waist", e.target.value)} placeholder="Waist (inches)" />
+                <button
+                  data-testid="metrics-save-waist"
+                  className="btn"
+                  onClick={() => saveEntry(
+                    "waist",
+                    async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({
+                      manualProgressInputs: current,
+                      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.waist,
+                      entry: { date: todayKey, value: drafts.waist, note: "Saved from Metrics / Baselines" },
+                    })),
+                    { waist: "" }
+                  )}
+                  disabled={!String(drafts.waist || "").trim() || savingKey === "waist"}
+                  style={{ fontSize:"0.5rem" }}
+                >
+                  {savingKey === "waist" ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </>,
+            "metrics-editor-waist"
+          )}
+
+          {relevantCardIds.has("lift_benchmark") && renderEditorBlock(
+            "Lift benchmark",
+            "One top set or recent benchmark lets the planner stop guessing on strength dose.",
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"1.2fr 0.8fr 0.6fr auto", gap:"0.35rem" }}>
+                <input data-testid="metrics-input-lift-exercise" value={drafts.liftExercise} onChange={(e)=>updateDraft("liftExercise", e.target.value)} placeholder="Exercise" />
+                <input data-testid="metrics-input-lift-weight" value={drafts.liftWeight} onChange={(e)=>updateDraft("liftWeight", e.target.value)} placeholder="Weight" />
+                <input data-testid="metrics-input-lift-reps" value={drafts.liftReps} onChange={(e)=>updateDraft("liftReps", e.target.value)} placeholder="Reps" />
+                <button
+                  data-testid="metrics-save-lift"
+                  className="btn"
+                  onClick={() => saveEntry(
+                    "lift",
+                    async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({
+                      manualProgressInputs: current,
+                      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.liftBenchmark,
+                      entry: {
+                        date: todayKey,
+                        exercise: drafts.liftExercise || "Lift benchmark",
+                        weight: drafts.liftWeight,
+                        reps: drafts.liftReps,
+                        sets: 1,
+                        note: "Saved from Metrics / Baselines",
+                      },
+                    })),
+                    { liftExercise: "", liftWeight: "", liftReps: "" }
+                  )}
+                  disabled={!drafts.liftWeight || !drafts.liftReps || savingKey === "lift"}
+                  style={{ fontSize:"0.5rem" }}
+                >
+                  {savingKey === "lift" ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </>,
+            "metrics-editor-lift"
+          )}
+
+          {relevantCardIds.has("run_benchmark") && renderEditorBlock(
+            "Recent run anchor",
+            "Distance, time, pace, or any mix of the three works.",
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"0.7fr 0.8fr 0.8fr auto", gap:"0.35rem" }}>
+                <input data-testid="metrics-input-run-distance" value={drafts.runDistance} onChange={(e)=>updateDraft("runDistance", e.target.value)} placeholder="Miles" />
+                <input data-testid="metrics-input-run-duration" value={drafts.runDuration} onChange={(e)=>updateDraft("runDuration", e.target.value)} placeholder="Duration" />
+                <input data-testid="metrics-input-run-pace" value={drafts.runPace} onChange={(e)=>updateDraft("runPace", e.target.value)} placeholder="Pace" />
+                <button
+                  data-testid="metrics-save-run"
+                  className="btn"
+                  onClick={() => saveEntry(
+                    "run",
+                    async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({
+                      manualProgressInputs: current,
+                      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.runBenchmark,
+                      entry: {
+                        date: todayKey,
+                        distanceMiles: drafts.runDistance,
+                        durationMinutes: drafts.runDuration,
+                        paceText: drafts.runPace,
+                        note: "Saved from Metrics / Baselines",
+                      },
+                    })),
+                    { runDistance: "", runDuration: "", runPace: "" }
+                  )}
+                  disabled={(!drafts.runDistance && !drafts.runDuration && !drafts.runPace) || savingKey === "run"}
+                  style={{ fontSize:"0.5rem" }}
+                >
+                  {savingKey === "run" ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </>,
+            "metrics-editor-run"
+          )}
+
+          {relevantCardIds.has("swim_benchmark") && renderEditorBlock(
+            "Recent swim anchor",
+            "One recent swim distance or time anchor is enough.",
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"0.7fr 0.5fr 0.8fr auto", gap:"0.35rem" }}>
+                <input data-testid="metrics-input-swim-distance" value={drafts.swimDistance} onChange={(e)=>updateDraft("swimDistance", e.target.value)} placeholder="Distance" />
+                <select value={drafts.swimDistanceUnit} onChange={(e)=>updateDraft("swimDistanceUnit", e.target.value)} style={{ fontSize:"0.54rem" }}>
+                  <option value="yd">yd</option>
+                  <option value="m">m</option>
+                </select>
+                <input data-testid="metrics-input-swim-duration" value={drafts.swimDuration} onChange={(e)=>updateDraft("swimDuration", e.target.value)} placeholder="Duration" />
+                <button
+                  data-testid="metrics-save-swim"
+                  className="btn"
+                  onClick={() => saveEntry(
+                    "swim",
+                    async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({
+                      manualProgressInputs: current,
+                      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimBenchmark,
+                      entry: {
+                        date: todayKey,
+                        distance: drafts.swimDistance,
+                        distanceUnit: drafts.swimDistanceUnit,
+                        duration: drafts.swimDuration,
+                        note: "Saved from Metrics / Baselines",
+                      },
+                    })),
+                    { swimDistance: "", swimDuration: "" }
+                  )}
+                  disabled={(!drafts.swimDistance && !drafts.swimDuration) || savingKey === "swim"}
+                  style={{ fontSize:"0.5rem" }}
+                >
+                  {savingKey === "swim" ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </>,
+            "metrics-editor-swim"
+          )}
+
+          {relevantCardIds.has("swim_access_reality") && renderEditorBlock(
+            "Pool / open-water reality",
+            "This keeps swim structure honest about where you can actually train.",
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+                <select data-testid="metrics-input-swim-access-reality" value={drafts.swimAccessReality} onChange={(e)=>updateDraft("swimAccessReality", e.target.value)} style={{ fontSize:"0.54rem" }}>
+                  <option value="">Choose one</option>
+                  <option value={SWIM_ACCESS_REALITY_VALUES.pool}>Pool</option>
+                  <option value={SWIM_ACCESS_REALITY_VALUES.openWater}>Open water</option>
+                  <option value={SWIM_ACCESS_REALITY_VALUES.both}>Both</option>
+                </select>
+                <button
+                  data-testid="metrics-save-swim-access-reality"
+                  className="btn"
+                  onClick={() => saveEntry(
+                    "swim_access_reality",
+                    async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({
+                      manualProgressInputs: current,
+                      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimAccessReality,
+                      entry: { date: todayKey, value: drafts.swimAccessReality, note: "Saved from Metrics / Baselines" },
+                    })),
+                    { swimAccessReality: "" }
+                  )}
+                  disabled={!drafts.swimAccessReality || savingKey === "swim_access_reality"}
+                  style={{ fontSize:"0.5rem" }}
+                >
+                  {savingKey === "swim_access_reality" ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </>,
+            "metrics-editor-swim-reality"
+          )}
+
+          {relevantCardIds.has("starting_capacity") && renderEditorBlock(
+            "Safe starting capacity",
+            "Use the repeatable truth so the next block starts at the right dose.",
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:"0.35rem" }}>
+                <select data-testid="metrics-input-starting-capacity" value={drafts.startingCapacity} onChange={(e)=>updateDraft("startingCapacity", e.target.value)} style={{ fontSize:"0.54rem" }}>
+                  <option value="">Choose one</option>
+                  <option value={STARTING_CAPACITY_VALUES.walkOnly}>{STARTING_CAPACITY_META[STARTING_CAPACITY_VALUES.walkOnly]?.label || "Walks / very short efforts"}</option>
+                  <option value={STARTING_CAPACITY_VALUES.easyTen}>{STARTING_CAPACITY_META[STARTING_CAPACITY_VALUES.easyTen]?.label || "About 10 easy minutes"}</option>
+                  <option value={STARTING_CAPACITY_VALUES.steadyTwenty}>{STARTING_CAPACITY_META[STARTING_CAPACITY_VALUES.steadyTwenty]?.label || "About 20 to 30 minutes"}</option>
+                  <option value={STARTING_CAPACITY_VALUES.durableThirty}>{STARTING_CAPACITY_META[STARTING_CAPACITY_VALUES.durableThirty]?.label || "30+ minutes feels repeatable"}</option>
+                </select>
+                <button
+                  data-testid="metrics-save-starting-capacity"
+                  className="btn"
+                  onClick={() => saveEntry(
+                    "starting_capacity",
+                    async () => saveManualProgressInputs((current) => upsertGoalAnchorQuickEntry({
+                      manualProgressInputs: current,
+                      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.startingCapacity,
+                      entry: { date: todayKey, value: drafts.startingCapacity, note: "Saved from Metrics / Baselines" },
+                    })),
+                    { startingCapacity: "" }
+                  )}
+                  disabled={!drafts.startingCapacity || savingKey === "starting_capacity"}
+                  style={{ fontSize:"0.5rem" }}
+                >
+                  {savingKey === "starting_capacity" ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </>,
+            "metrics-editor-starting-capacity"
+          )}
+
+          {relevantCardIds.has("power_benchmark") && renderEditorBlock(
+            "Jump / power anchor",
+            "Use one recent jump anchor if power progression should be tighter.",
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 90px auto", gap:"0.35rem" }}>
+                <input data-testid="metrics-input-jump" value={drafts.jumpValue} onChange={(e)=>updateDraft("jumpValue", e.target.value)} placeholder="Vertical jump" />
+                <select value={drafts.jumpUnit} onChange={(e)=>updateDraft("jumpUnit", e.target.value)} style={{ fontSize:"0.54rem" }}>
+                  <option value="in">in</option>
+                  <option value="cm">cm</option>
+                </select>
+                <button data-testid="metrics-save-jump" className="btn" onClick={() => saveEntry("jump", async () => saveManualProgressInputs((current) => ({
+                  ...(current || {}),
+                  measurements: { ...(current?.measurements || {}) },
+                  benchmarks: { ...(current?.benchmarks || {}) },
+                  metrics: {
+                    ...(current?.metrics || {}),
+                    vertical_jump: upsertMetricSeries(
+                      current?.metrics?.vertical_jump || [],
+                      {
+                        date: todayKey,
+                        value: drafts.jumpValue === "" ? null : Number(drafts.jumpValue) || null,
+                        unit: drafts.jumpUnit,
+                      },
+                      createBaselineSaveMeta({
+                        fieldId: "vertical_jump",
+                        note: "Saved from Metrics / Baselines",
+                        })
+                    ),
+                  },
+                })), { jumpValue: "" })} disabled={!drafts.jumpValue || savingKey === "jump"} style={{ fontSize:"0.5rem" }}>{savingKey === "jump" ? "Saving..." : "Save"}</button>
+              </div>
+            </>,
+            "metrics-editor-jump"
+          )}
         </div>
       </div>
     </div>

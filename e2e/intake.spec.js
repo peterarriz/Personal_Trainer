@@ -130,6 +130,72 @@ test.describe("intake onboarding e2e", () => {
     await waitForPostOnboarding(page);
   });
 
+  test("swim goals gather the swim anchor inline before build", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "swim a mile in open water",
+      experienceLevel: "Intermediate",
+      trainingDays: "3",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+    });
+
+    await expect.poll(() => getCurrentFieldId(page), { timeout: 20_000 }).toBe("recent_swim_anchor");
+    const visitedFields = await completeAnchors(page, {
+      recent_swim_anchor: { type: "natural", value: "1000 yd in 22:30" },
+      swim_access_reality: { type: "choice", value: "open_water" },
+    }, { maxSteps: 4 });
+
+    expect(visitedFields).toContain("recent_swim_anchor");
+    expect(visitedFields).toContain("swim_access_reality");
+    await waitForReview(page);
+    await confirmIntakeBuild(page);
+    await waitForPostOnboarding(page);
+  });
+
+  test("re-entry goals gather safe starting capacity inline before build", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "get back in shape",
+      experienceLevel: "Beginner",
+      trainingDays: "3",
+      sessionLength: "30 min",
+      trainingLocation: "Gym",
+    });
+
+    await expect.poll(() => getCurrentFieldId(page), { timeout: 20_000 }).toBe("starting_capacity_anchor");
+    const visitedFields = await completeAnchors(page, {
+      starting_capacity_anchor: { type: "choice", value: "10_easy_minutes" },
+    }, { maxSteps: 3 });
+
+    expect(visitedFields).toContain("starting_capacity_anchor");
+    await waitForReview(page);
+    await confirmIntakeBuild(page);
+    await waitForPostOnboarding(page);
+  });
+
+  test("appearance goals can defer a proxy for now without getting kicked to Settings", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "I want to look athletic again",
+      experienceLevel: "Intermediate",
+      trainingDays: "4",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+    });
+
+    await expect.poll(() => getCurrentFieldId(page), { timeout: 20_000 }).toBe("appearance_proxy_anchor_kind");
+    const visitedFields = await completeAnchors(page, {
+      appearance_proxy_anchor_kind: { type: "choice", value: "skip_for_now" },
+    }, { maxSteps: 3 });
+
+    expect(visitedFields).toContain("appearance_proxy_anchor_kind");
+    await waitForReview(page);
+    await expect(page.getByTestId("intake-summary-section-what-is-fuzzy")).toContainText(/appearance marker|track bodyweight or waist/i);
+    await confirmIntakeBuild(page);
+    await waitForPostOnboarding(page);
+  });
+
   test("hybrid goal keeps both bench and leaning-out visible before build", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {

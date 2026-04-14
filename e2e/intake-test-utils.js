@@ -161,6 +161,18 @@ const parseExtractionCandidate = ({ fieldId = "", utterance = "" } = {}) => {
     });
   }
 
+  if (fieldId === "recent_swim_anchor") {
+    const hasDistance = /(\d+(?:\.\d+)?)\s*(?:yd|yard|yards|m|meter|meters|metre|metres)\b/i.test(cleanUtterance);
+    const hasDuration = /\b\d+:\d{2}(?::\d{2})?\b/.test(cleanUtterance) || /(\d+(?:\.\d+)?)\s*(?:min|mins|minute|minutes)\b/i.test(cleanUtterance);
+    if (!hasDistance && !hasDuration) return null;
+    return buildExtractionCandidate({
+      field_id: fieldId,
+      raw_text: cleanUtterance,
+      parsed_value: cleanUtterance,
+      evidenceText: cleanUtterance,
+    });
+  }
+
   if (fieldId === "target_weight_change") {
     const numericMatch = cleanUtterance.match(/([+-]?\d+(?:\.\d+)?)/);
     if (!numericMatch) return null;
@@ -436,7 +448,10 @@ async function completeIntroQuestionnaire(page, {
 
   for (const goal of additionalGoals) {
     await page.getByTestId("intake-goals-secondary-input").fill(String(goal));
-    await page.getByTestId("intake-goals-add").click();
+    const addGoalButton = page.getByTestId("intake-goals-add");
+    await expect(addGoalButton).toBeEnabled();
+    await addGoalButton.click();
+    await expect(page.getByTestId("intake-goals-secondary-input")).toHaveValue("");
   }
 
   await page.getByTestId(`intake-goals-option-experience-level-${toTestIdFragment(experienceLevelValue)}`).click();

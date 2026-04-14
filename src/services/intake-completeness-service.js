@@ -15,11 +15,15 @@ const dedupeStrings = (items = []) => {
 };
 
 export const INTAKE_COMPLETENESS_FIELDS = {
+  appearanceProxyPlan: "appearance_proxy_plan",
   currentStrengthBaseline: "current_strength_baseline",
   targetTimeline: "target_timeline",
   currentRunFrequency: "current_run_frequency",
   longestRecentRun: "longest_recent_run",
   recentPaceBaseline: "recent_pace_baseline",
+  recentSwimAnchor: "recent_swim_anchor",
+  swimAccessReality: "swim_access_reality",
+  startingCapacityAnchor: "starting_capacity_anchor",
   currentBodyweight: "current_bodyweight",
   targetWeightChange: "target_weight_change",
   currentWaist: "current_waist",
@@ -30,10 +34,12 @@ export const INTAKE_COMPLETENESS_QUESTION_KEYS = {
   strengthBaseline: "strength_baseline",
   runningTiming: "running_timing",
   runningBaseline: "running_baseline",
+  swimBaseline: "swim_baseline",
   bodyCompAnchor: "body_comp_anchor",
   bodyCompTimeline: "body_comp_timeline",
   appearanceProxyAnchor: "appearance_proxy_anchor",
   appearanceTimeline: "appearance_timeline",
+  startingCapacity: "starting_capacity",
   maintainedStrengthBaseline: "maintained_strength_baseline",
 };
 
@@ -42,8 +48,10 @@ export const INTAKE_COMPLETENESS_VALUE_TYPES = {
   athleticPowerBaseline: "athletic_power_baseline",
   targetTimeline: "target_timeline",
   runningBaseline: "running_baseline",
+  swimBaseline: "swim_baseline",
   bodyCompAnchor: "body_comp_anchor",
   appearanceProxyAnchor: "appearance_proxy_anchor",
+  startingCapacity: "starting_capacity",
 };
 
 const COMPLETENESS_SOURCE = "completeness";
@@ -53,6 +61,9 @@ const COMPLETENESS_FIELD_FALLBACK_PATTERNS = {
   [INTAKE_COMPLETENESS_FIELDS.currentRunFrequency]: [/running baseline|runs per week|run frequency/i],
   [INTAKE_COMPLETENESS_FIELDS.longestRecentRun]: [/running baseline|longest recent run|long run/i],
   [INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline]: [/running baseline|recent pace|race result|pace baseline/i],
+  [INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor]: [/swim anchor|swim benchmark|recent swim|swim baseline/i],
+  [INTAKE_COMPLETENESS_FIELDS.swimAccessReality]: [/pool|open water|swim access|water reality/i],
+  [INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor]: [/starting capacity|safe starting|repeatable right now|tolerance/i],
   [INTAKE_COMPLETENESS_FIELDS.currentBodyweight]: [/current bodyweight|current weight|scale weight|proxy we can track/i],
   [INTAKE_COMPLETENESS_FIELDS.targetWeightChange]: [/how much.*lose|target weight change|trying to lose/i],
   [INTAKE_COMPLETENESS_FIELDS.currentWaist]: [/waist/i],
@@ -133,6 +144,59 @@ const parsePaceLikeText = (text = "") => {
   if (pace?.[0]) return pace[0];
   if (/\bpace\b|\b5k\b|\b10k\b|\bhalf\b|\bmarathon\b/i.test(normalized)) return normalized;
   return "";
+};
+
+const parseSwimDistance = (text = "") => {
+  const normalized = String(text || "").toLowerCase();
+  const match = normalized.match(/\b(\d+(?:\.\d+)?)\s*(yd|yard|yards|m|meter|meters|metre|metres)\b/i);
+  if (!match?.[1]) return null;
+  const unitRaw = String(match?.[2] || "").toLowerCase();
+  const unit = /yd|yard/.test(unitRaw) ? "yd" : /m|meter|metre/.test(unitRaw) ? "m" : "";
+  return {
+    value: Number(match[1]),
+    unit,
+  };
+};
+
+const parseSwimDuration = (text = "") => {
+  const normalized = sanitizeText(text, 120);
+  if (!normalized) return "";
+  const hhmmss = normalized.match(/\b(\d+:\d{2}(?::\d{2})?)\b/);
+  if (hhmmss?.[1]) return hhmmss[1];
+  const minuteMatch = normalized.match(/\b(\d+(?:\.\d+)?)\s*(?:min|mins|minute|minutes)\b/i);
+  if (minuteMatch?.[1]) return `${minuteMatch[1]} min`;
+  return "";
+};
+
+const parseSwimAccessReality = (text = "") => {
+  const normalized = sanitizeText(text, 80).toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "both" || /\bboth\b/.test(normalized)) return "both";
+  if (normalized === "open_water" || /open[_ -]?water|lake|ocean/.test(normalized)) return "open_water";
+  if (normalized === "pool" || /\bpool\b/.test(normalized)) return "pool";
+  return "";
+};
+
+const parseStartingCapacityChoice = (text = "") => {
+  const normalized = sanitizeText(text, 80).toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "walk_only" || /\bwalk\b/.test(normalized)) return "walk_only";
+  if (normalized === "10_easy_minutes" || /\b10\b|\bshort\b/.test(normalized)) return "10_easy_minutes";
+  if (normalized === "20_to_30_minutes" || /\b20\b|\b30\b|\bsteady\b/.test(normalized)) return "20_to_30_minutes";
+  if (normalized === "30_plus_minutes" || /\b30\+\b|\b30 plus\b|\brepeatable\b/.test(normalized)) return "30_plus_minutes";
+  return "";
+};
+
+const parseSwimAnchor = (text = "") => {
+  const normalized = sanitizeText(text, 160);
+  const swimDistance = parseSwimDistance(normalized);
+  const swimDuration = parseSwimDuration(normalized);
+  return {
+    raw: normalized,
+    distance: Number.isFinite(swimDistance?.value) ? swimDistance.value : null,
+    distanceUnit: swimDistance?.unit || "",
+    duration: swimDuration,
+  };
 };
 
 const parseStrengthBaseline = (text = "") => {
@@ -340,6 +404,10 @@ const resolveKnownFacts = ({ resolvedGoals = [], answers = {} } = {}) => {
   const currentRunFrequencyText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentRunFrequency);
   const longestRecentRunText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.longestRecentRun);
   const recentPaceBaselineText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline);
+  const recentSwimAnchorText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor);
+  const swimAccessRealityText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.swimAccessReality);
+  const startingCapacityText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor);
+  const appearanceProxyPlan = sanitizeText(readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan)?.value || "", 80);
   const currentBodyweightText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight);
   const targetWeightChangeText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.targetWeightChange);
   const currentWaistText = readTextField(answers, INTAKE_COMPLETENESS_FIELDS.currentWaist);
@@ -371,6 +439,17 @@ const resolveKnownFacts = ({ resolvedGoals = [], answers = {} } = {}) => {
           paceText: parsePaceLikeText(recentPaceBaselineText) || recentPaceBaselineText,
         }
       : null,
+    recentSwimAnchor: recentSwimAnchorText
+      ? {
+          ...parseSwimAnchor(recentSwimAnchorText),
+          text: recentSwimAnchorText,
+        }
+      : null,
+    swimAccessReality: parseSwimAccessReality(swimAccessRealityText),
+    swimAccessRealityText,
+    startingCapacityAnchor: parseStartingCapacityChoice(startingCapacityText),
+    startingCapacityText,
+    appearanceProxyPlan,
     currentBodyweight: parseFirstWeightLikeNumber(currentBodyweightText),
     currentBodyweightText,
     targetWeightChange: targetMetric ?? parseTargetWeightChange(targetWeightChangeText),
@@ -486,6 +565,26 @@ const buildBodyCompAnchorPrompt = (facts = {}) => {
   };
 };
 
+const isSwimGoal = (goal = {}) => {
+  const corpus = [
+    goal?.summary,
+    goal?.rawIntent?.text,
+    goal?.primaryMetric?.label,
+    goal?.primaryDomain,
+  ].filter(Boolean).join(" ").toLowerCase();
+  return /\b(swim|swimming|pool|open water|laps?)\b/.test(corpus) || /swimming_endurance_technique/.test(corpus);
+};
+
+const needsSafeStartCapacity = (goal = {}) => {
+  const goalFamily = String(goal?.goalFamily || "").toLowerCase();
+  const planningCategory = String(goal?.planningCategory || "").toLowerCase();
+  const primaryDomain = String(goal?.primaryDomain || "").toLowerCase();
+  return goalFamily === "re_entry"
+    || (planningCategory === "general_fitness" && /durability|foundation/.test(primaryDomain))
+    || primaryDomain === "durability_rebuild"
+    || primaryDomain === "general_foundation";
+};
+
 const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) => {
   if (!goal) return { requiredFields: [], optionalFields: [] };
   const goalRole = goal?.intakeConfirmedRole || (index === 0 ? "primary" : "maintained");
@@ -567,7 +666,56 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
     }));
   }
 
-  if (planningCategory === "running") {
+  if (isSwimGoal(goal) && goalRole === "primary") {
+    const swimAnchorReady = Boolean(facts?.recentSwimAnchor?.text);
+    const swimRealityReady = Boolean(facts?.swimAccessReality);
+    requiredFields.push(buildRequirement({
+      key: INTAKE_COMPLETENESS_QUESTION_KEYS.swimBaseline,
+      label: "Recent swim anchor",
+      filled: swimAnchorReady && swimRealityReady,
+      fieldKeys: [
+        INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor,
+        INTAKE_COMPLETENESS_FIELDS.swimAccessReality,
+      ],
+      goalRole,
+      question: buildQuestion({
+        key: INTAKE_COMPLETENESS_QUESTION_KEYS.swimBaseline,
+        prompt: "What's one recent swim anchor, and is this mostly pool, open water, or both right now?",
+        placeholder: "Example: 1000 yd in 22:30, pool only",
+        fieldKeys: [
+          INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor,
+          INTAKE_COMPLETENESS_FIELDS.swimAccessReality,
+        ],
+        label: "Recent swim anchor",
+        goalRole,
+        expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.swimBaseline,
+        inputFields: [
+          {
+            key: INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor,
+            label: "Recent swim anchor",
+            inputType: "text",
+            expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.swimBaseline,
+            placeholder: "Example: 1000 yd in 22:30",
+            helperText: "One recent distance or time anchor is enough.",
+            required: true,
+          },
+          {
+            key: INTAKE_COMPLETENESS_FIELDS.swimAccessReality,
+            label: "Water reality",
+            inputType: "text",
+            expectedValueType: "choice",
+            placeholder: "pool, open water, or both",
+            helperText: "This keeps the first block honest about where you can actually swim.",
+            required: true,
+          },
+        ],
+        validation: {
+          kind: "swim_baseline",
+          message: "Add one recent swim anchor and whether you're mostly swimming in the pool, open water, or both.",
+        },
+      }),
+    }));
+  } else if (planningCategory === "running") {
     if (goalRole === "primary" && !facts?.targetWindowKnown) {
       requiredFields.push(buildRequirement({
         key: INTAKE_COMPLETENESS_QUESTION_KEYS.runningTiming,
@@ -765,7 +913,11 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
 
   if (goalFamily === "appearance" && goalRole === "primary") {
     const appearanceHasExplicitTimingSignal = /\b(by|before|for)\b|\bspring\b|\bsummer\b|\bfall\b|\bautumn\b|\bwinter\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b|\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b/i.test(String(goal?.rawIntent?.text || ""));
-    const proxyAnchorReady = Boolean(facts?.currentBodyweight || facts?.currentWaist);
+    const proxyAnchorReady = Boolean(
+      facts?.currentBodyweight
+      || facts?.currentWaist
+      || facts?.appearanceProxyPlan === "skip_for_now"
+    );
     requiredFields.push(buildRequirement({
       key: INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
       label: "Appearance tracking proxy",
@@ -773,6 +925,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
       fieldKeys: [
         INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
         INTAKE_COMPLETENESS_FIELDS.currentWaist,
+        INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan,
       ],
       goalRole,
       question: buildQuestion({
@@ -782,6 +935,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
         fieldKeys: [
           INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
           INTAKE_COMPLETENESS_FIELDS.currentWaist,
+          INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan,
         ],
         label: "Appearance tracking proxy",
         goalRole,
@@ -814,7 +968,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
         ],
         validation: {
           kind: "appearance_proxy_anchor",
-          message: "Add at least one proxy we can track right away: bodyweight or waist.",
+          message: "Add one clean proxy we can track right away, or skip it for now and let the first block stay more conservative.",
         },
       }),
     }));
@@ -865,6 +1019,40 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
       filled: Boolean(facts?.currentWaist),
       fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentWaist],
       goalRole,
+    }));
+  }
+
+  if (goalRole === "primary" && needsSafeStartCapacity(goal)) {
+    requiredFields.push(buildRequirement({
+      key: INTAKE_COMPLETENESS_QUESTION_KEYS.startingCapacity,
+      label: "Safe starting capacity",
+      filled: Boolean(facts?.startingCapacityAnchor),
+      fieldKeys: [INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor],
+      goalRole,
+      question: buildQuestion({
+        key: INTAKE_COMPLETENESS_QUESTION_KEYS.startingCapacity,
+        prompt: "What feels repeatable right now: a short walk, about 10 easy minutes, about 20 to 30 minutes, or 30+ minutes?",
+        placeholder: "Example: about 20 to 30 minutes",
+        fieldKeys: [INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor],
+        label: "Safe starting capacity",
+        goalRole,
+        expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.startingCapacity,
+        inputFields: [
+          {
+            key: INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor,
+            label: "Safe starting capacity",
+            inputType: "text",
+            expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.startingCapacity,
+            placeholder: "Example: about 20 to 30 minutes",
+            helperText: "This keeps the first week honest about what you can repeat safely.",
+            required: true,
+          },
+        ],
+        validation: {
+          kind: "starting_capacity",
+          message: "Choose the starting capacity that feels most repeatable right now.",
+        },
+      }),
     }));
   }
 
@@ -922,6 +1110,9 @@ export const buildIntakeCompletenessDraft = ({
   const storedRunFrequency = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentRunFrequency);
   const storedLongestRun = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.longestRecentRun);
   const storedRecentPace = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline);
+  const storedSwimAnchor = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor);
+  const storedSwimAccessReality = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.swimAccessReality);
+  const storedStartingCapacity = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor);
   const storedBodyweight = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight);
   const storedTargetChange = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.targetWeightChange);
   const storedWaist = readStoredField(answers, INTAKE_COMPLETENESS_FIELDS.currentWaist);
@@ -947,6 +1138,10 @@ export const buildIntakeCompletenessDraft = ({
       values[INTAKE_COMPLETENESS_FIELDS.longestRecentRun] = sanitizeText(storedLongestRun?.raw || "", 160);
       values[INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline] = sanitizeText(storedRecentPace?.raw || "", 160);
       break;
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.swimBaseline:
+      values[INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor] = sanitizeText(storedSwimAnchor?.raw || "", 160);
+      values[INTAKE_COMPLETENESS_FIELDS.swimAccessReality] = sanitizeText(storedSwimAccessReality?.value || storedSwimAccessReality?.raw || "", 80);
+      break;
     case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor: {
       const targetField = toArray(question?.inputFields).find((field) => field?.key === INTAKE_COMPLETENESS_FIELDS.targetWeightChange);
       const direction = sanitizeText(targetField?.direction || "", 20).toLowerCase();
@@ -959,6 +1154,9 @@ export const buildIntakeCompletenessDraft = ({
     case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor:
       values[INTAKE_COMPLETENESS_FIELDS.currentBodyweight] = Number.isFinite(storedBodyweight?.value) ? String(storedBodyweight.value) : "";
       values[INTAKE_COMPLETENESS_FIELDS.currentWaist] = Number.isFinite(storedWaist?.value) ? String(storedWaist.value) : "";
+      break;
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.startingCapacity:
+      values[INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor] = sanitizeText(storedStartingCapacity?.value || storedStartingCapacity?.raw || "", 80);
       break;
     default:
       break;
@@ -1107,6 +1305,38 @@ export const validateIntakeCompletenessAnswer = ({
       };
       break;
     }
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.swimBaseline: {
+      const swimAnchorText = sanitizeText(values[INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor] || "", 160);
+      const swimAnchor = parseSwimAnchor(swimAnchorText);
+      const swimAccessReality = parseSwimAccessReality(values[INTAKE_COMPLETENESS_FIELDS.swimAccessReality] || "");
+      if (!swimAnchorText || (!Number.isFinite(swimAnchor?.distance) && !swimAnchor?.duration)) {
+        setFieldError(INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor, "Add one recent swim distance or time anchor.");
+      }
+      if (!swimAccessReality) {
+        setFieldError(INTAKE_COMPLETENESS_FIELDS.swimAccessReality, "Choose whether this is mostly pool, open water, or both.");
+      }
+      if (Object.keys(fieldErrors).length > 0) break;
+      const swimRealityLabel = swimAccessReality === "open_water"
+        ? "open water"
+        : swimAccessReality === "both"
+        ? "pool + open water"
+        : "pool";
+      summaryText = [swimAnchorText, swimRealityLabel].filter(Boolean).join(", ");
+      normalizedValues = {
+        [INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor]: {
+          raw: swimAnchor.raw,
+          value: swimAnchor.raw,
+          distance: swimAnchor.distance,
+          distanceUnit: swimAnchor.distanceUnit,
+          duration: swimAnchor.duration,
+        },
+        [INTAKE_COMPLETENESS_FIELDS.swimAccessReality]: {
+          raw: swimRealityLabel,
+          value: swimAccessReality,
+        },
+      };
+      break;
+    }
     case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor: {
       const currentBodyweight = readFiniteNumber(values[INTAKE_COMPLETENESS_FIELDS.currentBodyweight]);
       const targetChange = readFiniteNumber(values[INTAKE_COMPLETENESS_FIELDS.targetWeightChange]);
@@ -1157,10 +1387,21 @@ export const validateIntakeCompletenessAnswer = ({
       break;
     }
     case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor: {
+      const appearanceProxyPlan = sanitizeText(values[INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan] || "", 80).toLowerCase();
       const currentBodyweight = readFiniteNumber(values[INTAKE_COMPLETENESS_FIELDS.currentBodyweight]);
       const currentWaist = readFiniteNumber(values[INTAKE_COMPLETENESS_FIELDS.currentWaist]);
+      if (appearanceProxyPlan === "skip_for_now") {
+        summaryText = "Skip proxy for now";
+        normalizedValues = {
+          [INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan]: {
+            raw: "skip for now",
+            value: "skip_for_now",
+          },
+        };
+        break;
+      }
       if ((!Number.isFinite(currentBodyweight) || currentBodyweight <= 0) && (!Number.isFinite(currentWaist) || currentWaist <= 0)) {
-        formError = "Add either your current bodyweight or your waist so we have one clean proxy.";
+        formError = "Add either your current bodyweight or your waist, or skip it for now.";
         break;
       }
       summaryText = [
@@ -1186,6 +1427,22 @@ export const validateIntakeCompletenessAnswer = ({
               },
             }
           : {}),
+      };
+      break;
+    }
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.startingCapacity: {
+      const startingCapacity = parseStartingCapacityChoice(values[INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor] || cleanText);
+      const startingCapacityRaw = sanitizeText(values[INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor] || cleanText, 80);
+      if (!startingCapacity) {
+        setFieldError(INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor, "Choose what feels repeatable right now.");
+        break;
+      }
+      summaryText = startingCapacityRaw || startingCapacity.replaceAll("_", " ");
+      normalizedValues = {
+        [INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor]: {
+          raw: summaryText,
+          value: startingCapacity,
+        },
       };
       break;
     }
@@ -1367,6 +1624,28 @@ export const applyIntakeCompletenessAnswer = ({
       }
       break;
     }
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.swimBaseline: {
+      const swimAnchor = parseSwimAnchor(cleanAnswer);
+      const swimAccessReality = parseSwimAccessReality(cleanAnswer);
+      if ((Number.isFinite(swimAnchor?.distance) || swimAnchor?.duration) && canStoreField(INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor)) {
+        nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor, {
+          raw: swimAnchor.raw,
+          value: swimAnchor.raw,
+          distance: swimAnchor.distance,
+          distanceUnit: swimAnchor.distanceUnit,
+          duration: swimAnchor.duration,
+        });
+        storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor);
+      }
+      if (swimAccessReality && canStoreField(INTAKE_COMPLETENESS_FIELDS.swimAccessReality)) {
+        nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.swimAccessReality, {
+          raw: swimAccessReality === "open_water" ? "open water" : swimAccessReality === "both" ? "pool + open water" : "pool",
+          value: swimAccessReality,
+        });
+        storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.swimAccessReality);
+      }
+      break;
+    }
     case INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor: {
       const weight = parseFirstWeightLikeNumber(cleanAnswer);
       const targetChange = parseTargetWeightChange(cleanAnswer);
@@ -1392,6 +1671,7 @@ export const applyIntakeCompletenessAnswer = ({
       const weight = parseFirstWeightLikeNumber(cleanAnswer);
       const waist = parseWaistMeasurement(cleanAnswer);
       const photos = /photo/i.test(cleanAnswer) ? normalizeBoolean(cleanAnswer) ?? true : normalizeBoolean(cleanAnswer);
+      const wantsToSkipProxy = /\b(skip|later|not right now|for now|without a proxy)\b/i.test(cleanAnswer);
       if (Number.isFinite(weight) && !/waist/i.test(cleanAnswer) && canStoreField(INTAKE_COMPLETENESS_FIELDS.currentBodyweight)) {
         nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.currentBodyweight, {
           raw: cleanAnswer,
@@ -1408,12 +1688,30 @@ export const applyIntakeCompletenessAnswer = ({
         });
         storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.currentWaist);
       }
+      if (!Number.isFinite(weight) && !Number.isFinite(waist) && wantsToSkipProxy && canStoreField(INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan)) {
+        nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan, {
+          raw: "skip for now",
+          value: "skip_for_now",
+        });
+        storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan);
+      }
       if (photos === true && canStoreField(INTAKE_COMPLETENESS_FIELDS.progressPhotos)) {
         nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.progressPhotos, {
           raw: cleanAnswer,
           value: true,
         });
         storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.progressPhotos);
+      }
+      break;
+    }
+    case INTAKE_COMPLETENESS_QUESTION_KEYS.startingCapacity: {
+      const startingCapacity = parseStartingCapacityChoice(cleanAnswer);
+      if (startingCapacity && canStoreField(INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor)) {
+        nextAnswers = upsertCompletenessField(nextAnswers, INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor, {
+          raw: cleanAnswer,
+          value: startingCapacity,
+        });
+        storedFieldKeys.push(INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor);
       }
       break;
     }
@@ -1439,9 +1737,13 @@ export const buildIntakeCompletenessContext = ({
     Number.isFinite(facts?.currentRunFrequency) ? `Current running frequency: ${facts.currentRunFrequency} runs per week` : "",
     facts?.longestRecentRun?.text ? `Longest recent run: ${facts.longestRecentRun.text}` : "",
     facts?.recentPaceBaseline?.text ? `Recent running pace baseline: ${facts.recentPaceBaseline.text}` : "",
+    facts?.recentSwimAnchor?.text ? `Recent swim anchor: ${facts.recentSwimAnchor.text}` : "",
+    facts?.swimAccessRealityText ? `Swim reality: ${facts.swimAccessRealityText}` : "",
     Number.isFinite(facts?.currentBodyweight) ? `Current bodyweight: ${facts.currentBodyweight} lb` : "",
     Number.isFinite(facts?.targetWeightChange) ? `Desired bodyweight change: ${facts.targetWeightChange > 0 ? "+" : ""}${facts.targetWeightChange} lb` : "",
     Number.isFinite(facts?.currentWaist) ? `Current waist: ${facts.currentWaist} in` : "",
+    facts?.startingCapacityText ? `Safe starting capacity: ${facts.startingCapacityText}` : "",
+    facts?.appearanceProxyPlan === "skip_for_now" ? "Appearance proxy is intentionally deferred for now." : "",
   ]);
 
   const timingHints = dedupeStrings([
