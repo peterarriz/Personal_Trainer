@@ -546,35 +546,11 @@ const buildStrengthBaselinePrompt = (resolvedGoal = {}, goalRole = "primary") =>
   };
 };
 
-const buildBodyCompAnchorPrompt = (facts = {}) => {
-  const needsWeight = !facts?.currentBodyweight;
-  const needsTarget = !Number.isFinite(facts?.targetWeightChange);
-  if (needsWeight && needsTarget) {
-    return {
-      label: "Current bodyweight and desired weight change",
-      prompt: "What's your current bodyweight, and roughly how much are you trying to lose?",
-      placeholder: "Example: 205 lb, trying to lose 20",
-      needsWeight,
-      needsTarget,
-    };
-  }
-  if (needsWeight) {
-    return {
-      label: "Current bodyweight",
-      prompt: "What's your current bodyweight or closest recent scale weight?",
-      placeholder: "Example: 205 lb",
-      needsWeight,
-      needsTarget,
-    };
-  }
-  return {
-    label: "Desired weight change",
-    prompt: "Roughly how much weight are you trying to lose?",
-    placeholder: "Example: 15-20 lb",
-    needsWeight,
-    needsTarget,
-  };
-};
+const buildBodyCompAnchorPrompt = () => ({
+  label: "Current bodyweight",
+  prompt: "What's your current bodyweight or closest recent scale weight?",
+  placeholder: "Example: 205 lb",
+});
 
 const isSwimGoal = (goal = {}) => {
   const corpus = [
@@ -604,7 +580,12 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
   const requiredFields = [];
   const optionalFields = [];
 
-  if (planningCategory === "strength") {
+  const explicitStrengthBenchmark = /\b(bench|squat|deadlift|overhead press|ohp|lift)\b/i.test(String(goal?.summary || goal?.rawIntent?.text || ""));
+  const requiresStrengthBaseline = goalFamily === "athletic_power"
+    || Boolean(goal?.primaryMetric?.targetValue)
+    || explicitStrengthBenchmark;
+
+  if (planningCategory === "strength" && requiresStrengthBaseline) {
     const strengthPrompt = buildStrengthBaselinePrompt(goal, goalRole);
     requiredFields.push(buildRequirement({
       key: goalRole === "maintained" ? INTAKE_COMPLETENESS_QUESTION_KEYS.maintainedStrengthBaseline : INTAKE_COMPLETENESS_QUESTION_KEYS.strengthBaseline,
@@ -673,6 +654,15 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
       required: false,
       filled: Boolean(facts?.targetWindowKnown),
       fieldKeys: [INTAKE_COMPLETENESS_FIELDS.targetTimeline],
+      goalRole,
+    }));
+  } else if (planningCategory === "strength") {
+    optionalFields.push(buildRequirement({
+      key: "strength_baseline_optional",
+      label: "Current strength baseline",
+      required: false,
+      filled: Boolean(facts?.currentStrengthBaseline?.text),
+      fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline],
       goalRole,
     }));
   }
@@ -836,14 +826,14 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
     requiredFields.push(buildRequirement({
       key: INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor,
       label: anchorPrompt.label,
-      filled: Boolean(facts?.currentBodyweight) && (Number.isFinite(facts?.targetWeightChange) || Boolean(goal?.primaryMetric?.targetValue)),
-      fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentBodyweight, INTAKE_COMPLETENESS_FIELDS.targetWeightChange],
+      filled: Boolean(facts?.currentBodyweight),
+      fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentBodyweight],
       goalRole,
       question: buildQuestion({
         key: INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor,
         prompt: anchorPrompt.prompt,
         placeholder: anchorPrompt.placeholder,
-        fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentBodyweight, INTAKE_COMPLETENESS_FIELDS.targetWeightChange],
+        fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentBodyweight],
         label: anchorPrompt.label,
         goalRole,
         expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.bodyCompAnchor,
@@ -860,58 +850,29 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
             max: 1000,
             unit: "lb",
           },
-          {
-            key: INTAKE_COMPLETENESS_FIELDS.targetWeightChange,
-            label: "Target loss",
-            inputType: "number",
-            expectedValueType: "number",
-            placeholder: "20",
-            helperText: "Enter the pounds you want to lose.",
-            required: anchorPrompt.needsTarget,
-            min: 1,
-            max: 300,
-            unit: "lb",
-            direction: "loss",
-          },
         ],
         validation: {
           kind: "body_comp_anchor",
-          message: "Add the current bodyweight and target change I need to size this goal realistically.",
+          message: "Add your current bodyweight so the first block starts from something real.",
         },
       }),
     }));
-    if (!facts?.targetWindowKnown) {
-      requiredFields.push(buildRequirement({
-        key: INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline,
-        label: "Target timeline",
-        filled: false,
-        fieldKeys: [INTAKE_COMPLETENESS_FIELDS.targetTimeline],
-        goalRole,
-        question: buildQuestion({
-          key: INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline,
-          prompt: "What's the rough timeline for this weight-loss goal?",
-          placeholder: "Example: by August or over the next 16 weeks",
-          fieldKeys: [INTAKE_COMPLETENESS_FIELDS.targetTimeline],
-          label: "Target timeline",
-          goalRole,
-          affectsTimeline: true,
-          expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
-          inputFields: [{
-            key: INTAKE_COMPLETENESS_FIELDS.targetTimeline,
-            label: "Target timeline",
-            inputType: "text",
-            expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
-            placeholder: "Example: by August or over the next 16 weeks",
-            helperText: "A rough window is enough. It does not need to be exact, and open-ended is okay if there is no hard finish date.",
-            required: true,
-          }],
-          validation: {
-            kind: "target_timeline",
-            message: "Enter a date, month, or rough time window for this goal.",
-          },
-        }),
-      }));
-    }
+    optionalFields.push(buildRequirement({
+      key: "body_comp_target_change_optional",
+      label: "Target weight change",
+      required: false,
+      filled: Number.isFinite(facts?.targetWeightChange) || Boolean(goal?.primaryMetric?.targetValue),
+      fieldKeys: [INTAKE_COMPLETENESS_FIELDS.targetWeightChange],
+      goalRole,
+    }));
+    optionalFields.push(buildRequirement({
+      key: "body_comp_timeline_optional",
+      label: "Target timeline",
+      required: false,
+      filled: Boolean(facts?.targetWindowKnown),
+      fieldKeys: [INTAKE_COMPLETENESS_FIELDS.targetTimeline],
+      goalRole,
+    }));
     optionalFields.push(buildRequirement({
       key: "body_comp_waist_optional",
       label: "Current waist measurement",
@@ -1158,9 +1119,11 @@ export const buildIntakeCompletenessDraft = ({
       const targetField = toArray(question?.inputFields).find((field) => field?.key === INTAKE_COMPLETENESS_FIELDS.targetWeightChange);
       const direction = sanitizeText(targetField?.direction || "", 20).toLowerCase();
       values[INTAKE_COMPLETENESS_FIELDS.currentBodyweight] = Number.isFinite(storedBodyweight?.value) ? String(storedBodyweight.value) : "";
-      values[INTAKE_COMPLETENESS_FIELDS.targetWeightChange] = Number.isFinite(storedTargetChange?.value)
-        ? String(direction === "loss" ? Math.abs(storedTargetChange.value) : storedTargetChange.value)
-        : "";
+      if (targetField?.key === INTAKE_COMPLETENESS_FIELDS.targetWeightChange) {
+        values[INTAKE_COMPLETENESS_FIELDS.targetWeightChange] = Number.isFinite(storedTargetChange?.value)
+          ? String(direction === "loss" ? Math.abs(storedTargetChange.value) : storedTargetChange.value)
+          : "";
+      }
       break;
     }
     case INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor:

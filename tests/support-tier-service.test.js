@@ -64,3 +64,27 @@ test("goal-free foundation mode remains tier 1", () => {
   assert.equal(tier.id, "tier_1");
   assert.match(tier.basisLine, /No explicit goal is required/i);
 });
+
+test("re-entry and safe-rebuild goals stay tier 2 even when they share the general planner backbone", () => {
+  const tier = buildSupportTierModel({
+    goals: [{
+      active: true,
+      name: "Get back into consistent training shape",
+      category: "general_fitness",
+      resolvedGoal: {
+        goalFamily: "re_entry",
+        summary: "Get back into consistent training shape",
+      },
+    }],
+    domainAdapterId: DOMAIN_ADAPTER_IDS.durability,
+    goalCapabilityStack: {
+      primary: {
+        primaryDomain: DOMAIN_ADAPTER_IDS.durability,
+        fallbackPlanningMode: "rebuild_then_specialize",
+      },
+    },
+  });
+
+  assert.equal(tier.id, "tier_2");
+  assert.match(tier.honestyLine, /guardrails/i);
+});

@@ -962,6 +962,7 @@ const expandRequirementToAnchors = ({
   const selectedAppearanceProxy = sanitizeText(
     bindingsByFieldId?.appearance_proxy_anchor_kind?.parsed_value
       || bindingsByFieldId?.appearance_proxy_anchor_kind?.raw_text
+      || facts?.appearanceProxyPlan
       || "",
     80
   );
@@ -1569,17 +1570,19 @@ export const validateMissingAnchorAnswer = ({
         formError: "",
         parsed_value: chosenValue,
         parse_confidence: 1,
-        canonicalWrites: chosenValue === "skip_for_now"
-          ? [
-              buildBindingWrite({
-                fieldKey: INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan,
-                record: {
-                  raw: "skip for now",
-                  value: "skip_for_now",
-                },
-              }),
-            ]
-          : [],
+        canonicalWrites: [
+          buildBindingWrite({
+            fieldKey: INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan,
+            record: {
+              raw: chosenValue === "skip_for_now"
+                ? "skip for now"
+                : chosenValue === INTAKE_COMPLETENESS_FIELDS.currentWaist
+                ? "waist"
+                : "bodyweight",
+              value: chosenValue,
+            },
+          }),
+        ],
         summaryText: chosenValue === "skip_for_now"
           ? "Skip for now"
           : chosenValue === INTAKE_COMPLETENESS_FIELDS.currentWaist
@@ -1696,6 +1699,41 @@ export const validateMissingAnchorAnswer = ({
       };
     }
     case INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline: {
+      const expectsAthleticPowerBaseline = sanitizeText(anchor?.expected_value_type || anchor?.kind || "", 80).toLowerCase() === "athletic_power_baseline";
+      if (expectsAthleticPowerBaseline) {
+        const athleticBaselineText = sanitizeText(answerObject?.value || answerObject?.raw || cleanRaw, 160);
+        if (!athleticBaselineText) {
+          return {
+            isValid: false,
+            formError: validationMessage,
+            parsed_value: null,
+            parse_confidence: 0,
+            canonicalWrites: [],
+            summaryText: "",
+            parseErrorCode: "invalid_athletic_power_baseline",
+          };
+        }
+        return {
+          isValid: true,
+          formError: "",
+          parsed_value: {
+            canonical_field_id: INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline,
+            value: athleticBaselineText,
+          },
+          parse_confidence: 0.95,
+          canonicalWrites: [
+            buildBindingWrite({
+              fieldKey: INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline,
+              record: {
+                raw: athleticBaselineText,
+                value: athleticBaselineText,
+              },
+            }),
+          ],
+          summaryText: athleticBaselineText,
+          parseErrorCode: "",
+        };
+      }
       const explicitMode = sanitizeText(answerObject?.mode || "", 40).toLowerCase();
       const explicitWeight = toFiniteNumber(answerObject?.weight ?? answerObject?.value, null);
       const explicitReps = toFiniteNumber(answerObject?.reps, null);

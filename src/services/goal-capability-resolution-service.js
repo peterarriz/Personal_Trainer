@@ -125,6 +125,16 @@ const buildPacketFromSignals = ({ goal = {}, signals = {} } = {}) => {
       buildCapability(GOAL_CAPABILITY_FAMILIES.durability, 0.15),
     ];
     fallbackPlanningMode = confidence === "low" ? "aerobic_foundation" : "race_specific_progression";
+  } else if (goalFamily === "re_entry") {
+    primaryDomain = DOMAIN_ADAPTER_IDS.durability;
+    secondaryDomains = [DOMAIN_ADAPTER_IDS.foundation];
+    capabilityMix = [
+      buildCapability(GOAL_CAPABILITY_FAMILIES.durability, 0.4, "primary"),
+      buildCapability(GOAL_CAPABILITY_FAMILIES.consistency, 0.3),
+      buildCapability(GOAL_CAPABILITY_FAMILIES.mobility, 0.15),
+      buildCapability(GOAL_CAPABILITY_FAMILIES.aerobicBase, 0.15),
+    ];
+    fallbackPlanningMode = "rebuild_then_specialize";
   } else if (signals.fatLoss || signals.appearance || goal?.category === "body_comp" || resolvedGoal?.planningCategory === "body_comp") {
     primaryDomain = DOMAIN_ADAPTER_IDS.bodyComp;
     secondaryDomains = dedupeStrings([
@@ -151,7 +161,7 @@ const buildPacketFromSignals = ({ goal = {}, signals = {} } = {}) => {
       buildCapability(GOAL_CAPABILITY_FAMILIES.consistency, 0.15),
     ];
     fallbackPlanningMode = "strength_foundation";
-  } else if (signals.durability || goalFamily === "re_entry") {
+  } else if (signals.durability) {
     primaryDomain = DOMAIN_ADAPTER_IDS.durability;
     secondaryDomains = [DOMAIN_ADAPTER_IDS.foundation];
     capabilityMix = [

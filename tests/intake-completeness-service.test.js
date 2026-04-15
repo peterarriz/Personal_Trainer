@@ -18,6 +18,8 @@ const buildIntakePacket = ({
   rawGoalText,
   timingConstraints = [],
   appearanceConstraints = [],
+  additionalContext = "",
+  injuryText = "",
 } = {}) => ({
   version: "2026-04-v1",
   intent: "intake_interpretation",
@@ -37,13 +39,13 @@ const buildIntakePacket = ({
       equipment: ["Dumbbells", "Pull-up bar"],
     },
     injuryConstraintContext: {
-      injuryText: "",
-      constraints: [],
+      injuryText,
+      constraints: injuryText ? [injuryText] : [],
     },
     userProvidedConstraints: {
       timingConstraints,
       appearanceConstraints,
-      additionalContext: "Find the balance",
+      additionalContext: additionalContext || "Find the balance",
     },
   },
 });
@@ -78,22 +80,20 @@ test("strength goal completeness asks for the current lift baseline", () => {
   ]);
 });
 
-test("weight-loss completeness asks for current bodyweight and timeline when needed", () => {
+test("weight-loss completeness asks only for the current bodyweight when the goal is otherwise open-ended", () => {
   const state = deriveIntakeCompletenessState({
-    resolvedGoals: buildResolvedGoals("lose 20 lb"),
+    resolvedGoals: buildResolvedGoals("fat loss"),
     answers: {},
   });
 
   assert.equal(state.isComplete, false);
   assert.deepEqual(state.missingRequired.map((item) => item.key), [
     INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor,
-    INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline,
   ]);
   assert.match(state.nextQuestions[0].prompt, /current bodyweight/i);
   assert.equal(state.nextQuestions[0].expectedValueType, INTAKE_COMPLETENESS_VALUE_TYPES.bodyCompAnchor);
   assert.deepEqual(state.nextQuestions[0].inputFields.map((field) => field.key), [
     "current_bodyweight",
-    "target_weight_change",
   ]);
 });
 
@@ -168,7 +168,18 @@ test("re-entry completeness asks for safe starting capacity instead of advanced 
   ]);
 });
 
-test("multi-goal completeness keeps primary needs first and still asks for maintained strength baseline", () => {
+test("generic muscle-gain goals do not force a lift benchmark before the first plan", () => {
+  const state = deriveIntakeCompletenessState({
+    resolvedGoals: buildResolvedGoals("gain muscle"),
+    answers: {},
+  });
+
+  assert.equal(state.isComplete, true);
+  assert.deepEqual(state.missingRequired, []);
+  assert.ok(state.optionalFields.some((item) => item.key === "strength_baseline_optional"));
+});
+
+test("multi-goal completeness keeps primary needs first without forcing a generic maintained-strength benchmark", () => {
   const resolvedGoals = buildResolvedGoals("lose fat but keep strength");
   const state = deriveIntakeCompletenessState({
     resolvedGoals,
@@ -184,11 +195,10 @@ test("multi-goal completeness keeps primary needs first and still asks for maint
     },
   });
 
-  assert.equal(state.isComplete, false);
-  assert.deepEqual(state.missingRequired.map((item) => item.key), [
-    INTAKE_COMPLETENESS_QUESTION_KEYS.maintainedStrengthBaseline,
-  ]);
-  assert.match(state.nextQuestions[0].prompt, /maintained strength goal/i);
+  assert.equal(state.isComplete, true);
+  assert.deepEqual(state.missingRequired, []);
+  assert.deepEqual(state.nextQuestions, []);
+  assert.ok(state.optionalFields.some((item) => item.key === "strength_baseline_optional"));
 });
 
 test("structured running goal follow-up for race date validates and clears immediately", () => {
@@ -247,12 +257,16 @@ test("structured timeline follow-up accepts natural phrases like by summer", () 
   assert.equal(answered.answers.intake_completeness.fields.target_timeline.value, "by summer");
 });
 
-test("structured body-comp timeline follow-up accepts open-ended timing", () => {
-  const resolvedGoals = buildResolvedGoals("lose 20 lb");
-  const question = deriveIntakeCompletenessState({
-    resolvedGoals,
-    answers: {},
-  }).nextQuestions.find((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline);
+test("structured body-comp timeline follow-up still accepts open-ended timing when invoked", () => {
+  const question = {
+    key: INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline,
+    fieldKeys: ["target_timeline"],
+    source: "completeness",
+    inputFields: [{
+      key: "target_timeline",
+      required: true,
+    }],
+  };
   const validation = validateIntakeCompletenessAnswer({
     question,
     answerValues: {
@@ -391,7 +405,6 @@ test("structured body-comp follow-up captures current bodyweight and target chan
     question,
     answerValues: {
       current_bodyweight: "191",
-      target_weight_change: "20",
     },
   });
   const answered = applyIntakeCompletenessAnswer({
@@ -399,7 +412,6 @@ test("structured body-comp follow-up captures current bodyweight and target chan
     question,
     answerValues: {
       current_bodyweight: "191",
-      target_weight_change: "20",
     },
   });
   const state = deriveIntakeCompletenessState({
@@ -409,7 +421,7 @@ test("structured body-comp follow-up captures current bodyweight and target chan
 
   assert.equal(validation.isValid, true);
   assert.equal(answered.answers.intake_completeness.fields.current_bodyweight.value, 191);
-  assert.equal(answered.answers.intake_completeness.fields.target_weight_change.value, -20);
+  assert.equal(answered.answers.intake_completeness.fields.target_weight_change, undefined);
   assert.ok(!state.missingRequired.some((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor));
 });
 
@@ -504,7 +516,7 @@ test("structured drafts seed existing body-comp fields back into the follow-up f
   });
 
   assert.equal(draft.current_bodyweight, "191");
-  assert.equal(draft.target_weight_change, "20");
+  assert.equal(draft.target_weight_change, undefined);
 });
 
 test("field-scoped bodyweight answer binds only to the bodyweight anchor field", () => {
@@ -647,7 +659,7 @@ test("bodyweight answer clears the body-comp anchor requirement without re-askin
 
   assert.equal(answered.answers.intake_completeness.fields.current_bodyweight.value, 191);
   assert.ok(!state.missingRequired.some((item) => item.key === INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor));
-  assert.equal(state.nextQuestions[0]?.key, INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompTimeline);
+  assert.equal(state.nextQuestions[0], undefined);
 });
 
 test("invalid partial running baseline answer still re-prompts correctly", () => {

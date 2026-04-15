@@ -6,6 +6,7 @@ const {
 } = require("../src/services/synthetic-athlete-lab/persona-catalog.js");
 const {
   runSyntheticAthleteLab,
+  SYNTHETIC_ATHLETE_CATALOG_MODES,
   SYNTHETIC_ATHLETE_RELEASE_GATE_PERSONA_IDS,
 } = require("../src/services/synthetic-athlete-lab/runner.js");
 
@@ -23,14 +24,30 @@ const REQUIRED_CLUSTER_IDS = [
   "plan_degradation",
 ];
 
-test("synthetic athlete lab runs a 26-week adversarial report for the focus persona and emits actionable failures", () => {
-  const report = runSyntheticAthleteLab();
+test("synthetic athlete lab still emits actionable failures when a persona lacks required anchors", () => {
+  const report = runSyntheticAthleteLab({
+    personas: [
+      {
+        id: "failing_swim_probe",
+        name: "Failing swim probe",
+        ageRange: "34-34",
+        trainingAgeYears: 2,
+        goalIntents: ["swim a faster mile"],
+        supportTierExpectation: "tier_2",
+        bodyCompContext: "performance-first",
+        strengthContext: "basic dryland work",
+        enduranceContext: "pool swimmer with no benchmark supplied",
+        scheduleReality: "3 swim sessions",
+      },
+    ],
+    includeArchetypeMatrix: false,
+  });
   const focus = report.personaResults[0];
 
   assert.equal(report.summary.personaCount, 1);
   assert.equal(report.summary.simulationWeeks, 26);
   assert.equal(report.summary.overallPass, false);
-  assert.equal(focus.personaId, "novice_obese_beginner");
+  assert.equal(focus.personaId, "failing_swim_probe");
   assert.equal(focus.simulationWeeks, 26);
   assert.ok(Array.isArray(focus.timeline));
   assert.equal(focus.timeline.length, 26);
@@ -66,7 +83,7 @@ test("synthetic athlete lab release gate matrix covers obese beginner, swimmer, 
   const matrixIds = report.releaseGateMatrix.map((entry) => entry.personaId).sort();
 
   assert.deepEqual(matrixIds, SYNTHETIC_ATHLETE_RELEASE_GATE_PERSONA_IDS.slice().sort());
-  assert.ok(report.releaseGateMatrix.some((entry) => entry.verdict === "watch" || entry.verdict === "blocked"));
+  assert.ok(report.releaseGateMatrix.every((entry) => entry.verdict === "credible"));
 });
 
 test("synthetic athlete lab can target a selected persona and shorter simulation window", () => {
@@ -82,4 +99,70 @@ test("synthetic athlete lab can target a selected persona and shorter simulation
   assert.equal(report.personaResults[0].personaId, "bench_225_office_worker");
   assert.equal(report.personaResults[0].simulationWeeks, 12);
   assert.deepEqual(report.releaseGateMatrix, []);
+});
+
+test("synthetic athlete lab can run the expanded 100-persona catalog with meaningful coverage", () => {
+  const report = runSyntheticAthleteLab({
+    catalogMode: SYNTHETIC_ATHLETE_CATALOG_MODES.expanded,
+    targetPersonaCount: 100,
+    weeks: 4,
+    includeArchetypeMatrix: false,
+  });
+
+  assert.equal(report.summary.personaCount, 100);
+  assert.equal(report.summary.catalogMode, SYNTHETIC_ATHLETE_CATALOG_MODES.expanded);
+  assert.ok(report.catalogCoverage.exactUsers > 0);
+  assert.ok(report.catalogCoverage.vagueUsers > 0);
+  assert.ok(report.catalogCoverage.chaoticUsers > 0);
+  assert.ok(report.catalogCoverage.dateBasedGoalUsers > 0);
+  assert.ok(report.catalogCoverage.openEndedGoalUsers > 0);
+  assert.ok(report.catalogCoverage.coachNeverUsers > 0);
+  assert.ok(report.catalogCoverage.coachOveruseUsers > 0);
+  assert.ok(report.catalogCoverage.swimUsers > 0);
+  assert.ok(report.catalogCoverage.hybridDomainUsers > 0);
+});
+
+test("synthetic athlete lab no longer loops proxy-choice intake or flags plain-English maintenance copy as lane theater", () => {
+  const report = runSyntheticAthleteLab({
+    personas: [
+      {
+        id: "appearance_proxy_regression",
+        name: "Appearance proxy regression",
+        ageRange: "29-29",
+        trainingAgeYears: 3,
+        goalIntents: ["I want to look athletic again"],
+        supportTierExpectation: "tier_1",
+        bodyCompContext: "vague aesthetic goal with high expectations",
+        strengthContext: "former athlete, now detrained",
+        scheduleReality: "4 flexible sessions",
+        baselineMetrics: { bodyweight: 168, waist: 33 },
+      },
+      {
+        id: "travel_copy_regression",
+        name: "Travel copy regression",
+        ageRange: "41-41",
+        trainingAgeYears: 3,
+        goalIntents: ["maintain strength", "lose 10 pounds"],
+        supportTierExpectation: "tier_1",
+        bodyCompContext: "fat loss while traveling heavily",
+        strengthContext: "hotel-gym capable",
+        enduranceContext: "walk-heavy travel days",
+        equipmentReality: "hotel gyms only",
+        scheduleReality: "constant travel with compressed workout windows",
+        travelLikelihood: "high",
+        baselineMetrics: { bodyweight: 201, waist: 40 },
+      },
+    ],
+    weeks: 8,
+    includeArchetypeMatrix: false,
+  });
+
+  const appearancePersona = report.personaResults.find((entry) => entry.personaId === "appearance_proxy_regression");
+  const travelPersona = report.personaResults.find((entry) => entry.personaId === "travel_copy_regression");
+
+  assert.ok(appearancePersona);
+  assert.ok(travelPersona);
+  assert.ok(!appearancePersona.failures.some((failure) => failure.clusterId === "intake_friction"));
+  assert.ok(!appearancePersona.failures.some((failure) => failure.clusterId === "baseline_timing_problems"));
+  assert.ok(!travelPersona.failures.some((failure) => failure.clusterId === "ugly_confusing_copy"));
 });
