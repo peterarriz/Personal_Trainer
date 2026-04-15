@@ -14,8 +14,8 @@ export const GOAL_CHANGE_MODE_META = {
   },
   [GOAL_CHANGE_MODES.reprioritizeGoalStack]: {
     label: "Re-prioritize Goals",
-    effectLine: "Changes which resolved goals lead versus stay maintained.",
-    historyLine: "Past logs and earlier plan snapshots stay untouched. The goal stack order changes going forward.",
+    effectLine: "Changes the priority order the planner follows going forward.",
+    historyLine: "Past logs and earlier plan snapshots stay untouched. The priority order changes going forward.",
   },
   [GOAL_CHANGE_MODES.startNewGoalArc]: {
     label: "Start New Goal Arc",

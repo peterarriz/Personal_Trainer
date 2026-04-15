@@ -187,8 +187,8 @@ const openGoalManagement = async (page) => {
   await page.goto(`/?e2e=${Date.now()}`);
   await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
   await page.getByRole("button", { name: "Open settings" }).click({ force: true });
-  await page.getByTestId("settings-surface-plan").click();
-  await expect(page.getByTestId("settings-plan-management")).toBeVisible();
+  await page.getByTestId("settings-surface-goals").click();
+  await expect(page.getByTestId("settings-goals-section")).toBeVisible();
   await expect(page.getByTestId("settings-goals-management")).toBeVisible();
 };
 
@@ -231,7 +231,7 @@ test("Settings goals management can add a library-based goal without relying on 
   await page.getByTestId("settings-goal-editor-template-swim_faster_mile").click();
   await page.getByTestId("settings-goal-editor-preview").click();
   await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("Swim a faster mile");
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("joins the active goal stack");
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("joins the active priority order");
   await page.getByTestId("settings-goals-confirm-preview").click();
 
   await expect(page.getByTestId("settings-goals-management")).toContainText("Swim a faster mile");
@@ -256,15 +256,48 @@ test("Settings goals management archives and restores a goal through explicit pr
 
   await page.getByTestId("settings-goal-archive-goal_cut_record").click();
   await expect(page.getByTestId("settings-goal-archive-sheet")).toBeVisible();
-  await page.getByTestId("settings-goal-archive-status-completed").click();
+  await page.getByTestId("settings-goal-archive-status-archived").click();
   await page.getByTestId("settings-goal-archive-preview").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("moves out of the active stack as completed");
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("is archived");
   await page.getByTestId("settings-goals-confirm-preview").click();
 
-  await page.getByTestId("settings-goals-archived").getByText("Archived, completed, and dropped goals", { exact: true }).click();
+  await expect(page.getByTestId("settings-goals-bucket-archived")).toContainText("Archived goals");
   await expect(page.getByTestId("settings-archived-goal-goal_cut_record")).toBeVisible();
   await page.getByTestId("settings-goal-restore-goal_cut_record").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("returns to the active stack");
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("returns to the active priority order");
+  await page.getByTestId("settings-goals-confirm-preview").click();
+
+  await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toBeVisible();
+});
+
+test("Settings goals management marks a goal completed without rewriting the active stack immediately", async ({ page }) => {
+  await openGoalManagement(page);
+
+  await page.getByTestId("settings-goal-archive-goal_cut_record").click();
+  await expect(page.getByTestId("settings-goal-archive-sheet")).toBeVisible();
+  await page.getByTestId("settings-goal-archive-status-completed").click();
+  await page.getByTestId("settings-goal-archive-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("marked completed");
+  await page.getByTestId("settings-goals-confirm-preview").click();
+
+  await expect(page.getByTestId("settings-goals-bucket-completed")).toContainText("Completed goals");
+  await expect(page.getByTestId("settings-archived-goal-goal_cut_record")).toBeVisible();
+});
+
+test("Settings goals management pauses and resumes a goal through explicit previews", async ({ page }) => {
+  await openGoalManagement(page);
+
+  await page.getByTestId("settings-goal-archive-goal_cut_record").click();
+  await expect(page.getByTestId("settings-goal-archive-sheet")).toBeVisible();
+  await page.getByTestId("settings-goal-archive-status-paused").click();
+  await page.getByTestId("settings-goal-archive-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("into paused goals");
+  await page.getByTestId("settings-goals-confirm-preview").click();
+
+  await expect(page.getByTestId("settings-goals-bucket-paused")).toContainText("Paused goals");
+  await expect(page.getByTestId("settings-goal-restore-goal_cut_record")).toContainText("Resume");
+  await page.getByTestId("settings-goal-restore-goal_cut_record").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("returns to the active priority order");
   await page.getByTestId("settings-goals-confirm-preview").click();
 
   await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toBeVisible();

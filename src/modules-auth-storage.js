@@ -19,11 +19,13 @@ export const AUTH_REQUIRED = "AUTH_REQUIRED";
 export const AUTH_TRANSIENT = "AUTH_TRANSIENT";
 export const AUTH_PROVIDER_UNAVAILABLE = "AUTH_PROVIDER_UNAVAILABLE";
 export const AUTH_DATA_INCOMPATIBLE = "AUTH_DATA_INCOMPATIBLE";
+export const AUTH_DELETE_NOT_CONFIGURED = "AUTH_DELETE_NOT_CONFIGURED";
 
 export const STORAGE_STATUS_REASONS = {
   notSignedIn: "not_signed_in",
   signedOut: "signed_out",
   accountDeleted: "account_deleted",
+  deviceReset: "device_reset",
   authRequired: "auth_required",
   transient: "sync_temporarily_failed",
   providerUnavailable: "provider_unavailable",
@@ -47,6 +49,12 @@ export const buildStorageStatus = ({
 const applyStorageStatusUpdate = (setStorageStatus, nextStatus) => {
   if (typeof setStorageStatus !== "function" || !nextStatus) return;
   setStorageStatus(nextStatus);
+};
+
+const buildStructuredError = (message, details = {}) => {
+  const error = new Error(String(message || "Unknown auth lifecycle failure."));
+  Object.assign(error, details || {});
+  return error;
 };
 
 const isTransientStorageMessage = (message = "") => (
@@ -235,6 +243,38 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     return res.status === 204 ? {} : res.json();
   };
 
+  const checkDeleteAccountAvailability = async () => {
+    const res = await safeFetchWithTimeout("/api/auth/delete-account", {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+      },
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw buildStructuredError(
+        String(data?.message || "Delete-account diagnostics could not be loaded."),
+        {
+          code: String(data?.code || "delete_account_diagnostics_failed"),
+          detail: String(data?.detail || ""),
+          fix: String(data?.fix || ""),
+          configured: data?.configured,
+          missing: Array.isArray(data?.missing) ? data.missing : [],
+          required: Array.isArray(data?.required) ? data.required : [],
+        }
+      );
+    }
+    return {
+      configured: Boolean(data?.configured),
+      code: String(data?.code || (data?.configured ? "delete_account_configured" : "delete_account_not_configured")),
+      message: String(data?.message || ""),
+      detail: String(data?.detail || ""),
+      fix: String(data?.fix || ""),
+      missing: Array.isArray(data?.missing) ? data.missing : [],
+      required: Array.isArray(data?.required) ? data.required : [],
+    };
+  };
+
   const refreshSession = async (refreshToken, fallbackSession = null) => {
     if (!refreshToken) return null;
     try {
@@ -337,14 +377,11 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   };
 
   const handleSignOut = async ({ authSession, setAuthSession, setStorageStatus }) => {
-    try {
-      if (authSession?.access_token) {
-        await authRequest("logout", { method: "POST", headers: { "Authorization": `Bearer ${authSession.access_token}` } });
-      }
-    } catch {}
     setAuthSession(null);
     lastSyncedGoalsFingerprint = "";
     lastSyncedCoachMemoryFingerprint = "";
+    lastPersistedPayloadFingerprint = "";
+    lastPersistedUserId = "";
     saveAuthSession(null);
     setStorageStatus(buildStorageStatus({
       mode: "local",
@@ -352,6 +389,11 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       reason: STORAGE_STATUS_REASONS.signedOut,
       detail: "You are signed out, so cloud sync is paused until you sign back in.",
     }));
+    try {
+      if (authSession?.access_token) {
+        await authRequest("logout", { method: "POST", headers: { "Authorization": `Bearer ${authSession.access_token}` } });
+      }
+    } catch {}
   };
 
   const handleDeleteAccount = async ({
@@ -362,6 +404,21 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     clearLocalData = async () => {},
   }) => {
     setAuthError("");
+    const diagnostics = await checkDeleteAccountAvailability();
+    if (!diagnostics?.configured) {
+      throw buildStructuredError(
+        diagnostics?.message || "Account deletion is not configured on this deployment yet.",
+        {
+          code: diagnostics?.code || "delete_account_not_configured",
+          detail: diagnostics?.detail || "",
+          fix: diagnostics?.fix || "",
+          missing: diagnostics?.missing || [],
+          required: diagnostics?.required || [],
+          configured: diagnostics?.configured,
+        }
+      );
+    }
+
     const { ensured, validSession } = await withFreshSession({
       authSession,
       setAuthSession,
@@ -381,7 +438,17 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
-      throw new Error(String(data?.message || "Account deletion failed."));
+      throw buildStructuredError(
+        String(data?.message || "Account deletion failed."),
+        {
+          code: String(data?.code || "delete_account_failed"),
+          detail: String(data?.detail || ""),
+          fix: String(data?.fix || ""),
+          missing: Array.isArray(data?.missing) ? data.missing : [],
+          required: Array.isArray(data?.required) ? data.required : [],
+          configured: data?.configured,
+        }
+      );
     }
 
     try {
@@ -455,6 +522,25 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
 
   const isUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || "").trim());
 
+  const inferGoalPriority = (goal = {}, idx = 0) => {
+    const explicitPriority = toFiniteInteger(goal?.priority)
+      || toFiniteInteger(goal?.resolvedGoal?.planningPriority)
+      || toFiniteInteger(goal?.planningPriority);
+    if (explicitPriority) return explicitPriority;
+    const role = String(
+      goal?.intakeConfirmedRole
+      || goal?.goalArbitrationRole
+      || goal?.goalRole
+      || goal?.resolvedGoal?.intakeConfirmedRole
+      || ""
+    ).trim().toLowerCase();
+    if (role === "primary") return 1;
+    if (role === "maintained") return Math.max(2, idx + 1);
+    if (role === "background") return Math.max(3, idx + 1);
+    if (role === "deferred") return Math.max(4, idx + 1);
+    return idx + 1;
+  };
+
   const encodeCoachMemoryField = (value) => {
     try {
       return JSON.stringify(value ?? null);
@@ -474,7 +560,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       target_value: targetValue,
       current_value: currentValue,
       target_date: toJsonDate(goal?.targetDate),
-      priority: toFiniteInteger(goal?.priority) || (idx + 1),
+      priority: inferGoalPriority(goal, idx),
       status: goal?.active === false ? "archived" : String(goal?.status || "active"),
     };
   };
@@ -806,10 +892,11 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     clearCachedAuthSession,
     authRequest,
     ensureValidSession,
-    handleSignIn,
+      handleSignIn,
     handleSignUp,
     handleSignOut,
     handleDeleteAccount,
+    checkDeleteAccountAvailability,
     sbLoad,
     sbSave,
     syncExercisePerformanceForDate,

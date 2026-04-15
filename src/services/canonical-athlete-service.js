@@ -81,6 +81,35 @@ export const inferGoalType = (goal = {}) => {
   return goal?.targetDate ? "time_bound" : "ongoing";
 };
 
+const normalizePriorityNumber = (value, fallback = null) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return Math.max(1, Math.round(numeric));
+};
+
+export const inferNormalizedGoalPriority = (goal = {}, idx = 0) => {
+  const explicitPriority = normalizePriorityNumber(
+    goal?.priority
+      ?? goal?.resolvedGoal?.planningPriority
+      ?? goal?.planningPriority,
+    null
+  );
+  if (explicitPriority) return explicitPriority;
+
+  const normalizedRole = pickFirstNonEmpty(
+    goal?.intakeConfirmedRole,
+    goal?.goalArbitrationRole,
+    goal?.goalRole,
+    goal?.resolvedGoal?.intakeConfirmedRole
+  ).toLowerCase();
+
+  if (normalizedRole === "primary") return 1;
+  if (normalizedRole === "maintained") return Math.max(2, idx + 1);
+  if (normalizedRole === "background") return Math.max(3, idx + 1);
+  if (normalizedRole === "deferred") return Math.max(4, idx + 1);
+  return idx + 1;
+};
+
 export const normalizeGoalObject = (goal = {}, idx = 0) => {
   const projectedFromResolved = goal?.resolvedGoal
     ? projectResolvedGoalToPlanningGoal(goal.resolvedGoal, idx)
@@ -102,7 +131,7 @@ export const normalizeGoalObject = (goal = {}, idx = 0) => {
     id: mergedGoal?.id || `goal_${idx + 1}`,
     name: mergedGoal?.name || "Goal",
     category: mergedGoal?.category || "running",
-    priority: Number(mergedGoal?.priority || (idx + 1)),
+    priority: inferNormalizedGoalPriority(mergedGoal, idx),
     targetDate: mergedGoal?.targetDate || "",
     measurableTarget: mergedGoal?.measurableTarget || "",
     active: mergedGoal?.active !== false,

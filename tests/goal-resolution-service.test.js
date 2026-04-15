@@ -453,7 +453,7 @@ test("mixed lose-fat-but-keep-strength intent resolves into body-comp plus stren
   assert.equal(result.resolvedGoals.length, 2);
   assert.deepEqual(result.planningGoals.map((goal) => goal.category), ["body_comp", "strength"]);
   assert.equal(result.resolvedGoals[0].summary, "Lose fat while keeping strength");
-  assert.equal(result.resolvedGoals[1].summary, "Keep strength while the primary goal leads");
+  assert.equal(result.resolvedGoals[1].summary, "Keep strength in the plan while another priority leads");
   assert.ok(result.tradeoffs.some((item) => /fat loss may limit strength/i.test(item)));
   assert.equal(result.planningGoals[1].tracking.mode, "logged_lifts");
 });
@@ -509,7 +509,7 @@ test("running plus maintained strength stays run-led and event-specific when exp
   assert.equal(result.resolvedGoals[0].planningCategory, "running");
   assert.equal(result.resolvedGoals[0].summary, "Run a half marathon in 1:45:00");
   assert.equal(result.resolvedGoals[1].goalFamily, "strength");
-  assert.equal(result.resolvedGoals[1].summary, "Keep strength while the primary goal leads");
+  assert.equal(result.resolvedGoals[1].summary, "Keep strength in the plan while another priority leads");
   assert.doesNotMatch(result.resolvedGoals[0].summary, /hybrid/i);
 });
 

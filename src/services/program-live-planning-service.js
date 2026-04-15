@@ -796,7 +796,7 @@ const buildRuntimePlanBasisExplanation = ({
       compromiseLine,
     ]).join(" "),
     todayLine: basisMode === "goal_driven_with_style"
-      ? `${styleName} is biasing today's session, but your goal stack and live constraints still lead the plan.`
+      ? `${styleName} is biasing today's session, but your priority order and live constraints still lead the plan.`
       : basisMode === "program_plus_style"
       ? `Today's session comes from ${programName} in ${fidelityLabel} mode, with ${styleName} shaping the feel around the edges.`
       : basisMode === "program_used_as_style"
@@ -807,7 +807,7 @@ const buildRuntimePlanBasisExplanation = ({
     coachLine: basisMode === "program_plus_style"
       ? `The plan is anchored to ${programName}, while ${styleName} biases exercise feel and weekly tone. Safety and real-life constraints still win first.`
       : basisMode === "goal_driven_with_style"
-      ? `${styleName} is nudging the goal-driven plan, but it is not allowed to override the main goal stack or safety rules.`
+      ? `${styleName} is nudging the goal-driven plan, but it is not allowed to override the main priority order or safety rules.`
       : basisMode === "program_used_as_style"
       ? `${programName} is being used as a style influence only, so the planner borrows its direction without pretending to run the full template.`
       : programDefinition?.id

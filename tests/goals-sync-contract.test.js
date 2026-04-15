@@ -413,16 +413,34 @@ test("handleDeleteAccount calls the server delete path and clears local caches",
 
   const module = createAuthStorageModule({
     safeFetchWithTimeout: async (url, options = {}) => {
+      const method = options.method || "GET";
       requests.push({
         url,
-        method: options.method || "GET",
+        method,
         headers: options.headers || {},
       });
-      if (url === "/api/auth/delete-account") {
+      if (url === "/api/auth/delete-account" && method === "GET") {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ ok: true, message: "Account deleted." }),
+          json: async () => ({
+            ok: true,
+            code: "delete_account_configured",
+            configured: true,
+            required: ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"],
+            missing: [],
+            message: "Account deletion is configured for this deployment.",
+            detail: "The server can resolve the signed-in user and issue an admin delete.",
+            fix: "",
+          }),
+          text: async () => "",
+        };
+      }
+      if (url === "/api/auth/delete-account" && method === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, code: "delete_account_deleted", message: "Account deleted." }),
           text: async () => "",
         };
       }
@@ -465,5 +483,74 @@ test("handleDeleteAccount calls the server delete path and clears local caches",
   assert.equal(localStorage.getItem(AUTH_CACHE_KEY), null);
   assert.equal(localStorage.getItem(LOCAL_CACHE_KEY), null);
   assert.equal(nextStorageStatus?.reason, STORAGE_STATUS_REASONS.accountDeleted);
+  assert.ok(requests.some((request) => request.url === "/api/auth/delete-account" && request.method === "GET"));
   assert.ok(requests.some((request) => request.url === "/api/auth/delete-account" && request.method === "POST"));
+});
+
+test("handleDeleteAccount stops before POST when delete-account diagnostics report missing deployment config", async () => {
+  const requests = [];
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      const method = options.method || "GET";
+      requests.push({ url, method });
+      if (url === "/api/auth/delete-account" && method === "GET") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            code: "delete_account_not_configured",
+            configured: false,
+            required: ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"],
+            missing: ["SUPABASE_SERVICE_ROLE_KEY"],
+            message: "Account deletion is not configured on this deployment yet.",
+            detail: "The deployment is missing one or more server-side Supabase settings required for auth-user deletion.",
+            fix: "Set SUPABASE_SERVICE_ROLE_KEY on the server deployment and redeploy before enabling permanent account deletion.",
+          }),
+          text: async () => "",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => "",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  const authSession = {
+    access_token: "header.payload.signature",
+    refresh_token: "refresh-token",
+    user: { id: "00000000-0000-0000-0000-000000000001" },
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+  };
+
+  await assert.rejects(
+    module.handleDeleteAccount({
+      authSession,
+      setAuthSession: noop,
+      setStorageStatus: noop,
+      clearLocalData: async () => {},
+    }),
+    (error) => {
+      assert.equal(error?.code, "delete_account_not_configured");
+      assert.deepEqual(error?.missing, ["SUPABASE_SERVICE_ROLE_KEY"]);
+      assert.match(String(error?.fix || ""), /SUPABASE_SERVICE_ROLE_KEY/i);
+      return true;
+    }
+  );
+
+  assert.ok(requests.some((request) => request.url === "/api/auth/delete-account" && request.method === "GET"));
+  assert.equal(requests.some((request) => request.url === "/api/auth/delete-account" && request.method === "POST"), false);
 });

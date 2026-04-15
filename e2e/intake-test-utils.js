@@ -441,7 +441,11 @@ async function completeIntroQuestionnaire(page, {
   await expect(page.getByTestId("intake-goals-step")).toBeVisible();
   if (String(goalText || "").trim()) {
     if (await page.getByTestId("intake-goals-primary-input").count() === 0) {
-      await page.getByTestId("intake-goals-toggle-custom").click();
+      if (await page.getByTestId("intake-goal-type-custom").count() > 0) {
+        await page.getByTestId("intake-goal-type-custom").click();
+      } else {
+        await page.getByTestId("intake-goals-toggle-custom").click();
+      }
       await expect(page.getByTestId("intake-goals-primary-input")).toBeVisible();
     }
     await page.getByTestId("intake-goals-primary-input").fill(goalText);
@@ -479,14 +483,94 @@ async function completeIntroQuestionnaire(page, {
     await page.getByTestId(`intake-goals-option-injury-impact-${toTestIdFragment(injuryImpact)}`).click();
   }
 
-  await page.getByTestId(`intake-goals-option-coaching-style-${toTestIdFragment(coachingStyle)}`).click();
-  await page.getByTestId("intake-footer-continue").click();
-  await expect(page.getByTestId("intake-interpretation-step")).toBeVisible({ timeout: 20_000 });
-
-  if (stopAtInterpretation) return;
-
+  const coachingChip = page.getByTestId(`intake-goals-option-coaching-style-${toTestIdFragment(coachingStyle)}`);
+  if (await coachingChip.count()) {
+    await coachingChip.click();
+  }
   await page.getByTestId("intake-footer-continue").click();
   await expect.poll(async () => await getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm/);
+  if (stopAtInterpretation) return;
+  const phase = await getCurrentPhase(page);
+  if (phase === "clarify") {
+    await expect(page.getByTestId("intake-clarify-step")).toBeVisible();
+  }
+  if (phase === "confirm") {
+    await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
+  }
+}
+
+async function fillPlanningRealityInputs(page, {
+  experienceLevel = "Intermediate",
+  trainingDays = "3",
+  sessionLength = "45 min",
+  trainingLocation = "Gym",
+  homeEquipment = [],
+  homeEquipmentOther = "",
+  injuryText = "",
+  injuryImpact = "",
+  coachingStyle = "",
+} = {}) {
+  const experienceLevelValue = normalizeExperienceLevelValue(experienceLevel);
+  const sessionLengthValue = normalizeSessionLengthValue(sessionLength);
+  await page.getByTestId(`intake-goals-option-experience-level-${toTestIdFragment(experienceLevelValue)}`).click();
+  await page.getByTestId(`intake-goals-option-training-days-${toTestIdFragment(trainingDays)}`).click();
+  await page.getByTestId(`intake-goals-option-session-length-${toTestIdFragment(sessionLengthValue)}`).click();
+  await page.getByTestId(`intake-goals-option-training-location-${toTestIdFragment(trainingLocation)}`).click();
+
+  if (trainingLocation === "Home" || trainingLocation === "Both") {
+    for (const option of homeEquipment) {
+      await page.getByTestId(`intake-goals-option-home-equipment-${toTestIdFragment(option)}`).click();
+    }
+    if (homeEquipment.includes("Other") && homeEquipmentOther) {
+      await page.getByTestId("intake-goals-input-home-equipment-other").fill(homeEquipmentOther);
+    }
+  }
+
+  if (String(injuryText || "").trim()) {
+    await page.getByTestId("intake-goals-input-injury-text").fill(injuryText);
+  }
+  if (injuryImpact) {
+    await page.getByTestId(`intake-goals-option-injury-impact-${toTestIdFragment(injuryImpact)}`).click();
+  }
+  if (coachingStyle) {
+    const coachingChip = page.getByTestId(`intake-goals-option-coaching-style-${toTestIdFragment(coachingStyle)}`);
+    if (await coachingChip.count()) await coachingChip.click();
+  }
+}
+
+async function fillStarterMetricInputs(page, quickMetrics = {}) {
+  for (const [fieldKey, rawValue] of Object.entries(quickMetrics || {})) {
+    if (rawValue == null || rawValue === "") continue;
+    const choiceValue = typeof rawValue === "object" && rawValue !== null ? rawValue.value : rawValue;
+    const choiceTarget = page.getByTestId(`intake-goal-metric-${fieldKey}-${toTestIdFragment(choiceValue)}`);
+    if (await choiceTarget.count()) {
+      await choiceTarget.click();
+      continue;
+    }
+    const inputTarget = page.getByTestId(`intake-goal-metric-${toTestIdFragment(fieldKey)}`);
+    if (await inputTarget.count()) {
+      await inputTarget.fill(String(choiceValue));
+    }
+  }
+}
+
+async function completeGoalLibraryIntakeStep(page, {
+  goalType = "running",
+  templateId = "",
+  quickMetrics = {},
+  stopAtReview = false,
+  ...planningOverrides
+} = {}) {
+  await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+  await page.getByTestId(`intake-goal-type-${goalType}`).click();
+  if (templateId) {
+    await page.getByTestId(`intake-featured-goal-${templateId}`).click();
+  }
+  await fillStarterMetricInputs(page, quickMetrics);
+  await fillPlanningRealityInputs(page, planningOverrides);
+  await page.getByTestId("intake-footer-continue").click();
+  await expect.poll(async () => await getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm/);
+  if (stopAtReview) return;
   const phase = await getCurrentPhase(page);
   if (phase === "clarify") {
     await expect(page.getByTestId("intake-clarify-step")).toBeVisible();
@@ -763,6 +847,7 @@ module.exports = {
   answerCurrentAnchor,
   confirmIntakeBuild,
   completeAnchors,
+  completeGoalLibraryIntakeStep,
   completeProfileSetup,
   completeIntroQuestionnaire,
   enterLocalIntakeIfNeeded,

@@ -37,10 +37,10 @@ test.describe("synthetic athlete browser probe", () => {
     await waitForPostOnboarding(page);
 
     await page.getByTestId("app-tab-settings").click();
-    await page.getByTestId("settings-surface-plan").click();
+    await page.getByTestId("settings-surface-goals").click();
     await expect(page.getByTestId("settings-goals-management")).toBeVisible();
+    await page.getByTestId("settings-surface-baselines").click();
     await expect(page.getByTestId("settings-metrics-baselines")).toBeVisible();
-    await page.getByTestId("settings-metrics-baselines").click();
     await expect(page.getByTestId("metrics-baselines-section")).toContainText(/why it matters|provenance|captured/i);
 
     await page.getByTestId("app-tab-coach").click();
@@ -61,10 +61,10 @@ test.describe("synthetic athlete browser probe", () => {
       stopAtInterpretation: true,
     });
 
+    await expect.poll(() => getCurrentFieldId(page), { timeout: 20_000 }).toMatch(/target_timeline|current_strength_baseline/);
     await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(2);
     await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/bench|chest|shoulders/i);
 
-    await page.getByTestId("intake-footer-continue").click();
     await completeAnchors(page, {
       target_timeline: { type: "natural", value: "July" },
       current_strength_baseline: { type: "strength_top_set", weight: 185, reps: 5 },
@@ -107,8 +107,7 @@ test.describe("synthetic athlete browser probe", () => {
     await waitForPostOnboarding(page);
 
     await page.getByTestId("app-tab-settings").click();
-    await page.getByTestId("settings-surface-plan").click();
-    await page.getByTestId("settings-metrics-baselines").click();
+    await page.getByTestId("settings-surface-baselines").click();
     await expect(page.getByTestId("metrics-baselines-section")).toContainText(/pool|swim/i);
     await expect(page.getByTestId("metrics-baselines-section")).toContainText(/captured|provenance|why it matters/i);
   });

@@ -354,7 +354,7 @@ test("ProgramBlock uses resolved goal structure to express horizon, proxies, and
         category: "strength",
         priority: 2,
         resolvedGoal: buildResolvedGoal({
-          summary: "Keep strength while the primary goal leads",
+          summary: "Keep strength in the plan while another priority leads",
           planningCategory: "strength",
           goalFamily: "strength",
           measurabilityTier: "exploratory_fuzzy",
@@ -383,7 +383,7 @@ test("ProgramBlock uses resolved goal structure to express horizon, proxies, and
     assert.ok(composer.programBlock.tradeoffs.some((item) => /fat loss may limit strength/i.test(item)));
     assert.equal(composer.programBlock.recoveryPosture.level, "protective");
     assert.equal(composer.programBlock.goalAllocation.prioritized, "Fat-loss momentum");
-    assert.ok(composer.programBlock.goalAllocation.maintained.includes("Keep strength while the primary goal leads"));
+    assert.ok(composer.programBlock.goalAllocation.maintained.includes("Keep strength in the plan while another priority leads"));
     assert.equal(composer.programBlock.minimizedEmphasis.role, "minimized");
     assert.ok(composer.programBlock.successCriteria.some((item) => /Waist circumference/i.test(item)));
     assert.match(composer.programBlock.dominantEmphasis.objective, /8 week target horizon/i);
@@ -458,7 +458,7 @@ test("WeeklyIntent carries maintained, minimized, and tradeoff posture for hybri
     assert.equal(planWeek.weeklyIntent.minimizedFocus, "non-primary volume");
     assert.match(planWeek.weeklyIntent.tradeoffFocus, /lower-body|race prep/i);
     assert.match(planWeek.weeklyIntent.successDefinition, /upper-body maintenance|maintenance exposures/i);
-    assert.match(planWeek.weeklyIntent.rationale, /stays maintained/i);
+    assert.match(planWeek.weeklyIntent.rationale, /stays active with less emphasis/i);
   });
 });
 
@@ -742,11 +742,11 @@ test("body-comp plus maintained strength maps to a non-race block and week", asy
         }),
       },
       {
-        name: "Keep strength while the primary goal leads",
+        name: "Keep strength in the plan while another priority leads",
         category: "strength",
         priority: 2,
         resolvedGoal: buildResolvedGoal({
-          summary: "Keep strength while the primary goal leads",
+          summary: "Keep strength in the plan while another priority leads",
           planningCategory: "strength",
           goalFamily: "strength",
           measurabilityTier: "exploratory_fuzzy",

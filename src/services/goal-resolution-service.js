@@ -739,7 +739,7 @@ const buildThirtyDaySuccessDefinition = ({ goalFamily = GOAL_FAMILIES.generalFit
       : "Complete 8 lower-body power sessions over the next 30 days and log one jump or rim-touch check each week.";
   }
   if (variant === "strength_maintenance") {
-    return "Keep two logged strength sessions each week over the next 30 days while the primary goal leads.";
+    return "Keep two logged strength sessions each week over the next 30 days while another priority leads.";
   }
   if (goalFamily === GOAL_FAMILIES.performance && planningCategory === "general_fitness") {
     return "Complete 8 swim-specific sessions over the next 30 days and log one benchmark or technique check each week.";
@@ -795,7 +795,7 @@ const buildSummary = ({
       ? `Raise your vertical jump to ${primaryMetric.targetValue} ${primaryMetric.unit}`.trim()
       : "Improve jump power and vertical pop";
   }
-  if (variant === "strength_maintenance") return "Keep strength while the primary goal leads";
+  if (variant === "strength_maintenance") return "Keep strength in the plan while another priority leads";
   if (variant === "body_comp_primary_with_strength_retention") return "Lose fat while keeping strength";
   if (goalFamily === GOAL_FAMILIES.appearance && /\bsix pack\b/i.test(rawText)) {
     return targetWindow?.targetHorizonWeeks ? "Improve midsection definition by the target window" : "Improve midsection definition";

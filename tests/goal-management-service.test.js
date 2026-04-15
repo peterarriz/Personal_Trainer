@@ -74,7 +74,19 @@ test("goal settings view model shows current and archived goals with field prove
           primaryMetric: { key: "ten_k_time", label: "10k time", targetValue: "46:00", unit: "time" },
         }),
       ],
-      history: [],
+      history: [
+        {
+          id: "history_completed_10k",
+          changeType: GOAL_MANAGEMENT_CHANGE_TYPES.archive,
+          changedAt: "2026-05-11T09:00:00.000Z",
+          goalSummary: "Run a spring 10k",
+          changedFields: [{ field: "status", label: "Status" }],
+          impactLines: ["Run a spring 10k is marked completed and moves out of the active priority order."],
+          archiveStatus: GOAL_ARCHIVE_STATUSES.completed,
+          previousStatus: "active",
+          nextStatus: GOAL_ARCHIVE_STATUSES.completed,
+        },
+      ],
     },
   };
   const view = buildGoalSettingsViewModel({
@@ -111,6 +123,10 @@ test("goal settings view model shows current and archived goals with field prove
   assert.match(view.currentGoals[1].timingDetail || "", /next 3 months|visible plan/i);
   assert.match(view.currentGoals[0].fieldRows.find((row) => row.field === "summary")?.provenanceSummary || "", /confirmed|imported/i);
   assert.equal(view.archivedGoals[0].status, GOAL_ARCHIVE_STATUSES.completed);
+  assert.equal(view.lifecycleSections.find((section) => section.key === "completedGoals")?.count, 1);
+  assert.equal(view.counts.completedCount, 1);
+  assert.match(view.historyFeed[0]?.headline || "", /completed run a spring 10k/i);
+  assert.match(view.historyFeed[0]?.detail || "", /completed/i);
 });
 
 test("reprioritize preview updates order and impact copy before commit", () => {
@@ -215,7 +231,7 @@ test("adding a new goal from the preset library previews a clean active goal ins
   assert.equal(preview.nextViewModel.currentGoals[1].summary, "Bench press 225 lb");
   assert.equal(preview.nextResolvedGoals[1].goalTemplateId, "bench_225");
   assert.match(preview.changeLabel, /Add Bench press 225 lb/i);
-  assert.match(preview.impactLines.join(" "), /joins the active goal stack/i);
+  assert.match(preview.impactLines.join(" "), /joins the active priority order/i);
 });
 
 test("archive and restore previews keep goal history while moving goals in and out of the active stack", () => {
@@ -256,6 +272,8 @@ test("archive and restore previews keep goal history while moving goals in and o
   assert.equal(archivePreview.nextViewModel.currentGoals.length, 1);
   assert.equal(archivePreview.nextGoalManagement.archivedGoals.length, 1);
   assert.equal(archivePreview.nextGoalManagement.archivedGoals[0].status, GOAL_ARCHIVE_STATUSES.completed);
+  assert.equal(archivePreview.historyEntry.previousStatus, "active");
+  assert.equal(archivePreview.historyEntry.nextStatus, GOAL_ARCHIVE_STATUSES.completed);
 
   const restorePreview = buildGoalManagementPreview({
     goals: archivePreview.nextGoals,
@@ -273,5 +291,92 @@ test("archive and restore previews keep goal history while moving goals in and o
   assert.ok(restorePreview);
   assert.equal(restorePreview.nextViewModel.currentGoals.length, 2);
   assert.equal(restorePreview.nextGoalManagement.archivedGoals.length, 0);
-  assert.match(restorePreview.impactLines.join(" "), /returns to the active stack/i);
+  assert.match(restorePreview.impactLines.join(" "), /returns to the active priority order/i);
+  assert.equal(restorePreview.historyEntry.previousStatus, GOAL_ARCHIVE_STATUSES.completed);
+  assert.equal(restorePreview.historyEntry.nextStatus, "active");
+});
+
+test("pause preview routes a goal into the paused lifecycle bucket and emits a readable audit event", () => {
+  const goals = [
+    buildGoal({
+      runtimeId: "goal_running",
+      recordId: "goal_running_record",
+      summary: "Run a half marathon in 1:45:00",
+      category: "running",
+      goalFamily: "performance",
+      priority: 1,
+      primaryMetric: { key: "half_marathon_time", label: "Half marathon time", targetValue: "1:45:00", unit: "time" },
+    }),
+    buildGoal({
+      runtimeId: "goal_bench",
+      recordId: "goal_bench_record",
+      summary: "Bench press 225 lb",
+      category: "strength",
+      goalFamily: "strength",
+      priority: 2,
+      primaryMetric: { key: "bench_press_weight", label: "Bench 1RM", targetValue: "225", unit: "lb" },
+    }),
+  ];
+  const preview = buildGoalManagementPreview({
+    goals,
+    personalization: { goalManagement: { archivedGoals: [], history: [] } },
+    change: {
+      type: GOAL_MANAGEMENT_CHANGE_TYPES.archive,
+      goalId: "goal_bench_record",
+      archiveStatus: GOAL_ARCHIVE_STATUSES.paused,
+    },
+    now: "2026-04-14T12:00:00.000Z",
+  });
+
+  assert.ok(preview);
+  assert.equal(preview.nextGoalManagement.archivedGoals[0].status, GOAL_ARCHIVE_STATUSES.paused);
+  assert.equal(preview.historyEntry.previousStatus, "active");
+  assert.equal(preview.historyEntry.nextStatus, GOAL_ARCHIVE_STATUSES.paused);
+  assert.match(preview.historyEntry.changeLabel || "", /paused/i);
+  assert.match(preview.impactLines.join(" "), /paused goals/i);
+
+  const nextView = buildGoalSettingsViewModel({
+    goals: preview.nextGoals,
+    personalization: { goalManagement: preview.nextGoalManagement },
+    now: "2026-04-14T12:00:00.000Z",
+  });
+  assert.equal(nextView.lifecycleSections.find((section) => section.key === "pausedGoals")?.count, 1);
+});
+
+test("goal management previews do not mutate the current goals or stored goal-management history", () => {
+  const goals = [
+    buildGoal({
+      runtimeId: "goal_cut",
+      recordId: "goal_cut_record",
+      summary: "Get leaner",
+      category: "body_comp",
+      goalFamily: "body_comp",
+      priority: 1,
+      proxyMetrics: [{ key: "waist", label: "Waist trend", unit: "in" }],
+    }),
+  ];
+  const personalization = {
+    goalManagement: {
+      archivedGoals: [],
+      history: [],
+    },
+  };
+  const goalsBefore = JSON.parse(JSON.stringify(goals));
+  const personalizationBefore = JSON.parse(JSON.stringify(personalization));
+
+  const preview = buildGoalManagementPreview({
+    goals,
+    personalization,
+    change: {
+      type: GOAL_MANAGEMENT_CHANGE_TYPES.archive,
+      goalId: "goal_cut_record",
+      archiveStatus: GOAL_ARCHIVE_STATUSES.archived,
+    },
+    now: "2026-04-14T12:00:00.000Z",
+  });
+
+  assert.ok(preview);
+  assert.deepEqual(goals, goalsBefore);
+  assert.deepEqual(personalization, personalizationBefore);
+  assert.match(preview.explicitHistoryNote || "", /Historical plan truth/i);
 });

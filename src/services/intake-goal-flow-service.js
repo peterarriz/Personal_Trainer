@@ -601,10 +601,10 @@ export const INTAKE_CONFIRMATION_STATUSES = {
 };
 
 export const GOAL_STACK_ROLE_LABELS = {
-  [GOAL_STACK_ROLES.primary]: "Lead",
-  [GOAL_STACK_ROLES.maintained]: "Maintained",
-  [GOAL_STACK_ROLES.background]: "Support (background)",
-  [GOAL_STACK_ROLES.deferred]: "Deferred",
+  [GOAL_STACK_ROLES.primary]: "Priority 1",
+  [GOAL_STACK_ROLES.maintained]: "Priority 2",
+  [GOAL_STACK_ROLES.background]: "Priority 3",
+  [GOAL_STACK_ROLES.deferred]: "Later priority",
 };
 
 export const GOAL_REVIEW_LANE_KEYS = {
@@ -628,8 +628,8 @@ const GOAL_REVIEW_LANE_META = {
     emptyState: "No Priority 3 goal is selected yet.",
   },
   [GOAL_REVIEW_LANE_KEYS.deferredGoals]: {
-    title: "Additional goals that still matter",
-    emptyState: "No additional goals are sitting below the top priorities right now.",
+    title: "Priorities 4+",
+    emptyState: "No goals are stacked below Priority 3 right now.",
   },
 };
 
@@ -652,26 +652,43 @@ const GOAL_REVIEW_ACTIONS = {
   },
 };
 
-const ORDERED_GOAL_STACK_PRIORITY_LABELS = ["Priority 1", "Priority 2", "Priority 3"];
-const ORDERED_GOAL_STACK_ADDITIONAL_LABEL = "Additional goals that still matter";
+const ORDERED_GOAL_STACK_VISIBLE_PRIORITY_COUNT = 3;
+const ORDERED_GOAL_STACK_ADDITIONAL_LABEL = "Priorities 4+";
+
+const buildPriorityNumber = (priorityIndex = null) => (
+  Number.isFinite(Number(priorityIndex)) && Number(priorityIndex) >= 0
+    ? Math.max(1, Math.round(Number(priorityIndex)) + 1)
+    : null
+);
 
 const buildOrderedGoalPriorityLabel = (priorityIndex = null) => (
-  Number.isFinite(Number(priorityIndex)) && Number(priorityIndex) >= 0 && Number(priorityIndex) < ORDERED_GOAL_STACK_PRIORITY_LABELS.length
-    ? ORDERED_GOAL_STACK_PRIORITY_LABELS[Number(priorityIndex)]
-    : "Additional goal"
+  buildPriorityNumber(priorityIndex)
+    ? `Priority ${buildPriorityNumber(priorityIndex)}`
+    : "Goal"
 );
 
 const buildOrderedGoalPrioritySectionLabel = (priorityIndex = null) => (
-  Number.isFinite(Number(priorityIndex)) && Number(priorityIndex) >= 0 && Number(priorityIndex) < ORDERED_GOAL_STACK_PRIORITY_LABELS.length
-    ? ORDERED_GOAL_STACK_PRIORITY_LABELS[Number(priorityIndex)]
+  buildPriorityNumber(priorityIndex) && Number(priorityIndex) < ORDERED_GOAL_STACK_VISIBLE_PRIORITY_COUNT
+    ? buildOrderedGoalPriorityLabel(priorityIndex)
+    : ORDERED_GOAL_STACK_ADDITIONAL_LABEL
+);
+
+const buildOrderedGoalPriorityRangeLabel = ({
+  startIndex = null,
+  endIndex = null,
+} = {}) => (
+  buildPriorityNumber(startIndex) && buildPriorityNumber(endIndex)
+    ? buildPriorityNumber(startIndex) === buildPriorityNumber(endIndex)
+      ? buildOrderedGoalPriorityLabel(startIndex)
+      : `Priorities ${buildPriorityNumber(startIndex)}-${buildPriorityNumber(endIndex)}`
     : ORDERED_GOAL_STACK_ADDITIONAL_LABEL
 );
 
 const buildOrderedGoalPriorityHelper = (priorityIndex = null) => {
-  if (Number(priorityIndex) === 0) return "Gets the clearest push in this block.";
-  if (Number(priorityIndex) === 1) return "Preserved while Priority 1 drives most progression.";
-  if (Number(priorityIndex) === 2) return "Still influences exercise selection and tracking where possible.";
-  return "Still matters and stays visible even if it does not drive this block directly.";
+  if (Number(priorityIndex) === 0) return "Gets the most planning weight right now.";
+  if (Number(priorityIndex) === 1) return "Still shapes the block, with slightly less weight than Priority 1.";
+  if (Number(priorityIndex) === 2) return "Balanced into the week after the first two priorities.";
+  return "Stays visible in the stack and can still shape exercise selection, sequencing, and tracking when it fits cleanly.";
 };
 
 const normalizeGoalAdjustmentText = (value = "") => {
@@ -960,18 +977,15 @@ const buildGoalReviewEntry = ({
     ? Math.max(0, Math.round(Number(priorityIndex)))
     : null;
   const timing = buildGoalTimingPresentation(goal);
-  const fallbackRationale = role === GOAL_STACK_ROLES.primary
-    ? "Priority 1 gets the clearest push in this block."
-    : role === GOAL_STACK_ROLES.maintained
-    ? "Priority 2 is preserved while Priority 1 drives most progression."
-    : role === GOAL_STACK_ROLES.background
-    ? "Lower-priority goals still influence exercise selection and tracking where possible."
-    : "This stays visible for later blocks without overloading the current one.";
+  const fallbackRationale = buildOrderedGoalPriorityHelper(normalizedPriorityIndex);
   return {
     id: goal?.id,
     summary: sanitizeDisplayLine(goal?.summary || "", 160),
     role,
-    roleLabel: sanitizeDisplayLine(GOAL_STACK_ROLE_LABELS[role] || "Goal", 80),
+    roleLabel: sanitizeDisplayLine(
+      buildOrderedGoalPriorityLabel(normalizedPriorityIndex) || GOAL_STACK_ROLE_LABELS[role] || "Goal",
+      80
+    ),
     priorityIndex: normalizedPriorityIndex,
     priorityLabel: sanitizeDisplayLine(buildOrderedGoalPriorityLabel(normalizedPriorityIndex), 80),
     prioritySectionLabel: sanitizeDisplayLine(buildOrderedGoalPrioritySectionLabel(normalizedPriorityIndex), 120),
@@ -1010,7 +1024,7 @@ const buildLeadPriorityBasis = ({ leadGoal = null, goalFeasibility = null } = {}
     parts.push("it is the most specific target");
   }
   if (goalId && recommendedLeadId && goalId === recommendedLeadId) {
-    parts.push("it came through the feasibility gate as the cleanest lead");
+    parts.push("it came through the feasibility gate as the clearest Priority 1 fit");
   }
   if (leadGoal?.arbitrationConfirmedPrimary || Number(leadGoal?.planningPriority || 99) === 1) {
     parts.push("it carries the strongest user priority signal");
@@ -1030,17 +1044,21 @@ const buildReviewTradeoffStatement = ({
   const priorityOneGoal = visibleGoals[0] || null;
   if (!priorityOneGoal?.summary) return "";
   const lines = [
-    `Priority 1 is ${priorityOneGoal.summary}. It gets the clearest push because ${buildLeadPriorityBasis({ leadGoal: priorityOneGoal, goalFeasibility })}.`,
+    `Priority 1 is ${priorityOneGoal.summary}. It gets the most planning weight because ${buildLeadPriorityBasis({ leadGoal: priorityOneGoal, goalFeasibility })}.`,
   ];
   if (visibleGoals[1]?.summary) {
-    lines.push(`Priority 2 is ${visibleGoals[1].summary}. It is preserved while Priority 1 drives most progression.`);
+    lines.push(`Priority 2 is ${visibleGoals[1].summary}. It still shapes the block, with slightly less planning weight than Priority 1.`);
   }
   if (visibleGoals[2]?.summary) {
-    lines.push(`Priority 3 is ${visibleGoals[2].summary}. Lower-priority goals still influence exercise selection and tracking where possible.`);
+    lines.push(`Priority 3 is ${visibleGoals[2].summary}. It stays in the weekly balance when it fits cleanly.`);
   }
-  const additionalSummary = formatGoalSummaryList(visibleGoals.slice(3));
+  const additionalGoals = visibleGoals.slice(3);
+  const additionalSummary = formatGoalSummaryList(additionalGoals);
   if (additionalSummary) {
-    lines.push(`${additionalSummary} ${visibleGoals.slice(3).length === 1 ? "stays" : "stay"} visible as additional goals that still matter. They can still influence exercise selection and tracking where possible.`);
+    lines.push(`${buildOrderedGoalPriorityRangeLabel({
+      startIndex: 3,
+      endIndex: visibleGoals.length - 1,
+    })} include ${additionalSummary}. ${additionalGoals.length === 1 ? "It stays" : "They stay"} visible in the stack and can still shape exercise selection, sequencing, and tracking when it fits cleanly.`);
   }
   if (primaryTradeoff) {
     lines.push(`${sentenceCase(primaryTradeoff).replace(/[.]+$/g, "")}.`);
@@ -1078,13 +1096,13 @@ const buildOrderedGoalStackContract = ({
       {
         key: "priority_3",
         title: "Priority 3",
-        empty_state: "Priority 3 can still shape the plan when it fits.",
+        empty_state: "Priority 3 can still shape the plan when it fits cleanly.",
         goals: items[2] ? [items[2]] : [],
       },
       {
         key: "additional_goals",
         title: ORDERED_GOAL_STACK_ADDITIONAL_LABEL,
-        empty_state: "No additional goals are sitting below the top three right now.",
+        empty_state: "No goals are stacked below Priority 3 right now.",
         goals: items.slice(3),
       },
     ],
@@ -1380,8 +1398,8 @@ export const buildIntakeGoalStackReviewModel = ({
         enabled: confirmation.keepResiliencePriority !== false,
         label: "Recovery stays protected",
         summary: confirmedGoals.length >= 2
-          ? "We'll still protect recovery so Priority 1 can push without the week falling apart."
-          : "We'll keep recovery in a good place while Priority 1 gets most of the attention.",
+          ? "We'll still protect recovery so the highest priorities can push without the week falling apart."
+          : "We'll keep recovery in a good place while Priority 1 gets most of the planning weight.",
         trackingLabels: ["Session completion", "Readiness", "Recovery drift"],
       }
     : null;
@@ -1476,7 +1494,7 @@ export const buildIntakeSecondaryGoalPrompt = ({
     prompt: sanitizeDisplayLine("Anything else you want to improve or maintain while chasing this?", 180),
     helperText: sanitizeDisplayLine(inferredGoals.length
       ? `Optional. I already picked up ${inferredGoals.join(" and ")} from what you said. Pick one of the quick options below, or add your own if needed.`
-      : "Optional. Pick one of the quick options below, or add your own if you want the plan to hold something else in the background.", 320),
+      : "Optional. Pick one of the quick options below, or add your own if you want another goal to stay visible in the priority order.", 320),
     placeholder: sanitizeDisplayLine("Example: get a six pack, bench 225, or keep upper body", 120),
     quickOptions: [
       { key: SECONDARY_GOAL_RESPONSE_KEYS.skip, label: "Skip" },
@@ -1850,7 +1868,7 @@ const buildStageRoleLabel = ({
   if (normalizedRole === GOAL_STACK_ROLES.primary) return "Priority 1";
   if (normalizedRole === GOAL_STACK_ROLES.maintained) return "Priority 2";
   if (normalizedRole === GOAL_STACK_ROLES.background) return "Priority 3";
-  if (normalizedRole === GOAL_STACK_ROLES.deferred) return "Additional goal";
+  if (normalizedRole === GOAL_STACK_ROLES.deferred) return "Priority 4+";
   return "Goal stack";
 };
 
@@ -2206,7 +2224,7 @@ export const buildIntakeSummaryRailModel = ({
                 `${goal.priorityLabel || goal.roleLabel ? `${goal.priorityLabel || goal.roleLabel}: ` : ""}${goal.summary}${goal.goalTypeLabel ? ` - ${goal.goalTypeLabel}` : ""}${goal.timingLabel ? ` - ${goal.timingLabel}` : ""}`
               ))
             : (yourWords.length
-              ? ["We will resolve your goal stack after you continue."]
+              ? ["We will resolve your priority order after you continue."]
               : ["Your interpreted goals will show up here."]),
           220
         ),
