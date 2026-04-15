@@ -296,6 +296,36 @@ test("secondary-goal arbitration dedupes the same appearance lane when it is pre
   assert.equal(appearanceGoals.length, 1);
 });
 
+test("additional goals stay isolated from a hybrid primary sentence during arbitration", () => {
+  const rawGoalText = "Bench 225 and get leaner by summer";
+  const packet = buildIntakePacket({ rawGoalText });
+  packet.intake.baselineContext.primaryGoalLabel = rawGoalText;
+  const resolution = resolvePrimaryGoal(rawGoalText, packet);
+  const arbitration = buildGoalArbitrationStack({
+    resolvedGoals: resolution.resolvedGoals,
+    confirmedPrimaryGoal: resolution.resolvedGoals[0],
+    additionalGoalTexts: ["Jump higher again", "Keep shoulders healthy"],
+    typedIntakePacket: packet,
+    now: "2026-04-11",
+  });
+
+  const jumpGoals = arbitration.goals.filter((goal) => goal?.rawIntent?.text === "Jump higher again");
+  const shoulderGoals = arbitration.goals.filter((goal) => goal?.rawIntent?.text === "Keep shoulders healthy");
+
+  assert.equal(jumpGoals.length, 1);
+  assert.equal(jumpGoals[0]?.goalFamily, "athletic_power");
+  assert.equal(shoulderGoals.length, 1);
+  assert.equal(shoulderGoals[0]?.goalFamily, "general_fitness");
+  assert.equal(
+    arbitration.goals.filter((goal) => goal?.rawIntent?.text === "Jump higher again" && goal?.goalFamily !== "athletic_power").length,
+    0
+  );
+  assert.equal(
+    arbitration.goals.filter((goal) => goal?.rawIntent?.text === "Keep shoulders healthy" && goal?.goalFamily !== "general_fitness").length,
+    0
+  );
+});
+
 test("malformed bmi phrasing requires clarification before arbitration finalizes", () => {
   const packet = buildIntakePacket({ rawGoalText: "BMI under 10%" });
   const resolution = resolvePrimaryGoal("BMI under 10%", packet);

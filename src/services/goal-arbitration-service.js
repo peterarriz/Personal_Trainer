@@ -61,7 +61,7 @@ const buildMinimalIntakePacket = ({ rawGoalText = "", typedIntakePacket = null }
     intake: {
       rawGoalText,
       baselineContext: {
-        primaryGoalLabel: sanitizeText(baselineContext?.primaryGoalLabel || "General Fitness", 80) || "General Fitness",
+        primaryGoalLabel: sanitizeText(rawGoalText || baselineContext?.primaryGoalLabel || "General Fitness", 80) || "General Fitness",
         currentBaseline: sanitizeText(baselineContext?.currentBaseline || "", 180),
       },
       scheduleReality: {

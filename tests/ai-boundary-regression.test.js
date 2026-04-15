@@ -250,14 +250,65 @@ test("typed AI packet generation produces a bounded proposal-only packet", async
 
 test("typed intake AI packet includes bounded intake context and keeps the same proposal-only boundary", async () => {
   await withMockedNow("2026-04-09T12:02:00Z", async () => {
+    const packetArgs = createIntakePacketArgs();
     const packet = buildAiStatePacket({
       intent: AI_PACKET_INTENTS.intakeInterpretation,
-      ...createIntakePacketArgs(),
+      ...packetArgs,
+      intakeContext: {
+        ...packetArgs.intakeContext,
+        goalTemplateSelection: {
+          entryMode: "preset",
+          templateId: "swim_faster_mile",
+          templateCategoryId: "swim",
+          templateTitle: "Swim a faster mile",
+          goalText: "Swim a faster mile",
+          summary: "Swim a faster mile",
+          planningCategory: "swim",
+          goalFamily: "performance",
+          primaryMetric: {
+            key: "swim_mile_time",
+            label: "Swim mile time",
+            unit: "time",
+            targetValue: "28:00",
+            kind: "primary",
+          },
+          proxyMetrics: [
+            { key: "weekly_swim_frequency", label: "Weekly swim frequency", unit: "sessions", kind: "proxy" },
+          ],
+          helper: "Exact swim benchmark goal.",
+        },
+        goalTemplateStack: [
+          {
+            entryMode: "preset",
+            templateId: "swim_faster_mile",
+            templateCategoryId: "swim",
+            templateTitle: "Swim a faster mile",
+            goalText: "Swim a faster mile",
+            summary: "Swim a faster mile",
+            planningCategory: "swim",
+            goalFamily: "performance",
+          },
+          {
+            entryMode: "preset",
+            templateId: "maintain_strength",
+            templateCategoryId: "strength",
+            templateTitle: "Maintain strength",
+            goalText: "Maintain strength",
+            summary: "Maintain strength with repeatable exposures",
+            planningCategory: "strength",
+            goalFamily: "strength",
+          },
+        ],
+      },
     });
 
     assert.equal(packet.version, AI_PACKET_VERSION);
     assert.equal(packet.intent, AI_PACKET_INTENTS.intakeInterpretation);
     assert.equal(packet.intake.rawGoalText, "I want to look athletic again and maybe run a 10k this fall.");
+    assert.equal(packet.intake.goalTemplateSelection.templateId, "swim_faster_mile");
+    assert.equal(packet.intake.goalTemplateSelection.primaryMetric.key, "swim_mile_time");
+    assert.equal(packet.intake.goalTemplateStack.length, 2);
+    assert.equal(packet.intake.goalTemplateStack[1].templateId, "maintain_strength");
     assert.equal(packet.intake.baselineContext.experienceLevel, "Intermediate");
     assert.equal(packet.intake.scheduleReality.trainingDaysPerWeek, 4);
     assert.deepEqual(packet.intake.equipmentAccessContext.equipment, ["Dumbbells", "Pull-up bar"]);

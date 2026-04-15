@@ -85,7 +85,7 @@ test.describe("mobile surface simplification", () => {
     await page.getByTestId("settings-surface-plan").click();
     await expect(page.getByTestId("settings-plan-management")).toBeVisible();
     await expect(page.getByText("Programs and styles")).toBeVisible();
-    await expect(page.getByText("Goal changes", { exact: true })).toBeVisible();
+    await expect(page.getByText("Advanced text request", { exact: true })).toBeVisible();
 
     await page.getByTestId("settings-surface-advanced").click();
     await expect(page.getByTestId("settings-advanced-section")).toBeVisible();

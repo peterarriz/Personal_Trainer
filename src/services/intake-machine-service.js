@@ -29,6 +29,9 @@ import {
   TRANSCRIPT_MESSAGE_KINDS,
 } from "./intake-transcript-service.js";
 import {
+  findGoalTemplateSelectionForGoalText,
+} from "./goal-template-catalog-service.js";
+import {
   isOpenEndedTimingValue,
 } from "./goal-timing-service.js";
 import { resolveGoalTranslation } from "./goal-resolution-service.js";
@@ -403,7 +406,11 @@ const buildGoalFeasibilityContextFromIntake = (intakeContext = {}) => ({
   },
 });
 
-const buildArbitrationIntakePacket = ({ typedIntakePacket = null, rawGoalText = "" } = {}) => {
+const buildArbitrationIntakePacket = ({
+  typedIntakePacket = null,
+  rawGoalText = "",
+  goalTemplateSelection = null,
+} = {}) => {
   const packet = typedIntakePacket && typeof typedIntakePacket === "object"
     ? typedIntakePacket
     : { version: "2026-04-v1", intent: "intake_interpretation" };
@@ -413,6 +420,44 @@ const buildArbitrationIntakePacket = ({ typedIntakePacket = null, rawGoalText = 
     intake: {
       ...intake,
       rawGoalText,
+      goalTemplateSelection: goalTemplateSelection || intake?.goalTemplateSelection || null,
+    },
+  };
+};
+
+const buildFocusedArbitrationIntakePacket = ({
+  typedIntakePacket = null,
+  rawGoalText = "",
+  goalTemplateSelection = null,
+} = {}) => {
+  const packet = typedIntakePacket && typeof typedIntakePacket === "object"
+    ? typedIntakePacket
+    : { version: "2026-04-v1", intent: "intake_interpretation" };
+  const intake = packet?.intake || packet?.intakeContext || {};
+  return {
+    ...packet,
+    intake: {
+      rawGoalText,
+      goalTemplateSelection: goalTemplateSelection || null,
+      baselineContext: {
+        ...(intake?.baselineContext || {}),
+        primaryGoalLabel: rawGoalText || intake?.baselineContext?.primaryGoalLabel || "",
+      },
+      scheduleReality: {
+        ...(intake?.scheduleReality || {}),
+      },
+      equipmentAccessContext: {
+        ...(intake?.equipmentAccessContext || {}),
+      },
+      injuryConstraintContext: {
+        ...(intake?.injuryConstraintContext || {}),
+      },
+      userProvidedConstraints: {
+        timingConstraints: [],
+        appearanceConstraints: [],
+        additionalContext: sanitizeText(intake?.userProvidedConstraints?.additionalContext || "", 180),
+      },
+      goalCompletenessContext: {},
     },
   };
 };
@@ -424,6 +469,14 @@ const buildConfirmedArbitrationInputs = ({
 } = {}) => {
   const primaryGoalText = sanitizeText(answers?.goal_intent || "", 320);
   const additionalGoalTexts = readAdditionalGoalEntries({ answers });
+  const primaryGoalTemplateSelectionCandidate = findGoalTemplateSelectionForGoalText({
+    answers,
+    goalText: primaryGoalText,
+    index: 0,
+  });
+  const primaryGoalTemplateSelection = primaryGoalTemplateSelectionCandidate?.templateId
+    ? primaryGoalTemplateSelectionCandidate
+    : null;
   const primaryGoalConfirmation = buildIntakeMachineGoalConfirmation({
     answers,
     confirmed: true,
@@ -437,6 +490,7 @@ const buildConfirmedArbitrationInputs = ({
           typedIntakePacket: buildArbitrationIntakePacket({
             typedIntakePacket,
             rawGoalText: primaryGoalText,
+            goalTemplateSelection: primaryGoalTemplateSelection,
           }),
           rawGoalText: primaryGoalText,
         }),
@@ -444,13 +498,22 @@ const buildConfirmedArbitrationInputs = ({
         now,
       })?.resolvedGoals?.[0] || null
     : null;
-  const confirmedAdditionalGoals = additionalGoalTexts.flatMap((goalText) => {
+  const confirmedAdditionalGoals = additionalGoalTexts.flatMap((goalText, index) => {
+    const goalTemplateSelectionCandidate = findGoalTemplateSelectionForGoalText({
+      answers,
+      goalText,
+      index: index + 1,
+    });
+    const goalTemplateSelection = goalTemplateSelectionCandidate?.templateId
+      ? goalTemplateSelectionCandidate
+      : null;
     const resolution = resolveGoalTranslation({
       rawUserGoalIntent: goalText,
       typedIntakePacket: buildDeterministicTypedIntakePacket({
-        typedIntakePacket: buildArbitrationIntakePacket({
+        typedIntakePacket: buildFocusedArbitrationIntakePacket({
           typedIntakePacket,
           rawGoalText: goalText,
+          goalTemplateSelection,
         }),
         rawGoalText: goalText,
       }),

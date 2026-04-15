@@ -147,6 +147,7 @@ const normalizeResolvedGoal = (goal = {}, index = 0) => {
     summary: sanitizeText(goal?.summary || goal?.name || "Resolved goal", 160),
     planningCategory: sanitizeText(goal?.planningCategory || goal?.category || "general_fitness", 40).toLowerCase() || "general_fitness",
     goalFamily: sanitizeText(goal?.goalFamily || "", 40).toLowerCase(),
+    primaryDomain: sanitizeText(goal?.primaryDomain || goal?.resolvedGoal?.primaryDomain || "", 80).toLowerCase(),
     measurabilityTier: inferMeasurabilityTier(goal),
     primaryMetric,
     proxyMetrics,
@@ -260,6 +261,51 @@ const getManualRunBenchmarkSeries = ({ manualProgressInputs = {} } = {}) => {
     ...toArray(benchmarkPool?.run_results),
     ...toArray(manualProgressInputs?.run_results),
     ...toArray(manualProgressInputs?.runBenchmarks),
+  ]);
+};
+
+const normalizeManualSwimBenchmarkSeries = (rows = []) => (Array.isArray(rows) ? rows : [])
+  .map((row) => {
+    const date = sanitizeText(row?.date || row?.dateKey || row?.d || "", 24);
+    const rawValue = sanitizeText(row?.value || row?.benchmark || row?.text || "", 120);
+    const parsedValueMatch = rawValue.match(/(\d+(?:\.\d+)?)\s*(yd|yard|yards|m|meter|meters|metre|metres)\s*(?:in\s*)?(\d+:\d{2}(?::\d{2})?)/i);
+    const distance = toFiniteNumber(
+      row?.distance
+      ?? row?.yards
+      ?? row?.meters
+      ?? parsedValueMatch?.[1],
+      null
+    );
+    const distanceUnit = sanitizeText(
+      row?.distanceUnit
+      || row?.unit
+      || parsedValueMatch?.[2]
+      || "yd",
+      12
+    ).toLowerCase() || "yd";
+    const duration = sanitizeText(row?.duration || row?.swimTime || parsedValueMatch?.[3] || "", 24);
+    const durationSeconds = parseDurationTextToSeconds(duration);
+    const note = sanitizeText(row?.note || rawValue || "", 160);
+    return {
+      date,
+      distance,
+      distanceUnit,
+      duration,
+      durationSeconds,
+      note,
+    };
+  })
+  .filter((row) => row.date && (Number.isFinite(row.distance) || Number.isFinite(row.durationSeconds) || row.duration))
+  .sort((a, b) => a.date.localeCompare(b.date));
+
+const getManualSwimBenchmarkSeries = ({ manualProgressInputs = {} } = {}) => {
+  const benchmarkPool = manualProgressInputs?.benchmarks || {};
+  const metricPool = manualProgressInputs?.metrics || {};
+  return normalizeManualSwimBenchmarkSeries([
+    ...toArray(benchmarkPool?.swim_benchmark),
+    ...toArray(metricPool?.swim_benchmark),
+    ...toArray(manualProgressInputs?.swim_benchmark),
+    ...toArray(manualProgressInputs?.swimBenchmarks),
   ]);
 };
 
@@ -559,6 +605,97 @@ const buildRunTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs 
   });
 
   return [paceItem, volumeItem, progressionItem];
+};
+
+const formatSwimBenchmarkLabel = (benchmark = null) => {
+  if (!benchmark) return "No swim benchmark logged yet";
+  const distanceLabel = Number.isFinite(benchmark?.distance)
+    ? `${formatNumber(benchmark.distance, 0)} ${benchmark.distanceUnit || "yd"}`
+    : "";
+  const durationLabel = sanitizeText(benchmark?.duration || "", 24);
+  return [distanceLabel, durationLabel ? `in ${durationLabel}` : "", benchmark?.date ? `on ${benchmark.date}` : ""]
+    .filter(Boolean)
+    .join(" ");
+};
+
+const isSwimGoal = (goal = {}) => (
+  goal?.primaryDomain === "swimming_endurance_technique"
+  || (goal?.proxyMetrics || []).some((metric) => /swim/.test(String(metric?.key || "")))
+  || /\bswim\b/i.test(String(goal?.summary || ""))
+);
+
+const buildSwimTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
+  const swimBenchmarks = getManualSwimBenchmarkSeries({ manualProgressInputs });
+  const recentBenchmarks = swimBenchmarks.filter((entry) => isWithinAgeWindow({ dateKey: entry?.date || "", now, minDays: 0, maxDays: 42 }));
+  const latestBenchmark = recentBenchmarks[recentBenchmarks.length - 1] || swimBenchmarks[swimBenchmarks.length - 1] || null;
+  const comparableBenchmarks = swimBenchmarks.filter((entry) => (
+    Number.isFinite(entry?.durationSeconds)
+    && Number.isFinite(latestBenchmark?.distance)
+    && entry?.distance === latestBenchmark?.distance
+    && String(entry?.distanceUnit || "") === String(latestBenchmark?.distanceUnit || "")
+  ));
+  const firstComparable = comparableBenchmarks[0] || null;
+  const latestComparable = comparableBenchmarks[comparableBenchmarks.length - 1] || latestBenchmark || null;
+  const improvementSeconds = Number.isFinite(firstComparable?.durationSeconds) && Number.isFinite(latestComparable?.durationSeconds)
+    ? Math.round(firstComparable.durationSeconds - latestComparable.durationSeconds)
+    : null;
+  const swimRealitySeries = toArray(manualProgressInputs?.metrics?.swim_access_reality || manualProgressInputs?.swim_access_reality)
+    .map((row) => ({
+      date: sanitizeText(row?.date || row?.dateKey || "", 24),
+      value: sanitizeText(row?.label || row?.value || row?.note || "", 80),
+      note: sanitizeText(row?.note || row?.label || row?.value || "", 120),
+    }))
+    .filter((row) => row.date && row.value)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const latestReality = swimRealitySeries[swimRealitySeries.length - 1] || null;
+
+  const benchmarkItem = createTrackedItem({
+    key: "swim_benchmark_retest",
+    label: "Swim benchmark",
+    kind: goal?.primaryMetric?.targetValue ? "primary" : "proxy",
+    metricRefs: ["swim_benchmark_retest", goal?.primaryMetric?.key || ""],
+    status: latestBenchmark
+      ? GOAL_PROGRESS_STATUSES.building
+      : GOAL_PROGRESS_STATUSES.needsData,
+    currentDisplay: latestBenchmark
+      ? `Latest benchmark ${formatSwimBenchmarkLabel(latestBenchmark)}`
+      : "First swim benchmark still needs to be logged",
+    targetDisplay: goal?.primaryMetric?.targetValue
+      ? `${goal.primaryMetric.label} ${goal.primaryMetric.targetValue}`
+      : "Retest the same benchmark every 2 to 4 weeks",
+    trendDisplay: improvementSeconds === null
+      ? ""
+      : improvementSeconds > 0
+      ? `${Math.abs(improvementSeconds)} sec faster than your first matched benchmark`
+      : improvementSeconds < 0
+      ? `${Math.abs(improvementSeconds)} sec slower than your first matched benchmark`
+      : "No change from the first matched benchmark yet",
+    why: "Swim speed needs a repeatable benchmark, not a vague promise to swim harder.",
+  });
+
+  const realityItem = createTrackedItem({
+    key: "swim_access_reality",
+    label: "Swim reality",
+    kind: "proxy",
+    metricRefs: ["swim_access_reality"],
+    status: latestReality?.note || latestReality?.value ? GOAL_PROGRESS_STATUSES.onTrack : GOAL_PROGRESS_STATUSES.needsData,
+    currentDisplay: latestReality?.note
+      ? latestReality.note
+      : latestReality?.value
+      ? `Current swim reality: ${latestReality.value}`
+      : "Pool or open-water reality still needs to be captured",
+    why: "Pool access versus open water changes the whole early swim block, so the app keeps that visible.",
+  });
+
+  const consistencyItem = buildConsistencyItem({
+    key: "weekly_swim_frequency",
+    label: "Swim consistency",
+    why: "Swim goals stay honest when the week includes repeatable swim exposures, even before split-level logging is polished.",
+    dataIndex,
+    now,
+  });
+
+  return [benchmarkItem, realityItem, consistencyItem];
 };
 
 const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
@@ -938,6 +1075,9 @@ const buildTrackedItemsForGoal = ({ goal = {}, dataIndex = {}, manualProgressInp
   if (goal?.goalFamily === "appearance") {
     return buildAppearanceTrackedItems({ goal, dataIndex, manualProgressInputs, now });
   }
+  if (isSwimGoal(goal)) {
+    return buildSwimTrackedItems({ goal, dataIndex, manualProgressInputs, now });
+  }
   if (goal?.planningCategory === "running") {
     return buildRunTrackedItems({ goal, dataIndex, manualProgressInputs, now });
   }
@@ -958,6 +1098,9 @@ const buildStatusSummary = ({ goal = {}, trackingMode = GOAL_PROGRESS_TRACKING_M
     return goal?.first30DaySuccessDefinition
       ? `This goal is still exploratory, so the first 30-day success definition leads: ${goal.first30DaySuccessDefinition}`
       : "This goal is still exploratory, so consistency, readiness, and baseline improvement lead the first block.";
+  }
+  if (isSwimGoal(goal)) {
+    return "This swim goal is tracked through a repeatable benchmark, your current swim reality, and consistency instead of vague category labels.";
   }
   if (goal?.planningCategory === "running") {
     return "This event goal is tracked through pace, run volume, and workout progression rather than broad category labels.";
@@ -980,6 +1123,9 @@ const buildHonestyNote = ({ goal = {}, trackingMode = GOAL_PROGRESS_TRACKING_MOD
   }
   if (trackedItems.every((item) => item?.status === GOAL_PROGRESS_STATUSES.needsData)) {
     return "The goal structure is resolved, but the first relevant check-ins still need to be logged.";
+  }
+  if (isSwimGoal(goal)) {
+    return "Swim progress stays provisional until you keep logging repeatable benchmarks; the app does not invent split data it does not have.";
   }
   if (trackingMode === GOAL_PROGRESS_TRACKING_MODES.proxy) {
     return "Proxy-tracked goals stay grounded in visible markers rather than one forced universal metric.";

@@ -25,6 +25,43 @@ const clampNumberAiState = (value, min, max, fallback = min) => {
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(min, Math.min(max, numeric));
 };
+const toArrayAiState = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
+
+const compactGoalMetricAiState = (metric = null) => {
+  if (!metric || typeof metric !== "object") return null;
+  const label = sanitizeTextAiState(metric?.label || metric?.name || "", 120);
+  if (!label) return null;
+  return {
+    key: sanitizeTextAiState(metric?.key || "", 80).toLowerCase(),
+    label,
+    unit: sanitizeTextAiState(metric?.unit || "", 24),
+    targetValue: sanitizeTextAiState(metric?.targetValue || metric?.value || "", 80),
+    kind: sanitizeTextAiState(metric?.kind || "", 20).toLowerCase(),
+  };
+};
+
+const compactGoalTemplateSelectionAiState = (selection = null) => {
+  if (!selection || typeof selection !== "object") return null;
+  const goalText = sanitizeTextAiState(selection?.goalText || selection?.summary || "", 220);
+  if (!goalText) return null;
+  return {
+    id: sanitizeTextAiState(selection?.id || "", 120),
+    entryMode: sanitizeTextAiState(selection?.entryMode || "", 20).toLowerCase(),
+    templateId: sanitizeTextAiState(selection?.templateId || "", 80).toLowerCase(),
+    templateCategoryId: sanitizeTextAiState(selection?.templateCategoryId || "", 40).toLowerCase(),
+    templateTitle: sanitizeTextAiState(selection?.templateTitle || "", 120),
+    goalText,
+    summary: sanitizeTextAiState(selection?.summary || goalText, 160),
+    planningCategory: sanitizeTextAiState(selection?.planningCategory || "", 40).toLowerCase(),
+    goalFamily: sanitizeTextAiState(selection?.goalFamily || "", 40).toLowerCase(),
+    primaryMetric: compactGoalMetricAiState(selection?.primaryMetric || null),
+    proxyMetrics: toArrayAiState(selection?.proxyMetrics)
+      .map((metric) => compactGoalMetricAiState(metric))
+      .filter(Boolean)
+      .slice(0, 6),
+    helper: sanitizeTextAiState(selection?.helper || "", 220),
+  };
+};
 
 const sortEntriesByDate = (collection = {}) => Object.entries(collection || {})
   .filter(([dateKey]) => Boolean(dateKey))
@@ -204,9 +241,16 @@ const compactIntakeContext = (intakeContext = {}) => {
   const equipment = intakeContext?.equipmentAccessContext || {};
   const injury = intakeContext?.injuryConstraintContext || {};
   const userConstraints = intakeContext?.userProvidedConstraints || {};
+  const goalTemplateSelection = compactGoalTemplateSelectionAiState(intakeContext?.goalTemplateSelection || null);
+  const goalTemplateStack = toArrayAiState(intakeContext?.goalTemplateStack)
+    .map((selection) => compactGoalTemplateSelectionAiState(selection))
+    .filter(Boolean)
+    .slice(0, 8);
 
   return clonePlainValueAiState({
     rawGoalText: sanitizeTextAiState(intakeContext?.rawGoalText || "", 320),
+    goalTemplateSelection,
+    goalTemplateStack,
     baselineContext: {
       primaryGoalKey: sanitizeTextAiState(baseline?.primaryGoalKey || "", 40),
       primaryGoalLabel: sanitizeTextAiState(baseline?.primaryGoalLabel || "", 80),

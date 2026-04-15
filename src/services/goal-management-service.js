@@ -13,11 +13,18 @@ import {
   buildTimingModeHelpText,
   formatGoalDateLabel,
 } from "./goal-timing-service.js";
+import {
+  applyGoalTemplateSelectionToDraft,
+  buildGoalTemplateSelection,
+  inferGoalTemplateSelectionFromGoal,
+  normalizeGoalTemplateSelection,
+} from "./goal-template-catalog-service.js";
 import { dedupeStrings } from "../utils/collection-utils.js";
 
 export const GOAL_MANAGEMENT_VERSION = 1;
 
 export const GOAL_MANAGEMENT_CHANGE_TYPES = {
+  add: "add",
   edit: "edit",
   reprioritize: "reprioritize",
   archive: "archive",
@@ -323,6 +330,14 @@ const resolveRecordId = (goal = {}, idx = 0) => sanitizeText(
   || goal?.resolvedGoal?.id
   || goal?.id
   || `goal_record_${idx + 1}`,
+  140
+);
+
+const buildNewGoalRecordId = ({
+  draft = {},
+  capturedAt = toIsoTimestamp(),
+} = {}) => sanitizeText(
+  `goal_${slugify(draft?.summary || draft?.templateId || draft?.selectionGoalText || "new_goal", "goal")}_${toTimestampMs(capturedAt)}`,
   140
 );
 
@@ -686,6 +701,9 @@ const buildImpactLines = ({
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.archive && subjectGoal?.name) {
     lines.push(`${subjectGoal.name} moves out of the active stack as ${sanitizeText(archiveStatus || subjectGoal?.status || "archived", 40).toLowerCase()}. Historical plans and logs stay attached to the earlier version.`);
   }
+  if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.add && subjectGoal?.name) {
+    lines.push(`${subjectGoal.name} joins the active goal stack and starts shaping future plans after you confirm.`);
+  }
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.restore && subjectGoal?.name) {
     lines.push(`${subjectGoal.name} returns to the active stack and starts influencing plan decisions again.`);
   }
@@ -772,44 +790,70 @@ export const buildGoalSettingsViewModel = ({
 };
 
 export const buildGoalEditorDraft = ({ goal = null } = {}) => {
-  const managedGoal = ensureManagedGoal(goal);
+  const managedGoal = goal ? ensureManagedGoal(goal) : null;
   const snapshot = buildGoalSnapshot(managedGoal);
   const timingMode = snapshot.targetDate ? "exact_date" : snapshot.targetHorizonWeeks ? "target_horizon" : "open_ended";
-  return {
-    goalId: resolveRecordId(managedGoal || {}, 0),
-    summary: snapshot.summary,
-    planningCategory: snapshot.planningCategory,
-    primaryMetricLabel: sanitizeText(snapshot.primaryMetric?.label || "", 120),
-    primaryMetricTargetValue: sanitizeText(snapshot.primaryMetric?.targetValue || "", 80),
-    primaryMetricUnit: sanitizeText(snapshot.primaryMetric?.unit || "", 24),
-    proxyMetrics: normalizeProxyMetrics(snapshot.proxyMetrics || []).map((metric) => ({
-      key: metric.key,
-      label: metric.label,
-      unit: metric.unit,
-    })),
-    timingMode,
-    timingHelperText: buildTimingModeHelpText({ timingMode }),
-    targetDate: snapshot.targetDate,
-    targetHorizonWeeks: snapshot.targetHorizonWeeks ? String(snapshot.targetHorizonWeeks) : "",
-    status: sanitizeText(managedGoal?.status || "active", 40).toLowerCase() || "active",
-  };
+  const inferredTemplate = inferGoalTemplateSelectionFromGoal({ goal: managedGoal });
+  return applyGoalTemplateSelectionToDraft({
+    draft: {
+      goalId: managedGoal ? resolveRecordId(managedGoal, 0) : "",
+      summary: snapshot.summary,
+      planningCategory: snapshot.planningCategory,
+      primaryMetricLabel: sanitizeText(snapshot.primaryMetric?.label || "", 120),
+      primaryMetricTargetValue: sanitizeText(snapshot.primaryMetric?.targetValue || "", 80),
+      primaryMetricUnit: sanitizeText(snapshot.primaryMetric?.unit || "", 24),
+      proxyMetrics: normalizeProxyMetrics(snapshot.proxyMetrics || []).map((metric) => ({
+        key: metric.key,
+        label: metric.label,
+        unit: metric.unit,
+      })),
+      timingMode,
+      timingHelperText: buildTimingModeHelpText({ timingMode }),
+      targetDate: snapshot.targetDate,
+      targetHorizonWeeks: snapshot.targetHorizonWeeks ? String(snapshot.targetHorizonWeeks) : "",
+      status: sanitizeText(managedGoal?.status || "active", 40).toLowerCase() || "active",
+      entryMode: inferredTemplate?.entryMode || "preset",
+      templateId: inferredTemplate?.templateId || "",
+      templateCategoryId: inferredTemplate?.templateCategoryId || "",
+      templateTitle: inferredTemplate?.templateTitle || "",
+      selectionGoalText: inferredTemplate?.goalText || "",
+    },
+    selection: inferredTemplate,
+  });
 };
 
 const buildResolvedGoalFromDraft = ({
   goal = null,
   draft = {},
   priority = 1,
+  recordId = "",
 } = {}) => {
   const currentResolvedGoal = extractResolvedGoal(goal) || {};
-  const planningCategory = sanitizeText(draft?.planningCategory || currentResolvedGoal?.planningCategory || goal?.category || "general_fitness", 40).toLowerCase() || "general_fitness";
+  const selectedTemplate = normalizeGoalTemplateSelection(
+    draft?.templateId || draft?.selectionGoalText
+      ? buildGoalTemplateSelection({
+          templateId: draft?.templateId || "",
+          customGoalText: !draft?.templateId ? draft?.selectionGoalText || draft?.summary || "" : "",
+          customSummary: draft?.summary || "",
+        })
+      : null
+  );
+  const planningCategory = sanitizeText(
+    draft?.planningCategory
+    || selectedTemplate?.planningCategory
+    || currentResolvedGoal?.planningCategory
+    || goal?.category
+    || "general_fitness",
+    40
+  ).toLowerCase() || "general_fitness";
   const primaryMetric = normalizeMetric({
-    key: draft?.primaryMetricKey || currentResolvedGoal?.primaryMetric?.key || slugify(draft?.primaryMetricLabel || currentResolvedGoal?.primaryMetric?.label || "metric", "metric"),
-    label: draft?.primaryMetricLabel || currentResolvedGoal?.primaryMetric?.label || "",
-    unit: draft?.primaryMetricUnit || currentResolvedGoal?.primaryMetric?.unit || "",
-    targetValue: draft?.primaryMetricTargetValue || currentResolvedGoal?.primaryMetric?.targetValue || "",
+    key: draft?.primaryMetricKey || selectedTemplate?.primaryMetric?.key || currentResolvedGoal?.primaryMetric?.key || slugify(draft?.primaryMetricLabel || selectedTemplate?.primaryMetric?.label || currentResolvedGoal?.primaryMetric?.label || "metric", "metric"),
+    label: draft?.primaryMetricLabel || selectedTemplate?.primaryMetric?.label || currentResolvedGoal?.primaryMetric?.label || "",
+    unit: draft?.primaryMetricUnit || selectedTemplate?.primaryMetric?.unit || currentResolvedGoal?.primaryMetric?.unit || "",
+    targetValue: draft?.primaryMetricTargetValue || selectedTemplate?.primaryMetric?.targetValue || currentResolvedGoal?.primaryMetric?.targetValue || "",
   }, "primary");
   const proxyMetrics = normalizeProxyMetrics(
-    toArray(draft?.proxyMetrics || []).map((metric) => ({
+    toArray((draft?.proxyMetrics || []).length ? draft.proxyMetrics : selectedTemplate?.proxyMetrics || []).map((metric) => ({
       key: metric?.key || slugify(metric?.label || "", "proxy"),
       label: metric?.label || "",
       unit: metric?.unit || "",
@@ -829,8 +873,8 @@ const buildResolvedGoalFromDraft = ({
   });
   return {
     ...cloneValue(currentResolvedGoal || {}),
-    id: resolveRecordId(goal || currentResolvedGoal || {}, 0),
-    summary: sanitizeText(draft?.summary || currentResolvedGoal?.summary || goal?.name || "", 160),
+    id: sanitizeText(recordId || resolveRecordId(goal || currentResolvedGoal || {}, 0), 140),
+    summary: sanitizeText(draft?.summary || selectedTemplate?.summary || currentResolvedGoal?.summary || goal?.name || "", 160),
     planningCategory,
     goalFamily: resolveGoalFamilyForCategory(planningCategory, currentResolvedGoal?.goalFamily || goal?.goalFamily || ""),
     planningPriority: priority,
@@ -841,6 +885,7 @@ const buildResolvedGoalFromDraft = ({
     measurabilityTier,
     confirmedByUser: true,
     confirmationSource: "settings_goal_management",
+    goalTemplateId: sanitizeText(draft?.templateId || selectedTemplate?.templateId || currentResolvedGoal?.goalTemplateId || "", 80),
   };
 };
 
@@ -885,6 +930,40 @@ export const buildGoalManagementPreview = ({
     nextActiveGoals = committedGoals;
     subjectChangedFields = Object.values(changedFieldsByGoalId).flat().filter(Boolean);
     changeLabel = "Priority order updated";
+  }
+
+  if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.add) {
+    const nextPriority = nextActiveGoals.length + 1;
+    const recordId = buildNewGoalRecordId({
+      draft: change?.draft || {},
+      capturedAt,
+    });
+    const nextResolvedGoal = buildResolvedGoalFromDraft({
+      goal: null,
+      draft: change?.draft || {},
+      priority: nextPriority,
+      recordId,
+    });
+    nextActiveGoals.push(buildPlannerGoalFromResolvedGoal({
+      currentGoal: {
+        goalRecordId: recordId,
+        id: recordId,
+      },
+      resolvedGoal: nextResolvedGoal,
+      priority: nextPriority,
+      idx: nextPriority - 1,
+    }));
+    const { committedGoals, changedFieldsByGoalId } = finalizeActiveGoals({
+      currentActiveGoals,
+      nextActiveGoals,
+      changeType,
+      sourceLabel: "Settings goal add",
+      capturedAt,
+    });
+    nextActiveGoals = committedGoals;
+    subjectGoal = nextActiveGoals.find((goal) => resolveRecordId(goal) === recordId) || nextActiveGoals[nextActiveGoals.length - 1] || null;
+    subjectChangedFields = changedFieldsByGoalId[recordId] || diffGoalSnapshots(null, buildGoalSnapshot(subjectGoal));
+    changeLabel = subjectGoal?.name ? `Add ${subjectGoal.name}` : "Goal added";
   }
 
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.edit) {
@@ -1027,7 +1106,7 @@ export const buildGoalManagementPreview = ({
   return {
     changeType,
     changeLabel,
-    plannerChangeMode: changeType === GOAL_MANAGEMENT_CHANGE_TYPES.edit
+    plannerChangeMode: (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.edit || changeType === GOAL_MANAGEMENT_CHANGE_TYPES.add)
       ? "refine_current_goal"
       : "reprioritize_goal_stack",
     historyEntry,

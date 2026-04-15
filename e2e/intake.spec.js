@@ -130,6 +130,32 @@ test.describe("intake onboarding e2e", () => {
     await waitForPostOnboarding(page);
   });
 
+  test("preset-first intake can stack multiple goals without forcing custom text", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+
+    await page.getByTestId("intake-goal-category-strength").click();
+    await page.getByTestId("intake-goal-template-bench_225").click();
+    await page.getByTestId("intake-goal-category-physique").click();
+    await page.getByTestId("intake-goal-template-get_leaner").click();
+
+    await expect(page.getByTestId("intake-selected-goals")).toContainText("Bench press 225 lb");
+    await expect(page.getByTestId("intake-selected-goals")).toContainText("Get leaner");
+
+    await page.getByTestId("intake-goals-option-experience-level-intermediate").click();
+    await page.getByTestId("intake-goals-option-training-days-4").click();
+    await page.getByTestId("intake-goals-option-session-length-45").click();
+    await page.getByTestId("intake-goals-option-training-location-gym").click();
+    await page.getByTestId("intake-goals-option-coaching-style-balanced-coaching").click();
+    await page.getByTestId("intake-footer-continue").click();
+
+    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(2);
+    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2"]);
+    await expectSummaryRail(page);
+    await expectNoFakeTranscript(page);
+  });
+
   test("swim goals gather the swim anchor inline before build", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {

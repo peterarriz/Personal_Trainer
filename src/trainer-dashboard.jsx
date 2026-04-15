@@ -163,6 +163,15 @@ import {
   GOAL_MANAGEMENT_CHANGE_TYPES,
 } from "./services/goal-management-service.js";
 import {
+  findGoalTemplateById,
+  findGoalTemplateSelectionForGoalText,
+  applyGoalTemplateSelectionToDraft,
+  buildGoalTemplateSelection,
+  buildGoalTemplateSelectionsFromAnswers,
+  listGoalTemplateCategories,
+  listGoalTemplates,
+} from "./services/goal-template-catalog-service.js";
+import {
   buildGoalTimingPresentation,
   buildTimingModeHelpText,
   buildVisiblePlanningHorizonLabel,
@@ -2388,6 +2397,31 @@ const extractAppearanceConstraints = (...values) => values
   .filter((value) => value && /(abs|lean|athletic|toned|look|appearance|physique|body comp|body composition|shirtless|defined)/i.test(value))
   .slice(0, 3);
 
+const resolveGoalTemplateSelectionFromAnswers = ({
+  answers = {},
+  goalText = "",
+  index = 0,
+} = {}) => {
+  const selection = findGoalTemplateSelectionForGoalText({
+    answers,
+    goalText,
+    index,
+  });
+  return selection?.templateId ? selection : null;
+};
+
+const inferGoalTemplateCategoryIdForDraft = (draft = {}) => {
+  const explicitCategoryId = String(draft?.templateCategoryId || "").trim().toLowerCase();
+  if (explicitCategoryId && explicitCategoryId !== "custom") return explicitCategoryId;
+  const planningCategory = String(draft?.planningCategory || "").trim().toLowerCase();
+  if (planningCategory === "strength") return "strength";
+  if (planningCategory === "body_comp") return "physique";
+  if (planningCategory === "running") return "running";
+  if (planningCategory === "swim" || planningCategory === "swimming") return "swim";
+  if (["general_fitness", "mobility", "injury_prevention", "health"].includes(planningCategory)) return "health";
+  return "all";
+};
+
 const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } = {}) => {
   const primaryGoalKey = String(answers.primary_goal || "").trim();
   const primaryGoalLabel = PRIMARY_GOAL_LABELS[primaryGoalKey] || sanitizeIntakeText(String(answers.goal_intent || "").trim()).slice(0, 80) || primaryGoalKey || "General Fitness";
@@ -2417,11 +2451,19 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
   const rawGoalText = sanitizeIntakeText(String(answers.goal_intent || "").trim())
     || additionalGoalEntries[0]
     || primaryGoalLabel;
+  const goalTemplateStack = buildGoalTemplateSelectionsFromAnswers({ answers });
+  const primaryGoalTemplateSelection = resolveGoalTemplateSelectionFromAnswers({
+    answers,
+    goalText: rawGoalText,
+    index: 0,
+  });
 
   return {
     input: "Interpret this onboarding intake without writing canonical goal state.",
     intakeContext: {
       rawGoalText: rawGoalText || primaryGoalLabel,
+      goalTemplateSelection: primaryGoalTemplateSelection,
+      goalTemplateStack,
       baselineContext: {
         primaryGoalKey,
         primaryGoalLabel,
@@ -2584,7 +2626,11 @@ const buildGoalFeasibilityContextFromIntake = (intakeContext = {}) => ({
   },
 });
 
-const buildArbitrationIntakePacket = ({ typedIntakePacket = null, rawGoalText = "" } = {}) => {
+const buildArbitrationIntakePacket = ({
+  typedIntakePacket = null,
+  rawGoalText = "",
+  goalTemplateSelection = null,
+} = {}) => {
   const packet = typedIntakePacket && typeof typedIntakePacket === "object"
     ? typedIntakePacket
     : { version: "2026-04-v1", intent: "intake_interpretation" };
@@ -2594,6 +2640,44 @@ const buildArbitrationIntakePacket = ({ typedIntakePacket = null, rawGoalText = 
     intake: {
       ...intake,
       rawGoalText,
+      goalTemplateSelection: goalTemplateSelection || intake?.goalTemplateSelection || null,
+    },
+  };
+};
+
+const buildFocusedArbitrationIntakePacket = ({
+  typedIntakePacket = null,
+  rawGoalText = "",
+  goalTemplateSelection = null,
+} = {}) => {
+  const packet = typedIntakePacket && typeof typedIntakePacket === "object"
+    ? typedIntakePacket
+    : { version: "2026-04-v1", intent: "intake_interpretation" };
+  const intake = packet?.intake || packet?.intakeContext || {};
+  return {
+    ...packet,
+    intake: {
+      rawGoalText,
+      goalTemplateSelection: goalTemplateSelection || null,
+      baselineContext: {
+        ...(intake?.baselineContext || {}),
+        primaryGoalLabel: rawGoalText || intake?.baselineContext?.primaryGoalLabel || "",
+      },
+      scheduleReality: {
+        ...(intake?.scheduleReality || {}),
+      },
+      equipmentAccessContext: {
+        ...(intake?.equipmentAccessContext || {}),
+      },
+      injuryConstraintContext: {
+        ...(intake?.injuryConstraintContext || {}),
+      },
+      userProvidedConstraints: {
+        timingConstraints: [],
+        appearanceConstraints: [],
+        additionalContext: sanitizeIntakeText(intake?.userProvidedConstraints?.additionalContext || ""),
+      },
+      goalCompletenessContext: {},
     },
   };
 };
@@ -2605,12 +2689,18 @@ const buildConfirmedArbitrationInputs = ({
 } = {}) => {
   const primaryGoalText = sanitizeIntakeText(String(answers?.goal_intent || "").trim()).slice(0, 320);
   const additionalGoalTexts = readAdditionalGoalEntries({ answers });
+  const primaryGoalTemplateSelection = resolveGoalTemplateSelectionFromAnswers({
+    answers,
+    goalText: primaryGoalText,
+    index: 0,
+  });
   const confirmedPrimaryGoal = primaryGoalText
     ? resolveGoalTranslation({
         rawUserGoalIntent: primaryGoalText,
         typedIntakePacket: buildArbitrationIntakePacket({
           typedIntakePacket,
           rawGoalText: primaryGoalText,
+          goalTemplateSelection: primaryGoalTemplateSelection,
         }),
         explicitUserConfirmation: {
           confirmed: true,
@@ -2620,12 +2710,22 @@ const buildConfirmedArbitrationInputs = ({
         now,
       })?.resolvedGoals?.[0] || null
     : null;
-  const confirmedAdditionalGoals = additionalGoalTexts.flatMap((goalText) => {
+  const confirmedAdditionalGoals = additionalGoalTexts.flatMap((goalText, index) => {
+    const goalTemplateSelection = resolveGoalTemplateSelectionFromAnswers({
+      answers,
+      goalText,
+      index: index + 1,
+    });
     const resolution = resolveGoalTranslation({
       rawUserGoalIntent: goalText,
       typedIntakePacket: buildArbitrationIntakePacket({
-        typedIntakePacket,
+        typedIntakePacket: buildFocusedArbitrationIntakePacket({
+          typedIntakePacket,
+          rawGoalText: goalText,
+          goalTemplateSelection,
+        }),
         rawGoalText: goalText,
+        goalTemplateSelection,
       }),
       explicitUserConfirmation: {
         confirmed: true,
@@ -2762,6 +2862,33 @@ const buildIntakeAssessmentTextFromProposal = ({
   ].filter(Boolean).join(" "));
 };
 
+const mergeAssessmentTypedIntakePacket = ({
+  fallbackPacket = null,
+  runtimePacket = null,
+} = {}) => {
+  const safeFallbackPacket = fallbackPacket && typeof fallbackPacket === "object" ? fallbackPacket : null;
+  const safeRuntimePacket = runtimePacket && typeof runtimePacket === "object" ? runtimePacket : null;
+  if (!safeFallbackPacket) return safeRuntimePacket;
+  if (!safeRuntimePacket) return safeFallbackPacket;
+  const fallbackIntake = safeFallbackPacket?.intake || safeFallbackPacket?.intakeContext || {};
+  const runtimeIntake = safeRuntimePacket?.intake || safeRuntimePacket?.intakeContext || {};
+  return {
+    ...safeFallbackPacket,
+    ...safeRuntimePacket,
+    intake: {
+      ...fallbackIntake,
+      ...runtimeIntake,
+      goalTemplateSelection: runtimeIntake?.goalTemplateSelection || fallbackIntake?.goalTemplateSelection || null,
+      goalTemplateStack: Array.isArray(runtimeIntake?.goalTemplateStack) && runtimeIntake.goalTemplateStack.length
+        ? runtimeIntake.goalTemplateStack
+        : Array.isArray(fallbackIntake?.goalTemplateStack)
+        ? fallbackIntake.goalTemplateStack
+        : [],
+      goalCompletenessContext: runtimeIntake?.goalCompletenessContext || fallbackIntake?.goalCompletenessContext || {},
+    },
+  };
+};
+
 const buildTypedIntakeAssessment = async ({ answers = {}, existingMemory = [] } = {}) => {
   const packetArgs = buildIntakePacketArgsFromAnswers({ answers, existingMemory });
   const previewFallback = buildPreviewGoalResolutionBundle({
@@ -2776,6 +2903,10 @@ const buildTypedIntakeAssessment = async ({ answers = {}, existingMemory = [] } 
     safeFetchWithTimeout,
     packetArgs,
   });
+  const assessmentTypedIntakePacket = mergeAssessmentTypedIntakePacket({
+    fallbackPacket,
+    runtimePacket: runtime?.statePacket || null,
+  });
   if (!runtime?.ok || !runtime?.interpreted) {
     const reviewModel = buildIntakeGoalReviewModel({
       goalResolution: previewFallback.goalResolution,
@@ -2786,7 +2917,7 @@ const buildTypedIntakeAssessment = async ({ answers = {}, existingMemory = [] } 
     });
     return {
       text: fallbackText,
-      typedIntakePacket: runtime?.statePacket || fallbackPacket,
+      typedIntakePacket: assessmentTypedIntakePacket,
       aiInterpretationProposal: null,
       goalResolution: previewFallback.goalResolution,
       orderedResolvedGoals: previewFallback.orderedResolvedGoals,
@@ -2815,7 +2946,7 @@ const buildTypedIntakeAssessment = async ({ answers = {}, existingMemory = [] } 
       previewGoalResolution: previewFromProposal.goalResolution,
       goalFeasibility: previewFromProposal.goalFeasibility,
     }),
-    typedIntakePacket: runtime.statePacket || fallbackPacket,
+    typedIntakePacket: assessmentTypedIntakePacket,
     aiInterpretationProposal: runtime.interpreted,
     goalResolution: previewFromProposal.goalResolution,
     orderedResolvedGoals: previewFromProposal.orderedResolvedGoals,
@@ -8084,6 +8215,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [stepIndex, setStepIndex] = useState(() => Math.max(0, Number(restoredIntakeSession?.stepIndex) || 0));
   const [draft, setDraft] = useState(() => String(restoredIntakeSession?.draft || ""));
   const [extraGoalDraft, setExtraGoalDraft] = useState("");
+  const [selectedGoalSelections, setSelectedGoalSelections] = useState(() => buildGoalTemplateSelectionsFromAnswers({
+    answers: restoredIntakeSession?.answers || {},
+  }));
+  const [goalLibraryCategory, setGoalLibraryCategory] = useState("all");
+  const [goalLibrarySearch, setGoalLibrarySearch] = useState("");
+  const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
   const [equipmentSelection, setEquipmentSelection] = useState([]);
   const [equipmentOther, setEquipmentOther] = useState("");
   const [phase, setPhase] = useState(() => restoredIntakeSession?.phase || INTAKE_UI_PHASES.goals);
@@ -8117,6 +8254,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [showParseDebug, setShowParseDebug] = useState(false);
   const intakeMachineRef = useRef(intakeMachine);
   const coachVoiceRequestKeysRef = useRef(new Set());
+  const goalIntentDraftRef = useRef(String(restoredIntakeSession?.answers?.goal_intent || ""));
 
   const buildFlow = (currentAnswers = {}) => {
     const injuryQuestionContext = buildIntakeInjuryConstraintContext({
@@ -8162,6 +8300,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   useEffect(() => {
     intakeMachineRef.current = intakeMachine;
   }, [intakeMachine]);
+
+  useEffect(() => {
+    goalIntentDraftRef.current = String(answers?.goal_intent || "");
+  }, [answers?.goal_intent]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -8731,48 +8873,109 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     return editedState;
   };
   const syncGoalStackDraftToAnswers = ({
-    primaryGoalText = answers?.goal_intent || "",
+    primaryGoalText = goalIntentDraftRef.current || answers?.goal_intent || "",
     additionalGoals = secondaryGoalEntries,
+    goalSelections = selectedGoalSelections,
     preserveFoundation = true,
   } = {}) => {
-    const derivedGoalStack = splitPrimaryGoalEntryIntoStack(primaryGoalText);
+    const normalizedSelections = (Array.isArray(goalSelections) ? goalSelections : [])
+      .map((selection) => buildGoalTemplateSelection({
+        templateId: selection?.templateId || "",
+        customGoalText: !selection?.templateId ? selection?.goalText || selection?.summary || "" : "",
+        customSummary: selection?.summary || "",
+      }))
+      .filter(Boolean);
+    const selectedGoalTexts = normalizedSelections.map((selection) => normalizeIntakeGoalEntry(selection?.goalText || "", 320)).filter(Boolean);
+    const selectedPrimaryGoal = selectedGoalTexts[0] || "";
+    const selectedAdditionalGoals = selectedGoalTexts.slice(1);
+    const derivedGoalStack = selectedPrimaryGoal || selectedAdditionalGoals.length
+      ? { primaryGoalText: selectedPrimaryGoal, additionalGoals: selectedAdditionalGoals }
+      : splitPrimaryGoalEntryIntoStack(primaryGoalText);
     const normalizedPrimaryGoal = derivedGoalStack.primaryGoalText;
     const normalizedAdditionalGoals = dedupeIntakeGoalEntries([
       ...derivedGoalStack.additionalGoals,
-      ...additionalGoals,
+      ...(selectedPrimaryGoal || selectedAdditionalGoals.length ? [] : additionalGoals),
     ])
       .filter((goalText) => goalText.toLowerCase() !== normalizedPrimaryGoal.toLowerCase())
-      .slice(0, 5);
+      .slice(0, 7);
     const nextAnswers = {
       ...answers,
       goal_intent: normalizedPrimaryGoal,
       additional_goals_list: normalizedAdditionalGoals,
       other_goals: normalizedAdditionalGoals.join(". "),
+      goal_template_stack: normalizedSelections,
       secondary_goal_prompt_answered: normalizedAdditionalGoals.length > 0,
       ...(preserveFoundation && normalizedPrimaryGoal
         ? { primary_goal: answers?.primary_goal || "" }
         : {}),
     };
+    goalIntentDraftRef.current = normalizedPrimaryGoal;
     setAnswers(nextAnswers);
     setSecondaryGoalEntries(normalizedAdditionalGoals);
+    setSelectedGoalSelections(normalizedSelections);
     return nextAnswers;
+  };
+  const addGoalSelectionToStack = (selection = null) => {
+    if (!selection?.goalText) return null;
+    const baseSelections = selectedGoalSelections.length
+      ? selectedGoalSelections
+      : buildGoalTemplateSelectionsFromAnswers({ answers });
+    const nextSelections = [
+      ...baseSelections.filter((item) => String(item?.goalText || "").toLowerCase() !== String(selection.goalText || "").toLowerCase()),
+      selection,
+    ];
+    return syncGoalStackDraftToAnswers({
+      goalSelections: nextSelections,
+      primaryGoalText: goalIntentDraftRef.current || answers?.goal_intent || "",
+      additionalGoals: secondaryGoalEntries,
+    });
+  };
+  const addPresetGoalToStack = (templateId = "") => {
+    const selection = buildGoalTemplateSelection({ templateId });
+    if (!selection) return null;
+    setShowCustomGoalComposer(false);
+    return addGoalSelectionToStack(selection);
   };
   const addGoalToStack = () => {
     const cleanGoalText = normalizeIntakeGoalEntry(extraGoalDraft);
     if (!cleanGoalText) return;
-    const nextAnswers = syncGoalStackDraftToAnswers({
-      primaryGoalText: answers?.goal_intent || "",
-      additionalGoals: [...secondaryGoalEntries, cleanGoalText],
-    });
+    const nextAnswers = addGoalSelectionToStack(buildGoalTemplateSelection({
+      customGoalText: cleanGoalText,
+    }));
     setExtraGoalDraft("");
     return nextAnswers;
   };
   const removeGoalFromStack = (goalText = "") => {
     const cleanGoalText = normalizeIntakeGoalEntry(goalText);
     if (!cleanGoalText) return;
+    const baseSelections = selectedGoalSelections.length
+      ? selectedGoalSelections
+      : buildGoalTemplateSelectionsFromAnswers({ answers });
     syncGoalStackDraftToAnswers({
-      primaryGoalText: answers?.goal_intent || "",
+      goalSelections: baseSelections.filter((item) => normalizeIntakeGoalEntry(item?.goalText || "", 320).toLowerCase() !== cleanGoalText.toLowerCase()),
+      primaryGoalText: goalIntentDraftRef.current || answers?.goal_intent || "",
       additionalGoals: secondaryGoalEntries.filter((item) => item.toLowerCase() !== cleanGoalText.toLowerCase()),
+    });
+  };
+  const moveSelectedGoalInStack = (goalText = "", direction = -1) => {
+    const cleanGoalText = normalizeIntakeGoalEntry(goalText, 320).toLowerCase();
+    if (!cleanGoalText) return;
+    const currentSelections = [
+      ...(selectedGoalSelections.length
+        ? selectedGoalSelections
+        : buildGoalTemplateSelectionsFromAnswers({ answers }))
+    ];
+    const currentIndex = currentSelections.findIndex((item) => normalizeIntakeGoalEntry(item?.goalText || "", 320).toLowerCase() === cleanGoalText);
+    if (currentIndex < 0) return;
+    const nextIndex = direction < 0 ? Math.max(0, currentIndex - 1) : Math.min(currentSelections.length - 1, currentIndex + 1);
+    if (currentIndex === nextIndex) return;
+    const nextSelections = [...currentSelections];
+    const [moved] = nextSelections.splice(currentIndex, 1);
+    nextSelections.splice(nextIndex, 0, moved);
+    syncGoalStackDraftToAnswers({
+      goalSelections: nextSelections,
+      primaryGoalText: goalIntentDraftRef.current || answers?.goal_intent || "",
+      additionalGoals: secondaryGoalEntries,
     });
   };
   const startFoundationPlanFlow = async () => {
@@ -8780,6 +8983,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       ...syncGoalStackDraftToAnswers({
         primaryGoalText: "",
         additionalGoals: [],
+        goalSelections: [],
       }),
       primary_goal: "general_fitness",
     };
@@ -9737,6 +9941,24 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const displayedTrackingLabels = Array.from(new Set(
     (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
   ));
+  const goalTemplateCategories = useMemo(() => listGoalTemplateCategories(), []);
+  const allGoalTemplates = useMemo(() => listGoalTemplates({ categoryId: "all" }), []);
+  const activeGoalLibraryCategory = useMemo(
+    () => goalTemplateCategories.find((category) => category.id === goalLibraryCategory) || goalTemplateCategories[0] || null,
+    [goalTemplateCategories, goalLibraryCategory]
+  );
+  const visibleGoalTemplates = useMemo(() => listGoalTemplates({
+    categoryId: goalLibraryCategory,
+    query: goalLibrarySearch,
+  }), [goalLibraryCategory, goalLibrarySearch]);
+  const intakeGoalSelections = useMemo(() => (
+    selectedGoalSelections.length
+      ? selectedGoalSelections
+      : buildGoalTemplateSelectionsFromAnswers({ answers })
+  ), [answers, selectedGoalSelections]);
+  const selectedGoalTextSet = useMemo(() => new Set(
+    intakeGoalSelections.map((selection) => String(selection?.goalText || "").toLowerCase()).filter(Boolean)
+  ), [intakeGoalSelections]);
   const intakeSummaryRail = useMemo(() => buildIntakeSummaryRailModel({
     answers,
     reviewModel: activeReviewModel,
@@ -9772,6 +9994,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   ].filter(Boolean);
   const goalsStageCanContinue = goalsStageNeeds.length === 0;
   const goalsStageCanStartFoundation = goalsStageNeeds.filter((item) => !/at least one goal/i.test(item)).length === 0;
+  useEffect(() => {
+    const syncedSelections = buildGoalTemplateSelectionsFromAnswers({ answers });
+    const currentSerialized = JSON.stringify(intakeGoalSelections);
+    const nextSerialized = JSON.stringify(syncedSelections);
+    if (currentSerialized !== nextSerialized) {
+      setSelectedGoalSelections(syncedSelections);
+    }
+  }, [answers]);
   const stageProgressIndex = phase === INTAKE_UI_PHASES.building
     ? 4
     : phase === INTAKE_UI_PHASES.confirm
@@ -10158,54 +10388,191 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     <div data-testid="intake-goals-step" style={{ display:"grid", gap:"0.95rem" }}>
       {renderSectionLabel("Stage 1", "Goals", "Add the goals that matter, then set the training reality in one pass.")}
       <div style={{ display:"grid", gap:"0.6rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
-        <label style={{ display:"grid", gap:"0.32rem" }}>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>MAIN GOAL</div>
-          <textarea
-            data-testid="intake-goals-primary-input"
-            ref={composerRef}
-            value={answers?.goal_intent || ""}
-            onChange={(e) => updateSimpleAnswer("goal_intent", e.target.value)}
-            placeholder="Bench 225. Get leaner by summer. Look athletic again."
-            rows={3}
-            style={{ minHeight:108, resize:"vertical", fontSize:"0.92rem", lineHeight:1.55 }}
-          />
-        </label>
-        <div style={{ display:"grid", gap:"0.42rem" }}>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>MORE GOALS</div>
-          {secondaryGoalEntries.length > 0 ? (
-            <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
-              {secondaryGoalEntries.map((goalText) => (
+        <div style={{ display:"grid", gap:"0.55rem" }}>
+          <div style={{ display:"grid", gap:"0.14rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL LIBRARY</div>
+            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>Start with a goal path. Custom text is still there, but it is the fallback now.</div>
+            <div data-testid="intake-goal-library-summary" style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              {allGoalTemplates.length} guided goal paths. {activeGoalLibraryCategory?.helper || "Pick a category or search the library first."}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            {goalTemplateCategories.map((category) => {
+              const selected = goalLibraryCategory === category.id;
+              return (
                 <button
-                  key={goalText}
-                  data-testid={`intake-goals-chip-${toTestIdFragment(goalText)}`}
+                  key={category.id}
+                  type="button"
                   className="btn"
-                  onClick={() => removeGoalFromStack(goalText)}
-                  style={{ fontSize:"0.52rem", color:"#dbe7f6", borderColor:"#324961" }}
+                  data-testid={`intake-goal-category-${category.id}`}
+                  onClick={() => setGoalLibraryCategory(category.id)}
+                  style={{
+                    fontSize:"0.5rem",
+                    color:selected ? "#0f172a" : "#dbe7f6",
+                    background:selected ? "#dbe7f6" : "transparent",
+                    borderColor:selected ? "#dbe7f6" : "#324961",
+                  }}
                 >
-                  {goalText} x
+                  {category.label}
                 </button>
+              );
+            })}
+          </div>
+          <input
+            data-testid="intake-goal-library-search"
+            value={goalLibrarySearch}
+            onChange={(e) => setGoalLibrarySearch(e.target.value)}
+            placeholder={`Search ${allGoalTemplates.length}+ goal paths`}
+          />
+          <div data-testid="intake-goal-library-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem", maxHeight:320, overflowY:"auto", paddingRight:"0.12rem", alignContent:"start" }}>
+            {visibleGoalTemplates.map((template) => {
+              const added = selectedGoalTextSet.has(String(template.goalText || "").toLowerCase());
+              return (
+                <button
+                  key={template.id}
+                  type="button"
+                  className="btn"
+                  data-testid={`intake-goal-template-${template.id}`}
+                  onClick={() => addPresetGoalToStack(template.id)}
+                  style={{
+                    textAlign:"left",
+                    borderColor: added ? "rgba(147,197,253,0.55)" : "#22324a",
+                    background: added ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.8)",
+                    padding:"0.75rem",
+                    display:"grid",
+                    gap:"0.18rem",
+                  }}
+                >
+                  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
+                    <div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
+                    <div style={{ fontSize:"0.44rem", color:added ? "#bfdbfe" : "#8fa5c8" }}>{added ? "Added" : "Add"}</div>
+                  </div>
+                  <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
+                </button>
+              );
+            })}
+            {visibleGoalTemplates.length === 0 ? (
+              <div style={{ border:"1px dashed rgba(111,148,198,0.18)", borderRadius:14, padding:"0.8rem", fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                No preset matched that search yet. Use the custom fallback only if the library truly misses what you mean.
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div data-testid="intake-selected-goals" style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.55)" }}>
+          <div style={{ display:"grid", gap:"0.14rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL STACK</div>
+            <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Priority stays obvious from the start. You can reorder here and fine-tune again before build.</div>
+          </div>
+          {intakeGoalSelections.length > 0 ? (
+            <div style={{ display:"grid", gap:"0.42rem" }}>
+              {intakeGoalSelections.map((selection, index) => (
+                <div
+                  key={selection.id || selection.goalText}
+                  data-testid={`intake-selected-goal-${toTestIdFragment(selection.goalText || selection.summary)}`}
+                  style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(8,14,25,0.76)", display:"grid", gap:"0.35rem" }}
+                >
+                  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"flex-start" }}>
+                    <div style={{ display:"grid", gap:"0.16rem" }}>
+                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>
+                        {index < 3 ? `PRIORITY ${index + 1}` : "ADDITIONAL GOAL"}
+                      </div>
+                      <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.42, fontWeight:600 }}>{selection.summary || selection.goalText}</div>
+                      <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{selection.helper || "Custom goal"}</div>
+                    </div>
+                    <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+                      <button
+                        type="button"
+                        className="btn"
+                        data-testid={`intake-selected-goal-up-${toTestIdFragment(selection.goalText || selection.summary)}`}
+                        onClick={() => moveSelectedGoalInStack(selection.goalText || selection.summary, -1)}
+                        disabled={index === 0}
+                        style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#324961" }}
+                      >
+                        Earlier
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        data-testid={`intake-selected-goal-down-${toTestIdFragment(selection.goalText || selection.summary)}`}
+                        onClick={() => moveSelectedGoalInStack(selection.goalText || selection.summary, 1)}
+                        disabled={index === intakeGoalSelections.length - 1}
+                        style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#324961" }}
+                      >
+                        Later
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        data-testid={`intake-selected-goal-remove-${toTestIdFragment(selection.goalText || selection.summary)}`}
+                        onClick={() => removeGoalFromStack(selection.goalText || selection.summary)}
+                        style={{ fontSize:"0.47rem", color:"#9fb4d3", borderColor:"#324961" }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
               ))}
             </div>
           ) : (
-            <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>Optional, but direct. Add as many as you need.</div>
+            <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>Pick one or more goals from the library, or use the custom fallback if your goal is unusual.</div>
           )}
-          <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
-            <input
-              data-testid="intake-goals-secondary-input"
-              value={extraGoalDraft}
-              onChange={(e) => setExtraGoalDraft(e.target.value)}
-              placeholder="Add another goal"
-            />
+        </div>
+        <div style={{ display:"grid", gap:"0.42rem", border:"1px dashed rgba(111,148,198,0.18)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.35)" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CUSTOM FALLBACK</div>
+              <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Use this only if the library does not fit what you mean.</div>
+            </div>
             <button
-              data-testid="intake-goals-add"
+              type="button"
               className="btn"
-              onClick={addGoalToStack}
-              disabled={!normalizeIntakeGoalEntry(extraGoalDraft)}
-              style={{ color:"#dbe7f6", borderColor:"#324961" }}
+              data-testid="intake-goals-toggle-custom"
+              onClick={() => setShowCustomGoalComposer((current) => !current)}
+              style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324961" }}
             >
-              Add
+              {showCustomGoalComposer ? "Hide custom" : "Use custom only if missing"}
             </button>
           </div>
+          {showCustomGoalComposer ? (
+            <div style={{ display:"grid", gap:"0.42rem" }}>
+              <label style={{ display:"grid", gap:"0.32rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Primary custom goal</div>
+                <textarea
+                  data-testid="intake-goals-primary-input"
+                  ref={composerRef}
+                  value={answers?.goal_intent || ""}
+                  onChange={(e) => {
+                    goalIntentDraftRef.current = e.target.value;
+                    updateSimpleAnswer("goal_intent", e.target.value);
+                  }}
+                  placeholder="Bench 225. Get leaner by summer. Look athletic again."
+                  rows={3}
+                  style={{ minHeight:96, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
+                />
+              </label>
+              <div style={{ display:"grid", gap:"0.32rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Add another custom goal</div>
+                <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
+                  <input
+                    data-testid="intake-goals-secondary-input"
+                    value={extraGoalDraft}
+                    onChange={(e) => setExtraGoalDraft(e.target.value)}
+                    placeholder="Add another goal"
+                  />
+                  <button
+                    data-testid="intake-goals-add"
+                    className="btn"
+                    onClick={addGoalToStack}
+                    disabled={!normalizeIntakeGoalEntry(extraGoalDraft)}
+                    style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
       <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
@@ -11773,7 +12140,11 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const [goalManagementBusy, setGoalManagementBusy] = useState(false);
   const [goalEditorOpen, setGoalEditorOpen] = useState(false);
   const [goalArchiveOpen, setGoalArchiveOpen] = useState(false);
+  const [goalEditorMode, setGoalEditorMode] = useState("edit");
   const [goalEditorDraft, setGoalEditorDraft] = useState(null);
+  const [goalEditorLibraryCategory, setGoalEditorLibraryCategory] = useState("all");
+  const [goalEditorLibrarySearch, setGoalEditorLibrarySearch] = useState("");
+  const [showGoalEditorCustomInput, setShowGoalEditorCustomInput] = useState(false);
   const [goalArchiveDraft, setGoalArchiveDraft] = useState({ goalId: "", archiveStatus: GOAL_ARCHIVE_STATUSES.archived });
   const [goalOrderDraftIds, setGoalOrderDraftIds] = useState([]);
   const settings = personalization?.settings || DEFAULT_PERSONALIZATION.settings;
@@ -12645,7 +13016,11 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   };
   const closeGoalEditor = () => {
     setGoalEditorOpen(false);
+    setGoalEditorMode("edit");
     setGoalEditorDraft(null);
+    setGoalEditorLibraryCategory("all");
+    setGoalEditorLibrarySearch("");
+    setShowGoalEditorCustomInput(false);
     resetGoalManagementWorkflow();
   };
   const closeGoalArchive = () => {
@@ -12656,7 +13031,23 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const openGoalEditor = (goalId = "") => {
     const goal = findCurrentManagedGoal(goalId);
     if (!goal) return;
-    setGoalEditorDraft(buildGoalEditorDraft({ goal }));
+    const draft = buildGoalEditorDraft({ goal });
+    setGoalEditorMode("edit");
+    setGoalEditorDraft(draft);
+    setGoalEditorLibraryCategory(inferGoalTemplateCategoryIdForDraft(draft));
+    setGoalEditorLibrarySearch("");
+    setShowGoalEditorCustomInput(draft?.entryMode === "custom");
+    setGoalEditorOpen(true);
+    setGoalArchiveOpen(false);
+    resetGoalManagementWorkflow();
+  };
+  const openNewGoalEditor = () => {
+    const draft = buildGoalEditorDraft({ goal: null });
+    setGoalEditorMode("add");
+    setGoalEditorDraft(draft);
+    setGoalEditorLibraryCategory("all");
+    setGoalEditorLibrarySearch("");
+    setShowGoalEditorCustomInput(false);
     setGoalEditorOpen(true);
     setGoalArchiveOpen(false);
     resetGoalManagementWorkflow();
@@ -12671,6 +13062,15 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     setGoalArchiveOpen(true);
     setGoalEditorOpen(false);
     resetGoalManagementWorkflow();
+  };
+  const selectGoalEditorTemplate = (templateId = "") => {
+    const selection = buildGoalTemplateSelection({ templateId });
+    if (!selection) return;
+    setShowGoalEditorCustomInput(false);
+    setGoalEditorDraft((current) => applyGoalTemplateSelectionToDraft({
+      draft: current || buildGoalEditorDraft({ goal: null }),
+      selection,
+    }));
   };
   const moveGoalInSettingsOrder = (goalId = "", direction = -1) => {
     const cleanGoalId = String(goalId || "").trim();
@@ -12730,13 +13130,19 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     });
   };
   const handlePreviewGoalEdit = async () => {
-    if (!goalEditorDraft?.goalId) {
+    const hasTemplateSelection = Boolean(goalEditorDraft?.templateId);
+    const hasCustomSelection = showGoalEditorCustomInput && Boolean(String(goalEditorDraft?.summary || goalEditorDraft?.selectionGoalText || "").trim());
+    if (!hasTemplateSelection && !hasCustomSelection && goalEditorMode === "add") {
+      setGoalManagementError("Pick a goal path first, or use the custom fallback.");
+      return;
+    }
+    if (goalEditorMode !== "add" && !goalEditorDraft?.goalId) {
       setGoalManagementError("Pick a goal to edit first.");
       return;
     }
     const preview = await handleGoalManagementPreview({
-      type: GOAL_MANAGEMENT_CHANGE_TYPES.edit,
-      goalId: goalEditorDraft.goalId,
+      type: goalEditorMode === "add" ? GOAL_MANAGEMENT_CHANGE_TYPES.add : GOAL_MANAGEMENT_CHANGE_TYPES.edit,
+      goalId: goalEditorMode === "add" ? "" : goalEditorDraft.goalId,
       draft: goalEditorDraft,
     });
     if (preview) setGoalEditorOpen(false);
@@ -12783,7 +13189,11 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       setGoalManagementNotice(`${goalManagementPreview?.changeLabel || "Goal update"} applied.`);
       setGoalManagementPreview(null);
       setGoalEditorOpen(false);
+      setGoalEditorMode("edit");
       setGoalEditorDraft(null);
+      setGoalEditorLibraryCategory("all");
+      setGoalEditorLibrarySearch("");
+      setShowGoalEditorCustomInput(false);
       setGoalArchiveOpen(false);
       setGoalArchiveDraft({ goalId: "", archiveStatus: GOAL_ARCHIVE_STATUSES.archived });
     } catch (error) {
@@ -12803,6 +13213,16 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const currentGoalCards = goalSettingsModel?.currentGoals || [];
   const archivedGoalCards = goalSettingsModel?.archivedGoals || [];
   const currentGoalOrder = goalSettingsModel?.currentGoalOrder || [];
+  const goalEditorTemplateCategories = useMemo(() => listGoalTemplateCategories(), []);
+  const allGoalEditorTemplates = useMemo(() => listGoalTemplates({ categoryId: "all" }), []);
+  const activeGoalEditorCategory = useMemo(
+    () => goalEditorTemplateCategories.find((category) => category.id === goalEditorLibraryCategory) || goalEditorTemplateCategories[0] || null,
+    [goalEditorTemplateCategories, goalEditorLibraryCategory]
+  );
+  const visibleGoalEditorTemplates = useMemo(() => listGoalTemplates({
+    categoryId: goalEditorLibraryCategory,
+    query: goalEditorLibrarySearch,
+  }), [goalEditorLibraryCategory, goalEditorLibrarySearch]);
   const goalOrderDirty = currentGoalOrder.join("|") !== (Array.isArray(goalOrderDraftIds) ? goalOrderDraftIds : []).join("|");
   return (
     <div className="fi" data-testid="settings-tab" style={{ display:"grid", gap:"0.75rem" }}>
@@ -13039,8 +13459,19 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                     Goal edits stay proposal-only until you preview impact and confirm them. Historical plans and logs never get rewritten.
                   </div>
                 </div>
-                <div style={{ fontSize:"0.47rem", color:"#8fa5c8", background:"#111827", border:"1px solid #23344d", borderRadius:999, padding:"0.18rem 0.5rem" }}>
-                  {currentGoalCards.length} current • {archivedGoalCards.length} archived
+                <div style={{ display:"flex", gap:"0.35rem", alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
+                  <div style={{ fontSize:"0.47rem", color:"#8fa5c8", background:"#111827", border:"1px solid #23344d", borderRadius:999, padding:"0.18rem 0.5rem" }}>
+                    {currentGoalCards.length} current • {archivedGoalCards.length} archived
+                  </div>
+                  <button
+                    data-testid="settings-goals-add"
+                    className="btn"
+                    onClick={openNewGoalEditor}
+                    disabled={goalManagementBusy}
+                    style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#2b3d55" }}
+                  >
+                    Add goal
+                  </button>
                 </div>
               </div>
 
@@ -13206,14 +13637,17 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               </details>
             </div>
             <details>
-              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Goal changes</summary>
+              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Advanced text request</summary>
               <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                  The library-based goal manager above is the main path. Use this only when you want the app to interpret a plain-English goal change.
+                </div>
                 <select value={goalChangeMode} onChange={(e)=>setGoalChangeMode(e.target.value)} style={{ fontSize:"0.54rem" }}>
                   <option value={GOAL_CHANGE_MODES.refineCurrentGoal}>Refine current goal</option>
                   <option value={GOAL_CHANGE_MODES.reprioritizeGoalStack}>Re-prioritize goals</option>
                   <option value={GOAL_CHANGE_MODES.startNewGoalArc}>Start new goal arc</option>
                 </select>
-                <input value={goalChangeIntent} onChange={(e)=>setGoalChangeIntent(e.target.value)} placeholder="Describe the goal change in plain English" />
+                <input value={goalChangeIntent} onChange={(e)=>setGoalChangeIntent(e.target.value)} placeholder="Optional plain-English goal request" />
                 <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
                   <button className="btn btn-primary" onClick={handleSettingsGoalPreview} disabled={goalChangePreviewing || goalChangeApplying} style={{ fontSize:"0.5rem" }}>
                     {goalChangePreviewing ? "Previewing..." : "Preview"}
@@ -13354,10 +13788,142 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 
       {goalEditorOpen && goalEditorDraft && (
         <div onClick={closeGoalEditor} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:65, padding:"1rem" }}>
-          <div onClick={(event)=>event.stopPropagation()} className="card card-soft" data-testid="settings-goal-editor" style={{ width:"100%", maxWidth:620, borderColor:"#30455f", background:"#0f172a", display:"grid", gap:"0.5rem" }}>
+          <div onClick={(event)=>event.stopPropagation()} className="card card-soft" data-testid="settings-goal-editor" style={{ width:"100%", maxWidth:620, maxHeight:"88vh", overflowY:"auto", borderColor:"#30455f", background:"#0f172a", display:"grid", gap:"0.5rem" }}>
             <div style={{ display:"grid", gap:"0.14rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>EDIT GOAL</div>
-              <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>Refine the active goal, then preview plan impact before it becomes canonical.</div>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>{goalEditorMode === "add" ? "ADD GOAL" : "EDIT GOAL"}</div>
+              <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>
+                {goalEditorMode === "add"
+                  ? "Pick a goal path first, then preview how it will affect the active stack."
+                  : "Refine the active goal with a cleaner goal path, then preview plan impact before it becomes canonical."}
+              </div>
+            </div>
+            <div data-testid="settings-goal-editor-library" style={{ display:"grid", gap:"0.45rem", border:"1px solid #243752", borderRadius:14, background:"#0b1220", padding:"0.65rem" }}>
+              <div style={{ display:"grid", gap:"0.14rem" }}>
+                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>GOAL LIBRARY</div>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>Use the library first. Custom text is still available, but only as the fallback.</div>
+                <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                  {allGoalEditorTemplates.length} guided goal paths. {activeGoalEditorCategory?.helper || "Search or browse the library first."}
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
+                {goalEditorTemplateCategories.map((category) => {
+                  const selected = goalEditorLibraryCategory === category.id;
+                  return (
+                    <button
+                      key={category.id}
+                      type="button"
+                      className="btn"
+                      data-testid={`settings-goal-editor-category-${category.id}`}
+                      onClick={() => setGoalEditorLibraryCategory(category.id)}
+                      style={{
+                        fontSize:"0.47rem",
+                        color:selected ? "#0f172a" : "#dbe7f6",
+                        background:selected ? "#dbe7f6" : "transparent",
+                        borderColor:selected ? "#dbe7f6" : "#2b3d55",
+                      }}
+                    >
+                      {category.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <input
+                data-testid="settings-goal-editor-search"
+                value={goalEditorLibrarySearch}
+                onChange={(e)=>setGoalEditorLibrarySearch(e.target.value)}
+                placeholder={`Search ${allGoalEditorTemplates.length}+ goal paths`}
+              />
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.4rem", maxHeight:280, overflowY:"auto", paddingRight:"0.12rem", alignContent:"start" }}>
+                {visibleGoalEditorTemplates.map((template) => {
+                  const selected = goalEditorDraft?.templateId === template.id;
+                  return (
+                    <button
+                      key={template.id}
+                      type="button"
+                      className="btn"
+                      data-testid={`settings-goal-editor-template-${template.id}`}
+                      onClick={() => selectGoalEditorTemplate(template.id)}
+                      style={{
+                        textAlign:"left",
+                        padding:"0.65rem",
+                        display:"grid",
+                        gap:"0.18rem",
+                        background:selected ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.82)",
+                        borderColor:selected ? "rgba(147,197,253,0.55)" : "#22324a",
+                      }}
+                    >
+                      <div style={{ display:"flex", justifyContent:"space-between", gap:"0.3rem", alignItems:"flex-start" }}>
+                        <div style={{ fontSize:"0.56rem", color:"#f8fafc", fontWeight:600, lineHeight:1.4 }}>{template.title}</div>
+                        <div style={{ fontSize:"0.44rem", color:selected ? "#bfdbfe" : "#8fa5c8" }}>{selected ? "Selected" : "Use"}</div>
+                      </div>
+                      <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
+                    </button>
+                  );
+                })}
+                {visibleGoalEditorTemplates.length === 0 && (
+                  <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5, border:"1px dashed #23344d", borderRadius:12, padding:"0.7rem" }}>
+                    No goal path matched that search yet.
+                  </div>
+                )}
+              </div>
+              {(goalEditorDraft?.templateId || goalEditorDraft?.summary) && (
+                <div style={{ border:"1px solid #20314a", borderRadius:12, background:"#0f172a", padding:"0.5rem", display:"grid", gap:"0.18rem" }}>
+                  <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>SELECTED PATH</div>
+                  <div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.45 }}>
+                    {goalEditorDraft?.summary || goalEditorDraft?.templateTitle || "Goal path"}
+                  </div>
+                  <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                    {goalEditorDraft?.templateId
+                      ? findGoalTemplateById(goalEditorDraft.templateId)?.helper || "Library-based goal path"
+                      : "Custom goal path"}
+                  </div>
+                </div>
+              )}
+              <div style={{ display:"grid", gap:"0.32rem", borderTop:"1px solid #182335", paddingTop:"0.42rem" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+                  <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>Need something unusual? Use the custom fallback.</div>
+                  <button
+                    type="button"
+                    className="btn"
+                    data-testid="settings-goal-editor-toggle-custom"
+                    onClick={() => {
+                      const nextOpen = !showGoalEditorCustomInput;
+                      setShowGoalEditorCustomInput(nextOpen);
+                      if (nextOpen) {
+                        setGoalEditorDraft((current) => ({
+                          ...(current || buildGoalEditorDraft({ goal: null })),
+                          entryMode: "custom",
+                          templateId: "",
+                          templateCategoryId: "custom",
+                          templateTitle: "Custom goal",
+                        }));
+                      }
+                    }}
+                    style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#2b3d55" }}
+                  >
+                    {showGoalEditorCustomInput ? "Hide custom" : "Use custom only if missing"}
+                  </button>
+                </div>
+                {showGoalEditorCustomInput && (
+                  <label style={{ display:"grid", gap:"0.12rem" }}>
+                    <span style={{ fontSize:"0.47rem", color:"#8fa5c8" }}>Custom goal</span>
+                    <input
+                      data-testid="settings-goal-editor-custom-summary"
+                      value={goalEditorDraft.summary || ""}
+                      onChange={(e)=>setGoalEditorDraft((current) => ({
+                        ...(current || buildGoalEditorDraft({ goal: null })),
+                        entryMode: "custom",
+                        templateId: "",
+                        templateCategoryId: "custom",
+                        templateTitle: "Custom goal",
+                        selectionGoalText: e.target.value,
+                        summary: e.target.value,
+                      }))}
+                      placeholder="Describe the goal in plain English"
+                    />
+                  </label>
+                )}
+              </div>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.38rem" }}>
               <label style={{ display:"grid", gap:"0.12rem" }}>
