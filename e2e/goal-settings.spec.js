@@ -222,6 +222,35 @@ test("Settings goals management edits a dated goal into an open-ended goal with 
   await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toContainText("Open-ended");
 });
 
+test("Settings goals management can add a library-based goal without relying on free text", async ({ page }) => {
+  await openGoalManagement(page);
+
+  await page.getByTestId("settings-goals-add").click();
+  await expect(page.getByTestId("settings-goal-editor")).toBeVisible();
+  await page.getByTestId("settings-goal-editor-category-swim").click();
+  await page.getByTestId("settings-goal-editor-template-swim_faster_mile").click();
+  await page.getByTestId("settings-goal-editor-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("Swim a faster mile");
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("joins the active goal stack");
+  await page.getByTestId("settings-goals-confirm-preview").click();
+
+  await expect(page.getByTestId("settings-goals-management")).toContainText("Swim a faster mile");
+});
+
+test("Settings goals management can swap an active goal onto a library path without typing a new description", async ({ page }) => {
+  await openGoalManagement(page);
+
+  await page.getByTestId("settings-goal-edit-goal_cut_record").click();
+  await expect(page.getByTestId("settings-goal-editor")).toBeVisible();
+  await page.getByTestId("settings-goal-editor-category-physique").click();
+  await page.getByTestId("settings-goal-editor-template-look_athletic_again").click();
+  await page.getByTestId("settings-goal-editor-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("Look athletic again");
+  await page.getByTestId("settings-goals-confirm-preview").click();
+
+  await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toContainText("Look athletic again");
+});
+
 test("Settings goals management archives and restores a goal through explicit previews", async ({ page }) => {
   await openGoalManagement(page);
 

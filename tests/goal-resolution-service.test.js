@@ -9,6 +9,9 @@ const {
 const {
   normalizeGoals,
 } = require("../src/services/canonical-athlete-service.js");
+const {
+  buildGoalTemplateSelection,
+} = require("../src/services/goal-template-catalog-service.js");
 
 const DEFAULT_GOAL_SLOTS = [
   { id: "g_primary", name: "Primary goal", type: "ongoing", category: "running", priority: 1, targetDate: "", measurableTarget: "", active: false, tracking: { mode: "progress_tracker" } },
@@ -114,6 +117,42 @@ test("swim goals keep swim-specific summaries and domain adapter hints", () => {
   assert.equal(result.resolvedGoals[0].primaryDomain, "swimming_endurance_technique");
   assert.ok(result.resolvedGoals[0].candidateDomainAdapters.includes("swimming_endurance_technique"));
   assert.ok(result.unresolvedGaps.some((gap) => /pool|swim/i.test(gap)));
+});
+
+test("template-first swim goals keep the swim benchmark metric instead of falling back to generic text capture", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "improve my swim speed",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "improve my swim speed",
+      additionalContext: "pool access only",
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-14",
+  });
+  assert.notEqual(result.resolvedGoals[0].primaryMetric?.key, "swim_mile_time");
+
+  const templatedResult = resolveGoalTranslation({
+    rawUserGoalIntent: "improve my swim speed",
+    typedIntakePacket: {
+      ...buildIntakePacket({
+        rawGoalText: "improve my swim speed",
+        additionalContext: "pool access only",
+      }),
+      intake: {
+        ...buildIntakePacket({
+          rawGoalText: "improve my swim speed",
+          additionalContext: "pool access only",
+        }).intake,
+        goalTemplateSelection: buildGoalTemplateSelection({ templateId: "swim_faster_mile" }),
+      },
+    },
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-14",
+  });
+
+  assert.equal(templatedResult.resolvedGoals[0].summary, "Swim a faster mile");
+  assert.equal(templatedResult.resolvedGoals[0].primaryMetric?.key, "swim_mile_time");
+  assert.equal(templatedResult.resolvedGoals[0].goalTemplateId, "swim_faster_mile");
 });
 
 test("swim goals no longer collapse into running planning categories", () => {

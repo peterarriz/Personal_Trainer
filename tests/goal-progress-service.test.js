@@ -190,6 +190,50 @@ test("appearance goals stay review-based and avoid fake exact precision", () => 
   assert.match(card.honestyNote, /never get a fake exact completion score/i);
 });
 
+test("swim speed goals track benchmark retests, swim reality, and consistency without pretending they are generic cardio", () => {
+  const result = buildGoalProgressTracking({
+    resolvedGoals: [
+      buildResolvedGoal({
+        summary: "Swim a faster mile",
+        planningCategory: "general_fitness",
+        primaryMetric: { key: "swim_mile_time", label: "Swim mile time", unit: "time", targetValue: "28:00" },
+        proxyMetrics: [
+          { key: "swim_benchmark_retest", label: "Swim benchmark retest", unit: "benchmark", kind: "proxy" },
+          { key: "weekly_swim_frequency", label: "Weekly swim frequency", unit: "sessions", kind: "proxy" },
+          { key: "swim_access_reality", label: "Swim access reality", unit: "", kind: "proxy" },
+        ],
+        goalFamily: "swimming_endurance_technique",
+      }),
+    ],
+    logs: {
+      "2026-04-02": { type: "Swim", feel: 3, checkin: { status: "completed_as_planned" } },
+      "2026-04-09": { type: "Swim", feel: 4, checkin: { status: "completed_as_planned" } },
+    },
+    manualProgressInputs: {
+      benchmarks: {
+        swim_benchmark: [
+          { date: "2026-03-20", value: "1000 yd in 22:30" },
+          { date: "2026-04-10", value: "1000 yd in 21:50" },
+        ],
+      },
+      metrics: {
+        swim_access_reality: [
+          { date: "2026-04-10", value: "pool", label: "Pool only" },
+        ],
+      },
+    },
+    now: "2026-04-14",
+  });
+
+  const card = result.goalCards[0];
+  const itemsByKey = Object.fromEntries(card.trackedItems.map((item) => [item.key, item]));
+  assert.equal(card.trackedItems[0].key, "swim_benchmark_retest");
+  assert.match(itemsByKey.swim_benchmark_retest.currentDisplay, /1000 yd in 21:50/i);
+  assert.match(itemsByKey.swim_benchmark_retest.trendDisplay, /40 sec faster/i);
+  assert.match(itemsByKey.swim_access_reality.currentDisplay, /Pool only/i);
+  assert.match(card.statusSummary, /repeatable benchmark|swim reality/i);
+});
+
 test("exploratory re-entry goals become trackable through consistency, readiness, and baseline improvements", () => {
   const result = buildGoalProgressTracking({
     resolvedGoals: [

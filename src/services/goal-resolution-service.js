@@ -1,6 +1,7 @@
 import { dedupeStrings } from "../utils/collection-utils.js";
 import { buildGoalCapabilityPacket } from "./goal-capability-resolution-service.js";
 import { isOpenEndedTimingValue } from "./goal-timing-service.js";
+import { normalizeGoalTemplateSelection } from "./goal-template-catalog-service.js";
 
 export const GOAL_MEASURABILITY_TIERS = {
   fullyMeasurable: "fully_measurable",
@@ -441,12 +442,15 @@ const resolveMetricSet = ({
   signals = {},
   proposal = {},
   confirmation = {},
+  templateSelection = null,
 } = {}) => {
   const confirmationPrimary = confirmation?.edits?.primaryMetric ? uniqMetrics([{ ...(confirmation.edits.primaryMetric || {}), kind: "primary" }])[0] || null : null;
   const confirmationProxy = uniqMetrics((confirmation?.edits?.proxyMetrics || []).map((metric) => ({ ...metric, kind: "proxy" })));
   const proposalPrimary = (proposal?.suggestedMetrics || []).find((metric) => metric.kind === "primary") || null;
   const proposalPrimaryMetric = proposal?.primaryMetric || proposalPrimary || null;
   const proposalProxy = (proposal?.proxyMetrics || []).length ? proposal.proxyMetrics : (proposal?.suggestedMetrics || []).filter((metric) => metric.kind !== "primary");
+  const templatePrimary = templateSelection?.primaryMetric ? uniqMetrics([{ ...(templateSelection.primaryMetric || {}), kind: "primary" }])[0] || null : null;
+  const templateProxy = uniqMetrics((templateSelection?.proxyMetrics || []).map((metric) => ({ ...metric, kind: "proxy" })));
 
   let heuristicPrimary = null;
   if (planningCategory === "running") heuristicPrimary = extractRunningPrimaryMetric(rawText);
@@ -455,9 +459,10 @@ const resolveMetricSet = ({
   if (!heuristicPrimary && goalFamily === GOAL_FAMILIES.athleticPower) heuristicPrimary = extractAthleticPowerPrimaryMetric(rawText);
   if (!heuristicPrimary && planningCategory === "body_comp") heuristicPrimary = extractWeightLossPrimaryMetric(rawText);
 
-  const primaryMetric = confirmationPrimary || heuristicPrimary || (confirmation?.acceptedProposal !== false ? proposalPrimaryMetric : null) || null;
+  const primaryMetric = confirmationPrimary || templatePrimary || heuristicPrimary || (confirmation?.acceptedProposal !== false ? proposalPrimaryMetric : null) || null;
   const proxyMetrics = uniqMetrics([
     ...confirmationProxy,
+    ...templateProxy,
     ...(confirmation?.acceptedProposal !== false ? proposalProxy : []),
     ...defaultProxyMetricsForGoal({ planningCategory, goalFamily, signals }),
   ]).filter((metric) => !primaryMetric || metric.key !== primaryMetric.key);
@@ -622,6 +627,7 @@ const inferGoalFamily = ({
   proposal = {},
   confirmation = {},
   signals = {},
+  templateSelection = null,
 } = {}) => {
   const explicitMixedGoal = Boolean(
     signals.hasHybrid
@@ -631,6 +637,9 @@ const inferGoalFamily = ({
   );
   if (confirmation?.edits?.goalFamily && Object.values(GOAL_FAMILIES).includes(confirmation.edits.goalFamily)) {
     return confirmation.edits.goalFamily;
+  }
+  if (Object.values(GOAL_FAMILIES).includes(templateSelection?.goalFamily)) {
+    return templateSelection.goalFamily;
   }
   if (
     confirmation?.acceptedProposal !== false
@@ -768,8 +777,10 @@ const buildSummary = ({
   primaryMetric = null,
   targetWindow = {},
   confirmation = {},
+  templateSelection = null,
 } = {}) => {
   if (confirmation?.edits?.summary) return confirmation.edits.summary;
+  if (templateSelection?.summary) return templateSelection.summary;
   if (variant === "hybrid_endurance") {
     return "Build running endurance while strength stays supportive";
   }
@@ -953,6 +964,7 @@ const createResolvedGoal = ({
   proposal = {},
   confirmation = {},
   signals = {},
+  templateSelection = null,
 } = {}) => {
   const metricText = rawIntentText || analysisText;
   const validationIssues = buildValidationIssues({ signals });
@@ -963,6 +975,7 @@ const createResolvedGoal = ({
     signals,
     proposal,
     confirmation,
+    templateSelection,
   });
   const measurableTier = inferMeasurabilityTier({
     goalFamily,
@@ -999,6 +1012,7 @@ const createResolvedGoal = ({
     primaryMetric: metricSet.primaryMetric,
     targetWindow,
     confirmation,
+    templateSelection,
   });
   const tradeoffs = buildTradeoffs({
     goalFamily,
@@ -1047,6 +1061,7 @@ const createResolvedGoal = ({
       measurabilityTier: proposal?.measurabilityTier || "",
       coachSummary: proposal?.coachSummary || "",
     },
+    goalTemplateId: sanitizeText(templateSelection?.templateId || "", 80),
   };
   const capabilityPacket = buildGoalCapabilityPacket({
     goal: {
@@ -1247,6 +1262,7 @@ export const resolveGoalTranslation = ({
   now = new Date(),
 } = {}) => {
   const intakeContext = resolveIntakeContext(typedIntakePacket);
+  const templateSelection = normalizeGoalTemplateSelection(intakeContext?.goalTemplateSelection || null);
   const rawIntentText = getRawGoalIntentText({ rawUserGoalIntent, intakeContext });
   const analysisText = getCorpusText({ rawUserGoalIntent: rawIntentText, intakeContext });
   const proposal = normalizeAiInterpretationProposal(aiInterpretationProposal);
@@ -1256,6 +1272,7 @@ export const resolveGoalTranslation = ({
     proposal,
     confirmation,
     signals,
+    templateSelection,
   });
   const targetWindow = resolveTargetWindow({
     rawText: rawIntentText,
@@ -1279,6 +1296,7 @@ export const resolveGoalTranslation = ({
     proposal,
     confirmation,
     signals,
+    templateSelection,
   }));
   const planningGoals = buildPlanningGoalsFromResolvedGoals({ resolvedGoals });
   const unresolvedGaps = dedupeStrings(resolvedGoals.flatMap((goal) => goal?.unresolvedGaps || []));

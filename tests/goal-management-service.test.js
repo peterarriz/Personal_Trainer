@@ -184,6 +184,40 @@ test("editing a goal can convert an exact-date target into an open-ended goal be
   assert.match(preview.impactLines.join(" "), /open-ended/i);
 });
 
+test("adding a new goal from the preset library previews a clean active goal insertion", () => {
+  const goals = [
+    buildGoal({
+      runtimeId: "goal_running",
+      recordId: "goal_running_record",
+      summary: "Run a half marathon in 1:45:00",
+      category: "running",
+      goalFamily: "performance",
+      priority: 1,
+      primaryMetric: { key: "half_marathon_time", label: "Half marathon time", targetValue: "1:45:00", unit: "time" },
+    }),
+  ];
+  const draft = buildGoalEditorDraft({ goal: null });
+  draft.templateId = "bench_225";
+  draft.summary = "Bench press 225 lb";
+
+  const preview = buildGoalManagementPreview({
+    goals,
+    personalization: { goalManagement: { archivedGoals: [], history: [] } },
+    change: {
+      type: GOAL_MANAGEMENT_CHANGE_TYPES.add,
+      draft,
+    },
+    now: "2026-04-14T12:00:00.000Z",
+  });
+
+  assert.ok(preview);
+  assert.equal(preview.nextViewModel.currentGoals.length, 2);
+  assert.equal(preview.nextViewModel.currentGoals[1].summary, "Bench press 225 lb");
+  assert.equal(preview.nextResolvedGoals[1].goalTemplateId, "bench_225");
+  assert.match(preview.changeLabel, /Add Bench press 225 lb/i);
+  assert.match(preview.impactLines.join(" "), /joins the active goal stack/i);
+});
+
 test("archive and restore previews keep goal history while moving goals in and out of the active stack", () => {
   const goals = [
     buildGoal({

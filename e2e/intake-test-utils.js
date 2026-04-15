@@ -440,6 +440,10 @@ async function completeIntroQuestionnaire(page, {
   const sessionLengthValue = normalizeSessionLengthValue(sessionLength);
   await expect(page.getByTestId("intake-goals-step")).toBeVisible();
   if (String(goalText || "").trim()) {
+    if (await page.getByTestId("intake-goals-primary-input").count() === 0) {
+      await page.getByTestId("intake-goals-toggle-custom").click();
+      await expect(page.getByTestId("intake-goals-primary-input")).toBeVisible();
+    }
     await page.getByTestId("intake-goals-primary-input").fill(goalText);
   } else {
     await page.getByTestId("intake-footer-foundation").click();
