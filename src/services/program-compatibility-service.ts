@@ -182,7 +182,7 @@ const evaluateGoals = ({
   const incompatible = uniqueStrings(programDefinition?.incompatibleGoalTypes || []).map(normalizeGoalType);
   if (activeGoalTypes.some((goalType) => incompatible.includes(goalType))) {
     return {
-      mismatch: "This template pulls in a different direction than your active goal stack.",
+      mismatch: "This template pulls in a different direction than your active priority order.",
       blocked: true,
       scorePenalty: 28,
       changes: ["Pick a better-matched program or use a style instead of forcing a mismatch."],

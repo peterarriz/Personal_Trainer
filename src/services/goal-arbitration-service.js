@@ -358,8 +358,8 @@ const buildRoleDecision = ({
     return {
       reasonCode: goal?.arbitrationConfirmedPrimary ? "confirmed_primary" : "highest_priority_signal",
       summary: hasBlockingClarification(goal)
-        ? "This stays the lead intent, but it still needs clarification before planning can lock."
-        : "This sets the block direction and gets the cleanest planning focus.",
+        ? "This stays at the top of the priority order, but it still needs clarification before planning can lock."
+        : "This gets the most planning weight and sets the clearest direction for the block.",
       validationIssueKeys,
     };
   }
@@ -368,20 +368,20 @@ const buildRoleDecision = ({
     if (isMaintenanceIntent(goal)) {
       return {
         reasonCode: "maintenance_intent",
-        summary: "This stays alive in the week, but it does not set the block structure.",
+        summary: "This stays active in the week, but it does not carry the most planning weight.",
         validationIssueKeys,
       };
     }
     if (isHardOutcomeGoal(goal)) {
       return {
         reasonCode: "kept_alive_as_secondary",
-        summary: "This matters enough to keep progressing slowly while the lead goal still takes first claim on recovery.",
+        summary: "This still matters and can keep moving, but the top priority still gets first claim on recovery and progression.",
         validationIssueKeys,
       };
     }
     return {
       reasonCode: "secondary_lane_maintained",
-      summary: "This stays in maintenance range while the lead goal gets the cleanest push.",
+      summary: "This stays high in the priority order, with a little less planning weight than Priority 1.",
       validationIssueKeys,
     };
   }
@@ -390,27 +390,27 @@ const buildRoleDecision = ({
     if (intakeBlocked && !isMaintenanceIntent(goal)) {
       return {
         reasonCode: "background_until_primary_clarifies",
-        summary: "This stays acknowledged, but it cannot claim planning priority until the primary lane is better anchored.",
+        summary: "This stays visible, but it cannot move higher in the priority order until the top goal is better anchored.",
         validationIssueKeys,
       };
     }
     if (isAppearanceGoal(goal)) {
       return {
         reasonCode: "appearance_support_background",
-        summary: "We will watch this through check-ins, but the block will not optimize it directly.",
+        summary: "We will keep tracking this through check-ins without forcing the whole block to revolve around it.",
         validationIssueKeys,
       };
     }
     if (planningCategory && planningCategory === leadCategory) {
       return {
         reasonCode: "same_lane_not_co_primary",
-        summary: "This overlaps with the lead lane, so it stays supportive instead of becoming co-primary.",
+        summary: "This overlaps with a higher priority goal, so it does not need separate top billing to stay in the plan.",
         validationIssueKeys,
       };
     }
     return {
       reasonCode: highConflict ? "support_only_due_to_conflict" : "background_support",
-      summary: "This matters, but it sits in the background while the lead and maintained lanes get the real planning focus.",
+      summary: "This still matters, and it stays visible in the priority order while the higher priorities get more planning weight.",
       validationIssueKeys,
     };
   }
@@ -433,13 +433,13 @@ const buildRoleDecision = ({
   if (planningCategory && planningCategory === leadCategory) {
     return {
       reasonCode: "deferred_same_lane",
-      summary: "This overlaps too much with the lead lane to earn its own slot in the active stack.",
+      summary: "This overlaps too much with a higher priority goal to earn its own separate planning emphasis right now.",
       validationIssueKeys,
     };
   }
   return {
     reasonCode: "deferred_due_to_stack_cap",
-    summary: "This matters, but it fits better after the current block gets a cleaner focus.",
+    summary: "This still matters, but it fits better as a later priority after the current block gets a cleaner focus.",
     validationIssueKeys,
   };
 };

@@ -1,5 +1,5 @@
 import { sanitizeDisplayCopy } from "./text-format-service.js";
-import { buildDayPrescriptionDisplay } from "./day-prescription-display-service.js";
+import { buildCanonicalPlanSurfaceModel } from "./plan-day-surface-service.js";
 import {
   getExercisePerformanceRecordsForLog,
   getSessionPerformanceRecordsForLog,
@@ -376,11 +376,13 @@ export const buildWorkoutLogFormRecommendation = ({
     reps: genericVisible ? normalizeNumericText(logEntry?.reps ?? logEntry?.pushups ?? firstStrengthRow?.actualReps ?? "") : "",
     weight: genericVisible ? normalizeNumericText(logEntry?.weight ?? firstStrengthRow?.actualWeight ?? "") : "",
   };
-  const plannedSummary = buildDayPrescriptionDisplay({
+  const plannedSummary = buildCanonicalPlanSurfaceModel({
+    surface: "log",
+    plannedDayRecord,
     training,
-    includeWhy: false,
     prescribedExercises: resolvedPrescribedExercises,
-  });
+    includeWhy: false,
+  }).display;
   const sections = {
     run: {
       enabled: family === WORKOUT_LOG_FAMILIES.run || family === WORKOUT_LOG_FAMILIES.mixed,

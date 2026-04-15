@@ -1785,8 +1785,8 @@ test("primary body-comp plus maintained strength stays explicit in the confirmed
   assert.equal(confirmedStack[0].intakeConfirmedRole, GOAL_STACK_ROLES.primary);
   assert.equal(confirmedStack[1].planningCategory, "strength");
   assert.equal(confirmedStack[1].intakeConfirmedRole, GOAL_STACK_ROLES.maintained);
-  assert.equal(review.activeGoals[0].roleLabel, "Lead");
-  assert.equal(review.activeGoals[1].roleLabel, "Maintained");
+  assert.equal(review.activeGoals[0].roleLabel, "Priority 1");
+  assert.equal(review.activeGoals[1].roleLabel, "Priority 2");
   assert.ok(review.primaryTradeoff.length > 0);
 });
 
@@ -1859,7 +1859,7 @@ test("final review keeps running lead, maintained bench goal, and background abs
   assert.equal(reviewModel.reviewContract.ordered_goal_stack.top_priorities[0]?.summary, arbitration.leadGoal?.summary);
   assert.deepEqual(
     reviewModel.reviewContract.lane_sections.map((section) => section.title),
-    ["Priority 1", "Priority 2", "Priority 3", "Additional goals that still matter"]
+    ["Priority 1", "Priority 2", "Priority 3", "Priorities 4+"]
   );
   assert.equal(reviewModel.reviewContract.actions.confirm.label, "Confirm and build my plan");
   assert.equal(reviewModel.reviewContract.actions.changePriority.label, "Reorder goals");
@@ -1966,7 +1966,7 @@ test("goal stack review keeps parsed goals separate and lets one be removed befo
 
   assert.equal(initialReview.activeGoals.length, 2);
   assert.equal(initialReview.activeGoals[0]?.summary, "Run a half marathon in 1:45:00");
-  assert.equal(initialReview.activeGoals[1]?.summary, "Keep strength while the primary goal leads");
+  assert.equal(initialReview.activeGoals[1]?.summary, "Keep strength in the plan while another priority leads");
 
   const withoutSecondary = buildIntakeGoalStackReviewModel({
     resolvedGoals: resolution.resolvedGoals,
@@ -1990,7 +1990,7 @@ test("goal stack review keeps parsed goals separate and lets one be removed befo
   });
 
   assert.equal(withoutLead.activeGoals.length, 1);
-  assert.equal(withoutLead.activeGoals[0]?.summary, "Keep strength while the primary goal leads");
+  assert.equal(withoutLead.activeGoals[0]?.summary, "Keep strength in the plan while another priority leads");
 });
 
 test("duplicate goal fingerprints do not render in both lead and later sections", () => {
@@ -2068,8 +2068,8 @@ test("review model labels deferred goals with the intake review vocabulary", () 
     goalStackConfirmation: null,
   });
 
-  assert.equal(review.activeGoals[0].roleLabel, "Lead");
-  assert.equal(review.deferredGoals[0].roleLabel, "Deferred");
+  assert.equal(review.activeGoals[0].roleLabel, "Priority 1");
+  assert.equal(review.deferredGoals[0].roleLabel, "Priority 2");
 });
 
 test("hybrid vague goal resolves into explicit leading and maintained structure", () => {
@@ -2253,10 +2253,112 @@ test("ordered goal stack keeps five goals visible while planner confirmation sti
     goalStackConfirmation.orderedGoalIds
   );
   assert.equal(review.orderedGoalStack.additional_goals.length, 2);
-  assert.equal(review.reviewContract.ordered_goal_stack.sections[3]?.title, "Additional goals that still matter");
+  assert.equal(review.reviewContract.ordered_goal_stack.sections[3]?.title, "Priorities 4+");
   assert.match(review.reviewContract.tradeoff_statement, /Priority 1 is Bench press 225 lb/i);
   assert.deepEqual(
     confirmed.map((goal) => goal.id),
     ["goal_strength_bench", "goal_running_lead"]
   );
+});
+
+test("ordered goal stack keeps seven goals visible and preserves later priorities as explicit additional goals", () => {
+  const resolvedGoals = [
+    {
+      id: "goal_running_lead",
+      summary: "Run a half marathon in 1:45:00",
+      planningCategory: "running",
+      goalFamily: "performance",
+      planningPriority: 1,
+      goalArbitrationRole: GOAL_STACK_ROLES.primary,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.fullyMeasurable,
+      primaryMetric: { key: "half_marathon_finish_time", targetValue: "1:45:00", label: "Half marathon time" },
+    },
+    {
+      id: "goal_strength_bench",
+      summary: "Bench press 225 lb",
+      planningCategory: "strength",
+      goalFamily: "strength",
+      planningPriority: 2,
+      goalArbitrationRole: GOAL_STACK_ROLES.maintained,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.fullyMeasurable,
+      primaryMetric: { key: "bench_press_1rm", targetValue: "225 lb", label: "Bench 1RM" },
+    },
+    {
+      id: "goal_body_comp",
+      summary: "Get leaner by summer",
+      planningCategory: "body_comp",
+      goalFamily: "body_comp",
+      planningPriority: 3,
+      goalArbitrationRole: GOAL_STACK_ROLES.background,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.proxyMeasurable,
+      proxyMetrics: [{ label: "Bodyweight trend" }],
+    },
+    {
+      id: "goal_power_jump",
+      summary: "Jump higher again",
+      planningCategory: "strength",
+      goalFamily: "athletic_power",
+      planningPriority: 4,
+      goalArbitrationRole: GOAL_STACK_ROLES.deferred,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.proxyMeasurable,
+      proxyMetrics: [{ label: "Jump contacts" }],
+    },
+    {
+      id: "goal_durability",
+      summary: "Keep shoulders healthy",
+      planningCategory: "injury_prevention",
+      goalFamily: "general_fitness",
+      planningPriority: 5,
+      goalArbitrationRole: GOAL_STACK_ROLES.deferred,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.proxyMeasurable,
+      proxyMetrics: [{ label: "Pain-free sessions" }],
+    },
+    {
+      id: "goal_swim_confidence",
+      summary: "Swim confidently in open water",
+      planningCategory: "swim",
+      goalFamily: "performance",
+      planningPriority: 6,
+      goalArbitrationRole: GOAL_STACK_ROLES.deferred,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.proxyMeasurable,
+      proxyMetrics: [{ label: "Open-water sessions" }],
+    },
+    {
+      id: "goal_mobility",
+      summary: "Move better through hips and ankles",
+      planningCategory: "general_fitness",
+      goalFamily: "general_fitness",
+      planningPriority: 7,
+      goalArbitrationRole: GOAL_STACK_ROLES.deferred,
+      measurabilityTier: GOAL_MEASURABILITY_TIERS.proxyMeasurable,
+      proxyMetrics: [{ label: "Mobility sessions" }],
+    },
+  ];
+  const goalStackConfirmation = {
+    orderedGoalIds: [
+      "goal_strength_bench",
+      "goal_running_lead",
+      "goal_body_comp",
+      "goal_power_jump",
+      "goal_durability",
+      "goal_swim_confidence",
+      "goal_mobility",
+    ],
+    removedGoalIds: [],
+  };
+
+  const review = buildIntakeGoalStackReviewModel({
+    resolvedGoals,
+    goalResolution: null,
+    goalFeasibility: { conflictFlags: [{ key: "limited_schedule_multi_goal_stack", summary: "The schedule needs a clean focus." }] },
+    goalStackConfirmation,
+  });
+
+  assert.deepEqual(
+    review.orderedGoalStack.items.map((goal) => goal.id),
+    goalStackConfirmation.orderedGoalIds
+  );
+  assert.equal(review.orderedGoalStack.additional_goals.length, 4);
+  assert.equal(review.reviewContract.ordered_goal_stack.sections[3]?.title, "Priorities 4+");
+  assert.ok(review.orderedGoalStack.items.some((goal) => goal.priorityLabel === "Priority 7"));
 });

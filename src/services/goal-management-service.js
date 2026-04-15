@@ -32,10 +32,56 @@ export const GOAL_MANAGEMENT_CHANGE_TYPES = {
 };
 
 export const GOAL_ARCHIVE_STATUSES = {
+  future: "future",
+  paused: "paused",
   archived: "archived",
   completed: "completed",
   dropped: "dropped",
 };
+
+const ACTIVE_GOAL_STATUS = "active";
+
+const GOAL_STATUS_LABELS = {
+  [ACTIVE_GOAL_STATUS]: "Active",
+  [GOAL_ARCHIVE_STATUSES.future]: "Future",
+  [GOAL_ARCHIVE_STATUSES.paused]: "Paused",
+  [GOAL_ARCHIVE_STATUSES.archived]: "Archived",
+  [GOAL_ARCHIVE_STATUSES.completed]: "Completed",
+  [GOAL_ARCHIVE_STATUSES.dropped]: "Dropped",
+};
+
+const GOAL_LIFECYCLE_SECTIONS = [
+  {
+    key: "futureGoals",
+    status: GOAL_ARCHIVE_STATUSES.future,
+    label: "Future goals",
+    helper: "Queued goals that stay visible but do not shape the live plan yet.",
+  },
+  {
+    key: "pausedGoals",
+    status: GOAL_ARCHIVE_STATUSES.paused,
+    label: "Paused goals",
+    helper: "Temporarily on hold until you resume them.",
+  },
+  {
+    key: "completedGoals",
+    status: GOAL_ARCHIVE_STATUSES.completed,
+    label: "Completed goals",
+    helper: "Finished goals kept for context and audit history.",
+  },
+  {
+    key: "archivedOnlyGoals",
+    status: GOAL_ARCHIVE_STATUSES.archived,
+    label: "Archived goals",
+    helper: "Closed goals that you want preserved without keeping them active.",
+  },
+  {
+    key: "droppedGoals",
+    status: GOAL_ARCHIVE_STATUSES.dropped,
+    label: "Dropped goals",
+    helper: "Goals intentionally taken out of the plan without marking them complete.",
+  },
+];
 
 const FIELD_LABELS = {
   summary: "Goal summary",
@@ -104,6 +150,20 @@ const cloneValue = (value) => {
 const toArray = (value) => (Array.isArray(value) ? value : value == null ? [] : [value]);
 
 const sanitizeText = (value = "", maxLength = 200) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+
+const normalizeGoalStatus = (value = "", fallback = ACTIVE_GOAL_STATUS) => {
+  const normalized = sanitizeText(value, 40).toLowerCase();
+  if (!normalized) return fallback;
+  if (normalized === ACTIVE_GOAL_STATUS) return ACTIVE_GOAL_STATUS;
+  if (Object.values(GOAL_ARCHIVE_STATUSES).includes(normalized)) return normalized;
+  return fallback;
+};
+
+const formatGoalStatusLabel = (status = "") => (
+  GOAL_STATUS_LABELS[normalizeGoalStatus(status, ACTIVE_GOAL_STATUS)]
+  || sanitizeText(status, 80)
+  || GOAL_STATUS_LABELS[ACTIVE_GOAL_STATUS]
+);
 
 const slugify = (value = "", fallback = "goal") => {
   const cleaned = String(value || "")
@@ -473,7 +533,15 @@ const extractResolvedGoal = (goal = null) => {
   };
 };
 
-const buildPlannerGoalFromResolvedGoal = ({ currentGoal = null, resolvedGoal = null, priority = 1, idx = 0 } = {}) => {
+const buildPlannerGoalFromResolvedGoal = ({
+  currentGoal = null,
+  resolvedGoal = null,
+  priority = 1,
+  idx = 0,
+  active = true,
+  status = ACTIVE_GOAL_STATUS,
+  archivedAt = null,
+} = {}) => {
   const projected = projectResolvedGoalToPlanningGoal({
     ...(cloneValue(resolvedGoal || {}) || {}),
     id: resolveRecordId(currentGoal || resolvedGoal || {}, idx),
@@ -486,10 +554,10 @@ const buildPlannerGoalFromResolvedGoal = ({ currentGoal = null, resolvedGoal = n
     id: currentGoal?.id || projected.id,
     goalRecordId: resolveRecordId(currentGoal || resolvedGoal || {}, idx),
     goalVersionId: currentGoal?.goalVersionId || "",
-    active: true,
-    status: "active",
+    active,
+    status: normalizeGoalStatus(status, active ? ACTIVE_GOAL_STATUS : GOAL_ARCHIVE_STATUSES.archived),
     priority,
-    archivedAt: null,
+    archivedAt: active ? null : (archivedAt || currentGoal?.archivedAt || null),
     resolvedGoal: {
       ...projected.resolvedGoal,
       id: resolveRecordId(currentGoal || resolvedGoal || {}, idx),
@@ -509,6 +577,30 @@ const sortGoalsByPriority = (goals = []) => (
     || sanitizeText(left?.name || "", 160).localeCompare(sanitizeText(right?.name || "", 160))
   ))
 );
+
+const sortGoalsByRecentChange = (goals = []) => (
+  [...(goals || [])].sort((left, right) => (
+    toTimestampMs(right?.goalManagement?.lastChangedAt || right?.goalManagement?.createdAt || 0)
+    - toTimestampMs(left?.goalManagement?.lastChangedAt || left?.goalManagement?.createdAt || 0)
+    || sanitizeText(left?.name || "", 160).localeCompare(sanitizeText(right?.name || "", 160))
+  ))
+);
+
+const buildPriorityLabel = (priority = null) => (
+  Number.isFinite(Number(priority)) && Number(priority) > 0
+    ? `Priority ${Math.max(1, Math.round(Number(priority)))}`
+    : "Priority"
+);
+
+const buildPriorityRangeLabel = (startPriority = null, endPriority = null) => (
+  Number.isFinite(Number(startPriority)) && Number.isFinite(Number(endPriority))
+    ? Number(startPriority) === Number(endPriority)
+      ? buildPriorityLabel(startPriority)
+      : `Priorities ${Math.round(Number(startPriority))}-${Math.round(Number(endPriority))}`
+    : "Later priorities"
+);
+
+const GOAL_PRIORITY_EXPLANATION = "Priority 1 gets the most planning weight. Later priorities stay visible and still influence exercise selection, sequencing, and tracking when they fit cleanly.";
 
 const reorderByIds = (goals = [], orderedGoalIds = []) => {
   const map = new Map(sortGoalsByPriority(goals).map((goal) => [resolveRecordId(goal), goal]));
@@ -600,6 +692,7 @@ const finalizeActiveGoals = ({
 
 const buildHistoryEntry = ({
   changeType = GOAL_MANAGEMENT_CHANGE_TYPES.edit,
+  changeLabel = "",
   subjectGoal = null,
   changedFields = [],
   previousOrder = [],
@@ -607,18 +700,56 @@ const buildHistoryEntry = ({
   impactLines = [],
   capturedAt = toIsoTimestamp(),
   archiveStatus = "",
+  previousStatus = "",
+  nextStatus = "",
 } = {}) => ({
   id: `goal_management_${changeType}_${toTimestampMs(capturedAt)}`,
   changeType,
+  changeLabel: sanitizeText(changeLabel || "", 160),
   changedAt: capturedAt,
   goalRecordId: resolveRecordId(subjectGoal || {}, 0),
   goalSummary: sanitizeText(subjectGoal?.name || subjectGoal?.resolvedGoal?.summary || "", 160),
   archiveStatus: sanitizeText(archiveStatus || subjectGoal?.status || "", 40).toLowerCase(),
+  previousStatus: normalizeGoalStatus(previousStatus || "", ""),
+  nextStatus: normalizeGoalStatus(nextStatus || subjectGoal?.status || "", ""),
   changedFields: cloneValue(changedFields || []),
   previousOrder: cloneValue(previousOrder || []),
   nextOrder: cloneValue(nextOrder || []),
   impactLines: cloneValue(impactLines || []),
 });
+
+const buildGoalHistoryHeadline = (entry = {}) => {
+  const changeType = sanitizeText(entry?.changeType || "", 40).toLowerCase();
+  const goalSummary = sanitizeText(entry?.goalSummary || "Goal", 160);
+  const previousStatus = normalizeGoalStatus(entry?.previousStatus || "", "");
+  const nextStatus = normalizeGoalStatus(entry?.nextStatus || entry?.archiveStatus || "", "");
+  if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.reprioritize) return "Priority order updated";
+  if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.add) {
+    return nextStatus === GOAL_ARCHIVE_STATUSES.future
+      ? `Added ${goalSummary} to future goals`
+      : `Added ${goalSummary}`;
+  }
+  if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.edit) return `Edited ${goalSummary}`;
+  if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.archive) {
+    if (nextStatus === GOAL_ARCHIVE_STATUSES.paused) return `Paused ${goalSummary}`;
+    if (nextStatus === GOAL_ARCHIVE_STATUSES.future) return `Moved ${goalSummary} to future goals`;
+    if (nextStatus === GOAL_ARCHIVE_STATUSES.completed) return `Completed ${goalSummary}`;
+    if (nextStatus === GOAL_ARCHIVE_STATUSES.dropped) return `Dropped ${goalSummary}`;
+    return `Archived ${goalSummary}`;
+  }
+  if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.restore) {
+    if (previousStatus === GOAL_ARCHIVE_STATUSES.paused) return `Resumed ${goalSummary}`;
+    if (previousStatus === GOAL_ARCHIVE_STATUSES.future) return `Started ${goalSummary} now`;
+    return `Restored ${goalSummary}`;
+  }
+  return sanitizeText(entry?.changeLabel || goalSummary, 160) || goalSummary;
+};
+
+const buildGoalHistoryDetail = (entry = {}) => (
+  sanitizeText(toArray(entry?.impactLines || [])[0] || "", 220)
+  || sanitizeText((entry?.changedFields || []).map((field) => field?.label).filter(Boolean).join(", "), 220)
+  || "Historical plan truth and workout logs stay preserved."
+);
 
 const buildGoalCardModel = ({
   goal = null,
@@ -637,9 +768,10 @@ const buildGoalCardModel = ({
     id: resolveRecordId(managedGoal),
     runtimeId: sanitizeText(managedGoal?.id || "", 140),
     summary: sanitizeText(managedGoal?.name || managedGoal?.resolvedGoal?.summary || snapshot.summary, 160),
-    status: sanitizeText(managedGoal?.status || (managedGoal?.active === false ? "archived" : "active"), 40).toLowerCase() || "active",
+    status: normalizeGoalStatus(managedGoal?.status || (managedGoal?.active === false ? GOAL_ARCHIVE_STATUSES.archived : ACTIVE_GOAL_STATUS)),
+    statusLabel: formatGoalStatusLabel(managedGoal?.status || (managedGoal?.active === false ? GOAL_ARCHIVE_STATUSES.archived : ACTIVE_GOAL_STATUS)),
     priority: normalizeInteger(managedGoal?.priority, null),
-    priorityLabel: priorityLabel || fallbackPriorityLabel || (managedGoal?.priority <= 3 ? `Priority ${managedGoal.priority}` : "Additional goal"),
+    priorityLabel: priorityLabel || fallbackPriorityLabel || buildPriorityLabel(managedGoal?.priority),
     goalTypeLabel: GOAL_TYPE_LABELS[snapshot.goalFamily] || GOAL_TYPE_LABELS[snapshot.planningCategory] || "Goal",
     timingLabel: timing.label,
     timingDetail: timing.detail,
@@ -688,24 +820,35 @@ const buildImpactLines = ({
     }
   }
   if (nextActiveGoals[1]?.name) {
-    lines.push(`${nextActiveGoals[1].name} stays active while Priority 1 drives most of the progression.`);
+    lines.push(`${nextActiveGoals[1].name} stays high in the priority order with slightly less planning weight than Priority 1.`);
   }
   if (nextActiveGoals.length >= 3) {
-    const additionalCount = Math.max(0, nextActiveGoals.length - 2);
-    if (additionalCount === 1) {
-      lines.push(`${nextActiveGoals[2].name} still influences exercise selection and tracking where possible.`);
-    } else if (additionalCount > 1) {
-      lines.push("Lower-priority goals still influence exercise selection and tracking where possible.");
+    const remainingGoals = nextActiveGoals.slice(2);
+    if (remainingGoals.length === 1) {
+      lines.push(`${buildPriorityLabel(3)} stays ${remainingGoals[0].name}. It still shapes the plan when it fits cleanly.`);
+    } else if (remainingGoals.length > 1) {
+      lines.push(`${buildPriorityRangeLabel(3, nextActiveGoals.length)} stay visible and can still influence exercise selection, sequencing, and tracking when they fit cleanly.`);
     }
   }
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.archive && subjectGoal?.name) {
-    lines.push(`${subjectGoal.name} moves out of the active stack as ${sanitizeText(archiveStatus || subjectGoal?.status || "archived", 40).toLowerCase()}. Historical plans and logs stay attached to the earlier version.`);
+    const nextStatus = normalizeGoalStatus(archiveStatus || subjectGoal?.status || GOAL_ARCHIVE_STATUSES.archived, GOAL_ARCHIVE_STATUSES.archived);
+    if (nextStatus === GOAL_ARCHIVE_STATUSES.paused) {
+      lines.push(`${subjectGoal.name} moves out of the active priority order and into paused goals. Historical plans and logs stay attached to the earlier version.`);
+    } else if (nextStatus === GOAL_ARCHIVE_STATUSES.future) {
+      lines.push(`${subjectGoal.name} moves out of the active priority order and into future goals until you start it. Historical plans and logs stay attached to the earlier version.`);
+    } else if (nextStatus === GOAL_ARCHIVE_STATUSES.completed) {
+      lines.push(`${subjectGoal.name} is marked completed and moves out of the active priority order. Historical plans and logs stay attached to the earlier version.`);
+    } else if (nextStatus === GOAL_ARCHIVE_STATUSES.dropped) {
+      lines.push(`${subjectGoal.name} is marked dropped and moves out of the active priority order. Historical plans and logs stay attached to the earlier version.`);
+    } else {
+      lines.push(`${subjectGoal.name} is archived and moves out of the active priority order. Historical plans and logs stay attached to the earlier version.`);
+    }
   }
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.add && subjectGoal?.name) {
-    lines.push(`${subjectGoal.name} joins the active goal stack and starts shaping future plans after you confirm.`);
+    lines.push(`${subjectGoal.name} joins the active priority order and starts shaping future plans after you confirm.`);
   }
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.restore && subjectGoal?.name) {
-    lines.push(`${subjectGoal.name} returns to the active stack and starts influencing plan decisions again.`);
+    lines.push(`${subjectGoal.name} returns to the active priority order and starts influencing plan decisions again.`);
   }
   if (changedFields.some((entry) => ["targetDate", "targetHorizonWeeks", "openEnded"].includes(entry.field))) {
     const timing = buildGoalTimingPresentation(subjectGoal);
@@ -739,7 +882,7 @@ export const buildGoalSettingsViewModel = ({
       .map((goal, idx) => ensureManagedGoal(goal, idx, now))
       .filter(Boolean)
   );
-  const archivedGoals = sortGoalsByPriority(
+  const inactiveGoals = sortGoalsByRecentChange(
     toArray(personalization?.goalManagement?.archivedGoals || [])
       .map((goal, idx) => ensureManagedGoal({
         ...goal,
@@ -758,34 +901,79 @@ export const buildGoalSettingsViewModel = ({
   const priorityLabelsById = Object.fromEntries(
     toArray(reviewModel?.orderedGoalStack?.items || []).map((item, index) => [
       sanitizeText(item?.id || "", 140),
-      sanitizeText(item?.priorityLabel || (index < 3 ? `Priority ${index + 1}` : "Additional goal"), 80),
+      sanitizeText(item?.priorityLabel || buildPriorityLabel(index + 1), 80),
     ])
   );
   return {
     currentGoals: activeGoals.map((goal, index) => buildGoalCardModel({
       goal,
       priorityLabel: priorityLabelsById[resolveRecordId(goal)],
-      fallbackPriorityLabel: index < 3 ? `Priority ${index + 1}` : "Additional goal",
+      fallbackPriorityLabel: buildPriorityLabel(index + 1),
       now,
     })),
-    archivedGoals: archivedGoals.map((goal) => buildGoalCardModel({
+    archivedGoals: inactiveGoals.map((goal) => buildGoalCardModel({
       goal,
-      priorityLabel: sanitizeText(goal?.status || "archived", 80),
-      fallbackPriorityLabel: sanitizeText(goal?.status || "archived", 80),
+      priorityLabel: formatGoalStatusLabel(goal?.status || GOAL_ARCHIVE_STATUSES.archived),
+      fallbackPriorityLabel: formatGoalStatusLabel(goal?.status || GOAL_ARCHIVE_STATUSES.archived),
       now,
     })),
+    lifecycleSections: GOAL_LIFECYCLE_SECTIONS.map((section) => {
+      const sectionGoals = inactiveGoals
+        .filter((goal) => normalizeGoalStatus(goal?.status || "", GOAL_ARCHIVE_STATUSES.archived) === section.status)
+        .map((goal) => buildGoalCardModel({
+          goal,
+          priorityLabel: formatGoalStatusLabel(goal?.status || section.status),
+          fallbackPriorityLabel: formatGoalStatusLabel(goal?.status || section.status),
+          now,
+        }));
+      return {
+        ...section,
+        count: sectionGoals.length,
+        goals: sectionGoals,
+      };
+    }),
+    counts: {
+      activeCount: activeGoals.length,
+      inactiveCount: inactiveGoals.length,
+      totalCount: activeGoals.length + inactiveGoals.length,
+      futureCount: inactiveGoals.filter((goal) => normalizeGoalStatus(goal?.status || "", GOAL_ARCHIVE_STATUSES.archived) === GOAL_ARCHIVE_STATUSES.future).length,
+      pausedCount: inactiveGoals.filter((goal) => normalizeGoalStatus(goal?.status || "", GOAL_ARCHIVE_STATUSES.archived) === GOAL_ARCHIVE_STATUSES.paused).length,
+      completedCount: inactiveGoals.filter((goal) => normalizeGoalStatus(goal?.status || "", GOAL_ARCHIVE_STATUSES.archived) === GOAL_ARCHIVE_STATUSES.completed).length,
+      archivedCount: inactiveGoals.filter((goal) => normalizeGoalStatus(goal?.status || "", GOAL_ARCHIVE_STATUSES.archived) === GOAL_ARCHIVE_STATUSES.archived).length,
+      droppedCount: inactiveGoals.filter((goal) => normalizeGoalStatus(goal?.status || "", GOAL_ARCHIVE_STATUSES.archived) === GOAL_ARCHIVE_STATUSES.dropped).length,
+    },
     currentGoalOrder: activeGoals.map((goal) => resolveRecordId(goal)),
+    priorityExplanation: GOAL_PRIORITY_EXPLANATION,
     tradeoffStatement: sanitizeText(reviewModel?.tradeoffStatement || reviewModel?.reviewContract?.tradeoff_statement || "", 220),
     reviewModel,
-    historyFeed: toArray(personalization?.goalManagement?.history || []).map((entry) => ({
-      id: sanitizeText(entry?.id || "", 160),
-      changeType: sanitizeText(entry?.changeType || "", 40).toLowerCase(),
-      changedAt: entry?.changedAt || "",
-      goalSummary: sanitizeText(entry?.goalSummary || "", 160),
-      changedFields: cloneValue(entry?.changedFields || []),
-      impactLines: cloneValue(entry?.impactLines || []),
-      archiveStatus: sanitizeText(entry?.archiveStatus || "", 40).toLowerCase(),
-    })),
+    historyFeed: toArray(personalization?.goalManagement?.history || [])
+      .map((entry) => {
+        const previousStatus = normalizeGoalStatus(entry?.previousStatus || "", "");
+        const nextStatus = normalizeGoalStatus(entry?.nextStatus || entry?.archiveStatus || "", "");
+        const changedFieldLabels = dedupeStrings(
+          toArray(entry?.changedFields || [])
+            .map((field) => sanitizeText(field?.label || FIELD_LABELS[field?.field] || "", 80))
+            .filter(Boolean)
+        );
+        return {
+          id: sanitizeText(entry?.id || "", 160),
+          changeType: sanitizeText(entry?.changeType || "", 40).toLowerCase(),
+          changeLabel: sanitizeText(entry?.changeLabel || "", 160),
+          changedAt: entry?.changedAt || "",
+          goalSummary: sanitizeText(entry?.goalSummary || "", 160),
+          headline: buildGoalHistoryHeadline(entry),
+          detail: buildGoalHistoryDetail(entry),
+          changedFields: cloneValue(entry?.changedFields || []),
+          changedFieldLabels,
+          impactLines: cloneValue(entry?.impactLines || []),
+          archiveStatus: sanitizeText(entry?.archiveStatus || "", 40).toLowerCase(),
+          previousStatus,
+          nextStatus,
+          statusBeforeLabel: previousStatus ? formatGoalStatusLabel(previousStatus) : "",
+          statusAfterLabel: nextStatus ? formatGoalStatusLabel(nextStatus) : "",
+        };
+      })
+      .sort((left, right) => toTimestampMs(right?.changedAt || 0) - toTimestampMs(left?.changedAt || 0)),
   };
 };
 
@@ -917,6 +1105,8 @@ export const buildGoalManagementPreview = ({
   let subjectGoal = null;
   let subjectChangedFields = [];
   let changeLabel = "";
+  let previousStatus = "";
+  let nextStatus = "";
 
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.reprioritize) {
     const orderedGoalIds = toArray(change?.orderedGoalIds || []).map((goalId) => sanitizeText(goalId, 140)).filter(Boolean);
@@ -964,6 +1154,7 @@ export const buildGoalManagementPreview = ({
     subjectGoal = nextActiveGoals.find((goal) => resolveRecordId(goal) === recordId) || nextActiveGoals[nextActiveGoals.length - 1] || null;
     subjectChangedFields = changedFieldsByGoalId[recordId] || diffGoalSnapshots(null, buildGoalSnapshot(subjectGoal));
     changeLabel = subjectGoal?.name ? `Add ${subjectGoal.name}` : "Goal added";
+    nextStatus = subjectGoal?.status || ACTIVE_GOAL_STATUS;
   }
 
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.edit) {
@@ -993,11 +1184,13 @@ export const buildGoalManagementPreview = ({
     subjectGoal = nextActiveGoals.find((goal) => resolveRecordId(goal) === targetGoalId) || null;
     subjectChangedFields = changedFieldsByGoalId[targetGoalId] || [];
     changeLabel = subjectGoal?.name ? `Edit ${subjectGoal.name}` : "Goal edited";
+    previousStatus = currentGoal?.status || ACTIVE_GOAL_STATUS;
+    nextStatus = subjectGoal?.status || ACTIVE_GOAL_STATUS;
   }
 
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.archive) {
     const targetGoalId = sanitizeText(change?.goalId || "", 140);
-    const archiveStatus = sanitizeText(change?.archiveStatus || GOAL_ARCHIVE_STATUSES.archived, 40).toLowerCase() || GOAL_ARCHIVE_STATUSES.archived;
+    const archiveStatus = normalizeGoalStatus(change?.archiveStatus || GOAL_ARCHIVE_STATUSES.archived, GOAL_ARCHIVE_STATUSES.archived);
     const targetIndex = nextActiveGoals.findIndex((goal) => resolveRecordId(goal) === targetGoalId);
     if (targetIndex < 0) return null;
     const currentGoal = nextActiveGoals[targetIndex];
@@ -1026,7 +1219,17 @@ export const buildGoalManagementPreview = ({
     nextActiveGoals = committedGoals;
     subjectGoal = archivedGoal;
     subjectChangedFields = diffGoalSnapshots(buildGoalSnapshot(currentGoal), buildGoalSnapshot(archivedGoal));
-    changeLabel = `${currentGoal?.name || "Goal"} marked ${archiveStatus}`;
+    changeLabel = archiveStatus === GOAL_ARCHIVE_STATUSES.paused
+      ? `${currentGoal?.name || "Goal"} paused`
+      : archiveStatus === GOAL_ARCHIVE_STATUSES.future
+      ? `${currentGoal?.name || "Goal"} moved to future goals`
+      : archiveStatus === GOAL_ARCHIVE_STATUSES.completed
+      ? `${currentGoal?.name || "Goal"} completed`
+      : archiveStatus === GOAL_ARCHIVE_STATUSES.dropped
+      ? `${currentGoal?.name || "Goal"} dropped`
+      : `${currentGoal?.name || "Goal"} archived`;
+    previousStatus = currentGoal?.status || ACTIVE_GOAL_STATUS;
+    nextStatus = archiveStatus;
   }
 
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.restore) {
@@ -1061,7 +1264,13 @@ export const buildGoalManagementPreview = ({
     nextActiveGoals = committedGoals;
     subjectGoal = nextActiveGoals.find((goal) => resolveRecordId(goal) === targetGoalId) || null;
     subjectChangedFields = changedFieldsByGoalId[targetGoalId] || [];
-    changeLabel = `${subjectGoal?.name || "Goal"} restored`;
+    changeLabel = archivedGoal?.status === GOAL_ARCHIVE_STATUSES.paused
+      ? `${subjectGoal?.name || "Goal"} resumed`
+      : archivedGoal?.status === GOAL_ARCHIVE_STATUSES.future
+      ? `${subjectGoal?.name || "Goal"} started now`
+      : `${subjectGoal?.name || "Goal"} restored`;
+    previousStatus = archivedGoal?.status || GOAL_ARCHIVE_STATUSES.archived;
+    nextStatus = subjectGoal?.status || ACTIVE_GOAL_STATUS;
   }
 
   const nextGoals = buildPlannerGoalCollection({
@@ -1093,6 +1302,7 @@ export const buildGoalManagementPreview = ({
   });
   const historyEntry = buildHistoryEntry({
     changeType,
+    changeLabel,
     subjectGoal,
     changedFields: subjectChangedFields,
     previousOrder,
@@ -1100,6 +1310,8 @@ export const buildGoalManagementPreview = ({
     impactLines,
     capturedAt,
     archiveStatus: change?.archiveStatus || subjectGoal?.status || "",
+    previousStatus,
+    nextStatus,
   });
   nextGoalManagement.history = [historyEntry, ...toArray(personalization?.goalManagement?.history || [])].slice(0, 60);
 

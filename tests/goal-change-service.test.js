@@ -120,7 +120,7 @@ test("goal change events and plan start dates stay explicit", () => {
     mode: GOAL_CHANGE_MODES.reprioritizeGoalStack,
     rawGoalIntent: "lose fat but keep strength",
     previousGoals: ["Half marathon", "Bench 225"],
-    nextGoals: ["Lose fat while keeping strength", "Keep strength while the primary goal leads"],
+    nextGoals: ["Lose fat while keeping strength", "Keep strength in the plan while another priority leads"],
     archivedPlanId: "goal_change_archive_123",
   });
 

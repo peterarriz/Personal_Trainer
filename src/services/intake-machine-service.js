@@ -2287,7 +2287,7 @@ export const validateIntakeCommitRequest = (commitRequest = null) => {
   if (!confirmedResolvedGoals.length) {
     return {
       ok: false,
-      reason: "I need a confirmed goal stack before I can build your plan.",
+      reason: "I need a confirmed priority order before I can build your plan.",
       confirmation_snapshot_id: confirmationSnapshotId,
       commitRequest: null,
     };

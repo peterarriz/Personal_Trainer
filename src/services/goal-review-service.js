@@ -173,7 +173,7 @@ const buildGoalFitAssessment = ({ primaryGoal = null, progressAssessment = null 
     return {
       key: "is_goal_still_right",
       verdict: "review",
-      answer: "The active goal stack needs a clearer primary goal.",
+      answer: "The active priority order needs a clearer Priority 1 goal.",
       detail: "No strong primary goal is available to review yet.",
     };
   }
@@ -242,7 +242,7 @@ const buildPlanEmphasisAssessment = ({ primaryGoal = null, currentProgramBlock =
       key: "should_we_refine_or_reprioritize",
       verdict: "review",
       answer: "The current block emphasis is not clear enough to review yet.",
-      detail: "Wait for a clearer ProgramBlock before changing priority.",
+      detail: "Wait for a clearer block summary before changing the priority order.",
     };
   }
   const category = sanitizeText(primaryGoal?.category || "", 40).toLowerCase();
@@ -253,23 +253,23 @@ const buildPlanEmphasisAssessment = ({ primaryGoal = null, currentProgramBlock =
     return {
       key: "should_we_refine_or_reprioritize",
       verdict: "no",
-      answer: "The current plan emphasis still matches the primary goal.",
-      detail: `Dominant emphasis: ${currentProgramBlock?.goalAllocation?.prioritized || currentProgramBlock?.dominantEmphasis?.label || "current block"}.`,
+      answer: "The current plan emphasis still matches Priority 1.",
+      detail: `Top emphasis right now: ${currentProgramBlock?.goalAllocation?.prioritized || currentProgramBlock?.dominantEmphasis?.label || "current block"}.`,
     };
   }
   if (maintained.some((value) => value.includes(summary) || value.includes(category))) {
     return {
       key: "should_we_refine_or_reprioritize",
       verdict: "reprioritize",
-      answer: "The current goal may be better as a maintained goal than the lead goal right now.",
-      detail: "The block is maintaining this goal while something else is leading.",
+      answer: "The current goal may fit better as a lower priority right now.",
+      detail: "The block is still carrying this goal, but something else has more planning weight.",
     };
   }
   return {
     key: "should_we_refine_or_reprioritize",
     verdict: "review",
-    answer: "The current block emphasis may no longer match the goal stack cleanly.",
-    detail: `Current emphasis: ${currentProgramBlock?.goalAllocation?.prioritized || currentProgramBlock?.dominantEmphasis?.label || "unknown"}.`,
+    answer: "The current block emphasis may no longer match the priority order cleanly.",
+    detail: `Current top emphasis: ${currentProgramBlock?.goalAllocation?.prioritized || currentProgramBlock?.dominantEmphasis?.label || "unknown"}.`,
   };
 };
 
@@ -284,7 +284,7 @@ const buildRecommendation = ({
     return {
       recommendation: GOAL_REVIEW_RECOMMENDATIONS.reprioritizeGoalStack,
       label: "Re-prioritize goals",
-      reason: planAssessment?.detail || "The current block emphasis and goal stack are drifting apart.",
+      reason: planAssessment?.detail || "The current block emphasis and priority order are drifting apart.",
     };
   }
   if (goalFitAssessment?.verdict === "review" || metricsAssessment?.verdict === "review") {
@@ -342,7 +342,7 @@ export const buildGoalReview = ({
       ? "Goal review coming up"
       : "Goal review snapshot",
     summary: due.dueState === GOAL_REVIEW_DUE_STATES.notDue
-      ? "The current goal stack looks coherent enough to keep the review lightweight."
+      ? "The current priority order looks coherent enough to keep the review lightweight."
       : "Use this check-in to confirm the goal, proxies, and block emphasis still match reality.",
     reviewItems: [
       progressAssessment,

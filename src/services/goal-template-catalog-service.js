@@ -215,7 +215,7 @@ const GOAL_TEMPLATES = Object.freeze([
     id: "maintain_strength",
     categoryId: "strength",
     title: "Maintain strength",
-    helper: "Keep strength while life, travel, or another goal takes the lead.",
+    helper: "Keep strength in the plan while life, travel, or another priority gets more weight.",
     goalText: "Maintain strength",
     summary: "Maintain strength with repeatable exposures",
     planningCategory: "strength",

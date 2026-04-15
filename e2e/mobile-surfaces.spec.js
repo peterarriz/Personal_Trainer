@@ -30,6 +30,8 @@ async function completeRunningOnboarding(page) {
   await waitForPostOnboarding(page);
 }
 
+const normalizeSurfaceText = (value = "") => String(value || "").replace(/\s+/g, " ").trim();
+
 test.describe("mobile surface simplification", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -47,12 +49,12 @@ test.describe("mobile surface simplification", () => {
       stopAtInterpretation: true,
     });
 
-    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expect.poll(async () => await page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toBe("clarify");
     await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
     await expect(page.getByTestId("intake-footer-continue")).toBeVisible();
     await expect(page.getByTestId("intake-transcript")).toHaveCount(0);
     await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(4);
-    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2", "Priority 3", "Additional goal"]);
+    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2", "Priority 3", "Priority 4"]);
     await expect(page.getByTestId("intake-proposal-additional-goals")).toBeVisible();
   });
 
@@ -79,17 +81,23 @@ test.describe("mobile surface simplification", () => {
     await page.getByTestId("app-tab-settings").click();
     await expect(page.getByTestId("settings-tab")).toBeVisible();
     await expect(page.getByTestId("settings-account-section")).toBeVisible();
-    await expect(page.getByTestId("settings-plan-management")).not.toBeVisible();
+    await expect(page.getByTestId("settings-goals-section")).not.toBeVisible();
     await expect(page.getByTestId("settings-advanced-section")).not.toBeVisible();
 
-    await page.getByTestId("settings-surface-plan").click();
-    await expect(page.getByTestId("settings-plan-management")).toBeVisible();
-    await expect(page.getByText("Programs and styles")).toBeVisible();
-    await expect(page.getByText("Advanced text request", { exact: true })).toBeVisible();
+    await page.getByTestId("settings-surface-goals").click();
+    await expect(page.getByTestId("settings-goals-section")).toBeVisible();
+    await expect(page.getByTestId("settings-goals-management")).toBeVisible();
+    await expect(page.getByText("Programs and styles")).toHaveCount(0);
+    await expect(page.getByText("Advanced text request", { exact: true })).toHaveCount(0);
+
+    await page.getByTestId("settings-surface-programs").click();
+    await expect(page.getByTestId("settings-programs-section")).toBeVisible();
+    await expect(page.getByText("PROGRAMS & STYLES").first()).toBeVisible();
 
     await page.getByTestId("settings-surface-advanced").click();
     await expect(page.getByTestId("settings-advanced-section")).toBeVisible();
     await expect(page.getByText("Integrations and imports")).toBeVisible();
+    await expect(page.getByText("Experimental goal request")).toBeVisible();
     await expect(page.getByText("Apple Health").first()).toBeVisible();
     await expect(page.getByText("Garmin Connect").first()).toBeVisible();
   });
@@ -138,6 +146,30 @@ test.describe("mobile surface simplification", () => {
     expect(logPlanText).toBe(todayPlanText);
   });
 
+  test("canonical session label stays aligned across today, program, log, nutrition, and coach", async ({ page }) => {
+    await completeRunningOnboarding(page);
+
+    const todayLabel = normalizeSurfaceText(await page.getByTestId("today-canonical-session-label").innerText());
+    expect(todayLabel.length).toBeGreaterThan(3);
+
+    await page.getByTestId("app-tab-program").click();
+    const programLabel = normalizeSurfaceText(await page.getByTestId("program-canonical-session-label").innerText());
+    expect(programLabel).toBe(todayLabel);
+
+    await page.getByTestId("app-tab-log").click();
+    await page.getByRole("button", { name: /open exercise-by-exercise entry/i }).click();
+    const logLabel = normalizeSurfaceText(await page.getByTestId("log-canonical-session-label").innerText());
+    expect(logLabel).toBe(todayLabel);
+
+    await page.getByTestId("app-tab-nutrition").click();
+    const nutritionLabel = normalizeSurfaceText(await page.getByTestId("nutrition-canonical-session-label").innerText());
+    expect(nutritionLabel).toBe(todayLabel);
+
+    await page.getByTestId("app-tab-coach").click();
+    const coachLabel = normalizeSurfaceText(await page.getByTestId("coach-canonical-session-label").innerText());
+    expect(coachLabel).toBe(todayLabel);
+  });
+
   test("workout and nutrition logging show strong saved state on mobile", async ({ page }) => {
     await completeRunningOnboarding(page);
 
@@ -153,7 +185,7 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("nutrition-save-status")).toContainText("Saved");
   });
 
-  test("training preference changes are visible on Program and Today", async ({ page }) => {
+  test("training preference changes propagate across Today, Program, Nutrition, and Coach", async ({ page }) => {
     await completeRunningOnboarding(page);
 
     await page.getByTestId("app-tab-settings").click();
@@ -164,6 +196,14 @@ test.describe("mobile surface simplification", () => {
     await page.getByTestId("app-tab-program").click();
     await expect(page.getByTestId("program-tab")).toBeVisible();
     await expect(page.getByTestId("program-change-summary")).toContainText("Aggressive preference");
+
+    await page.getByTestId("app-tab-nutrition").click();
+    await expect(page.getByTestId("nutrition-tab")).toBeVisible();
+    await expect(page.getByTestId("nutrition-canonical-reason")).toContainText("Aggressive preference");
+
+    await page.getByTestId("app-tab-coach").click();
+    await expect(page.getByTestId("coach-tab")).toBeVisible();
+    await expect(page.getByTestId("coach-canonical-reason")).toContainText("Aggressive preference");
 
     await page.getByTestId("app-tab-today").click();
     await expect(page.getByTestId("today-tab")).toBeVisible();
@@ -198,8 +238,8 @@ test.describe("mobile surface simplification", () => {
     await page.getByTestId("program-fix-metrics").click();
 
     await expect(page.getByTestId("settings-tab")).toBeVisible();
-    await expect(page.getByTestId("settings-plan-management")).toBeVisible();
-    await expect(page.getByTestId("settings-metrics-baselines")).toHaveAttribute("open", "");
+    await expect(page.getByTestId("settings-baselines-section")).toBeVisible();
+    await expect(page.getByTestId("settings-metrics-baselines")).toBeVisible();
     await expect(page.getByText("Opened from Program because missing or low-confidence baselines are limiting how specific adaptation can be.")).toBeVisible();
   });
 });

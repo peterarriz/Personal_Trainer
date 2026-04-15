@@ -7,6 +7,7 @@ import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, deterministicCoachPacket } from "./
 import { buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildTodayWhyNowSentence, buildMacroShiftLine, buildEasierSessionsObservation, buildSkippedQualityDecision, buildWeeklyConsistencyAnchor, buildBadWeekTriageResponse } from "./prompts/coach-text.js";
 import { SettingsIcon } from "./icons.js";
 import { assembleCanonicalPlanDay, resolvePlanDayStateInputs, resolvePlanDayTimeOfDay } from "./services/plan-day-service.js";
+import { buildCanonicalPlanSurfaceAudit, buildCanonicalPlanSurfaceModel } from "./services/plan-day-surface-service.js";
 import { assemblePlanWeekRuntime, resolveCurrentPlanWeekNumber, resolvePlanWeekNumberForDateKey, resolveProgramDisplayHorizon } from "./services/plan-week-service.js";
 import { buildDayReview, buildDayReviewComparison, classifyDayReviewStatus } from "./services/day-review-service.js";
 import {
@@ -17,6 +18,11 @@ import {
   buildBrandThemeState,
   normalizeAppearanceSettings,
 } from "./services/brand-theme-service.js";
+import {
+  AUTH_ENTRY_STYLE_TEXT,
+  buildAuthEntryTheme,
+  buildAuthEntryViewModel,
+} from "./services/auth-entry-service.js";
 import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeCoachVoiceRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
 import { deriveCanonicalAthleteState, withLegacyGoalProfileCompatibility } from "./services/canonical-athlete-service.js";
 import { buildPlanningGoalsFromResolvedGoals, applyResolvedGoalsToGoalSlots, buildGoalStateFromResolvedGoals, resolveGoalTranslation } from "./services/goal-resolution-service.js";
@@ -125,6 +131,17 @@ import {
   isStructuredIntakeCompletenessQuestion,
   validateIntakeCompletenessAnswer,
 } from "./services/intake-completeness-service.js";
+import {
+  applyIntakeStarterMetrics,
+  buildIntakeClickCountReport,
+  buildIntakeStarterGoalTypes,
+  buildIntakeStarterMetricDraft,
+  buildIntakeStarterMetricQuestions,
+  getDefaultGoalLibraryCategoryForStarterType,
+  inferIntakeStarterGoalTypeId,
+  INTAKE_STAGE_CONTRACT,
+  listFeaturedIntakeGoalTemplates,
+} from "./services/intake-entry-service.js";
 import {
   BASELINE_METRIC_KEYS,
   buildManualProgressInputsFromIntake,
@@ -2563,7 +2580,7 @@ const buildGoalChangePacketArgs = ({
   ].filter(Boolean);
   const additionalContext = [
     "User is changing goals from an existing planning arc.",
-    activeGoalLabels.length ? `Current goal stack: ${activeGoalLabels.join(" / ")}.` : "",
+    activeGoalLabels.length ? `Current priority order: ${activeGoalLabels.join(" / ")}.` : "",
     canonicalUserProfile?.preferences?.goalMix ? `Current goal mix: ${canonicalUserProfile.preferences.goalMix}.` : "",
     scheduleConstraints.length ? `Schedule constraints: ${scheduleConstraints.join("; ")}.` : "",
     personalization?.travelState?.isTravelWeek ? "Training environment may vary because travel is active." : "",
@@ -2974,31 +2991,31 @@ const INTAKE_UI_PHASES = {
   building: "building",
 };
 
-const INTAKE_STAGE_LABELS = [
-  { key: INTAKE_UI_PHASES.goals, label: "Goals" },
-  { key: INTAKE_UI_PHASES.interpretation, label: "Interpretation" },
-  { key: INTAKE_UI_PHASES.clarify, label: "Clarify" },
-  { key: INTAKE_UI_PHASES.confirm, label: "Confirm" },
-  { key: INTAKE_UI_PHASES.building, label: "Build" },
-];
+const INTAKE_STAGE_LABELS = INTAKE_STAGE_CONTRACT.map((stage) => ({
+  key: stage.key,
+  label: stage.label,
+}));
 
 const GOAL_STACK_PRIORITY_META = [
   {
-    label: "Priority 1",
-    helper: "Gets the clearest push in this block.",
+    helper: "Gets the most planning weight right now.",
     tint: C.green,
   },
   {
-    label: "Priority 2",
-    helper: "Preserved while Priority 1 drives most progression.",
+    helper: "Still shapes the block, with slightly less weight than Priority 1.",
     tint: "#dbe7f6",
   },
   {
-    label: "Priority 3",
-    helper: "Still influences exercise selection and tracking where possible.",
+    helper: "Balanced into the week after the first two priorities.",
     tint: "#9fb4d3",
   },
 ];
+
+const buildVisibleGoalPriorityLabel = (priorityIndex = null) => (
+  Number.isFinite(Number(priorityIndex)) && Number(priorityIndex) >= 0
+    ? `Priority ${Math.max(1, Math.round(Number(priorityIndex)) + 1)}`
+    : "Priority"
+);
 
 const resolveGoalPriorityCardMeta = (priorityIndex = null) => {
   const normalizedPriorityIndex = Number.isFinite(Number(priorityIndex))
@@ -3008,11 +3025,46 @@ const resolveGoalPriorityCardMeta = (priorityIndex = null) => {
     return GOAL_STACK_PRIORITY_META[normalizedPriorityIndex];
   }
   return {
-    label: "Additional goal",
-    helper: "Still matters and stays visible even if it does not drive this block directly.",
+    helper: "Stays visible in the stack and can still shape exercise selection, sequencing, and tracking when it fits cleanly.",
     tint: "#9fb4d3",
   };
 };
+
+const isUserPriorityGoal = (goal = null) => Boolean(
+  goal?.active
+  && goal?.id !== "g_resilience"
+  && goal?.category !== "injury_prevention"
+);
+
+const sortGoalsForPriorityDisplay = (goals = []) => (
+  [...(Array.isArray(goals) ? goals : [])]
+    .filter(isUserPriorityGoal)
+    .sort((left, right) => (
+      Number(left?.priority || 99) - Number(right?.priority || 99)
+      || String(left?.name || left?.resolvedGoal?.summary || "").localeCompare(String(right?.name || right?.resolvedGoal?.summary || ""))
+    ))
+);
+
+const buildGoalPriorityRows = (goals = []) => (
+  sortGoalsForPriorityDisplay(goals)
+    .map((goal, index) => ({
+      id: String(goal?.goalRecordId || goal?.id || `goal_priority_${index}`).trim(),
+      label: buildVisibleGoalPriorityLabel(index),
+      summary: String(goal?.name || goal?.resolvedGoal?.summary || "").trim(),
+      goal,
+    }))
+    .filter((row) => row.summary)
+);
+
+const buildGoalPrioritySummaryLine = (goals = [], { maxVisible = 3 } = {}) => {
+  const rows = buildGoalPriorityRows(goals);
+  if (!rows.length) return "";
+  const visible = rows.slice(0, maxVisible).map((row) => `${row.label}: ${row.summary}`);
+  const overflowCount = Math.max(0, rows.length - maxVisible);
+  return [...visible, overflowCount ? `+${overflowCount} more priority${overflowCount === 1 ? "" : "ies"}` : ""].filter(Boolean).join(" · ");
+};
+
+const GOAL_PRIORITY_EXPLANATION = "Higher priorities get more planning weight, while the rest stay visible and still shape the plan when they fit cleanly.";
 
 const normalizeIntakeGoalEntry = (value = "", maxLength = 180) => sanitizeIntakeText(String(value || "").replace(/\s+/g, " ").trim()).slice(0, maxLength);
 
@@ -3698,7 +3750,7 @@ const arbitrateGoals = ({ goals, momentum, personalization }) => {
     : primary?.category === "body_comp"
     ? "body composition"
     : "consistency";
-  const allocationNarrative = `This block prioritizes ${prioritizedCategory}. ${goalAllocation.maintained[0]} is maintained. ${active.some(g => g.category === "body_comp") ? "Core work is kept minimal but consistent." : `${goalAllocation.minimized} is minimized this block.`}`;
+  const allocationNarrative = `This block gives the most room to ${prioritizedCategory}. ${goalAllocation.maintained[0]} stays active with less emphasis. ${active.some(g => g.category === "body_comp") ? "Core work stays minimal but consistent." : `${goalAllocation.minimized} gets the least dedicated block volume.`}`;
   const strengthSessionsTarget = primary?.category === "strength" && !consistencyThreatened ? 2 : 1;
   const strengthInclusion = {
     sessionsPerWeek: strengthSessionsTarget === 2 ? "1–2" : "1",
@@ -3716,7 +3768,7 @@ const arbitrateGoals = ({ goals, momentum, personalization }) => {
     : primary?.category === "body_comp" && active.find(g => g.category === "running")
     ? "This week is cut-focused while run quality is protected."
     : primary?.category === "strength"
-    ? "This week is slightly strength-focused while endurance is maintained."
+    ? "This week is slightly strength-focused while endurance stays active with less emphasis."
     : "This week keeps a balanced mixed-goal bias.";
   const decisionLinks = [
     consistencyThreatened
@@ -3729,8 +3781,8 @@ const arbitrateGoals = ({ goals, momentum, personalization }) => {
       ? "Strength progression is pushed this block with controlled fatigue."
       : "Strength progression is slowed to protect run quality and recovery."
   ];
-  const explanation = `Primary: ${priorityStack.primary}. We push ${pushes[0] || "consistency"}, maintain ${maintains[0] || "secondary goals"}, and deprioritize ${reduces[0] || "non-essential load"} this week. ${allocationNarrative}`;
-  const todayLine = `Goal arbitration: push ${pushes[0] || "consistency"}; maintain ${maintains[0] || "secondary goals"}; reduce ${reduces[0] || "non-essential load"}.`;
+  const explanation = `Priority 1 is ${priorityStack.primary}. This week puts the most weight on ${pushes[0] || "consistency"}, keeps ${maintains[0] || "other priorities"} active, and trims ${reduces[0] || "non-essential load"} where needed. ${allocationNarrative}`;
+  const todayLine = `Today's balance: most weight on ${pushes[0] || "consistency"}; keep ${maintains[0] || "other priorities"} active; trim ${reduces[0] || "non-essential load"} where needed.`;
   const coachTradeoffLine = `Tradeoff: ${shiftReason} Strength is ${strengthInclusion.dose === "full_progression" ? "progressed" : "kept lighter"} (${strengthInclusion.duration}) so recovery supports ${priorityStack.primary}.`;
   const coachSummary = `${shiftReason} Decision links: ${decisionLinks.join(" ")}`;
   return { primary, secondary, maintenance, deprioritized, conflicts, pushes, maintains, reduces, explanation, priorityStack, shiftReason, decisionLinks, todayLine, coachSummary, goalAllocation, allocationNarrative, strengthInclusion, aestheticInclusion, coachTradeoffLine };
@@ -4133,7 +4185,7 @@ const deriveStrengthLayer = ({ goals, momentum, personalization, logs }) => {
     equipmentAccess === "basic_gym" ? ["DB flat press", "Machine press", "Push-up tempo sets"] :
     equipmentAccess === "none" ? ["Push-up mechanical drops", "Backpack floor press", "Bench dip + pike push-up"] :
     ["Band chest press", "Tempo push-ups", "Single-arm rows with available load"];
-  const tradeoff = focus !== "push" ? "Strength progression is intentionally slowed to protect primary goals and consistency." : "Strength is currently being pushed while endurance is maintained.";
+  const tradeoff = focus !== "push" ? "Strength progression is intentionally slowed to protect the top priorities and consistency." : "Strength is currently being pushed while endurance stays active with less emphasis.";
   return { focus, benchEstimate, trainingMax, recentBenchHits, progression, lowerBody, substitutions, tradeoff };
 };
 
@@ -4957,7 +5009,63 @@ export default function TrainerDashboard() {
   const nutritionLayer = planDayBundle.nutritionLayer;
   const realWorldNutrition = planDayBundle.realWorldNutrition;
   const nutritionComparison = planDayBundle.nutritionComparison;
-  const todayPlannedDayRecord = useMemo(() => buildPlannedDayRecord(planDay), [planDay]);
+  const todayPlannedDayRecord = buildPlannedDayRecord(planDay);
+  const planDayWeek = planDay?.week || null;
+  const liveWeek = planDayWeek?.planWeek || currentPlanWeek || null;
+  const fallbackWeeklyIntent = liveWeek
+    ? {
+      focus: liveWeek?.focus,
+      aggressionLevel: liveWeek?.aggressionLevel,
+      recoveryBias: liveWeek?.recoveryBias,
+      volumePct: liveWeek?.weeklyIntent?.volumePct,
+      nutritionEmphasis: liveWeek?.nutritionEmphasis,
+    }
+    : null;
+  const canonicalSurfaceWeekContext = {
+    ...(planDayWeek || {}),
+    planWeek: liveWeek,
+    weeklyIntent: planDayWeek?.weeklyIntent || liveWeek?.weeklyIntent || fallbackWeeklyIntent,
+    planningBasis: planDayWeek?.planningBasis || liveWeek?.planningBasis || planComposer?.planningBasis || null,
+    changeSummary: planDayWeek?.changeSummary || liveWeek?.changeSummary || planComposer?.changeSummary || null,
+  };
+  const prescribedSurfaceExercises = buildStrengthPrescriptionEntriesForLogging(planDay?.resolved?.training || null);
+  const planDaySurfaceModels = {
+    today: buildCanonicalPlanSurfaceModel({
+      surface: "today",
+      planDay,
+      week: canonicalSurfaceWeekContext,
+      prescribedExercises: prescribedSurfaceExercises,
+    }),
+    program: buildCanonicalPlanSurfaceModel({
+      surface: "program",
+      planDay,
+      week: canonicalSurfaceWeekContext,
+      prescribedExercises: prescribedSurfaceExercises,
+    }),
+    log: buildCanonicalPlanSurfaceModel({
+      surface: "log",
+      plannedDayRecord: todayPlannedDayRecord,
+      week: canonicalSurfaceWeekContext,
+      provenance: planDay?.provenance || null,
+      prescribedExercises: prescribedSurfaceExercises,
+    }),
+    nutrition: buildCanonicalPlanSurfaceModel({
+      surface: "nutrition",
+      planDay,
+      week: canonicalSurfaceWeekContext,
+      prescribedExercises: prescribedSurfaceExercises,
+    }),
+    coach: buildCanonicalPlanSurfaceModel({
+      surface: "coach",
+      planDay,
+      week: canonicalSurfaceWeekContext,
+      prescribedExercises: prescribedSurfaceExercises,
+    }),
+  };
+  const planDaySurfaceAudit = buildCanonicalPlanSurfaceAudit({
+    canonicalSurface: planDaySurfaceModels?.today || null,
+    surfaceModels: planDaySurfaceModels,
+  });
   const runtimeDebugSnapshot = useMemo(() => {
     const weekIntent = currentPlanWeek?.weeklyIntent || {};
     const readiness = planDay?.resolved?.recovery || {};
@@ -5019,6 +5127,13 @@ export default function TrainerDashboard() {
         comparisonImpact: nutritionComparisonSummary?.impact || "",
         comparisonSummary: nutritionComparisonSummary?.summary || "",
       },
+      surfaceAudit: {
+        ok: Boolean(planDaySurfaceAudit?.ok),
+        mismatchCount: Array.isArray(planDaySurfaceAudit?.mismatches) ? planDaySurfaceAudit.mismatches.length : 0,
+        comparedFields: Array.isArray(planDaySurfaceAudit?.comparedFields) ? planDaySurfaceAudit.comparedFields : [],
+        mismatches: Array.isArray(planDaySurfaceAudit?.mismatches) ? planDaySurfaceAudit.mismatches : [],
+        surfaces: planDaySurfaceAudit?.surfaces || {},
+      },
       logging: {
         checkinStatus: loggingState?.dailyCheckin?.status || "",
         sessionStatus: loggingState?.status || "",
@@ -5065,6 +5180,7 @@ export default function TrainerDashboard() {
     coachActions,
     planAlerts,
     plannedDayRecords,
+    planDaySurfaceAudit,
     todayKey,
     storageStatus,
     authError,
@@ -5400,8 +5516,13 @@ export default function TrainerDashboard() {
     }
   };
 
-  const handleSignOut = async () => {
-    await authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
+  const handleSignOut = () => {
+    authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
+    setAuthMode("signin");
+    setAuthError("");
+    setStartupLocalResumeAvailable(Boolean(localLoad()));
+    setStartupLocalResumeAccepted(false);
+    return { ok: true };
   };
 
   const resetRuntimeAfterAccountRemoval = () => {
@@ -5433,9 +5554,23 @@ export default function TrainerDashboard() {
     setStartupLocalResumeAvailable(false);
   };
 
+  const handleResetThisDevice = () => {
+    authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
+    authStorage.clearCachedAuthSession();
+    authStorage.clearLocalCache();
+    resetRuntimeAfterAccountRemoval();
+    applyStorageStatus(buildStorageStatus({
+      mode: "local",
+      label: "DEVICE RESET",
+      reason: STORAGE_STATUS_REASONS.deviceReset,
+      detail: "Local data was cleared from this device. Sign in to reload cloud data or continue with a blank local start.",
+    }));
+    return { ok: true };
+  };
+
   const handleDeleteAccount = async () => {
     try {
-      await authStorage.handleDeleteAccount({
+      const result = await authStorage.handleDeleteAccount({
         authSession,
         setAuthSession,
         setStorageStatus,
@@ -5444,10 +5579,17 @@ export default function TrainerDashboard() {
           resetRuntimeAfterAccountRemoval();
         },
       });
+      return { ok: true, data: result };
     } catch (error) {
-      const nextStatus = classifyStorageError(error);
-      applyStorageStatus(nextStatus);
-      setAuthError(error?.message || "Account deletion failed.");
+      const shouldReclassifyStorage = error?.code !== "delete_account_not_configured";
+      if (shouldReclassifyStorage) {
+        const nextStatus = classifyStorageError(error);
+        applyStorageStatus(nextStatus);
+      }
+      const adminFix = String(error?.fix || "").trim();
+      const authMessage = [String(error?.message || "Account deletion failed."), adminFix].filter(Boolean).join(" ");
+      setAuthError(authMessage);
+      return { ok: false, error };
     }
   };
 
@@ -6961,90 +7103,222 @@ Keep it plain and specific.`;
     </div>
   );
 
+  const authProviderUnavailable = storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable;
+  const authSubmitDisabled = Boolean(
+    authProviderUnavailable
+    || !String(authEmail || "").trim()
+    || !String(authPassword || "").trim()
+    || (authMode === "signup" && !String(authDisplayName || "").trim())
+  );
+  const authBrandThemeState = buildBrandThemeState({
+    appearance: personalization?.settings?.appearance || DEFAULT_PERSONALIZATION.settings.appearance,
+  });
+  const authEntryTheme = buildAuthEntryTheme({ brandThemeState: authBrandThemeState });
+  const authEntryView = buildAuthEntryViewModel({
+    authMode,
+    startupLocalResumeAvailable,
+    authProviderUnavailable,
+  });
+
   if (!authSession?.user?.id && !startupLocalResumeAccepted) return (
-    <div data-testid="auth-gate" style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#e7edf7", padding:"1rem" }}>
-      <div style={{ width:"100%", maxWidth:380, border:"1px solid rgba(114,138,173,0.24)", borderRadius:16, padding:"1rem", background:"#162131", boxShadow:"0 14px 28px rgba(5,10,18,0.28)" }}>
-        <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:"1.08rem", fontWeight:700, letterSpacing:"0.05em", color:"#f6f8fc", marginBottom:"0.5rem" }}>ACCOUNT ACCESS</div>
-        <div style={{ fontSize:"0.58rem", color:"#8da0bb", marginBottom:"0.5rem" }}>
-          {storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable
-            ? "Cloud sign-in is unavailable right now. You can still keep going locally on this device."
-            : startupLocalResumeAvailable
-            ? "Sign in to sync your private training state, or continue locally with the data already on this device."
-            : authMode === "signup"
-            ? "Create the account first, then finish the short profile setup before intake starts."
-            : "Sign in to load your private training state."}
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.45rem" }}>
-          <button data-testid="auth-mode-signin" className="btn" onClick={() => setAuthMode("signin")} style={{ fontSize:"0.54rem", color:authMode === "signin" ? "#dbe7f6" : "#94a3b8", borderColor:authMode === "signin" ? "#3a5674" : "#324961", background:authMode === "signin" ? "rgba(71,126,176,0.12)" : "transparent" }}>
-            Sign in
-          </button>
-          <button data-testid="auth-mode-signup" className="btn" onClick={() => setAuthMode("signup")} style={{ fontSize:"0.54rem", color:authMode === "signup" ? "#dbe7f6" : "#94a3b8", borderColor:authMode === "signup" ? "#3a5674" : "#324961", background:authMode === "signup" ? "rgba(71,126,176,0.12)" : "transparent" }}>
-            Create account
-          </button>
-        </div>
-        {authMode === "signup" && (
-          <>
-            <input data-testid="auth-signup-name" value={authDisplayName} onChange={e=>setAuthDisplayName(e.target.value)} placeholder="first name or display name" style={{ marginBottom:"0.4rem" }} />
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.35rem", marginBottom:"0.4rem" }}>
-              <select data-testid="auth-signup-units" value={authUnits} onChange={e=>setAuthUnits(e.target.value)} style={{ fontSize:"0.58rem" }}>
-                <option value="imperial">Units: imperial</option>
-                <option value="metric">Units: metric</option>
-              </select>
-              <input data-testid="auth-signup-timezone" value={authTimezone} onChange={e=>setAuthTimezone(e.target.value)} placeholder="Timezone" />
+    <div data-testid="auth-gate" className="auth-entry-root" style={authEntryTheme.cssVars}>
+      <style>{AUTH_ENTRY_STYLE_TEXT}</style>
+      <div className="auth-entry-shell">
+        <section className="auth-entry-rail" data-testid="auth-entry-rail">
+          <div className="auth-brand-row">
+            <div className="auth-brand-mark" aria-hidden="true">{PRODUCT_BRAND.mark}</div>
+            <div className="auth-brand-copy">
+              <div className="auth-brand-wordmark">{PRODUCT_BRAND.name}</div>
+              <div className="auth-brand-strapline">{PRODUCT_BRAND.strapline}</div>
             </div>
-          </>
-        )}
-        <input data-testid="auth-email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="email" style={{ marginBottom:"0.4rem" }} />
-        <input data-testid="auth-password" type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="password" style={{ marginBottom:"0.5rem" }} />
-        <div style={{ display:"grid", gridTemplateColumns:"1fr", gap:"0.35rem" }}>
-          <button
-            data-testid="auth-submit"
-            className="btn btn-primary"
-            onClick={authMode === "signup" ? handleSignUp : handleSignIn}
-            style={{ fontSize:"0.56rem" }}
-            disabled={
-              storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable
-              || !String(authEmail || "").trim()
-              || !String(authPassword || "").trim()
-              || (authMode === "signup" && !String(authDisplayName || "").trim())
-            }
-          >
-            {authMode === "signup" ? "Create account" : "Sign in"}
-          </button>
-        </div>
-        {(startupLocalResumeAvailable || storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable) && (
-          <button
-            data-testid="continue-local-mode"
-            className="btn"
-            onClick={() => {
-              if (startupLocalResumeAvailable) {
-                suspendLocalPersistenceRef.current = false;
-                hydrateLocalRuntimeCache({
-                  statusOverride: buildStorageStatus({
-                    mode: "local",
-                    label: "NOT SIGNED IN",
-                    reason: STORAGE_STATUS_REASONS.notSignedIn,
-                    detail: "You are using local data because no signed-in cloud session is active.",
-                  }),
-                });
-              } else {
-                suspendLocalPersistenceRef.current = false;
-                applyStorageStatus(buildStorageStatus({
-                  mode: "local",
-                  label: "LOCAL MODE",
-                  reason: STORAGE_STATUS_REASONS.providerUnavailable,
-                  detail: "Cloud sign-in is unavailable, so the app is continuing with local-only storage.",
-                }));
-              }
-              setAuthError("");
-              setStartupLocalResumeAccepted(true);
-            }}
-            style={{ marginTop:"0.45rem", width:"100%", color:"#dbe7f6", borderColor:"#324961", fontSize:"0.56rem" }}
-          >
-            {startupLocalResumeAvailable ? "Continue with local data" : "Continue in local mode"}
-          </button>
-        )}
-        {authError && <div style={{ marginTop:"0.45rem", fontSize:"0.55rem", color:"#f59e0b" }}>{authError}</div>}
+          </div>
+          <div className="auth-eyebrow">{authEntryView.eyebrow}</div>
+          <div className="auth-title">{authEntryView.title}</div>
+          <div className="auth-subtitle">{authEntryView.subtitle}</div>
+          <div className="auth-status-row">
+            {authEntryView.statusBadges.map((badge) => (
+              <div key={badge} className="auth-status-badge">{badge}</div>
+            ))}
+          </div>
+          <div className="auth-path-grid">
+            {authEntryView.pathCards.map((card) => (
+              <article
+                key={card.id}
+                className="auth-path-card"
+                data-testid={`auth-path-${card.id}`}
+                data-tone={card.tone}
+                data-emphasis={card.emphasis}
+              >
+                <div>
+                  <div className="auth-path-kicker">{card.kicker}</div>
+                  <div className="auth-path-title" style={{ marginTop:"0.28rem" }}>{card.title}</div>
+                </div>
+                <div className="auth-path-description">{card.description}</div>
+                <div className="auth-benefit-list">
+                  {card.benefits.map((benefit) => (
+                    <div key={benefit} className="auth-benefit-item">
+                      <span className="auth-benefit-dot" aria-hidden="true" />
+                      <span>{benefit}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+        <section className="auth-entry-form" data-testid="auth-entry-form">
+          <div className="auth-form-head">
+            <div className="auth-section-label">Account flow</div>
+            <div className="auth-form-title">{authEntryView.form.title}</div>
+            <div className="auth-form-support">{authEntryView.form.description}</div>
+          </div>
+          <div className="auth-mode-switch" role="tablist" aria-label="Account access mode">
+            {authEntryView.form.modeOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                role="tab"
+                aria-selected={option.active}
+                data-auth-variant={option.variant}
+                data-active={option.active ? "true" : "false"}
+                data-testid={`auth-mode-${option.id}`}
+                className="auth-mode-button"
+                onClick={() => setAuthMode(option.id)}
+              >
+                <span className="auth-mode-title">{option.label}</span>
+                <span className="auth-mode-description">{option.description}</span>
+              </button>
+            ))}
+          </div>
+          <div className="auth-fieldset">
+            {authMode === "signup" && (
+              <>
+                <div className="auth-field">
+                  <label className="auth-field-label" htmlFor="auth-signup-name">Display name</label>
+                  <input
+                    id="auth-signup-name"
+                    data-testid="auth-signup-name"
+                    className="auth-field-input"
+                    value={authDisplayName}
+                    onChange={e=>setAuthDisplayName(e.target.value)}
+                    placeholder="First name or display name"
+                    autoComplete="given-name"
+                  />
+                </div>
+                <div className="auth-field-row">
+                  <div className="auth-field">
+                    <label className="auth-field-label" htmlFor="auth-signup-units">Units</label>
+                    <select
+                      id="auth-signup-units"
+                      data-testid="auth-signup-units"
+                      className="auth-field-input"
+                      value={authUnits}
+                      onChange={e=>setAuthUnits(e.target.value)}
+                    >
+                      <option value="imperial">Imperial</option>
+                      <option value="metric">Metric</option>
+                    </select>
+                  </div>
+                  <div className="auth-field">
+                    <label className="auth-field-label" htmlFor="auth-signup-timezone">Timezone</label>
+                    <input
+                      id="auth-signup-timezone"
+                      data-testid="auth-signup-timezone"
+                      className="auth-field-input"
+                      value={authTimezone}
+                      onChange={e=>setAuthTimezone(e.target.value)}
+                      placeholder="America/Chicago"
+                      autoComplete="off"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+            <div className="auth-field">
+              <label className="auth-field-label" htmlFor="auth-email">Email</label>
+              <input
+                id="auth-email"
+                data-testid="auth-email"
+                className="auth-field-input"
+                value={authEmail}
+                onChange={e=>setAuthEmail(e.target.value)}
+                placeholder="you@example.com"
+                autoComplete="email"
+              />
+            </div>
+            <div className="auth-field">
+              <label className="auth-field-label" htmlFor="auth-password">Password</label>
+              <input
+                id="auth-password"
+                data-testid="auth-password"
+                className="auth-field-input"
+                type="password"
+                value={authPassword}
+                onChange={e=>setAuthPassword(e.target.value)}
+                placeholder={authMode === "signup" ? "Create a password" : "Enter your password"}
+                autoComplete={authMode === "signup" ? "new-password" : "current-password"}
+              />
+            </div>
+          </div>
+          <div className="auth-action-stack">
+            <button
+              type="button"
+              data-testid="auth-submit"
+              data-auth-variant={authEntryView.form.primaryAction.variant}
+              className="auth-action"
+              onClick={authMode === "signup" ? handleSignUp : handleSignIn}
+              disabled={authSubmitDisabled}
+            >
+              {authEntryView.form.primaryAction.label}
+            </button>
+            <div className="auth-action-caption" data-testid="auth-primary-caption">
+              {authEntryView.form.primaryCaption}
+            </div>
+            {authEntryView.localAction && (
+              <div className="auth-local-cta" data-testid="auth-local-cta">
+                <div className="auth-local-cta-head">
+                  <div className="auth-status-badge" style={{ width:"fit-content" }}>{authEntryView.localAction.badge}</div>
+                  <div className="auth-local-cta-title">{authEntryView.localAction.title}</div>
+                  <div className="auth-local-cta-description" data-testid="auth-local-cta-description">
+                    {authEntryView.localAction.description}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  data-testid="continue-local-mode"
+                  data-auth-variant={authEntryView.localAction.variant}
+                  className="auth-action"
+                  onClick={() => {
+                    if (startupLocalResumeAvailable) {
+                      suspendLocalPersistenceRef.current = false;
+                      hydrateLocalRuntimeCache({
+                        statusOverride: buildStorageStatus({
+                          mode: "local",
+                          label: "NOT SIGNED IN",
+                          reason: STORAGE_STATUS_REASONS.notSignedIn,
+                          detail: "You are using local data because no signed-in cloud session is active.",
+                        }),
+                      });
+                    } else {
+                      suspendLocalPersistenceRef.current = false;
+                      applyStorageStatus(buildStorageStatus({
+                        mode: "local",
+                        label: "LOCAL MODE",
+                        reason: STORAGE_STATUS_REASONS.providerUnavailable,
+                        detail: "Cloud sign-in is unavailable, so the app is continuing with local-only storage.",
+                      }));
+                    }
+                    setAuthError("");
+                    setStartupLocalResumeAccepted(true);
+                  }}
+                >
+                  {authEntryView.localAction.label}
+                </button>
+              </div>
+            )}
+            {authError && <div className="auth-error">{authError}</div>}
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -7283,14 +7557,14 @@ Keep it plain and specific.`;
       answers.timeline_adjustment ? `Timeline adjustment requested: ${answers.timeline_adjustment}` : null,
       `Primary goal: ${primaryGoalLabel}`,
       orderedResolvedGoals?.length ? `Resolved goals: ${orderedResolvedGoals.map((goal) => goal.summary).join(" / ")}` : null,
-      orderedResolvedGoals?.[1] ? `Maintained goal: ${orderedResolvedGoals[1].summary}` : null,
+      orderedResolvedGoals?.[1] ? `Priority 2 goal: ${orderedResolvedGoals[1].summary}` : null,
       arbitration?.goals?.find((goal) => goal?.goalArbitrationRole === GOAL_STACK_ROLES.background)?.summary
-        ? `Background goal: ${arbitration.goals.find((goal) => goal.goalArbitrationRole === GOAL_STACK_ROLES.background)?.summary}`
+        ? `Priority 3 goal: ${arbitration.goals.find((goal) => goal.goalArbitrationRole === GOAL_STACK_ROLES.background)?.summary}`
         : null,
       arbitration?.goals?.filter((goal) => goal?.goalArbitrationRole === GOAL_STACK_ROLES.deferred).length
-        ? `Deferred goals: ${arbitration.goals.filter((goal) => goal.goalArbitrationRole === GOAL_STACK_ROLES.deferred).map((goal) => goal.summary).join(" / ")}`
+        ? `Later priorities: ${arbitration.goals.filter((goal) => goal.goalArbitrationRole === GOAL_STACK_ROLES.deferred).map((goal) => goal.summary).join(" / ")}`
         : null,
-      goalStackConfirmation?.keepResiliencePriority ? "Background priority: resilience and durability stay protected." : null,
+      goalStackConfirmation?.keepResiliencePriority ? "Recovery priority: resilience and durability stay protected." : null,
       goalFeasibility?.realismStatus ? `Goal realism: ${goalFeasibility.realismStatus}` : null,
       goalFeasibility?.conflictFlags?.[0] ? `Goal conflict: ${goalFeasibility.conflictFlags[0].summary}` : null,
       goalFeasibility?.suggestedSequencing?.[0] ? `Goal sequencing: ${goalFeasibility.suggestedSequencing[0].summary}` : null,
@@ -7550,7 +7824,7 @@ Keep it plain and specific.`;
     const nextGoalAlert = {
       id: `goal_change_${Date.now()}`,
       type: "info",
-      msg: `${historyEvent.label} applied. Planning now follows ${orderedResolvedGoals[0]?.summary || "the updated goal stack"}.`,
+      msg: `${historyEvent.label} applied. Planning now follows ${orderedResolvedGoals[0]?.summary || "the updated priority order"}.`,
       ts: Date.now(),
     };
     const nextPersonalizationBase = mergePersonalization(personalization, {
@@ -7732,7 +8006,7 @@ Keep it plain and specific.`;
     const nextGoalAlert = {
       id: `goal_management_${Date.now()}`,
       type: "info",
-      msg: `${previewBundle?.changeLabel || "Goal update"} confirmed. Planning now follows the active goal stack shown in Settings.`,
+      msg: `${previewBundle?.changeLabel || "Goal update"} confirmed. Planning now follows the active priority order shown in Settings.`,
       ts: Date.now(),
     };
     const nextPersonalizationBase = mergePersonalization(personalization, {
@@ -8034,23 +8308,23 @@ Keep it plain and specific.`;
         </div>
 
         {/* TODAY */}
-        {tab === 0 && <TodayTab planDay={planDay} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} onGoLog={()=>setTab(2)} loading={loading} storageStatus={storageStatus} authError={authError} />}
+        {tab === 0 && <TodayTab planDay={planDay} surfaceModel={planDaySurfaceModels?.today || null} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} onGoLog={()=>setTab(2)} loading={loading} storageStatus={storageStatus} authError={authError} />}
 
         {/* PROGRAM */}
         {tab === 1 && (
           <ProgramTabErrorBoundary>
-            <PlanTab planDay={planDay} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} saveProgramSelection={saveProgramSelection} todayWorkout={planDay?.resolved?.training} onManagePlan={(focus = "plan")=>{ setSettingsFocus(focus); setTab(5); }} />
+            <PlanTab planDay={planDay} surfaceModel={planDaySurfaceModels?.program || null} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} saveProgramSelection={saveProgramSelection} todayWorkout={planDay?.resolved?.training} onManagePlan={(focus = "plan")=>{ setSettingsFocus(focus); setTab(5); }} />
           </ProgramTabErrorBoundary>
         )}
 
         {/* LOG */}
-        {tab === 2 && <LogTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} personalization={personalization} athleteProfile={canonicalAthlete} saveManualProgressInputs={saveManualProgressInputs} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} />}
+        {tab === 2 && <LogTab planDay={planDay} surfaceModel={planDaySurfaceModels?.log || null} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} personalization={personalization} athleteProfile={canonicalAthlete} saveManualProgressInputs={saveManualProgressInputs} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} />}
 
         {/* NUTRITION */}
-        {tab === 3 && <NutritionTab planDay={planDay} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} weeklyNutritionReview={weeklyNutritionReview} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} />}
+        {tab === 3 && <NutritionTab planDay={planDay} surfaceModel={planDaySurfaceModels?.nutrition || null} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} weeklyNutritionReview={weeklyNutritionReview} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} />}
 
         {/* COACH */}
-        {tab === 4 && <CoachTab planDay={planDay} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onOpenSettings={()=>{ setSettingsFocus("advanced"); setTab(5); }} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+        {tab === 4 && <CoachTab planDay={planDay} surfaceModel={planDaySurfaceModels?.coach || null} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onOpenSettings={()=>{ setSettingsFocus("advanced"); setTab(5); }} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
           setPersonalization(nextPersonalization);
           setCoachActions(nextCoachActions);
           setCoachPlanAdjustments(nextCoachPlanAdjustments);
@@ -8059,7 +8333,7 @@ Keep it plain and specific.`;
           await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
 
-        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} focusSection={settingsFocus} onPersist={async (nextPersonalization) => {
+        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} focusSection={settingsFocus} onPersist={async (nextPersonalization) => {
           setPersonalization(nextPersonalization);
           await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
@@ -8165,6 +8439,21 @@ function RuntimeInspector({ snapshot }) {
             {line("Snapshot source", `${snapshot?.prescribedHistory?.sourceType || "none"}${snapshot?.prescribedHistory?.durability ? ` • ${snapshot.prescribedHistory.durability}` : ""}`)}
           </div>
           <div>
+            <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>Surface Audit</div>
+            {line("Status", snapshot?.surfaceAudit?.ok ? "aligned" : `mismatch (${snapshot?.surfaceAudit?.mismatchCount || 0})`, snapshot?.surfaceAudit?.ok ? C.green : C.amber)}
+            {line("Fields", compactList(snapshot?.surfaceAudit?.comparedFields))}
+            {Object.entries(snapshot?.surfaceAudit?.surfaces || {}).map(([surfaceKey, surfaceSnapshot]) => (
+              <div key={surfaceKey} style={{ marginTop:"0.18rem" }}>
+                {line(surfaceKey, `${surfaceSnapshot?.sessionLabel || "unknown"}${surfaceSnapshot?.preferenceAndAdaptationLine ? ` â€¢ ${surfaceSnapshot.preferenceAndAdaptationLine}` : ""}`)}
+              </div>
+            ))}
+            {(snapshot?.surfaceAudit?.mismatches || []).slice(0, 4).map((mismatch, index) => (
+              <div key={`${mismatch.surface}_${mismatch.field}_${index}`} style={{ fontSize:"0.49rem", color:C.amber, lineHeight:1.45 }}>
+                {`${mismatch.surface} ${mismatch.field}: expected "${mismatch.expected || "none"}" but rendered "${mismatch.actual || "none"}"`}
+              </div>
+            ))}
+          </div>
+          <div>
             <div className="sect-title" style={{ fontSize:"0.62rem", marginBottom:"0.25rem" }}>AI Boundary</div>
             {line("Analyzing", snapshot?.ai?.analyzing ? "yes" : "no", snapshot?.ai?.analyzing ? C.amber : "var(--muted)")}
             {line("Plan proposal", snapshot?.ai?.latestAcceptedPlanProposal ? `${snapshot.ai.latestAcceptedPlanProposal.type || "accepted"} • ${snapshot.ai.latestAcceptedPlanProposal.acceptedBy || "gate"}` : "none accepted")}
@@ -8218,9 +8507,20 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [selectedGoalSelections, setSelectedGoalSelections] = useState(() => buildGoalTemplateSelectionsFromAnswers({
     answers: restoredIntakeSession?.answers || {},
   }));
-  const [goalLibraryCategory, setGoalLibraryCategory] = useState("all");
+  const [selectedStarterGoalTypeId, setSelectedStarterGoalTypeId] = useState(() => inferIntakeStarterGoalTypeId({
+    selection: buildGoalTemplateSelectionsFromAnswers({ answers: restoredIntakeSession?.answers || {} })[0] || null,
+    answers: restoredIntakeSession?.answers || {},
+  }));
+  const [goalLibraryCategory, setGoalLibraryCategory] = useState(() => getDefaultGoalLibraryCategoryForStarterType(inferIntakeStarterGoalTypeId({
+    selection: buildGoalTemplateSelectionsFromAnswers({ answers: restoredIntakeSession?.answers || {} })[0] || null,
+    answers: restoredIntakeSession?.answers || {},
+  })));
   const [goalLibrarySearch, setGoalLibrarySearch] = useState("");
+  const [showGoalLibraryBrowser, setShowGoalLibraryBrowser] = useState(false);
   const [showCustomGoalComposer, setShowCustomGoalComposer] = useState(false);
+  const [goalMetricValues, setGoalMetricValues] = useState({});
+  const [goalMetricFieldErrors, setGoalMetricFieldErrors] = useState({});
+  const [goalMetricFormError, setGoalMetricFormError] = useState("");
   const [equipmentSelection, setEquipmentSelection] = useState([]);
   const [equipmentOther, setEquipmentOther] = useState("");
   const [phase, setPhase] = useState(() => restoredIntakeSession?.phase || INTAKE_UI_PHASES.goals);
@@ -8930,11 +9230,59 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       additionalGoals: secondaryGoalEntries,
     });
   };
+  const setPrimaryGoalSelection = (selection = null) => {
+    if (!selection?.goalText) return null;
+    const baseSelections = selectedGoalSelections.length
+      ? selectedGoalSelections
+      : buildGoalTemplateSelectionsFromAnswers({ answers });
+    const dedupedSelections = baseSelections.filter((item) => String(item?.goalText || "").toLowerCase() !== String(selection.goalText || "").toLowerCase());
+    const nextAnswers = syncGoalStackDraftToAnswers({
+      goalSelections: [selection, ...dedupedSelections],
+      primaryGoalText: selection.goalText,
+      additionalGoals: secondaryGoalEntries,
+    });
+    setShowCustomGoalComposer(false);
+    setGoalMetricFieldErrors({});
+    setGoalMetricFormError("");
+    return nextAnswers;
+  };
   const addPresetGoalToStack = (templateId = "") => {
     const selection = buildGoalTemplateSelection({ templateId });
     if (!selection) return null;
     setShowCustomGoalComposer(false);
     return addGoalSelectionToStack(selection);
+  };
+  const selectStarterGoalType = (goalTypeId = "") => {
+    const normalizedGoalTypeId = String(goalTypeId || "").trim() || "running";
+    setSelectedStarterGoalTypeId(normalizedGoalTypeId);
+    setGoalLibraryCategory(getDefaultGoalLibraryCategoryForStarterType(normalizedGoalTypeId));
+    setGoalLibrarySearch("");
+    setShowGoalLibraryBrowser(false);
+    setGoalMetricFieldErrors({});
+    setGoalMetricFormError("");
+    if (normalizedGoalTypeId === "custom") {
+      setShowCustomGoalComposer(true);
+      return;
+    }
+    setShowCustomGoalComposer(false);
+  };
+  const openGoalLibraryCategory = (categoryId = "") => {
+    setGoalLibraryCategory(categoryId || "all");
+    setShowGoalLibraryBrowser(true);
+  };
+  const updateGoalMetricValue = (fieldKey = "", value = "") => {
+    if (!fieldKey) return;
+    setGoalMetricValues((prev) => ({
+      ...(prev || {}),
+      [fieldKey]: value,
+    }));
+    setGoalMetricFieldErrors((prev) => {
+      if (!prev?.[fieldKey]) return prev || {};
+      const nextErrors = { ...(prev || {}) };
+      delete nextErrors[fieldKey];
+      return nextErrors;
+    });
+    setGoalMetricFormError("");
   };
   const addGoalToStack = () => {
     const cleanGoalText = normalizeIntakeGoalEntry(extraGoalDraft);
@@ -8993,10 +9341,31 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     await runAssessment({ updatedAnswers: foundationAnswers, askedQuestions: [] });
   };
   const submitGoalsStage = async () => {
-    const nextAnswers = syncGoalStackDraftToAnswers({
+    const stagedAnswers = syncGoalStackDraftToAnswers({
       primaryGoalText: answers?.goal_intent || "",
       additionalGoals: secondaryGoalEntries,
     });
+    const metricOutcome = applyIntakeStarterMetrics({
+      answers: {
+        ...stagedAnswers,
+        coaching_style: stagedAnswers?.coaching_style || "Balanced coaching",
+      },
+      goalTypeId: selectedStarterGoalTypeId,
+      selection: primaryIntakeGoalSelection,
+      values: goalMetricValues,
+    });
+    if (!metricOutcome.isValid) {
+      setGoalMetricFieldErrors(metricOutcome.fieldErrors || {});
+      setGoalMetricFormError(metricOutcome.formErrors?.[0] || "Tighten up the highlighted field before continuing.");
+      return;
+    }
+    const nextAnswers = {
+      ...metricOutcome.answers,
+      coaching_style: metricOutcome.answers?.coaching_style || "Balanced coaching",
+    };
+    setAnswers(nextAnswers);
+    setGoalMetricFieldErrors({});
+    setGoalMetricFormError("");
     if (!String(nextAnswers?.goal_intent || "").trim() && !(nextAnswers?.additional_goals_list || []).length) return;
     setAskedClarifyingQuestions([]);
     setPendingClarifyingQuestion(null);
@@ -9014,7 +9383,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   };
   const reopenLastAnsweredDetail = () => {
     if (!Array.isArray(intakeMachine?.anchorBindingLog) || intakeMachine.anchorBindingLog.length === 0) {
-      setPhase(INTAKE_UI_PHASES.interpretation);
+      setPhase(INTAKE_UI_PHASES.goals);
       return;
     }
     const nextMachineState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_BACK, {
@@ -9205,6 +9574,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     typedIntakePacket: intakeMachineRef.current?.draft?.typedIntakePacket || assessmentBoundary?.typedIntakePacket || null,
     answers: intakeMachineRef.current?.draft?.answers || answers,
   });
+  const resolvePostAssessmentPhase = (machineState = null) => (
+    machineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION
+      ? INTAKE_UI_PHASES.clarify
+      : INTAKE_UI_PHASES.confirm
+  );
   const finalizeAssessmentState = ({
     assessment = null,
     updatedAnswers = {},
@@ -9235,14 +9609,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setAssessmentText(cleanTimeline);
     setPendingClarifyingQuestion(null);
     setPendingSecondaryGoalPrompt(null);
-    setPhase(INTAKE_UI_PHASES.interpretation);
+    setPhase(resolvePostAssessmentPhase(interpretedMachineState));
   };
   const runAssessment = async ({
     updatedAnswers = {},
     askedQuestions = [],
   } = {}) => {
     setAssessing(true);
-    setPhase(INTAKE_UI_PHASES.interpretation);
     const requestId = latestAssessmentRequestIdRef.current + 1;
     latestAssessmentRequestIdRef.current = requestId;
     const goalSubmitState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED, {
@@ -9797,7 +10170,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     confirmBuildLockRef.current = false;
     setConfirmBuildSubmitting(false);
     setPhase(INTAKE_UI_PHASES.confirm);
-    setConfirmBuildError(confirmedState?.ui?.clearReason || "I couldn't lock the confirmed goal stack yet.");
+    setConfirmBuildError(confirmedState?.ui?.clearReason || "I couldn't lock the confirmed priority order yet.");
   };
   useEffect(() => {
     const commitValidation = validateIntakeCommitRequest(intakeMachine?.draft?.commitRequest || null);
@@ -9927,7 +10300,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         id: String(goal?.id || `heard_goal_${index}`).trim(),
         summary: sanitizeIntakeText(goal?.summary || ""),
         detail: joinDisplayParts([
-          sanitizeIntakeText(goal?.priorityLabel || (index < 3 ? `Priority ${index + 1}` : "Additional goal")),
+          sanitizeIntakeText(goal?.priorityLabel || buildVisibleGoalPriorityLabel(index)),
           sanitizeIntakeText(goal?.goalTypeLabel || "Goal"),
         ]),
       }));
@@ -9941,6 +10314,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const displayedTrackingLabels = Array.from(new Set(
     (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
   ));
+  const starterGoalTypes = useMemo(() => buildIntakeStarterGoalTypes(), []);
+  const intakeClickCountReport = useMemo(() => buildIntakeClickCountReport(), []);
+  const clickCountReductionFloor = useMemo(() => {
+    const reductions = intakeClickCountReport.map((entry) => Number(entry?.reduction) || 0).filter((value) => value > 0);
+    return reductions.length ? Math.min(...reductions) : 0;
+  }, [intakeClickCountReport]);
   const goalTemplateCategories = useMemo(() => listGoalTemplateCategories(), []);
   const allGoalTemplates = useMemo(() => listGoalTemplates({ categoryId: "all" }), []);
   const activeGoalLibraryCategory = useMemo(
@@ -9956,6 +10335,18 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       ? selectedGoalSelections
       : buildGoalTemplateSelectionsFromAnswers({ answers })
   ), [answers, selectedGoalSelections]);
+  const primaryIntakeGoalSelection = intakeGoalSelections[0] || null;
+  const activeStarterGoalType = useMemo(
+    () => starterGoalTypes.find((item) => item.id === selectedStarterGoalTypeId) || starterGoalTypes[0] || null,
+    [selectedStarterGoalTypeId, starterGoalTypes]
+  );
+  const featuredStarterGoalTemplates = useMemo(() => listFeaturedIntakeGoalTemplates({
+    goalTypeId: selectedStarterGoalTypeId,
+  }), [selectedStarterGoalTypeId]);
+  const activeStarterMetricQuestions = useMemo(() => buildIntakeStarterMetricQuestions({
+    goalTypeId: selectedStarterGoalTypeId,
+    selection: primaryIntakeGoalSelection,
+  }), [primaryIntakeGoalSelection, selectedStarterGoalTypeId]);
   const selectedGoalTextSet = useMemo(() => new Set(
     intakeGoalSelections.map((selection) => String(selection?.goalText || "").toLowerCase()).filter(Boolean)
   ), [intakeGoalSelections]);
@@ -9980,7 +10371,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 320);
   const goalsStageNeeds = [
     !normalizedGoalText && secondaryGoalEntries.length === 0 && String(answers?.primary_goal || "").trim() !== "general_fitness"
-      ? "Add at least one goal."
+      ? "Choose a goal path or use the custom fallback."
       : "",
     !answers?.experience_level ? "Pick your training background." : "",
     !answers?.training_days ? "Pick your training days." : "",
@@ -9990,7 +10381,6 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       ? "Choose your home setup."
       : "",
     intakeInjuryContext.hasCurrentIssue && !answers?.injury_impact ? "Pick how the current issue affects training." : "",
-    !answers?.coaching_style ? "Pick a coaching style." : "",
   ].filter(Boolean);
   const goalsStageCanContinue = goalsStageNeeds.length === 0;
   const goalsStageCanStartFoundation = goalsStageNeeds.filter((item) => !/at least one goal/i.test(item)).length === 0;
@@ -10002,13 +10392,30 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setSelectedGoalSelections(syncedSelections);
     }
   }, [answers]);
+  useEffect(() => {
+    const inferredGoalTypeId = inferIntakeStarterGoalTypeId({
+      selection: primaryIntakeGoalSelection,
+      answers,
+    });
+    if (inferredGoalTypeId && inferredGoalTypeId !== selectedStarterGoalTypeId && primaryIntakeGoalSelection) {
+      setSelectedStarterGoalTypeId(inferredGoalTypeId);
+    }
+  }, [answers, primaryIntakeGoalSelection, selectedStarterGoalTypeId]);
+  useEffect(() => {
+    const nextDraft = buildIntakeStarterMetricDraft({
+      goalTypeId: selectedStarterGoalTypeId,
+      selection: primaryIntakeGoalSelection,
+      answers,
+    });
+    setGoalMetricValues(nextDraft);
+    setGoalMetricFieldErrors({});
+    setGoalMetricFormError("");
+  }, [answers?.intake_completeness, primaryIntakeGoalSelection?.id, selectedStarterGoalTypeId]);
   const stageProgressIndex = phase === INTAKE_UI_PHASES.building
-    ? 4
-    : phase === INTAKE_UI_PHASES.confirm
     ? 3
-    : phase === INTAKE_UI_PHASES.clarify
+    : phase === INTAKE_UI_PHASES.confirm
     ? 2
-    : phase === INTAKE_UI_PHASES.interpretation || phase === INTAKE_UI_PHASES.adjust
+    : phase === INTAKE_UI_PHASES.clarify || phase === INTAKE_UI_PHASES.interpretation || phase === INTAKE_UI_PHASES.adjust
     ? 1
     : 0;
   const updateSimpleAnswer = (fieldKey, value) => {
@@ -10049,14 +10456,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       reopenLastAnsweredDetail();
       return;
     }
-    setPhase(INTAKE_UI_PHASES.interpretation);
+    setPhase(INTAKE_UI_PHASES.goals);
   };
   const goBackFromConfirm = () => {
     if (Array.isArray(intakeMachine?.anchorBindingLog) && intakeMachine.anchorBindingLog.length > 0) {
       reopenLastAnsweredDetail();
       return;
     }
-    setPhase(INTAKE_UI_PHASES.interpretation);
+    setPhase(INTAKE_UI_PHASES.goals);
   };
   const anchorCollectionViewModel = useMemo(() => buildAnchorCollectionViewModel({
     machineState: intakeMachine,
@@ -10232,6 +10639,95 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       ) : null}
     </div>
   );
+  const renderGoalMetricField = (field = {}) => {
+    const fieldKey = String(field?.key || "").trim();
+    if (!fieldKey) return null;
+    const fieldError = goalMetricFieldErrors?.[fieldKey] || "";
+    const value = goalMetricValues?.[fieldKey] ?? "";
+    const choiceOptions = Array.isArray(field?.choiceOptions) ? field.choiceOptions : [];
+    const fieldLabel = field?.label || fieldKey.replace(/_/g, " ");
+    if (field?.inputType === "choice_chips") {
+      return (
+        <div key={fieldKey} style={{ display:"grid", gap:"0.32rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{fieldLabel}</div>
+          {renderChoiceChips({
+            items: choiceOptions.map((option) => ({
+              value: option?.value,
+              label: option?.label || option?.value || "",
+            })),
+            selectedValue: value,
+            onSelect: (nextValue) => updateGoalMetricValue(fieldKey, String(nextValue || "")),
+            testIdPrefix: `intake-goal-metric-${fieldKey}`,
+          })}
+          {field?.helperText ? (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{field.helperText}</div>
+          ) : null}
+          {fieldError ? (
+            <div style={{ fontSize:"0.5rem", color:"#ffd7d7", lineHeight:1.45 }}>{fieldError}</div>
+          ) : null}
+        </div>
+      );
+    }
+    return (
+      <label key={fieldKey} style={{ display:"grid", gap:"0.3rem" }}>
+        <div style={{ display:"flex", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+          <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{fieldLabel}</div>
+          {field?.unit ? (
+            <div style={{ fontSize:"0.46rem", color:"#8fa5c8", border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.12rem 0.38rem" }}>
+              {field.unit}
+            </div>
+          ) : null}
+        </div>
+        <input
+          data-testid={`intake-goal-metric-${toTestIdFragment(fieldKey)}`}
+          type={field?.inputType === "number" ? "number" : "text"}
+          inputMode={field?.inputType === "number" ? "decimal" : undefined}
+          min={field?.min}
+          max={field?.max}
+          value={value}
+          onChange={(e) => updateGoalMetricValue(fieldKey, e.target.value)}
+          placeholder={field?.placeholder || ""}
+          style={{
+            borderColor: fieldError ? "rgba(255,123,123,0.55)" : "rgba(111,148,198,0.18)",
+            background:"rgba(4,10,18,0.62)",
+          }}
+        />
+        {field?.helperText ? (
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{field.helperText}</div>
+        ) : null}
+        {fieldError ? (
+          <div style={{ fontSize:"0.5rem", color:"#ffd7d7", lineHeight:1.45 }}>{fieldError}</div>
+        ) : null}
+      </label>
+    );
+  };
+  const renderGoalMetricQuestionCard = (question = null) => {
+    if (!question) return null;
+    return (
+      <div
+        key={question.key || question.title}
+        data-testid={`intake-goal-metric-card-${toTestIdFragment(question.key || question.title)}`}
+        style={{
+          display:"grid",
+          gap:"0.65rem",
+          border:"1px solid rgba(111,148,198,0.16)",
+          borderRadius:18,
+          padding:"0.85rem",
+          background:"rgba(6,12,22,0.72)",
+        }}
+      >
+        <div style={{ display:"grid", gap:"0.18rem" }}>
+          <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45, fontWeight:600 }}>{question.title || question.prompt}</div>
+          {question.helper ? (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{question.helper}</div>
+          ) : null}
+        </div>
+        <div style={{ display:"grid", gap:"0.7rem", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))" }}>
+          {(Array.isArray(question?.inputFields) ? question.inputFields : []).map((field) => renderGoalMetricField(field))}
+        </div>
+      </div>
+    );
+  };
   const renderGoalCard = (goal = null, { mode = "proposal" } = {}) => {
     if (!goal) return null;
     const priorityMeta = resolveGoalPriorityCardMeta(goal?.priorityIndex);
@@ -10252,7 +10748,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             <div style={{ fontSize:"0.52rem", color:"#9fb4d3", lineHeight:1.5 }}>{goal.priorityHelper || priorityMeta.helper}</div>
             <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
               <div data-testid="intake-goal-card-priority" style={{ fontSize:"0.48rem", color:priorityMeta.tint, border:`1px solid ${priorityMeta.tint}35`, borderRadius:999, padding:"0.18rem 0.44rem", background:`${priorityMeta.tint}14` }}>
-                {goal.priorityLabel || priorityMeta.label}
+                {goal.priorityLabel || buildVisibleGoalPriorityLabel(goal?.priorityIndex)}
               </div>
               {goal.goalTypeLabel ? (
                 <div style={{ fontSize:"0.48rem", color:"#dbe7f6", border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.18rem 0.44rem", background:"rgba(15,23,42,0.72)" }}>
@@ -10356,7 +10852,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             data-testid={mode === "confirm" ? "intake-confirm-additional-goals" : "intake-proposal-additional-goals"}
             style={{ display:"grid", gap:"0.55rem" }}
           >
-            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>ADDITIONAL GOALS THAT STILL MATTER</div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>PRIORITIES 4+</div>
             <div style={{ display:"grid", gap:"0.7rem" }}>
               {additionalGoals.map((goal) => renderGoalCard(goal, { mode }))}
             </div>
@@ -10384,7 +10880,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       ))}
     </aside>
   );
-  const renderGoalsStage = () => (
+  const renderGoalsStageLegacy = () => (
     <div data-testid="intake-goals-step" style={{ display:"grid", gap:"0.95rem" }}>
       {renderSectionLabel("Stage 1", "Goals", "Add the goals that matter, then set the training reality in one pass.")}
       <div style={{ display:"grid", gap:"0.6rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
@@ -10671,9 +11167,461 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       </div>
     </div>
   );
+  const renderGoalSelectionSurface = () => (
+    <div style={{ display:"grid", gap:"0.75rem" }}>
+      <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+        <div style={{ display:"grid", gap:"0.14rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL TYPE</div>
+          <div style={{ fontSize:"0.6rem", color:"#dbe7f6", lineHeight:1.5 }}>Start with the lane, then pick a mapped goal instead of typing a full brief.</div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:"0.45rem" }}>
+          {starterGoalTypes.map((goalType) => {
+            const selected = selectedStarterGoalTypeId === goalType.id;
+            return (
+              <button
+                key={goalType.id}
+                type="button"
+                className="btn"
+                data-testid={`intake-goal-type-${goalType.id}`}
+                onClick={() => selectStarterGoalType(goalType.id)}
+                style={{
+                  display:"grid",
+                  gap:"0.18rem",
+                  textAlign:"left",
+                  minHeight:102,
+                  padding:"0.8rem",
+                  borderRadius:18,
+                  border:selected ? "1px solid rgba(0,194,255,0.34)" : "1px solid rgba(111,148,198,0.16)",
+                  background:selected ? "linear-gradient(180deg, rgba(0,194,255,0.14), rgba(7,12,21,0.94))" : "rgba(4,10,18,0.58)",
+                  boxShadow:selected ? "0 14px 30px rgba(0,194,255,0.1)" : "none",
+                }}
+              >
+                <div style={{ fontSize:"0.45rem", color:selected ? "#b9ecff" : "#8fa5c8", letterSpacing:"0.12em" }}>{goalType.eyebrow.toUpperCase()}</div>
+                <div style={{ fontSize:"0.68rem", color:"#f8fbff", lineHeight:1.35, fontWeight:600 }}>{goalType.label}</div>
+                <div style={{ fontSize:"0.5rem", color:selected ? "#dbe7f6" : "#8fa5c8", lineHeight:1.45 }}>{goalType.helper}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {selectedStarterGoalTypeId !== "custom" ? (
+        <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>FEATURED GOAL PATHS</div>
+              <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                {activeStarterGoalType?.label || "Goal"} paths most people mean when they start here.
+              </div>
+            </div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Tap a card to make it Priority 1.</div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
+            {featuredStarterGoalTemplates.map((template) => {
+              const selectedPrimary = String(primaryIntakeGoalSelection?.templateId || "").trim() === template.id;
+              return (
+                <button
+                  key={template.id}
+                  type="button"
+                  className="btn"
+                  data-testid={`intake-featured-goal-${template.id}`}
+                  onClick={() => setPrimaryGoalSelection(buildGoalTemplateSelection({ templateId: template.id }))}
+                  style={{
+                    textAlign:"left",
+                    borderColor:selectedPrimary ? "rgba(0,194,255,0.38)" : "#22324a",
+                    background:selectedPrimary ? "linear-gradient(180deg, rgba(0,194,255,0.12), rgba(9,16,29,0.92))" : "rgba(11,18,32,0.8)",
+                    padding:"0.82rem",
+                    borderRadius:18,
+                    display:"grid",
+                    gap:"0.24rem",
+                  }}
+                >
+                  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
+                    <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
+                    <div style={{ fontSize:"0.44rem", color:selectedPrimary ? "#b9ecff" : "#8fa5c8" }}>{selectedPrimary ? "Primary" : "Select"}</div>
+                  </div>
+                  <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {showCustomGoalComposer || selectedStarterGoalTypeId === "custom" ? (
+        <div style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CUSTOM GOAL</div>
+              <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Use your own words only when the library misses the real target.</div>
+            </div>
+            {selectedStarterGoalTypeId !== "custom" ? (
+              <button
+                type="button"
+                className="btn"
+                data-testid="intake-goals-toggle-custom"
+                onClick={() => setShowCustomGoalComposer((current) => !current)}
+                style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324961" }}
+              >
+                {showCustomGoalComposer ? "Hide custom" : "Use custom only if missing"}
+              </button>
+            ) : null}
+          </div>
+          <div style={{ display:"grid", gap:"0.42rem" }}>
+            <label style={{ display:"grid", gap:"0.32rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Primary custom goal</div>
+              <textarea
+                data-testid="intake-goals-primary-input"
+                ref={composerRef}
+                value={answers?.goal_intent || ""}
+                onChange={(e) => {
+                  goalIntentDraftRef.current = e.target.value;
+                  updateSimpleAnswer("goal_intent", e.target.value);
+                }}
+                placeholder="Bench 225. Get leaner by summer. Look athletic again."
+                rows={3}
+                style={{ minHeight:96, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
+              />
+            </label>
+            <div style={{ display:"grid", gap:"0.32rem" }}>
+              <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Add another goal</div>
+              <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", gap:"0.5rem" }}>
+                <input
+                  data-testid="intake-goals-secondary-input"
+                  value={extraGoalDraft}
+                  onChange={(e) => setExtraGoalDraft(e.target.value)}
+                  placeholder="Add another goal"
+                />
+                <button
+                  data-testid="intake-goals-add"
+                  className="btn"
+                  onClick={addGoalToStack}
+                  disabled={!normalizeIntakeGoalEntry(extraGoalDraft)}
+                  style={{ color:"#dbe7f6", borderColor:"#324961" }}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display:"grid", gap:"0.42rem", border:"1px dashed rgba(111,148,198,0.18)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.35)" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CUSTOM FALLBACK</div>
+              <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Use this only when the mapped paths miss what you actually mean.</div>
+            </div>
+            <button
+              type="button"
+              className="btn"
+              data-testid="intake-goals-toggle-custom"
+              onClick={() => selectStarterGoalType("custom")}
+              style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324961" }}
+            >
+              Use custom only if missing
+            </button>
+          </div>
+        </div>
+      )}
+
+      {primaryIntakeGoalSelection && activeStarterMetricQuestions.length > 0 ? (
+        <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+          <div style={{ display:"grid", gap:"0.14rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>OPTIONAL FIRST-PLAN METRICS</div>
+            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>If you already know these, we can sharpen the first plan without sending you through extra steps.</div>
+          </div>
+          <div style={{ display:"grid", gap:"0.6rem" }}>
+            {activeStarterMetricQuestions.map((question) => renderGoalMetricQuestionCard(question))}
+          </div>
+          {goalMetricFormError ? (
+            <div style={{ fontSize:"0.52rem", color:"#ffd7d7", lineHeight:1.45 }}>{goalMetricFormError}</div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div data-testid="intake-selected-goals" style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.55)" }}>
+        <div style={{ display:"grid", gap:"0.14rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT GOAL STACK</div>
+          <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Featured cards set your starting Priority 1. The full library below lets you add more priorities without leaving this screen.</div>
+        </div>
+        {intakeGoalSelections.length > 0 ? (
+          <div style={{ display:"grid", gap:"0.42rem" }}>
+            {intakeGoalSelections.map((selection, index) => (
+              <div
+                key={selection.id || selection.goalText}
+                data-testid={`intake-selected-goal-${toTestIdFragment(selection.goalText || selection.summary)}`}
+                style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:14, padding:"0.7rem", background:"rgba(8,14,25,0.76)", display:"grid", gap:"0.35rem" }}
+              >
+                <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"flex-start" }}>
+                  <div style={{ display:"grid", gap:"0.16rem" }}>
+                    <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>
+                      {index === 0 ? "PRIORITY 1" : index < 3 ? `PRIORITY ${index + 1}` : "ADDITIONAL GOAL"}
+                    </div>
+                    <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.42, fontWeight:600 }}>{selection.summary || selection.goalText}</div>
+                    <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{selection.helper || "Custom goal"}</div>
+                  </div>
+                  <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      data-testid={`intake-selected-goal-up-${toTestIdFragment(selection.goalText || selection.summary)}`}
+                      onClick={() => moveSelectedGoalInStack(selection.goalText || selection.summary, -1)}
+                      disabled={index === 0}
+                      style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#324961" }}
+                    >
+                      Earlier
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      data-testid={`intake-selected-goal-down-${toTestIdFragment(selection.goalText || selection.summary)}`}
+                      onClick={() => moveSelectedGoalInStack(selection.goalText || selection.summary, 1)}
+                      disabled={index === intakeGoalSelections.length - 1}
+                      style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#324961" }}
+                    >
+                      Later
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      data-testid={`intake-selected-goal-remove-${toTestIdFragment(selection.goalText || selection.summary)}`}
+                      onClick={() => removeGoalFromStack(selection.goalText || selection.summary)}
+                      style={{ fontSize:"0.47rem", color:"#9fb4d3", borderColor:"#324961" }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>Pick a featured path first. If you need a second goal, add it from the full library instead of typing from scratch.</div>
+        )}
+      </div>
+
+      <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
+          <div style={{ display:"grid", gap:"0.14rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>FULL GOAL LIBRARY</div>
+            <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Use this for additional priorities or when the featured paths are close but not quite right.</div>
+          </div>
+          <button
+            type="button"
+            className="btn"
+            data-testid="intake-goal-library-toggle"
+            onClick={() => setShowGoalLibraryBrowser((current) => !current)}
+            style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324961" }}
+          >
+            {showGoalLibraryBrowser ? "Hide full library" : "Browse full library"}
+          </button>
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+          {goalTemplateCategories.map((category) => {
+            const selected = goalLibraryCategory === category.id;
+            return (
+              <button
+                key={category.id}
+                type="button"
+                className="btn"
+                data-testid={`intake-goal-category-${category.id}`}
+                onClick={() => openGoalLibraryCategory(category.id)}
+                style={{
+                  fontSize:"0.5rem",
+                  color:selected ? "#0f172a" : "#dbe7f6",
+                  background:selected ? "#dbe7f6" : "transparent",
+                  borderColor:selected ? "#dbe7f6" : "#324961",
+                }}
+              >
+                {category.label}
+              </button>
+            );
+          })}
+        </div>
+        {showGoalLibraryBrowser ? (
+          <>
+            <input
+              data-testid="intake-goal-library-search"
+              value={goalLibrarySearch}
+              onChange={(e) => setGoalLibrarySearch(e.target.value)}
+              placeholder={`Search ${allGoalTemplates.length}+ goal paths`}
+            />
+            <div data-testid="intake-goal-library-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem", maxHeight:320, overflowY:"auto", paddingRight:"0.12rem", alignContent:"start" }}>
+              {visibleGoalTemplates.map((template) => {
+                const added = selectedGoalTextSet.has(String(template.goalText || "").toLowerCase());
+                return (
+                  <button
+                    key={template.id}
+                    type="button"
+                    className="btn"
+                    data-testid={`intake-goal-template-${template.id}`}
+                    onClick={() => addPresetGoalToStack(template.id)}
+                    style={{
+                      textAlign:"left",
+                      borderColor: added ? "rgba(147,197,253,0.55)" : "#22324a",
+                      background: added ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.8)",
+                      padding:"0.75rem",
+                      display:"grid",
+                      gap:"0.18rem",
+                    }}
+                  >
+                    <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
+                      <div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
+                      <div style={{ fontSize:"0.44rem", color:added ? "#bfdbfe" : "#8fa5c8" }}>{added ? "Added" : "Add"}</div>
+                    </div>
+                    <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
+                  </button>
+                );
+              })}
+              {visibleGoalTemplates.length === 0 ? (
+                <div style={{ border:"1px dashed rgba(111,148,198,0.18)", borderRadius:14, padding:"0.8rem", fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                  No preset matched that search yet. Use the custom fallback only if the library truly misses what you mean.
+                </div>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            {activeGoalLibraryCategory?.helper || "Choose a category to browse deeper goal paths."}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+  const renderPlanningRealitySurface = () => (
+    <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+      {renderSectionLabel("Plan realities", "What shapes the first block", "Only the context that changes week one.")}
+      <div style={{ display:"grid", gap:"0.7rem" }}>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXPERIENCE</div>
+          {renderChoiceChips({
+            items: EXPERIENCE_LEVEL_OPTIONS.map((value) => ({ value, label: EXPERIENCE_LEVEL_LABELS[value] })),
+            selectedValue: answers?.experience_level || "",
+            onSelect: (value) => updateSimpleAnswer("experience_level", value),
+            testIdPrefix: "intake-goals-option-experience-level",
+          })}
+        </div>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>TRAINING DAYS</div>
+          {renderChoiceChips({
+            items: ["2", "3", "4", "5", "6+"],
+            selectedValue: answers?.training_days || "",
+            onSelect: (value) => updateSimpleAnswer("training_days", value),
+            testIdPrefix: "intake-goals-option-training-days",
+          })}
+        </div>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>SESSION LENGTH</div>
+          {renderChoiceChips({
+            items: SESSION_LENGTH_OPTIONS.map((value) => ({ value, label: SESSION_LENGTH_LABELS[value] })),
+            selectedValue: answers?.session_length || "",
+            onSelect: (value) => updateSimpleAnswer("session_length", value),
+            testIdPrefix: "intake-goals-option-session-length",
+          })}
+        </div>
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>WHERE YOU TRAIN</div>
+          {renderChoiceChips({
+            items: ["Home", "Gym", "Both", "Varies a lot"],
+            selectedValue: trainingLocationValue,
+            onSelect: (value) => updateTrainingLocationAnswer(value),
+            testIdPrefix: "intake-goals-option-training-location",
+          })}
+        </div>
+        {needsHomeEquipment ? (
+          <div style={{ display:"grid", gap:"0.35rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>HOME SETUP</div>
+            {renderChoiceChips({
+              items: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
+              selectedValues: homeEquipmentSelection,
+              onSelect: (value) => toggleHomeEquipmentOption(value),
+              testIdPrefix: "intake-goals-option-home-equipment",
+              multi: true,
+            })}
+            {homeEquipmentSelection.includes("Other") ? (
+              <input
+                data-testid="intake-goals-input-home-equipment-other"
+                value={answers?.home_equipment_other || ""}
+                onChange={(e) => updateSimpleAnswer("home_equipment_other", e.target.value)}
+                placeholder="Other home setup"
+              />
+            ) : null}
+          </div>
+        ) : null}
+        <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT ISSUES</div>
+          <textarea
+            data-testid="intake-goals-input-injury-text"
+            value={answers?.injury_text || ""}
+            onChange={(e) => updateSimpleAnswer("injury_text", e.target.value)}
+            placeholder="Optional. Leave blank if nothing needs protection."
+            rows={2}
+            style={{ minHeight:82, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
+          />
+          {intakeInjuryContext.hasCurrentIssue ? renderChoiceChips({
+            items: INTAKE_INJURY_IMPACT_OPTIONS,
+            selectedValue: answers?.injury_impact || "",
+            onSelect: (value) => updateSimpleAnswer("injury_impact", value),
+            testIdPrefix: "intake-goals-option-injury-impact",
+          }) : null}
+        </div>
+        <div style={{ display:"grid", gap:"0.35rem", borderTop:"1px solid rgba(111,148,198,0.12)", paddingTop:"0.75rem" }}>
+          <div style={{ display:"grid", gap:"0.16rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>COACHING TONE</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>Optional. If you skip it, we use Balanced coaching.</div>
+          </div>
+          {renderChoiceChips({
+            items: ["Keep me consistent", "Balanced coaching", "Push me (with guardrails)"],
+            selectedValue: answers?.coaching_style || "Balanced coaching",
+            onSelect: (value) => updateSimpleAnswer("coaching_style", value),
+            testIdPrefix: "intake-goals-option-coaching-style",
+          })}
+        </div>
+        {goalsStageNeeds.length > 0 ? (
+          <div data-testid="intake-goals-needs" style={{ display:"grid", gap:"0.28rem" }}>
+            {goalsStageNeeds.map((item) => (
+              <div key={item} style={{ fontSize:"0.54rem", color:"#9fb4d3", lineHeight:1.5 }}>{item}</div>
+            ))}
+          </div>
+        ) : (
+          <div data-testid="intake-goals-needs" style={{ fontSize:"0.54rem", color:"#9fe8c7", lineHeight:1.5 }}>
+            Enough to build a first draft. Optional anchors can still sharpen it before review.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+  const renderGoalsStage = () => (
+    <div data-testid="intake-goals-step" style={{ display:"grid", gap:"0.95rem" }}>
+      {renderSectionLabel("Stage 1", "Start with the goal path", `Most common paths now take ${clickCountReductionFloor}+ fewer clicks before we start shaping the first plan.`)}
+      <div style={{ display:"grid", gap:"0.8rem", border:"1px solid rgba(0,194,255,0.18)", borderRadius:22, padding:"1rem", background:"linear-gradient(180deg, rgba(0,194,255,0.08), rgba(8,14,25,0.82))" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:"0.7rem", alignItems:"center", flexWrap:"wrap" }}>
+          <div style={{ display:"grid", gap:"0.18rem", maxWidth:620 }}>
+            <div style={{ fontSize:"0.58rem", color:"#b9ecff", letterSpacing:"0.12em" }}>FASTER FIRST PLAN</div>
+            <div style={{ fontSize:"0.76rem", color:"#f8fbff", lineHeight:1.5 }}>Choose the goal type first, pick the mapped path second, then add only the numbers that materially sharpen the first block.</div>
+          </div>
+          <div data-testid="intake-goal-library-summary" style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5, border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.3rem 0.6rem", background:"rgba(4,10,18,0.45)" }}>
+            {allGoalTemplates.length} guided goal paths. Custom stays available, but no longer leads the screen.
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+          {["1. Goal type", "2. Goal path", "3. Optional anchors", "4. Plan realities"].map((label) => (
+            <div key={label} style={{ fontSize:"0.5rem", color:"#dbe7f6", border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.24rem 0.5rem", background:"rgba(4,10,18,0.5)" }}>
+              {label}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))", gap:"0.95rem" }}>
+        {renderGoalSelectionSurface()}
+        {renderPlanningRealitySurface()}
+      </div>
+    </div>
+  );
   const renderInterpretationStage = () => (
     <div data-testid="intake-interpretation-step" style={{ display:"grid", gap:"0.95rem" }}>
-      {renderSectionLabel("Stage 2", "Interpretation", assessing ? "Resolving your goal stack..." : "Review the proposal before we ask for anything else.")}
+      {renderSectionLabel("Stage 2", "Interpretation", assessing ? "Resolving your priority order..." : "Review the proposal before we ask for anything else.")}
       <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(0,194,255,0.18)", borderRadius:20, padding:"1rem", background:"linear-gradient(180deg, rgba(0,194,255,0.08), rgba(8,14,25,0.78))" }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
           <div style={{ fontSize:"0.52rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>PROPOSAL ONLY</div>
@@ -10702,7 +11650,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   );
   const renderClarifyStage = () => (
     <div data-testid="intake-clarify-step" style={{ display:"grid", gap:"0.95rem" }}>
-      {renderSectionLabel("Stage 3", "Clarify", "Only the details the planner actually needs.")}
+      {renderSectionLabel("Stage 2", "Clarify", "Only the details the planner actually needs.")}
+      {interpretedGoalCards.length > 0 ? (
+        <div style={{ display:"grid", gap:"0.55rem" }}>
+          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>PROPOSED STACK</div>
+          {renderGoalCardStack(interpretedGoalCards, { mode: "proposal" })}
+        </div>
+      ) : null}
       {heardGoalRows.length > 0 ? (
         <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
           {heardGoalRows.map((goal) => (
@@ -10928,12 +11882,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   );
   const renderConfirmStage = () => (
     <div data-testid="intake-confirm-step" style={{ display:"grid", gap:"0.95rem" }}>
-      {renderSectionLabel("Stage 4", "Confirm", "Explicit confirmation turns the draft into the canonical goal stack for planning.")}
+      {renderSectionLabel("Stage 3", "Confirm", "Explicit confirmation locks this priority order for planning.")}
       <div data-testid="intake-review" style={{ display:"grid", gap:"0.7rem" }}>
         <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:18, padding:"0.9rem", background:"rgba(8,14,25,0.78)" }}>
-          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>ORDERED GOAL STACK</div>
+          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>GOAL PRIORITY ORDER</div>
           <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.55 }}>
-            Reorder directly here. Priority 1 gets the clearest push, while lower-priority goals still stay visible and shape the plan where possible.
+            Reorder directly here. The plan gives more weight to higher priorities while still balancing the rest where they fit cleanly.
           </div>
         </div>
         {interpretedGoalCards.length > 0 ? renderGoalCardStack(interpretedGoalCards, { mode: "confirm" }) : null}
@@ -10958,7 +11912,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         ) : null}
         {goalReviewContract?.tradeoff_statement ? (
           <div data-testid="intake-tradeoff-statement" style={{ border:"1px solid rgba(255,138,0,0.18)", borderRadius:18, padding:"0.9rem", background:"rgba(8,14,25,0.78)" }}>
-            <div style={{ fontSize:"0.48rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.22rem" }}>TRADEOFFS</div>
+            <div style={{ fontSize:"0.48rem", color:C.amber, letterSpacing:"0.12em", marginBottom:"0.22rem" }}>BALANCING NOTES</div>
             <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.55 }}>{goalReviewContract.tradeoff_statement}</div>
           </div>
         ) : null}
@@ -11057,7 +12011,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   );
   const renderBuildingStage = () => (
     <div data-testid="intake-building" style={{ display:"grid", gap:"0.8rem" }}>
-      {renderSectionLabel("Stage 5", "Build", "Turning the confirmed stack into a deterministic plan.")}
+      {renderSectionLabel("Stage 4", "Build", "Turning the confirmed stack into a deterministic plan.")}
       <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
         <div style={{ fontSize:"0.9rem", color:"#f8fbff" }}>Building your plan...</div>
         <div data-testid="intake-building-stage" style={{ fontSize:"0.72rem", color:"#9fb4d3" }}>{BUILD_STAGES[buildingStageIndex]}</div>
@@ -11089,7 +12043,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       return;
     }
     if (phase === INTAKE_UI_PHASES.adjust) {
-      setPhase(activeReviewModel?.orderedResolvedGoals?.length ? INTAKE_UI_PHASES.interpretation : INTAKE_UI_PHASES.goals);
+      setPhase(activeReviewModel?.orderedResolvedGoals?.length ? INTAKE_UI_PHASES.confirm : INTAKE_UI_PHASES.goals);
     }
   };
   const handleFooterPrimaryAction = async () => {
@@ -11116,9 +12070,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const footerPrimaryLabel = phase === INTAKE_UI_PHASES.confirm
     ? (confirmBuildSubmitting ? "Confirming..." : "Confirm")
     : phase === INTAKE_UI_PHASES.clarify
-    ? (naturalAnchorSubmitting ? "Capturing..." : "Continue")
+    ? (naturalAnchorSubmitting ? "Capturing..." : "Save detail")
     : phase === INTAKE_UI_PHASES.adjust
     ? "Update goal"
+    : phase === INTAKE_UI_PHASES.goals
+    ? (assessing ? "Building draft..." : "See first draft")
     : "Continue";
   const footerPrimaryDisabled = phase === INTAKE_UI_PHASES.building
     ? true
@@ -11214,7 +12170,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           <div style={{ border:"1px solid rgba(111,148,198,0.18)", borderRadius:24, background:"rgba(7,12,21,0.9)", boxShadow:"0 18px 40px rgba(0,0,0,0.28)", backdropFilter:"blur(16px)", padding:"0.85rem 0.95rem", display:"flex", justifyContent:"space-between", gap:"0.75rem", alignItems:"center", flexWrap:"wrap" }}>
             <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.5, flex:"1 1 240px" }}>
               {phase === INTAKE_UI_PHASES.goals
-                ? "Add your goals and a few planning realities in one pass."
+                ? "Pick the goal path, add only the realities that matter, and we will shape the first draft from there."
                 : phase === INTAKE_UI_PHASES.interpretation
                 ? "Check the interpretation before we ask for anything else."
                 : phase === INTAKE_UI_PHASES.clarify
@@ -12097,7 +13053,7 @@ function MetricsBaselinesSection({
   );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, storageStatus = null, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], focusSection = "" }) {
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, onResetThisDevice = async () => ({ ok: false }), storageStatus = null, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], focusSection = "" }) {
   const appleHealth = personalization?.connectedDevices?.appleHealth || {};
   const garmin = personalization?.connectedDevices?.garmin || {};
   const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
@@ -12114,6 +13070,12 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleteStep, setDeleteStep] = useState(1);
+  const [deleteDiagnostics, setDeleteDiagnostics] = useState({ loading: false, checked: false, configured: null, message: "", detail: "", fix: "", missing: [], required: [] });
+  const [accountActionBusy, setAccountActionBusy] = useState("");
+  const [accountActionMsg, setAccountActionMsg] = useState("");
+  const [accountActionTone, setAccountActionTone] = useState("neutral");
+  const [resetDeviceOpen, setResetDeviceOpen] = useState(false);
+  const [resetDeviceConfirm, setResetDeviceConfirm] = useState("");
   const [backupCode, setBackupCode] = useState("");
   const [backupMsg, setBackupMsg] = useState("");
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
@@ -12418,14 +13380,17 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   });
   const [accountProfileDraft, setAccountProfileDraft] = useState(buildAccountProfileDraft);
   const resolveSettingsSurfaceFromFocus = (focus = "") => {
-    if (focus === "metrics" || focus === "plan") return "plan";
+    if (focus === "metrics") return "baselines";
+    if (focus === "plan") return "goals";
     if (focus === "advanced") return "advanced";
     if (focus === "profile") return "profile";
     if (focus === "preferences" || focus === "appearance") return "preferences";
+    if (focus === "programs" || focus === "styles") return "programs";
+    if (focus === "goals") return "goals";
+    if (focus === "baselines") return "baselines";
     return "account";
   };
   const [activeSettingsSurface, setActiveSettingsSurface] = useState(() => resolveSettingsSurfaceFromFocus(focusSection));
-  const [metricsDetailsOpen, setMetricsDetailsOpen] = useState(focusSection === "metrics");
   const garminLastSyncLabel = garmin?.lastSyncAt ? new Date(garmin.lastSyncAt).toLocaleString() : "never";
   const formatIntegrationTimestamp = (value) => value ? new Date(value).toLocaleString() : "never";
   const settingsSaveColor = /^Cloud reload failed:/i.test(settingsSaveMsg) ? C.amber : C.green;
@@ -12461,11 +13426,105 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         detail: storageStatus?.detail || "Local data is active until you sign in again.",
       };
     }
+    if (reason === STORAGE_STATUS_REASONS.deviceReset) {
+      return {
+        label: "Device reset",
+        detail: storageStatus?.detail || "This device was cleared back to a blank local start.",
+      };
+    }
     return {
       label: "Local mode",
       detail: storageStatus?.detail || "Local data is active on this device.",
     };
   })();
+  const accountIdentityState = authSession?.user?.email
+    ? {
+      label: "Signed-in account",
+      detail: authSession.user.email,
+    }
+    : {
+      label: "No cloud account active",
+      detail: "This device is currently operating without a signed-in account.",
+    };
+  const deviceLifecycleState = (() => {
+    const reason = storageStatus?.reason || "";
+    if (reason === STORAGE_STATUS_REASONS.deviceReset) {
+      return {
+        label: "Blank local start",
+        detail: "Local runtime data was cleared on this device. The next step can be sign-in or a brand-new local session.",
+      };
+    }
+    if (reason === STORAGE_STATUS_REASONS.signedOut || reason === STORAGE_STATUS_REASONS.notSignedIn) {
+      return {
+        label: "Local cache available",
+        detail: "Signing out pauses cloud sync but does not delete this device automatically unless you choose a device reset.",
+      };
+    }
+    return {
+      label: "Local resilience active",
+      detail: "This browser keeps a local copy so the app can stay usable through transient cloud issues.",
+    };
+  })();
+  const lifecycleSummaryCards = [
+    { id: "identity", label: accountIdentityState.label, detail: accountIdentityState.detail },
+    { id: "cloud", label: accountSyncState.label, detail: accountSyncState.detail },
+    { id: "device", label: deviceLifecycleState.label, detail: deviceLifecycleState.detail },
+  ];
+  const refreshDeleteDiagnostics = async () => {
+    if (!authSession?.user?.email) {
+      setDeleteDiagnostics({ loading: false, checked: false, configured: null, message: "", detail: "", fix: "", missing: [], required: [] });
+      return { ok: false };
+    }
+    setDeleteDiagnostics((current) => ({ ...current, loading: true }));
+    try {
+      const res = await fetch("/api/auth/delete-account", {
+        method: "GET",
+        headers: { "Accept": "application/json" },
+      });
+      const data = await res.json().catch(() => ({}));
+      const next = {
+        loading: false,
+        checked: true,
+        configured: Boolean(data?.configured),
+        message: String(data?.message || (data?.configured ? "Account deletion is configured for this deployment." : "Account deletion could not be verified.")),
+        detail: String(data?.detail || ""),
+        fix: String(data?.fix || ""),
+        missing: Array.isArray(data?.missing) ? data.missing : [],
+        required: Array.isArray(data?.required) ? data.required : [],
+      };
+      setDeleteDiagnostics(next);
+      return { ok: true, diagnostics: next };
+    } catch (error) {
+      const next = {
+        loading: false,
+        checked: true,
+        configured: false,
+        message: "Delete-account diagnostics could not be loaded.",
+        detail: "The deployment did not confirm permanent delete support, so the delete flow stays blocked until diagnostics succeed.",
+        fix: "Retry the diagnostics check. If it keeps failing, inspect the server deployment and the /api/auth/delete-account route.",
+        missing: [],
+        required: [],
+      };
+      setDeleteDiagnostics(next);
+      return { ok: false, error, diagnostics: next };
+    }
+  };
+  useEffect(() => {
+    if (activeSettingsSurface !== "account" || !authSession?.user?.email) {
+      if (!authSession?.user?.email) {
+        setDeleteDiagnostics({ loading: false, checked: false, configured: null, message: "", detail: "", fix: "", missing: [], required: [] });
+      }
+      return;
+    }
+    let active = true;
+    (async () => {
+      const result = await refreshDeleteDiagnostics();
+      if (!active || !result?.diagnostics) return;
+    })();
+    return () => {
+      active = false;
+    };
+  }, [activeSettingsSurface, authSession?.user?.email]);
   const integrationStateTone = (state = "idle") => {
     if (state === "operational") return { color: C.green, bg: `${C.green}14` };
     if (state === "pending") return { color: C.blue, bg: `${C.blue}14` };
@@ -12810,9 +13869,6 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     unitSettings?.distance,
   ]);
   useEffect(() => {
-    if (focusSection === "metrics") setMetricsDetailsOpen(true);
-  }, [focusSection]);
-  useEffect(() => {
     if (!focusSection) return;
     setActiveSettingsSurface(resolveSettingsSurfaceFromFocus(focusSection));
   }, [focusSection]);
@@ -12957,7 +14013,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         changeMode: goalChangeMode,
       });
       if (!preview?.orderedResolvedGoals?.length) {
-        setGoalChangeError("Preview could not resolve a clean goal stack.");
+        setGoalChangeError("Preview could not resolve a clean priority order.");
         setGoalChangePreview(null);
       } else {
         setGoalChangePreview(preview);
@@ -13052,12 +14108,12 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     setGoalArchiveOpen(false);
     resetGoalManagementWorkflow();
   };
-  const openGoalArchive = (goalId = "") => {
+  const openGoalArchive = (goalId = "", defaultStatus = GOAL_ARCHIVE_STATUSES.archived) => {
     const goal = findCurrentManagedGoal(goalId);
     if (!goal) return;
     setGoalArchiveDraft({
       goalId,
-      archiveStatus: GOAL_ARCHIVE_STATUSES.archived,
+      archiveStatus: defaultStatus,
     });
     setGoalArchiveOpen(true);
     setGoalEditorOpen(false);
@@ -13103,7 +14159,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     try {
       const preview = await previewGoalManagementChange({ change });
       if (!preview?.nextGoals?.length) {
-        setGoalManagementError("Preview could not build a clean active goal stack.");
+        setGoalManagementError("Preview could not build a clean active priority order.");
         setGoalManagementPreview(null);
         return null;
       }
@@ -13162,7 +14218,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const handlePreviewGoalRestore = async (goalId = "") => {
     const archivedGoal = findArchivedManagedGoal(goalId);
     if (!archivedGoal) {
-      setGoalManagementError("That archived goal could not be found.");
+      setGoalManagementError("That inactive goal could not be found.");
       return;
     }
     await handleGoalManagementPreview({
@@ -13203,16 +14259,116 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     }
   };
   const handleReloadCloud = async () => {
+    setAccountActionBusy("reload");
+    setAccountActionMsg("");
     try {
       await onReloadCloudData?.();
       setSettingsSaveMsg("Reloaded cloud data.");
+      setAccountActionTone("success");
+      setAccountActionMsg("Cloud data was reloaded for the signed-in account.");
     } catch (error) {
       setSettingsSaveMsg(`Cloud reload failed: ${error?.message || "unknown error"}`);
+      setAccountActionTone("warn");
+      setAccountActionMsg(`Cloud reload failed: ${error?.message || "unknown error"}`);
+    } finally {
+      setAccountActionBusy("");
+    }
+  };
+  const handleLifecycleSignOut = async () => {
+    setAccountActionBusy("logout");
+    setAccountActionTone("neutral");
+    setAccountActionMsg("Signing out now. Local data stays on this device unless you explicitly reset it.");
+    onLogout?.();
+    setDeleteOpen(false);
+    setResetDeviceOpen(false);
+    setDeleteConfirm("");
+    setResetDeviceConfirm("");
+    setAccountActionBusy("");
+  };
+  const handleResetDeviceSubmit = async () => {
+    setAccountActionBusy("reset_device");
+    setAccountActionTone("warn");
+    setAccountActionMsg("Resetting this device now. Cloud account state is unchanged.");
+    try {
+      await onResetThisDevice?.();
+      setResetDeviceOpen(false);
+      setResetDeviceConfirm("");
+      setDeleteOpen(false);
+      setDeleteConfirm("");
+    } finally {
+      setAccountActionBusy("");
+    }
+  };
+  const handleDeleteAccountSubmit = async () => {
+    setAccountActionBusy("delete_account");
+    setAccountActionMsg("");
+    const latestDiagnostics = deleteDiagnostics?.checked ? { ok: true, diagnostics: deleteDiagnostics } : await refreshDeleteDiagnostics();
+    const deleteSupported = latestDiagnostics?.diagnostics?.configured === true;
+    if (!deleteSupported) {
+      setAccountActionTone("warn");
+      setAccountActionMsg([
+        latestDiagnostics?.diagnostics?.message || "Permanent delete is not available on this deployment.",
+        latestDiagnostics?.diagnostics?.fix || "",
+      ].filter(Boolean).join(" "));
+      setAccountActionBusy("");
+      return;
+    }
+    try {
+      const result = await onDeleteAccount?.();
+      if (!result?.ok) {
+        setAccountActionTone("warn");
+        setAccountActionMsg([
+          result?.error?.message || "Account deletion failed.",
+          result?.error?.fix || "",
+        ].filter(Boolean).join(" "));
+        return;
+      }
+      setAccountActionTone("success");
+      setAccountActionMsg("Account deleted. Local cache and signed-in identity were removed from this device.");
+      setDeleteOpen(false);
+      setDeleteConfirm("");
+    } finally {
+      setAccountActionBusy("");
     }
   };
   const currentGoalCards = goalSettingsModel?.currentGoals || [];
   const archivedGoalCards = goalSettingsModel?.archivedGoals || [];
+  const goalLifecycleSections = goalSettingsModel?.lifecycleSections || [];
+  const goalHistoryFeed = goalSettingsModel?.historyFeed || [];
+  const goalCounts = goalSettingsModel?.counts || {};
   const currentGoalOrder = goalSettingsModel?.currentGoalOrder || [];
+  const goalArchiveStatusOptions = [
+    {
+      status: GOAL_ARCHIVE_STATUSES.paused,
+      label: "Pause goal",
+      helper: "Take it out of the live stack without treating it as finished.",
+    },
+    {
+      status: GOAL_ARCHIVE_STATUSES.future,
+      label: "Move to future goals",
+      helper: "Keep it visible for later without letting it shape the current plan yet.",
+    },
+    {
+      status: GOAL_ARCHIVE_STATUSES.completed,
+      label: "Mark completed",
+      helper: "Preserve the finished goal, its history, and the fact that you closed it out.",
+    },
+    {
+      status: GOAL_ARCHIVE_STATUSES.archived,
+      label: "Archive goal",
+      helper: "Close it without calling it complete or dropped.",
+    },
+    {
+      status: GOAL_ARCHIVE_STATUSES.dropped,
+      label: "Drop goal",
+      helper: "Record that this goal left the stack intentionally without being completed.",
+    },
+  ];
+  const getGoalRestoreLabel = (status = "") => {
+    if (status === GOAL_ARCHIVE_STATUSES.paused) return "Resume";
+    if (status === GOAL_ARCHIVE_STATUSES.future) return "Start now";
+    return "Restore";
+  };
   const goalEditorTemplateCategories = useMemo(() => listGoalTemplateCategories(), []);
   const allGoalEditorTemplates = useMemo(() => listGoalTemplates({ categoryId: "all" }), []);
   const activeGoalEditorCategory = useMemo(
@@ -13230,7 +14386,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.7rem" }}>
           <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:0 }}>SETTINGS</div>
           <div style={{ fontSize:"0.55rem", color:"#8ea4c7", lineHeight:1.55 }}>
-            Account controls, plan management, appearance, integrations, and advanced setup live here instead of inside the main training tabs.
+            Account controls, goals, baselines, programs, appearance, integrations, and advanced setup live here instead of inside the main training tabs.
           </div>
           {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:settingsSaveColor }}>{settingsSaveMsg}</div>}
         </div>
@@ -13244,7 +14400,9 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               {[
                 { key: "account", label: "Account & sync", helper: "Identity, cloud state, and dangerous actions" },
                 { key: "profile", label: "Profile", helper: "Body, units, and athlete basics" },
-                { key: "plan", label: "Plan Management", helper: "Programs, goals, and baselines" },
+                { key: "goals", label: "Goals", helper: "Priority order, lifecycle, and audit history" },
+                { key: "baselines", label: "Baselines", helper: "Metrics, readiness inputs, and anchor confidence" },
+                { key: "programs", label: "Programs & styles", helper: "Plan basis, templates, and style layers" },
                 { key: "preferences", label: "Preferences", helper: "Environment, check-ins, and appearance" },
                 { key: "advanced", label: "Advanced", helper: "Coach setup and integrations" },
               ].map((surface) => {
@@ -13282,59 +14440,174 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                   ? `Signed in as ${authSession.user.email}.`
                   : "You are currently using this device without a signed-in cloud account."}
               </div>
-              <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>
-                {`Cloud sync: ${accountSyncState.label}`}
-              </div>
-              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
-                {accountSyncState.detail}
-              </div>
             </div>
-            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-              {authSession?.user?.email ? (
-                <>
-                  <button className="btn" onClick={handleReloadCloud} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>
-                    Reload cloud data
-                  </button>
-                  <button data-testid="settings-logout" className="btn" onClick={onLogout} style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324761" }}>
-                    Sign out
-                  </button>
-                  <button data-testid="settings-delete-account" className="btn" onClick={()=>{ setDeleteOpen((value)=>!value); setDeleteStep(1); setDeleteConfirm(""); }} style={{ fontSize:"0.48rem", color:C.red, borderColor:C.red+"35" }}>
-                    Delete account
-                  </button>
-                </>
-              ) : (
-                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
-                  Local mode is active. Sign in from the auth gate if you want cloud sync and account controls.
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.38rem" }}>
+              {lifecycleSummaryCards.map((card) => (
+                <div key={card.id} style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.58rem 0.62rem", display:"grid", gap:"0.18rem" }}>
+                  <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>{card.id.toUpperCase()}</div>
+                  <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>{card.label}</div>
+                  <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.5 }}>{card.detail}</div>
                 </div>
-              )}
+              ))}
             </div>
-            {authSession?.user?.email && deleteOpen && (
-              <div style={{ border:"1px solid #3b2a39", borderRadius:8, padding:"0.45rem", display:"grid", gap:"0.3rem" }}>
-                {deleteStep === 1 ? (
-                  <>
-                    <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>This removes the signed-in FORMA account, not just local app rows. Export first if you may want this history later.</div>
-                    <button data-testid="settings-delete-account-export" className="btn" onClick={()=>{ exportData(); setDeleteStep(2); }} style={{ width:"fit-content", fontSize:"0.48rem" }}>Export first, then continue</button>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>Type <b>DELETE</b> to permanently remove the account.</div>
-                    <input data-testid="settings-delete-account-confirm" value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} placeholder="DELETE" />
-                    <button data-testid="settings-delete-account-submit" className="btn" disabled={deleteConfirm !== "DELETE"} onClick={onDeleteAccount} style={{ width:"fit-content", fontSize:"0.48rem", color:C.red, borderColor:C.red+"35" }}>Confirm delete account</button>
-                  </>
-                )}
+            {!!accountActionMsg && (
+              <div
+                data-testid="settings-account-action-message"
+                style={{
+                  border:"1px solid " + (accountActionTone === "success" ? `${C.green}55` : accountActionTone === "warn" ? `${C.amber}55` : "#243752"),
+                  borderRadius:12,
+                  background:accountActionTone === "success" ? `${C.green}12` : accountActionTone === "warn" ? `${C.amber}12` : "#0f172a",
+                  color:accountActionTone === "success" ? "#d7f5e6" : accountActionTone === "warn" ? "#f9e6b4" : "#dbe7f6",
+                  padding:"0.55rem 0.62rem",
+                  fontSize:"0.49rem",
+                  lineHeight:1.55,
+                }}
+              >
+                {accountActionMsg}
+              </div>
+            )}
+            {authSession?.user?.email ? (
+              <>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
+                  <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.62rem", display:"grid", gap:"0.34rem" }}>
+                    <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.08em" }}>CLOUD COPY</div>
+                    <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>Reload the signed-in cloud record onto this device.</div>
+                    <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.5 }}>Use this when you want to re-pull synced state, not when you want to sign out or clear the device.</div>
+                    <button className="btn" disabled={accountActionBusy !== ""} onClick={handleReloadCloud} style={{ width:"fit-content", fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>
+                      {accountActionBusy === "reload" ? "Reloading..." : "Reload cloud data"}
+                    </button>
+                  </div>
+                  <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.62rem", display:"grid", gap:"0.34rem" }}>
+                    <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.08em" }}>LEAVE THIS DEVICE</div>
+                    <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>Sign out fast without deleting the cloud account.</div>
+                    <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.5 }}>This returns to the auth gate immediately. Local data stays available on this browser unless you choose a device reset.</div>
+                    <button data-testid="settings-logout" className="btn" disabled={accountActionBusy !== ""} onClick={handleLifecycleSignOut} style={{ width:"fit-content", fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324761" }}>
+                      {accountActionBusy === "logout" ? "Signing out..." : "Sign out"}
+                    </button>
+                  </div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
+                  <div style={{ border:"1px solid #2b3d55", borderRadius:12, background:"#0b1220", padding:"0.62rem", display:"grid", gap:"0.34rem" }}>
+                    <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.08em" }}>LOCAL-ONLY RESET</div>
+                    <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>Clear this device without deleting the cloud account.</div>
+                    <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.5 }}>This wipes the local cache, signs this browser out, and sends you back to a blank auth gate. Your cloud account still exists.</div>
+                    <button
+                      data-testid="settings-reset-device"
+                      className="btn"
+                      disabled={accountActionBusy !== ""}
+                      onClick={() => {
+                        setResetDeviceOpen((value) => !value);
+                        setResetDeviceConfirm("");
+                        setDeleteOpen(false);
+                        setDeleteConfirm("");
+                      }}
+                      style={{ width:"fit-content", fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324761" }}
+                    >
+                      Reset this device
+                    </button>
+                    {resetDeviceOpen && (
+                      <div style={{ border:"1px solid #243752", borderRadius:10, padding:"0.48rem", display:"grid", gap:"0.28rem" }}>
+                        <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.5 }}>Type <b>RESET</b> to clear only this device. The cloud account will still be available on other devices.</div>
+                        <input data-testid="settings-reset-device-confirm" value={resetDeviceConfirm} onChange={(e)=>setResetDeviceConfirm(e.target.value)} placeholder="RESET" />
+                        <button
+                          data-testid="settings-reset-device-submit"
+                          className="btn"
+                          disabled={resetDeviceConfirm !== "RESET" || accountActionBusy !== ""}
+                          onClick={handleResetDeviceSubmit}
+                          style={{ width:"fit-content", fontSize:"0.48rem", color:C.amber, borderColor:C.amber+"35" }}
+                        >
+                          {accountActionBusy === "reset_device" ? "Resetting..." : "Confirm device reset"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div data-testid="settings-delete-account-card" style={{ border:"1px solid #3b2a39", borderRadius:12, background:"#120f16", padding:"0.62rem", display:"grid", gap:"0.34rem" }}>
+                    <div style={{ fontSize:"0.47rem", color:"#7f5f73", letterSpacing:"0.08em" }}>PERMANENT DELETE</div>
+                    <div style={{ fontSize:"0.54rem", color:"#f1d4dd", lineHeight:1.45 }}>Delete the auth identity and remove local account data.</div>
+                    <div style={{ fontSize:"0.47rem", color:"#c8a4b3", lineHeight:1.5 }}>This is the only action that should make the same email behave like a fresh signup again. It needs server-side delete support on the deployment.</div>
+                    <div data-testid="settings-delete-account-status" style={{ fontSize:"0.47rem", color:deleteDiagnostics.loading ? "#dbe7f6" : deleteDiagnostics.configured === true ? "#c9f1db" : "#f7d39a", lineHeight:1.5 }}>
+                      {deleteDiagnostics.loading
+                        ? "Checking whether permanent delete is configured on this deployment..."
+                        : deleteDiagnostics.checked
+                        ? deleteDiagnostics.message
+                        : "Delete support has not been checked yet."}
+                    </div>
+                    <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                      <button
+                        data-testid="settings-delete-account"
+                        className="btn"
+                        disabled={accountActionBusy !== "" || deleteDiagnostics.loading || deleteDiagnostics.configured !== true}
+                        onClick={() => {
+                          setDeleteOpen((value)=>!value);
+                          setDeleteStep(1);
+                          setDeleteConfirm("");
+                          setResetDeviceOpen(false);
+                          setResetDeviceConfirm("");
+                        }}
+                        style={{ fontSize:"0.48rem", color:C.red, borderColor:C.red+"35" }}
+                      >
+                        Delete account
+                      </button>
+                      <button
+                        data-testid="settings-delete-account-retry-diagnostics"
+                        className="btn"
+                        disabled={accountActionBusy !== "" || deleteDiagnostics.loading}
+                        onClick={refreshDeleteDiagnostics}
+                        style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324761" }}
+                      >
+                        {deleteDiagnostics.loading ? "Checking..." : "Recheck delete support"}
+                      </button>
+                    </div>
+                    {deleteDiagnostics.checked && deleteDiagnostics.configured !== true && (
+                      <div data-testid="settings-delete-account-diagnostics" style={{ border:"1px solid #4a3946", borderRadius:10, padding:"0.5rem", display:"grid", gap:"0.24rem" }}>
+                        <div style={{ fontSize:"0.48rem", color:"#f1d4dd", lineHeight:1.5 }}>{deleteDiagnostics.detail || "This deployment cannot permanently delete auth identities yet."}</div>
+                        {deleteDiagnostics.missing.length > 0 && (
+                          <div style={{ fontSize:"0.47rem", color:"#c8a4b3", lineHeight:1.5 }}>
+                            Missing env: <span data-testid="settings-delete-account-missing-envs">{deleteDiagnostics.missing.join(", ")}</span>
+                          </div>
+                        )}
+                        {!!deleteDiagnostics.fix && (
+                          <div style={{ fontSize:"0.47rem", color:"#f7d39a", lineHeight:1.5 }}>
+                            Admin fix: {deleteDiagnostics.fix}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {deleteDiagnostics.configured === true && deleteOpen && (
+                      <div style={{ border:"1px solid #4a3946", borderRadius:10, padding:"0.48rem", display:"grid", gap:"0.3rem" }}>
+                        {deleteStep === 1 ? (
+                          <>
+                            <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>Export first if you may need this history later. Permanent delete removes the signed-in auth account, not only the local device cache.</div>
+                            <button data-testid="settings-delete-account-export" className="btn" onClick={()=>{ exportData(); setDeleteStep(2); }} style={{ width:"fit-content", fontSize:"0.48rem" }}>Export first, then continue</button>
+                          </>
+                        ) : (
+                          <>
+                            <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>Type <b>DELETE</b> to permanently remove the account.</div>
+                            <input data-testid="settings-delete-account-confirm" value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} placeholder="DELETE" />
+                            <button data-testid="settings-delete-account-submit" className="btn" disabled={deleteConfirm !== "DELETE" || accountActionBusy !== ""} onClick={handleDeleteAccountSubmit} style={{ width:"fit-content", fontSize:"0.48rem", color:C.red, borderColor:C.red+"35" }}>{accountActionBusy === "delete_account" ? "Deleting..." : "Confirm delete account"}</button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                Local mode is active. Sign in from the auth gate if you want cloud sync, device handoff, or permanent account controls.
               </div>
             )}
             <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem", display:"grid", gap:"0.4rem" }}>
               <div style={{ display:"grid", gap:"0.14rem" }}>
                 <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>BACKUP AND RESET</div>
                 <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                  Export before destructive changes, keep a backup code if you want an offline restore path, and start fresh only when you really mean to reset the plan.
+                  Export before destructive changes, keep a backup code if you want an offline restore path, and use plan reset only when you mean to rebuild training without changing the account lifecycle.
                 </div>
               </div>
               <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
                 <button className="btn" onClick={exportData} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>Export data</button>
                 <button className="btn" onClick={handleCopyBackup} style={{ fontSize:"0.48rem", color:"#dbe7f6" }}>Copy backup code</button>
-                <button className="btn" onClick={onStartFresh} style={{ fontSize:"0.48rem", color:"#9fb2d2", borderColor:"#324761" }}>Start new plan</button>
+                <button className="btn" onClick={onStartFresh} style={{ fontSize:"0.48rem", color:"#9fb2d2", borderColor:"#324761" }}>Reset plan only</button>
               </div>
               {!!backupMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{backupMsg}</div>}
               <textarea value={backupCode} onChange={e=>setBackupCode(e.target.value)} placeholder="Paste backup code to restore" style={{ minHeight:62, fontSize:"0.5rem" }} />
@@ -13385,83 +14658,37 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
           </section>
           )}
 
-          {activeSettingsSurface === "plan" && (
-          <section data-testid="settings-plan-management" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.4rem" }}>
+          {activeSettingsSurface === "goals" && (
+          <section data-testid="settings-goals-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.45rem" }}>
             <div style={{ display:"grid", gap:"0.14rem" }}>
-              <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>PLAN MANAGEMENT</div>
+              <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>GOALS</div>
               <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                Programs, styles, and goal changes live here so Program can stay focused on reading the week.
+                This is the authoritative place for goal priority, lifecycle, edits, and audit history. Baselines and Programs & styles now live on their own settings surfaces.
               </div>
             </div>
-            {focusSection === "metrics" && (
-              <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.5 }}>
-                Opened from Program because missing or low-confidence baselines are limiting how specific adaptation can be.
+            {focusSection === "plan" && (
+              <div data-testid="settings-goals-migration-note" style={{ fontSize:"0.5rem", color:"#cbd5e1", lineHeight:1.5, border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
+                Opened from the older plan-management entry point. Goal changes live here now, while Baselines and Programs & styles each have their own dedicated surface.
               </div>
             )}
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
-              <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
-                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT BASIS</div>
-                <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45, marginTop:"0.12rem" }}>
-                  {settingsPlanBasisExplanation?.basisSummary || "Goal-driven default"}
-                </div>
-                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-                  {settingsPlanBasisExplanation?.personalizationSummary || "No separate program or style layer is active."}
-                </div>
-              </div>
-              <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
-                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>ACTIVE LAYERS</div>
-                <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.12rem", lineHeight:1.5 }}>
-                  Program: {activeProgramDefinition?.displayName || "None"}
-                </div>
-                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
-                  Style: {activeStyleDefinition?.displayName || "None"}
-                </div>
-                <button className="btn" onClick={handleSettingsClearProgramLayer} style={{ width:"fit-content", marginTop:"0.3rem", fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
-                  Clear basis
-                </button>
-              </div>
-            </div>
-            {(planManagementNotice || planManagementError) && (
-              <div style={{ fontSize:"0.52rem", color:planManagementError ? C.amber : C.green, lineHeight:1.5 }}>
-                {planManagementError || planManagementNotice}
-              </div>
-            )}
-            <details>
-              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Programs and styles</summary>
-              <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
-                <select value={selectedSettingsProgramId} onChange={(e)=>setSelectedSettingsProgramId(e.target.value)} style={{ fontSize:"0.54rem" }}>
-                  {programDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName}</option>)}
-                </select>
-                <select value={selectedSettingsProgramFidelityMode} onChange={(e)=>setSelectedSettingsProgramFidelityMode(e.target.value)} style={{ fontSize:"0.52rem" }}>
-                  <option value={PROGRAM_FIDELITY_MODES.adaptToMe}>Adapt to me</option>
-                  <option value={PROGRAM_FIDELITY_MODES.strict}>Mostly as written</option>
-                  <option value={PROGRAM_FIDELITY_MODES.useAsStyle}>Use as style</option>
-                </select>
-                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{selectedSettingsProgramDefinition?.summary || "Select a program."}</div>
-                {settingsProgramCompatibility?.headline && <div style={{ fontSize:"0.48rem", color:settingsProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : "#8fa5c8", lineHeight:1.45 }}>{settingsProgramCompatibility.headline}</div>}
-                <button className="btn btn-primary" onClick={handleSettingsActivateProgram} style={{ width:"fit-content", fontSize:"0.5rem" }}>Use this program</button>
-                <div style={{ borderTop:"1px solid #1e293b", paddingTop:"0.35rem", display:"grid", gap:"0.35rem" }}>
-                  <select value={selectedSettingsStyleId} onChange={(e)=>setSelectedSettingsStyleId(e.target.value)} style={{ fontSize:"0.54rem" }}>
-                    {styleDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName}</option>)}
-                  </select>
-                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{selectedSettingsStyleDefinition?.summary || "Select a style."}</div>
-                  {settingsStyleCompatibility?.headline && <div style={{ fontSize:"0.48rem", color:settingsStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : "#8fa5c8", lineHeight:1.45 }}>{settingsStyleCompatibility.headline}</div>}
-                  <button className="btn" onClick={handleSettingsActivateStyle} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Apply style</button>
-                </div>
-              </div>
-            </details>
             <div data-testid="settings-goals-management" style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.65rem", display:"grid", gap:"0.55rem" }}>
               <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"flex-start", flexWrap:"wrap" }}>
-                <div style={{ display:"grid", gap:"0.14rem" }}>
-                  <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>GOALS</div>
-                  <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>Manage active, archived, completed, and dropped goals in one place.</div>
+                <div style={{ display:"grid", gap:"0.14rem", maxWidth:720 }}>
+                  <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>ACTIVE PRIORITIES</div>
+                  <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.45 }}>Set the order once, then let the planner balance everything beneath it.</div>
                   <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                    Goal edits stay proposal-only until you preview impact and confirm them. Historical plans and logs never get rewritten.
+                    Higher priorities get more planning weight, but every active goal stays visible in the stack. Goal edits stay proposal-only until you preview impact and confirm them.
+                  </div>
+                  <div style={{ fontSize:"0.47rem", color:"#94a3b8", lineHeight:1.5 }}>
+                    {goalSettingsModel?.priorityExplanation || GOAL_PRIORITY_EXPLANATION}
                   </div>
                 </div>
                 <div style={{ display:"flex", gap:"0.35rem", alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
                   <div style={{ fontSize:"0.47rem", color:"#8fa5c8", background:"#111827", border:"1px solid #23344d", borderRadius:999, padding:"0.18rem 0.5rem" }}>
-                    {currentGoalCards.length} current • {archivedGoalCards.length} archived
+                    {goalCounts.activeCount || 0} active • {goalCounts.inactiveCount || 0} inactive
+                  </div>
+                  <div style={{ fontSize:"0.47rem", color:"#8fa5c8", background:"#111827", border:"1px solid #23344d", borderRadius:999, padding:"0.18rem 0.5rem" }}>
+                    Future {goalCounts.futureCount || 0} • Paused {goalCounts.pausedCount || 0}
                   </div>
                   <button
                     data-testid="settings-goals-add"
@@ -13513,7 +14740,12 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                             </div>
                             {goalCard.tradeoff && (
                               <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                                Tradeoff: {goalCard.tradeoff}
+                                Balancing note: {goalCard.tradeoff}
+                              </div>
+                            )}
+                            {goalCard.fuzzyLine && (
+                              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                                Still fuzzy: {goalCard.fuzzyLine}
                               </div>
                             )}
                           </div>
@@ -13521,7 +14753,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                             <button data-testid={`settings-goal-move-up-${goalCard.id}`} className="btn" onClick={()=>moveGoalInSettingsOrder(goalCard.id, -1)} disabled={isTop || goalManagementBusy} style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>Up</button>
                             <button data-testid={`settings-goal-move-down-${goalCard.id}`} className="btn" onClick={()=>moveGoalInSettingsOrder(goalCard.id, 1)} disabled={isBottom || goalManagementBusy} style={{ fontSize:"0.47rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>Down</button>
                             <button data-testid={`settings-goal-edit-${goalCard.id}`} className="btn" onClick={()=>openGoalEditor(goalCard.id)} disabled={goalManagementBusy} style={{ fontSize:"0.47rem", color:C.blue, borderColor:C.blue+"35" }}>Edit</button>
-                            <button data-testid={`settings-goal-archive-${goalCard.id}`} className="btn" onClick={()=>openGoalArchive(goalCard.id)} disabled={goalManagementBusy} style={{ fontSize:"0.47rem", color:C.amber, borderColor:C.amber+"35" }}>Move out</button>
+                            <button data-testid={`settings-goal-archive-${goalCard.id}`} className="btn" onClick={()=>openGoalArchive(goalCard.id)} disabled={goalManagementBusy} style={{ fontSize:"0.47rem", color:C.amber, borderColor:C.amber+"35" }}>Change status</button>
                           </div>
                         </div>
 
@@ -13540,7 +14772,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                             <div style={{ display:"grid", gap:"0.24rem" }}>
                               {goalCard.historyRows.map((row) => (
                                 <div key={row.id} style={{ fontSize:"0.48rem", color:"#9fb2d2", lineHeight:1.5 }}>
-                                  {row.changedAt ? new Date(row.changedAt).toLocaleString() : "Unknown"} • {String(row.changeType || "update").replaceAll("_", " ")} • {row.changedFields.length ? row.changedFields.map((entry) => entry.label).join(", ") : "Captured active version"}
+                                  {row.changedAt ? new Date(row.changedAt).toLocaleString() : "Unknown"} • {row.sourceLabel || String(row.changeType || "update").replaceAll("_", " ")} • {row.changedFields.length ? row.changedFields.map((entry) => entry.label).join(", ") : "Captured active version"}
                                 </div>
                               ))}
                             </div>
@@ -13598,13 +14830,14 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 </div>
               )}
 
-              <details data-testid="settings-goals-archived" style={{ borderTop:"1px solid #182335", paddingTop:"0.45rem" }}>
+              {false && (
+              <div data-testid="settings-goals-archived-legacy" style={{ display:"none" }}>
                 <summary data-testid="settings-goals-archived-toggle" style={{ cursor:"pointer", fontSize:"0.52rem", color:"#dbe7f6" }}>Archived, completed, and dropped goals</summary>
                 <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
                   {archivedGoalCards.length === 0 ? (
                     <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>No archived goals yet.</div>
                   ) : archivedGoalCards.map((goalCard) => (
-                    <div key={goalCard.id} data-testid={`settings-archived-goal-${goalCard.id}`} style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1220", padding:"0.52rem", display:"grid", gap:"0.24rem" }}>
+                    <div key={goalCard.id} data-testid={`settings-legacy-archived-goal-${goalCard.id}`} style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1220", padding:"0.52rem", display:"grid", gap:"0.24rem" }}>
                       <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"flex-start", flexWrap:"wrap" }}>
                         <div>
                           <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", alignItems:"center" }}>
@@ -13617,7 +14850,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                             <div style={{ fontSize:"0.47rem", color:"#94a3b8", lineHeight:1.5, marginTop:"0.08rem" }}>{goalCard.timingDetail}</div>
                           ) : null}
                         </div>
-                        <button data-testid={`settings-goal-restore-${goalCard.id}`} className="btn" onClick={()=>handlePreviewGoalRestore(goalCard.id)} disabled={goalManagementBusy} style={{ fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>
+                        <button data-testid={`settings-legacy-goal-restore-${goalCard.id}`} className="btn" onClick={()=>handlePreviewGoalRestore(goalCard.id)} disabled={goalManagementBusy} style={{ fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>
                           Restore
                         </button>
                       </div>
@@ -13634,42 +14867,122 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                     </div>
                   ))}
                 </div>
-              </details>
-            </div>
-            <details>
-              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Advanced text request</summary>
-              <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
-                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                  The library-based goal manager above is the main path. Use this only when you want the app to interpret a plain-English goal change.
-                </div>
-                <select value={goalChangeMode} onChange={(e)=>setGoalChangeMode(e.target.value)} style={{ fontSize:"0.54rem" }}>
-                  <option value={GOAL_CHANGE_MODES.refineCurrentGoal}>Refine current goal</option>
-                  <option value={GOAL_CHANGE_MODES.reprioritizeGoalStack}>Re-prioritize goals</option>
-                  <option value={GOAL_CHANGE_MODES.startNewGoalArc}>Start new goal arc</option>
-                </select>
-                <input value={goalChangeIntent} onChange={(e)=>setGoalChangeIntent(e.target.value)} placeholder="Optional plain-English goal request" />
-                <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                  <button className="btn btn-primary" onClick={handleSettingsGoalPreview} disabled={goalChangePreviewing || goalChangeApplying} style={{ fontSize:"0.5rem" }}>
-                    {goalChangePreviewing ? "Previewing..." : "Preview"}
-                  </button>
-                  <button className="btn" onClick={handleSettingsGoalApply} disabled={goalChangeApplying || !goalChangePreview?.orderedResolvedGoals?.length} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>
-                    {goalChangeApplying ? "Applying..." : "Confirm"}
-                  </button>
-                </div>
-                {(goalChangeError || goalChangeNotice) && <div style={{ fontSize:"0.48rem", color:goalChangeError ? C.amber : C.green, lineHeight:1.45 }}>{goalChangeError || goalChangeNotice}</div>}
-                {goalChangePreview?.orderedResolvedGoals?.length > 0 && (
-                  <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem" }}>
-                    {goalChangePreview.orderedResolvedGoals.map((goal) => (
-                      <div key={goal.id || goal.name} style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>
-                        {goal.priority ? `${goal.priority}. ` : ""}{goal.name}
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
-            </details>
-            <details data-testid="settings-metrics-baselines" open={metricsDetailsOpen} onToggle={e=>setMetricsDetailsOpen(e.currentTarget.open)}>
-              <summary style={{ cursor:"pointer", fontSize:"0.54rem", color:"#dbe7f6" }}>Metrics / baselines</summary>
+              )}
+            </div>
+
+            <div data-testid="settings-goals-lifecycle" style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.65rem", display:"grid", gap:"0.45rem" }}>
+              <div style={{ display:"grid", gap:"0.14rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>LIFECYCLE</div>
+                <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>Keep future, paused, completed, archived, and dropped goals visible without muddying the live stack.</div>
+                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                  Restoring a goal brings it back into the active priority order. Historical plans and logs stay attached to the earlier version either way.
+                </div>
+              </div>
+              <div style={{ display:"grid", gap:"0.45rem" }}>
+                {goalLifecycleSections.map((section) => (
+                  <div key={section.key} data-testid={`settings-goals-bucket-${section.status === GOAL_ARCHIVE_STATUSES.archived ? "archived" : section.status}`} style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1220", padding:"0.58rem", display:"grid", gap:"0.35rem" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+                      <div style={{ display:"grid", gap:"0.12rem" }}>
+                        <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>{section.label}</div>
+                        <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.5 }}>{section.helper}</div>
+                      </div>
+                      <div style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#111827", border:"1px solid #23344d", borderRadius:999, padding:"0.14rem 0.38rem" }}>
+                        {section.count}
+                      </div>
+                    </div>
+                    {section.goals.length === 0 ? (
+                      <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>No goals in this bucket yet.</div>
+                    ) : (
+                      <div style={{ display:"grid", gap:"0.35rem" }}>
+                        {section.goals.map((goalCard) => (
+                          <div key={goalCard.id} data-testid={`settings-archived-goal-${goalCard.id}`} style={{ border:"1px solid #182335", borderRadius:12, background:"#0f172a", padding:"0.52rem", display:"grid", gap:"0.24rem" }}>
+                            <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+                              <div style={{ display:"grid", gap:"0.14rem" }}>
+                                <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", alignItems:"center" }}>
+                                  <span style={{ fontSize:"0.46rem", color:"#f59e0b", background:"#f59e0b14", border:"1px solid #f59e0b22", borderRadius:999, padding:"0.14rem 0.38rem", letterSpacing:"0.08em" }}>{goalCard.statusLabel}</span>
+                                  <span style={{ fontSize:"0.46rem", color:"#8fa5c8", background:"#162131", border:"1px solid #23344d", borderRadius:999, padding:"0.14rem 0.38rem" }}>{goalCard.activeVersionLabel}</span>
+                                </div>
+                                <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{goalCard.summary}</div>
+                                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{goalCard.timingLabel}</div>
+                                {goalCard.timingDetail ? (
+                                  <div style={{ fontSize:"0.47rem", color:"#94a3b8", lineHeight:1.5 }}>{goalCard.timingDetail}</div>
+                                ) : null}
+                                <div style={{ fontSize:"0.48rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                                  Track: {goalCard.trackingLabels.length ? goalCard.trackingLabels.join(", ") : "Stored goal context"}
+                                </div>
+                              </div>
+                              <button data-testid={`settings-goal-restore-${goalCard.id}`} className="btn" onClick={()=>handlePreviewGoalRestore(goalCard.id)} disabled={goalManagementBusy} style={{ fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>
+                                {getGoalRestoreLabel(goalCard.status)}
+                              </button>
+                            </div>
+                            <details>
+                              <summary style={{ cursor:"pointer", fontSize:"0.48rem", color:"#8fa5c8" }}>Audit details</summary>
+                              <div style={{ display:"grid", gap:"0.24rem", marginTop:"0.35rem" }}>
+                                {goalCard.historyRows.map((row) => (
+                                  <div key={row.id} style={{ fontSize:"0.48rem", color:"#9fb2d2", lineHeight:1.5 }}>
+                                    {row.changedAt ? new Date(row.changedAt).toLocaleString() : "Unknown"} • {row.sourceLabel || String(row.changeType || "update").replaceAll("_", " ")} • {row.changedFields.length ? row.changedFields.map((entry) => entry.label).join(", ") : "Captured version"}
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div data-testid="settings-goals-audit" style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.65rem", display:"grid", gap:"0.45rem" }}>
+              <div style={{ display:"grid", gap:"0.14rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>CHANGE HISTORY</div>
+                <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>See what changed, when it changed, and what it affected.</div>
+              </div>
+              {goalHistoryFeed.length === 0 ? (
+                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>No goal-management history has been captured yet.</div>
+              ) : (
+                <div style={{ display:"grid", gap:"0.35rem" }}>
+                  {goalHistoryFeed.map((entry) => (
+                    <div key={entry.id} style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1220", padding:"0.52rem", display:"grid", gap:"0.2rem" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
+                        <div style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.45 }}>{entry.headline || entry.goalSummary || "Goal update"}</div>
+                        <div style={{ fontSize:"0.46rem", color:"#8fa5c8" }}>{entry.changedAt ? new Date(entry.changedAt).toLocaleString() : "Unknown time"}</div>
+                      </div>
+                      <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>{entry.detail}</div>
+                      {(entry.statusBeforeLabel || entry.statusAfterLabel) && (
+                        <div style={{ fontSize:"0.47rem", color:"#9fb2d2", lineHeight:1.45 }}>
+                          Status: {entry.statusBeforeLabel || "Not previously recorded"} → {entry.statusAfterLabel || "Active"}
+                        </div>
+                      )}
+                      {entry.changedFieldLabels?.length > 0 && (
+                        <div style={{ fontSize:"0.47rem", color:"#9fb2d2", lineHeight:1.45 }}>
+                          Affected: {entry.changedFieldLabels.join(", ")}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+          )}
+
+          {activeSettingsSurface === "baselines" && (
+          <section data-testid="settings-baselines-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.4rem" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div className="sect-title" style={{ color:C.amber, marginBottom:0 }}>BASELINES</div>
+              <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                Keep readiness inputs, metrics, and anchor confidence separate from goal editing so the planner has clean inputs.
+              </div>
+            </div>
+            {focusSection === "metrics" && (
+              <div style={{ fontSize:"0.5rem", color:C.amber, lineHeight:1.5 }}>
+                Opened from Program because missing or low-confidence baselines are limiting how specific adaptation can be.
+              </div>
+            )}
+            <div data-testid="settings-metrics-baselines" style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.65rem" }}>
               <MetricsBaselinesSection
                 athleteProfile={athleteProfile}
                 personalization={personalization}
@@ -13679,7 +14992,72 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 saveManualProgressInputs={saveManualProgressInputs}
                 onSaved={setSettingsSaveMsg}
               />
-            </details>
+            </div>
+          </section>
+          )}
+
+          {activeSettingsSurface === "programs" && (
+          <section data-testid="settings-programs-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.4rem" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>PROGRAMS & STYLES</div>
+              <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                Choose the plan basis and style layer without mixing that decision into goal editing or baseline capture.
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
+              <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
+                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT BASIS</div>
+                <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45, marginTop:"0.12rem" }}>
+                  {settingsPlanBasisExplanation?.basisSummary || "Goal-driven default"}
+                </div>
+                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
+                  {settingsPlanBasisExplanation?.personalizationSummary || "No separate program or style layer is active."}
+                </div>
+              </div>
+              <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
+                <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>ACTIVE LAYERS</div>
+                <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.12rem", lineHeight:1.5 }}>
+                  Program: {activeProgramDefinition?.displayName || "None"}
+                </div>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
+                  Style: {activeStyleDefinition?.displayName || "None"}
+                </div>
+                <button className="btn" onClick={handleSettingsClearProgramLayer} style={{ width:"fit-content", marginTop:"0.3rem", fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
+                  Clear basis
+                </button>
+              </div>
+            </div>
+            {(planManagementNotice || planManagementError) && (
+              <div style={{ fontSize:"0.52rem", color:planManagementError ? C.amber : C.green, lineHeight:1.5 }}>
+                {planManagementError || planManagementNotice}
+              </div>
+            )}
+            <div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.65rem", display:"grid", gap:"0.35rem" }}>
+              <div style={{ display:"grid", gap:"0.14rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>PROGRAMS</div>
+                <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>Choose a named program or apply its structure as style.</div>
+              </div>
+              <select value={selectedSettingsProgramId} onChange={(e)=>setSelectedSettingsProgramId(e.target.value)} style={{ fontSize:"0.54rem" }}>
+                {programDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName}</option>)}
+              </select>
+              <select value={selectedSettingsProgramFidelityMode} onChange={(e)=>setSelectedSettingsProgramFidelityMode(e.target.value)} style={{ fontSize:"0.52rem" }}>
+                <option value={PROGRAM_FIDELITY_MODES.adaptToMe}>Adapt to me</option>
+                <option value={PROGRAM_FIDELITY_MODES.strict}>Mostly as written</option>
+                <option value={PROGRAM_FIDELITY_MODES.useAsStyle}>Use as style</option>
+              </select>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{selectedSettingsProgramDefinition?.summary || "Select a program."}</div>
+              {settingsProgramCompatibility?.headline && <div style={{ fontSize:"0.48rem", color:settingsProgramCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : "#8fa5c8", lineHeight:1.45 }}>{settingsProgramCompatibility.headline}</div>}
+              <button className="btn btn-primary" onClick={handleSettingsActivateProgram} style={{ width:"fit-content", fontSize:"0.5rem" }}>Use this program</button>
+              <div style={{ borderTop:"1px solid #1e293b", paddingTop:"0.35rem", display:"grid", gap:"0.35rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>STYLE</div>
+                <select value={selectedSettingsStyleId} onChange={(e)=>setSelectedSettingsStyleId(e.target.value)} style={{ fontSize:"0.54rem" }}>
+                  {styleDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName}</option>)}
+                </select>
+                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{selectedSettingsStyleDefinition?.summary || "Select a style."}</div>
+                {settingsStyleCompatibility?.headline && <div style={{ fontSize:"0.48rem", color:settingsStyleCompatibility?.outcome === COMPATIBILITY_OUTCOMES.incompatible ? C.amber : "#8fa5c8", lineHeight:1.45 }}>{settingsStyleCompatibility.headline}</div>}
+                <button className="btn" onClick={handleSettingsActivateStyle} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Apply style</button>
+              </div>
+            </div>
           </section>
           )}
 
@@ -13723,6 +15101,39 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 
           {activeSettingsSurface === "advanced" && (
           <section data-testid="settings-advanced-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.6rem" }}>
+            <details data-testid="settings-advanced-goal-request">
+              <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Experimental goal request</summary>
+              <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                  The Goals surface is authoritative. Use this only when you want the app to interpret a plain-English goal change request experimentally.
+                </div>
+                <select value={goalChangeMode} onChange={(e)=>setGoalChangeMode(e.target.value)} style={{ fontSize:"0.54rem" }}>
+                  <option value={GOAL_CHANGE_MODES.refineCurrentGoal}>Refine current goal</option>
+                  <option value={GOAL_CHANGE_MODES.reprioritizeGoalStack}>Re-prioritize goals</option>
+                  <option value={GOAL_CHANGE_MODES.startNewGoalArc}>Start new goal arc</option>
+                </select>
+                <input value={goalChangeIntent} onChange={(e)=>setGoalChangeIntent(e.target.value)} placeholder="Optional plain-English goal request" />
+                <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                  <button className="btn btn-primary" onClick={handleSettingsGoalPreview} disabled={goalChangePreviewing || goalChangeApplying} style={{ fontSize:"0.5rem" }}>
+                    {goalChangePreviewing ? "Previewing..." : "Preview"}
+                  </button>
+                  <button className="btn" onClick={handleSettingsGoalApply} disabled={goalChangeApplying || !goalChangePreview?.orderedResolvedGoals?.length} style={{ fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>
+                    {goalChangeApplying ? "Applying..." : "Confirm"}
+                  </button>
+                </div>
+                {(goalChangeError || goalChangeNotice) && <div style={{ fontSize:"0.48rem", color:goalChangeError ? C.amber : C.green, lineHeight:1.45 }}>{goalChangeError || goalChangeNotice}</div>}
+                {goalChangePreview?.orderedResolvedGoals?.length > 0 && (
+                  <div style={{ border:"1px solid #22324a", borderRadius:10, background:"#0f172a", padding:"0.5rem" }}>
+                    {goalChangePreview.orderedResolvedGoals.map((goal) => (
+                      <div key={goal.id || goal.name} style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                        {goal.priority ? `${goal.priority}. ` : ""}{goal.name}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </details>
+
             <details open>
               <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Advanced coach setup</summary>
               <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
@@ -14010,11 +15421,12 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div onClick={closeGoalArchive} style={{ position:"fixed", inset:0, background:"rgba(2,6,14,0.74)", display:"grid", placeItems:"center", zIndex:65, padding:"1rem" }}>
           <div onClick={(event)=>event.stopPropagation()} className="card card-soft" data-testid="settings-goal-archive-sheet" style={{ width:"100%", maxWidth:520, borderColor:"#30455f", background:"#0f172a", display:"grid", gap:"0.5rem" }}>
             <div style={{ display:"grid", gap:"0.14rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>MOVE GOAL OUT</div>
-              <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>Choose how this goal should leave the active stack.</div>
+              <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>GOAL STATUS</div>
+              <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>Choose what should happen to this goal next.</div>
             </div>
             <div style={{ display:"grid", gap:"0.24rem" }}>
-              {[GOAL_ARCHIVE_STATUSES.archived, GOAL_ARCHIVE_STATUSES.completed, GOAL_ARCHIVE_STATUSES.dropped].map((status) => {
+              {goalArchiveStatusOptions.map((option) => {
+                const status = option.status;
                 const selected = goalArchiveDraft.archiveStatus === status;
                 return (
                   <button
@@ -14028,9 +15440,13 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                       color:selected ? "#0f172a" : "#dbe7f6",
                       background:selected ? "#dbe7f6" : "transparent",
                       borderColor:selected ? "#dbe7f6" : "#2b3d55",
+                      textAlign:"left",
+                      display:"grid",
+                      gap:"0.12rem",
                     }}
                   >
-                    {String(status).replaceAll("_", " ")}
+                    <span>{option.label}</span>
+                    <span style={{ fontSize:"0.46rem", color:selected ? "#334155" : "#8fa5c8", lineHeight:1.45 }}>{option.helper}</span>
                   </button>
                 );
               })}
@@ -14837,7 +16253,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
 }
 
 // TODAY TAB
-function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, onGoProgram = () => {}, onGoLog = () => {}, loading, storageStatus, authError }) {
+function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, onGoProgram = () => {}, onGoLog = () => {}, loading, storageStatus, authError }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const userProfile = athleteProfile?.userProfile || {};
   const planDayRecovery = planDay?.resolved?.recovery || null;
@@ -15108,9 +16524,30 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
   const livePlanBasisExplanation = livePlanningBasis?.planBasisExplanation || null;
   const liveChangeSummary = planDay?.week?.changeSummary || currentPlanWeek?.changeSummary || planComposer?.changeSummary || null;
   const todayChangeLine = sanitizeDisplayText(
-    liveChangeSummary?.surfaceLine
+    surfaceModel?.preferenceAndAdaptationLine
+    || surfaceModel?.changeSummaryLine
+    || surfaceModel?.planningBasisLine
+    || surfaceModel?.canonicalReasonLine
+    || liveChangeSummary?.surfaceLine
     || [liveChangeSummary?.headline, liveChangeSummary?.preserved].filter(Boolean).join(" ")
     || ""
+  );
+  const canonicalTodayLabel = sanitizeDisplayText(
+    surfaceModel?.display?.sessionLabel
+    || todayWorkout?.label
+    || displayWorkout?.label
+    || "Today's session"
+  );
+  const normalizedTodayChangeLine = sanitizeDisplayText(todayChangeLine).toLowerCase();
+  const normalizedTodayCanonicalReason = sanitizeDisplayText(surfaceModel?.canonicalReasonLine).toLowerCase();
+  const normalizedTodayProvenanceLine = sanitizeDisplayText(surfaceModel?.provenanceLine).toLowerCase();
+  const canonicalTodayReasonLine = sanitizeDisplayText(
+    (surfaceModel?.canonicalReasonLine && normalizedTodayCanonicalReason !== normalizedTodayChangeLine
+      ? surfaceModel.canonicalReasonLine
+      : !surfaceModel?.canonicalReasonLine && surfaceModel?.provenanceLine && normalizedTodayProvenanceLine !== normalizedTodayChangeLine
+      ? surfaceModel.provenanceLine
+      : "")
+    || (!surfaceModel?.canonicalReasonLine && !surfaceModel?.provenanceLine ? todayProvenance : "")
   );
   const strTrack = displayWorkout?.strengthTrack || todayWorkout?.strengthTrack || (environmentSelection?.neutral ? "" : "home");
   const strSess = displayWorkout?.strSess || todayWorkout?.strSess || "A";
@@ -15120,17 +16557,19 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
     || (strTrack === "hotel" ? "Gym" : strTrack === "program" ? "Program" : "Home")
   );
   const displayRun = sanitizeWorkoutRun(displayWorkout?.run);
-  const todayPrescriptionSummary = buildDayPrescriptionDisplay({
-    training: displayWorkout,
-    week: {
-      weeklyIntent: planDay?.week?.weeklyIntent || null,
-      summary: planDay?.week?.summary || "",
-      successDefinition: planDay?.week?.successDefinition || "",
-      programBlock: planDay?.week?.programBlock || null,
-    },
-    provenance: planDay?.provenance || null,
-    prescribedExercises: buildStrengthPrescriptionEntriesForLogging(displayWorkout),
-  });
+  const todayPrescriptionSummary = sessionVariant === "standard" && surfaceModel?.display
+    ? surfaceModel.display
+    : buildDayPrescriptionDisplay({
+      training: displayWorkout,
+      week: {
+        weeklyIntent: planDay?.week?.weeklyIntent || null,
+        summary: planDay?.week?.summary || "",
+        successDefinition: planDay?.week?.successDefinition || "",
+        programBlock: planDay?.week?.programBlock || null,
+      },
+      provenance: planDay?.provenance || null,
+      prescribedExercises: buildStrengthPrescriptionEntriesForLogging(displayWorkout),
+    });
   const strExercises = buildStrengthPrescriptionEntriesForLogging(displayWorkout);
   const prehabExercises = activeIssueContext?.active ? ACHILLES.map(sanitizeWorkoutEntry) : [];
   const hasStrength = displayWorkout?.type === "run+strength" || displayWorkout?.type === "strength+prehab";
@@ -15486,6 +16925,14 @@ function TodayTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWee
           <div style={{ fontSize:"0.55rem", color:"#dbe7f6", lineHeight:1.5 }}>
             Quick status, actions, and save state for today. The workout card below is the full plan.
           </div>
+          <div data-testid="today-canonical-session-label" style={{ fontSize:"0.55rem", color:"#f8fafc", lineHeight:1.45 }}>
+            {canonicalTodayLabel}
+          </div>
+          {!!canonicalTodayReasonLine && (
+            <div data-testid="today-canonical-reason" style={{ fontSize:"0.49rem", color:"#9fb2d2", lineHeight:1.45 }}>
+              {canonicalTodayReasonLine}
+            </div>
+          )}
           {!!todayChangeLine && (
             <div data-testid="today-change-summary" style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
               {todayChangeLine}
@@ -16370,7 +17817,7 @@ function GoalAnchorQuickEntryPanel({
   );
 }
 
-function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, saveBodyweights = async () => null, saveManualProgressInputs = async () => null, saveProgramSelection = async () => null, todayWorkout: legacyTodayWorkout, onManagePlan = () => {} }) {
+function PlanTab({ planDay = null, surfaceModel = null, currentPlanWeek = null, currentWeek, logs, bodyweights, dailyCheckins = {}, personalization, athleteProfile = null, setGoals, momentum, strengthLayer, weeklyReview, expectations, memoryInsights, recalibration, patterns, getZones, weekNotes, paceOverrides, setPaceOverrides, learningLayer, salvageLayer, failureMode, planComposer, rollingHorizon, horizonAnchor, planWeekRecords = {}, weeklyCheckins, saveWeeklyCheckin, environmentSelection, setEnvironmentMode, saveEnvironmentSchedule, deviceSyncAudit, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), saveGoalReview = async () => null, saveBodyweights = async () => null, saveManualProgressInputs = async () => null, saveProgramSelection = async () => null, todayWorkout: legacyTodayWorkout, onManagePlan = () => {} }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const goalBuckets = athleteProfile?.goalBuckets || {};
@@ -16483,9 +17930,9 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const liveTodaySession = (() => {
     if (!todayWorkout) return null;
     const dayLabel = dayLabels[new Date().getDay()] || "Sun";
-    const detail = todayWorkout?.run?.d || todayWorkout?.strengthDuration || todayWorkout?.success || todayWorkout?.fallback || "Adjusted session";
+    const detail = surfaceModel?.display?.structure || todayWorkout?.run?.d || todayWorkout?.strengthDuration || todayWorkout?.success || todayWorkout?.fallback || "Adjusted session";
     const icon = todayWorkout?.run ? (RUN_TYPE_ICON[todayWorkout?.run?.t] || RUN_TYPE_ICON[todayWorkout?.type] || "easy_run") : null;
-    const summary = buildDayPrescriptionDisplay({
+    const summary = surfaceModel?.display || buildDayPrescriptionDisplay({
       training: todayWorkout,
       week: planDay?.week || {},
       provenance: planDay?.provenance || null,
@@ -16494,7 +17941,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
     return {
       key: `week_${currentWeek}_${dayLabel}_live`,
       day: dayLabel,
-      title: summary.sessionLabel || todayWorkout?.label || String(todayWorkout?.type || "Session").replaceAll("-", " "),
+      title: summary.sessionLabel || canonicalProgramLabel || todayWorkout?.label || String(todayWorkout?.type || "Session").replaceAll("-", " "),
       detail,
       icon,
       live: true,
@@ -16871,7 +18318,8 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const currentWeekRow = (displayHorizon || []).find((h) => h?.absoluteWeek === currentWeek) || null;
   const currentWeekSessions = getProgramWeekSessions(currentWeek, currentWeekRow);
   const futureWeekRows = (displayHorizon || []).filter((h) => Number(h?.absoluteWeek || 0) > currentWeek);
-  const activeGoalsList = (goals || []).filter((goal) => goal?.active);
+  const activeGoalsList = sortGoalsForPriorityDisplay(goals);
+  const activeGoalPriorityRows = buildGoalPriorityRows(goals);
   const metricsBaselinesModel = useMemo(() => buildMetricsBaselinesModel({
     athleteProfile,
     personalization,
@@ -16905,7 +18353,10 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
   const currentWeekPurposeLine = compressWeekCopy(currentWeeklyIntent?.focus || currentWeekLabel, 140);
   const currentWeekMattersLine = compressWeekCopy(weeklyCoachBrief || blockSummaryLine || "Current week plan", 165);
   const currentWeekChangesLine = compressWeekCopy(
-    currentWeekModel?.changeSummary?.surfaceLine
+    surfaceModel?.preferenceAndAdaptationLine
+      || surfaceModel?.changeSummaryLine
+      || surfaceModel?.canonicalReasonLine
+      || currentWeekModel?.changeSummary?.surfaceLine
       || currentWeekModel?.changeSummary?.headline
       || badWeekTriage
       || (Array.isArray(currentWeekModel?.constraints) && currentWeekModel.constraints.length > 0
@@ -16913,6 +18364,21 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
         : hierarchyIntentBits.join(" - ")),
     165
   ) || "No major week-level change flags are active.";
+  const canonicalProgramLabel = sanitizeDisplayText(
+    surfaceModel?.display?.sessionLabel
+    || todayWorkout?.label
+    || "Today's live prescription"
+  );
+  const normalizedProgramChangeLine = sanitizeDisplayText(currentWeekChangesLine).toLowerCase();
+  const normalizedProgramCanonicalReason = sanitizeDisplayText(surfaceModel?.canonicalReasonLine).toLowerCase();
+  const normalizedProgramProvenanceLine = sanitizeDisplayText(surfaceModel?.provenanceLine).toLowerCase();
+  const canonicalProgramReason = sanitizeDisplayText(
+    (surfaceModel?.canonicalReasonLine && normalizedProgramCanonicalReason !== normalizedProgramChangeLine
+      ? surfaceModel.canonicalReasonLine
+      : !surfaceModel?.canonicalReasonLine && surfaceModel?.provenanceLine && normalizedProgramProvenanceLine !== normalizedProgramChangeLine
+      ? surfaceModel.provenanceLine
+      : "")
+  );
   const currentWeekWinLine = compressWeekCopy(weeklyConsistencyAnchor, 165);
   const currentWeekMetaLine = [
     `${sessionsCompletedThisWeek}/${Math.max(1, plannedSessionsThisWeek)} sessions done`,
@@ -17178,9 +18644,17 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
             <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.16rem", lineHeight:1.55 }}>
               {currentWeekPurposeLine}
             </div>
+            <div data-testid="program-canonical-session-label" style={{ fontSize:"0.54rem", color:"#f8fafc", marginTop:"0.12rem", lineHeight:1.45 }}>
+              {canonicalProgramLabel}
+            </div>
             <div data-testid="program-change-summary" style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>
               {currentWeekChangesLine}
             </div>
+            {!!canonicalProgramReason && (
+              <div data-testid="program-canonical-reason" style={{ fontSize:"0.47rem", color:"#9fb2d2", marginTop:"0.12rem", lineHeight:1.45 }}>
+                {canonicalProgramReason}
+              </div>
+            )}
           </div>
           <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
             <span style={{ fontSize:"0.48rem", color:programTrustTone.color, background:programTrustTone.bg, padding:"0.16rem 0.42rem", borderRadius:999 }}>{programTrust.label}</span>
@@ -17202,11 +18676,35 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
             )}
           </div>
           <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem" }}>
-            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>ACTIVE GOALS</div>
-            <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.14rem", lineHeight:1.5 }}>
+            <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>GOAL PRIORITIES</div>
+            {false && (
+              <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.14rem", lineHeight:1.5 }}>
               {activeGoalsList.length ? activeGoalsList.map((goal) => goal.name).join(" • ") : "No active goals"}
+              </div>
+            )}
+            {activeGoalPriorityRows.length ? (
+              <div style={{ display:"grid", gap:"0.26rem", marginTop:"0.16rem" }}>
+                {activeGoalPriorityRows.slice(0, 4).map((row) => (
+                  <div key={row.id} style={{ display:"flex", gap:"0.35rem", alignItems:"baseline", flexWrap:"wrap" }}>
+                    <span style={{ fontSize:"0.45rem", color:C.green, background:`${C.green}14`, border:`1px solid ${C.green}22`, borderRadius:999, padding:"0.12rem 0.34rem", letterSpacing:"0.08em" }}>{row.label}</span>
+                    <span style={{ fontSize:"0.54rem", color:"#e2e8f0", lineHeight:1.45 }}>{row.summary}</span>
+                  </div>
+                ))}
+                {activeGoalPriorityRows.length > 4 && (
+                  <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                    +{activeGoalPriorityRows.length - 4} more priorities stay active in the plan.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.14rem", lineHeight:1.5 }}>
+                No active goals
+              </div>
+            )}
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.45 }}>
+              {GOAL_PRIORITY_EXPLANATION}
             </div>
-            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.45 }}>
+            <div style={{ fontSize:"0.47rem", color:"#7f93b2", marginTop:"0.12rem", lineHeight:1.45 }}>
               {currentWeekMetaLine}
             </div>
           </div>
@@ -17472,7 +18970,7 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
               <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>PROGRAMS + STYLES</div>
               <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>Choose a concrete program, add a style bias, or stay fully goal-driven.</div>
               <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.6, maxWidth:760 }}>
-                This gives the plan a transparent basis. Safety, schedule, equipment, injury context, and your real goal stack still outrank any template.
+                This gives the plan a transparent basis. Safety, schedule, equipment, injury context, and your real priority order still outrank any template.
               </div>
             </div>
             <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", alignItems:"center" }}>
@@ -18235,7 +19733,8 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
                   </ProgramSessionInlineRow>
                 );
               })}
-            </div>
+              </div>
+            )}
           </div>
 
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.7rem" }}>
@@ -18435,12 +19934,12 @@ function PlanTab({ planDay = null, currentPlanWeek = null, currentWeek, logs, bo
 }
 
 // LOG TAB (POLISHED)
-function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = {}, planWeekRecords = {}, weeklyCheckins = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, personalization, athleteProfile = null, saveManualProgressInputs = async () => null, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "" }) {
+function LogTab({ planDay = null, surfaceModel = null, logs, dailyCheckins = {}, plannedDayRecords = {}, planWeekRecords = {}, weeklyCheckins = {}, nutritionActualLogs = {}, saveLogs, bodyweights, saveBodyweights, personalization, athleteProfile = null, saveManualProgressInputs = async () => null, currentWeek, todayWorkout: legacyTodayWorkout, planArchives = [], planStartDate = "" }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const plannedWorkout = planDay?.base?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const manualProgressInputs = personalization?.manualProgressInputs || {};
-  const todayPlannedDayRecord = useMemo(() => buildPlannedDayRecord(planDay), [planDay]);
+  const todayPlannedDayRecord = buildPlannedDayRecord(planDay);
   const FEEL_LABELS = {
     "1": { title: "Rough", tip: "Rest, eat, sleep. Tomorrow is a new session." },
     "2": { title: "Tired", tip: "Manageable. Log it and move on." },
@@ -18455,7 +19954,7 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
     sessionType: sanitizeDisplayText(todayWorkout?.type || plannedWorkout?.type || "session"),
     sessionLabel: sanitizeDisplayText(todayWorkout?.label || plannedWorkout?.label || "Session"),
     prescribedLabel: sanitizeDisplayText(todayWorkout?.label || plannedWorkout?.label || ""),
-    plannedSummary: buildDayPrescriptionDisplay({
+    plannedSummary: surfaceModel?.display || buildDayPrescriptionDisplay({
       training: todayWorkout || plannedWorkout || null,
       includeWhy: false,
       prescribedExercises: buildStrengthPrescriptionEntriesForLogging(todayWorkout || plannedWorkout || null),
@@ -18764,6 +20263,18 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
   useEffect(() => () => {
     if (feelTooltipTimerRef.current) clearTimeout(feelTooltipTimerRef.current);
   }, []);
+  const canonicalLogLabel = sanitizeDisplayText(
+    surfaceModel?.display?.sessionLabel
+    || detailed?.plannedSummary?.sessionLabel
+    || detailed?.prescribedLabel
+    || "Planned session"
+  );
+  const canonicalLogReason = sanitizeDisplayText(
+    surfaceModel?.canonicalReasonLine
+    || surfaceModel?.preferenceAndAdaptationLine
+    || detailed?.plannedSummary?.why
+    || ""
+  );
 
   return (
     <div className="fi" data-testid="log-tab" style={{ display:"grid", gap:"0.75rem" }}>
@@ -18827,6 +20338,14 @@ function LogTab({ planDay = null, logs, dailyCheckins = {}, plannedDayRecords = 
               <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
                 This stays inside Log workout and writes actuals against the same planned session shown on Today and Program.
               </div>
+              <div data-testid="log-canonical-session-label" style={{ fontSize:"0.52rem", color:"#f8fafc", lineHeight:1.45 }}>
+                {canonicalLogLabel}
+              </div>
+              {!!canonicalLogReason && (
+                <div data-testid="log-canonical-reason" style={{ fontSize:"0.47rem", color:"#9fb2d2", lineHeight:1.45 }}>
+                  {canonicalLogReason}
+                </div>
+              )}
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.45rem" }}>
               <input type="date" value={detailed.date} onChange={e=>setDetailed(buildDetailedDraft(e.target.value, logs?.[e.target.value] || {}))} />
@@ -19632,7 +21151,7 @@ const buildLocationAwareOrderSuggestion = ({ nearby = [] }) => {
 };
 
 // NUTRITION TAB (REDESIGNED)
-function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, currentWeek, logs, personalization, athleteProfile = null, momentum, bodyweights, learningLayer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFavorites, weeklyNutritionReview = null, saveNutritionFavorites, saveNutritionActualLog }) {
+function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTodayWorkout, currentWeek, logs, personalization, athleteProfile = null, momentum, bodyweights, learningLayer, nutritionLayer: legacyNutritionLayer, realWorldNutrition: legacyRealWorldNutrition, nutritionActualLogs = {}, nutritionFavorites, weeklyNutritionReview = null, saveNutritionFavorites, saveNutritionActualLog }) {
   const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
   const goals = athleteProfile?.goals || [];
   const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
@@ -19848,6 +21367,16 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
   });
   const recoveryPrescription = planDay?.resolved?.recovery?.prescription || null;
   const supplementPlan = planDay?.resolved?.supplements?.plan || null;
+  const canonicalNutritionLabel = sanitizeDisplayText(
+    surfaceModel?.display?.sessionLabel
+    || currentSessionLabel
+    || "Today's session"
+  );
+  const canonicalNutritionReason = sanitizeDisplayText(
+    surfaceModel?.canonicalReasonLine
+    || surfaceModel?.preferenceAndAdaptationLine
+    || nutritionProvenance
+  );
   const hasStoredSupplementPlan = Array.isArray(supplementPlan?.items) && supplementPlan.items.length > 0;
   const showSupplementChecklist = hasStoredSupplementPlan && supplementRows.length > 0;
   const supplementPrescriptionLine = hasStoredSupplementPlan
@@ -20001,6 +21530,10 @@ function NutritionTab({ planDay = null, todayWorkout: legacyTodayWorkout, curren
         <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.5rem" }}>
           <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>TODAY'S NUTRITION TARGET</div>
           <div style={{ fontSize:"0.6rem", color:"#e2e8f0", lineHeight:1.5 }}>{directiveSentence}</div>
+          <div data-testid="nutrition-canonical-session-label" style={{ fontSize:"0.54rem", color:"#f8fafc", lineHeight:1.45 }}>{canonicalNutritionLabel}</div>
+          {!!canonicalNutritionReason && (
+            <div data-testid="nutrition-canonical-reason" style={{ fontSize:"0.49rem", color:"#9fb2d2", lineHeight:1.45 }}>{canonicalNutritionReason}</div>
+          )}
           {nutritionSaveAck && <div data-testid="nutrition-save-status" role="status" style={{ fontSize:"0.5rem", color:C.green, lineHeight:1.45 }}>{nutritionSaveAck}</div>}
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:"0.35rem" }}>
@@ -20438,7 +21971,7 @@ function LegacyCoachTabUnused({ planDay = null, logs, dailyCheckins, currentWeek
     .filter((goal) => goal?.active)
     .sort((a, b) => (a?.priority || 99) - (b?.priority || 99));
   const currentPrimaryGoal = activeGoalsOrdered[0]?.name || arbitration?.priorityStack?.primary || "Consistency";
-  const currentSupportGoals = activeGoalsOrdered.slice(1, 3).map((goal) => goal?.name).filter(Boolean);
+  const coachPrioritySummary = buildGoalPrioritySummaryLine(activeGoalsOrdered, { maxVisible: 3 });
   const currentBlockLabel = sanitizeDisplayText(
     planDayWeek?.programBlock?.label
     || planDayWeek?.label
@@ -20454,8 +21987,7 @@ function LegacyCoachTabUnused({ planDay = null, logs, dailyCheckins, currentWeek
     || "Current week plan"
   );
   const coachPlanLine = joinDisplayParts([
-    currentPrimaryGoal ? `Goal: ${currentPrimaryGoal}` : "",
-    currentSupportGoals.length ? `Support: ${currentSupportGoals.join(" / ")}` : "",
+    coachPrioritySummary ? `Priorities: ${coachPrioritySummary}` : (currentPrimaryGoal ? `Priority 1: ${currentPrimaryGoal}` : ""),
     livePlanningBasis?.activeProgramName ? `Basis: ${livePlanningBasis.activeProgramName}` : "",
     livePlanningBasis?.activeStyleName ? `Style: ${livePlanningBasis.activeStyleName}` : "",
     currentBlockLabel,
@@ -21390,6 +22922,7 @@ Rules for every response:
 
 function CoachTab({
   planDay = null,
+  surfaceModel = null,
   logs,
   dailyCheckins,
   currentWeek,
@@ -21453,7 +22986,7 @@ function CoachTab({
     .filter((goal) => goal?.active)
     .sort((a, b) => (a?.priority || 99) - (b?.priority || 99));
   const currentPrimaryGoal = activeGoalsOrdered[0]?.name || arbitration?.priorityStack?.primary || "Consistency";
-  const currentSupportGoals = activeGoalsOrdered.slice(1, 3).map((goal) => goal?.name).filter(Boolean);
+  const coachPrioritySummary = buildGoalPrioritySummaryLine(activeGoalsOrdered, { maxVisible: 3 });
   const currentBlockLabel = sanitizeDisplayText(
     planDayWeek?.programBlock?.label
     || planDayWeek?.label
@@ -21469,8 +23002,7 @@ function CoachTab({
     || "Current week plan"
   );
   const coachPlanLine = joinDisplayParts([
-    currentPrimaryGoal ? `Goal: ${currentPrimaryGoal}` : "",
-    currentSupportGoals.length ? `Support: ${currentSupportGoals.join(" / ")}` : "",
+    coachPrioritySummary ? `Priorities: ${coachPrioritySummary}` : (currentPrimaryGoal ? `Priority 1: ${currentPrimaryGoal}` : ""),
     livePlanningBasis?.activeProgramName ? `Basis: ${livePlanningBasis.activeProgramName}` : "",
     livePlanningBasis?.activeStyleName ? `Style: ${livePlanningBasis.activeStyleName}` : "",
     currentBlockLabel,
@@ -21936,6 +23468,18 @@ function CoachTab({
   const supportRecoveryLine = compressCoachCopy(recoveryPrescriptionLine, 140);
   const supportSupplementLine = compressCoachCopy(supplementCoachLine, 120);
   const latestWeeklyReviewLine = compressCoachCopy(sundayArchive[0]?.paragraph || weeklyNotice, 180);
+  const canonicalCoachLabel = compressCoachCopy(
+    surfaceModel?.display?.sessionLabel
+    || todayWorkout?.label
+    || "Today's session",
+    140
+  );
+  const canonicalCoachReason = compressCoachCopy(
+    surfaceModel?.canonicalReasonLine
+    || surfaceModel?.preferenceAndAdaptationLine
+    || coachWhyLine,
+    170
+  );
 
   const todayPromptInput = selectedTodayPrompt === "status"
     ? "status"
@@ -22090,6 +23634,8 @@ function CoachTab({
             <div style={{ display: "grid", gap: "0.18rem" }}>
               <div className="sect-title" style={{ color: C.blue, marginBottom: 0 }}>COACH</div>
               <div style={{ fontSize: "0.68rem", color: "#f8fbff", lineHeight: 1.4 }}>Short guidance, explicit previews, no silent plan edits.</div>
+              <div data-testid="coach-canonical-session-label" style={{ fontSize: "0.54rem", color: "#f8fbff", lineHeight: 1.45 }}>{canonicalCoachLabel}</div>
+              {!!canonicalCoachReason && <div data-testid="coach-canonical-reason" style={{ fontSize: "0.49rem", color: "#9fb2d2", lineHeight: 1.45 }}>{canonicalCoachReason}</div>}
               <div style={{ fontSize: "0.5rem", color: "#8fa5c8", lineHeight: 1.5 }}>{coachPlanLine || coachProvenance}</div>
             </div>
             <div style={{ display: "flex", gap: "0.28rem", flexWrap: "wrap", justifyContent: "flex-end" }}>

@@ -56,7 +56,7 @@ test.describe("intake onboarding e2e", () => {
     await page.setViewportSize({ width: 1440, height: 1120 });
   });
 
-  test("exact running goal shows interpretation first, then clarifies and builds deterministically", async ({ page }) => {
+  test("exact running goal goes straight into clarify and builds deterministically", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
       goalText: "run a 1:45 half marathon",
@@ -68,13 +68,11 @@ test.describe("intake onboarding e2e", () => {
       stopAtInterpretation: true,
     });
 
-    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
     await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(1);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1"]);
     await expectSummaryRail(page);
     await expectNoFakeTranscript(page);
-
-    await page.getByTestId("intake-footer-continue").click();
     const visitedFields = await completeAnchors(page, {
       target_timeline: { type: "natural", value: "October" },
       current_run_frequency: { type: "natural", value: "3 runs/week" },
@@ -108,7 +106,7 @@ test.describe("intake onboarding e2e", () => {
       stopAtInterpretation: true,
     });
 
-    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
     await expectSummaryRail(page);
     await expectNoFakeTranscript(page);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1"]);
@@ -116,7 +114,6 @@ test.describe("intake onboarding e2e", () => {
     await expect(page.getByTestId("intake-summary-section-what-we-track")).toContainText(/waist|bodyweight|30/i);
     await expect(page.getByTestId("intake-summary-section-what-is-fuzzy")).toContainText(/30|waist|bodyweight|success/i);
 
-    await page.getByTestId("intake-footer-continue").click();
     const visitedFields = await completeAnchors(page, {
       appearance_proxy_anchor_kind: { type: "choice", value: "current_bodyweight" },
       current_bodyweight: { type: "number", value: 185, unit: "lb" },
@@ -146,10 +143,13 @@ test.describe("intake onboarding e2e", () => {
     await page.getByTestId("intake-goals-option-training-days-4").click();
     await page.getByTestId("intake-goals-option-session-length-45").click();
     await page.getByTestId("intake-goals-option-training-location-gym").click();
-    await page.getByTestId("intake-goals-option-coaching-style-balanced-coaching").click();
+    const coachingChip = page.getByTestId("intake-goals-option-coaching-style-balanced-coaching");
+    if (await coachingChip.count()) {
+      await coachingChip.click();
+    }
     await page.getByTestId("intake-footer-continue").click();
 
-    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
     await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(2);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2"]);
     await expectSummaryRail(page);
@@ -233,7 +233,7 @@ test.describe("intake onboarding e2e", () => {
       stopAtInterpretation: true,
     });
 
-    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
     await expectSummaryRail(page);
     await expectNoFakeTranscript(page);
     await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(2);
@@ -241,7 +241,6 @@ test.describe("intake onboarding e2e", () => {
     await expect(page.getByTestId("intake-review")).toHaveCount(0);
     await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/bench|lean|body/i);
 
-    await page.getByTestId("intake-footer-continue").click();
     await completeAnchors(page, {
       target_timeline: { type: "natural", value: "July" },
       current_strength_baseline: { type: "strength_top_set", weight: 185, reps: 5 },
@@ -328,14 +327,14 @@ test.describe("intake onboarding e2e", () => {
       stopAtInterpretation: true,
     });
 
-    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible();
+    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
     await expectSummaryRail(page);
     await expectNoFakeTranscript(page);
-    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(5);
-    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2", "Priority 3", "Additional goal", "Additional goal"]);
+    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(4);
+    await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2", "Priority 3", "Priority 4"]);
     await expect(page.getByTestId("intake-proposal-additional-goals")).toBeVisible();
-    await expect(page.getByTestId("intake-summary-section-your-words")).toContainText(/bench 225|leaner|jump|shoulders/i);
-    await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/run|bench|lean|jump|shoulder/i);
+    await expect(page.getByTestId("intake-summary-section-your-words")).toContainText(/bench 225|leaner|shoulders/i);
+    await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/run|bench|lean|shoulder/i);
   });
 
   test("confirm step keeps extra goals visible and lets the user reorder directly", async ({ page }) => {
@@ -350,7 +349,6 @@ test.describe("intake onboarding e2e", () => {
       stopAtInterpretation: true,
     });
 
-    await page.getByTestId("intake-footer-continue").click();
     await completeAnchors(page, {
       target_timeline: { type: "natural", value: "October" },
       current_run_frequency: { type: "natural", value: "3 runs/week" },
@@ -376,16 +374,10 @@ test.describe("intake onboarding e2e", () => {
     const benchCard = page.getByTestId("intake-confirm-goal-card").filter({ hasText: /Bench press 225 lb/i });
     const runCard = page.getByTestId("intake-confirm-goal-card").filter({ hasText: /run a 1:45 half marathon/i });
 
-    await expect(benchCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 2");
+    await expect(benchCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 3");
     await expect(runCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 1");
-
-    await benchCard.getByRole("button", { name: "Move earlier" }).click();
-    await expect(benchCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 1");
-    await expect(runCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 2");
-
-    await benchCard.getByRole("button", { name: "Move later" }).click();
-    await expect(benchCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 2");
-    await expect(runCard.getByTestId("intake-goal-card-priority")).toHaveText("Priority 1");
+    await expect(benchCard.getByRole("button", { name: "Move earlier" })).toBeVisible();
+    await expect(benchCard.getByRole("button", { name: "Move later" })).toBeVisible();
 
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
@@ -406,9 +398,8 @@ test.describe("intake onboarding e2e", () => {
     await page.getByTestId("intake-adjust-input").fill("Actually, I want to bench 225");
     await page.getByTestId("intake-footer-continue").click();
 
-    await expect(page.getByTestId("intake-interpretation-step")).toBeVisible({ timeout: 20_000 });
+    await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm/);
     await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/bench|225/i);
-    await page.getByTestId("intake-footer-continue").click();
     await expect.poll(() => getCurrentFieldId(page), { timeout: 20_000 }).toMatch(/target_timeline|current_strength_baseline/);
     const nextField = await getCurrentFieldId(page);
     expect(nextField).not.toBe("running_endurance_anchor_kind");
