@@ -217,3 +217,30 @@ test("saved safe starting capacity and swim reality become visible planning anch
   assert.ok(influence.summaryLines.some((line) => /Pool only is shaping swim structure/i.test(line)));
   assert.ok(influence.summaryLines.some((line) => /About 20 to 30 minutes is shaping the starting block/i.test(line)));
 });
+
+test("swim reality rows do not crash baseline influence when swim cards are absent", () => {
+  const influence = buildPlanningBaselineInfluence({
+    goals: [
+      {
+        id: "g_general",
+        name: "General conditioning",
+        category: "general_fitness",
+        active: true,
+        priority: 1,
+      },
+    ],
+    personalization: {
+      manualProgressInputs: {
+        measurements: {},
+        benchmarks: {},
+        metrics: {
+          swim_access_reality: [{ date: "2026-04-14", value: "pool", label: "Pool only", source: "intake_derived" }],
+        },
+      },
+    },
+    logs: {},
+    bodyweights: [],
+  });
+
+  assert.ok(influence.summaryLines.some((line) => /Pool only is shaping swim structure/i.test(line)));
+});

@@ -5,6 +5,7 @@ const {
   confirmIntakeBuild,
   getCurrentFieldId,
   gotoIntakeInLocalMode,
+  readLocalCache,
   waitForPostOnboarding,
   waitForReview,
 } = require("./intake-test-utils.js");
@@ -46,5 +47,69 @@ test.describe("synthetic athlete browser probe", () => {
     await page.getByTestId("coach-mode-button-ask_anything").click();
     await expect(page.getByTestId("coach-mode-panel-ask_anything")).toBeVisible();
     await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Advisory|AI advisory is off/i);
+  });
+
+  test("exact strength plus aesthetics flow keeps both goals visible and coach ask-anything stays non-mutating", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "Bench 225 by July and look bigger through my chest and shoulders",
+      experienceLevel: "Intermediate",
+      trainingDays: "4",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+      coachingStyle: "Balanced coaching",
+      stopAtInterpretation: true,
+    });
+
+    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(2);
+    await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/bench|chest|shoulders/i);
+
+    await page.getByTestId("intake-footer-continue").click();
+    await completeAnchors(page, {
+      target_timeline: { type: "natural", value: "July" },
+      current_strength_baseline: { type: "strength_top_set", weight: 185, reps: 5 },
+    }, { maxSteps: 4 });
+
+    await waitForReview(page);
+    await confirmIntakeBuild(page);
+    await waitForPostOnboarding(page);
+
+    await page.getByTestId("app-tab-coach").click();
+    const beforeCache = await readLocalCache(page);
+    await page.getByTestId("coach-mode-button-ask_anything").click();
+    await expect(page.getByTestId("coach-mode-panel-ask_anything")).toBeVisible();
+    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Advisory|AI advisory is off/i);
+    await expect(page.getByTestId("coach-preview-accept")).toHaveCount(0);
+
+    const afterCache = await readLocalCache(page);
+    expect(afterCache?.coachActions || []).toEqual(beforeCache?.coachActions || []);
+  });
+
+  test("swim flow keeps swim anchors inline and exposes swim provenance after build", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await completeIntroQuestionnaire(page, {
+      goalText: "swim a faster mile",
+      experienceLevel: "Intermediate",
+      trainingDays: "3",
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+      coachingStyle: "Balanced coaching",
+    });
+
+    await expect.poll(() => getCurrentFieldId(page), { timeout: 20_000 }).toBe("recent_swim_anchor");
+    await completeAnchors(page, {
+      recent_swim_anchor: { type: "natural", value: "1000 yd in 22:30" },
+      swim_access_reality: { type: "choice", value: "pool" },
+    }, { maxSteps: 4 });
+
+    await waitForReview(page);
+    await confirmIntakeBuild(page);
+    await waitForPostOnboarding(page);
+
+    await page.getByTestId("app-tab-settings").click();
+    await page.getByTestId("settings-surface-plan").click();
+    await page.getByTestId("settings-metrics-baselines").click();
+    await expect(page.getByTestId("metrics-baselines-section")).toContainText(/pool|swim/i);
+    await expect(page.getByTestId("metrics-baselines-section")).toContainText(/captured|provenance|why it matters/i);
   });
 });

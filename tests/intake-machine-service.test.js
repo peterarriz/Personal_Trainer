@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  applyMissingAnchorAnswer,
   buildIntakeMachineDebugView,
   buildIntakeParseDebugView,
   createIntakeMachineState,
@@ -802,7 +803,7 @@ test("machine exposes field-card metadata for timeline and strength baseline par
   });
 });
 
-test("body-comp timeline anchors accept open-ended timing without forcing a finish date", () => {
+test("body-comp intake no longer forces a timeline after the required bodyweight anchor is captured", () => {
   let nextState = createIntakeMachineState();
   nextState = intakeReducer(nextState, {
     event_id: "evt_body_comp_goal_submit",
@@ -836,36 +837,10 @@ test("body-comp timeline anchors accept open-ended timing without forcing a fini
     }),
   });
 
-  nextState = intakeReducer(nextState, {
-    event_id: "evt_target_weight_answered",
-    type: INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
-    timestamp: TEST_NOW,
-    payload: buildAnchorAnsweredPayload({
-      anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
-      raw_text: "20",
-      answer_value: "20",
-    }),
-  });
-
-  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.field_id, "target_timeline");
-  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor.allow_open_ended, true);
-
-  const openEndedValidation = validateMissingAnchorAnswer({
-    anchor: nextState.draft.missingAnchorsEngine.currentAnchor,
-    raw_text: "Open-ended",
-    answer_value: {
-      mode: "open_ended",
-      value: "open_ended",
-      raw: "Open-ended",
-    },
-  });
-
-  assert.equal(openEndedValidation.isValid, true);
-  assert.equal(openEndedValidation.summaryText, "Open-ended");
-  assert.deepEqual(openEndedValidation.canonicalWrites[0].record, {
-    raw: "Open-ended",
-    value: "open_ended",
-  });
+  assert.equal(nextState.draft.missingAnchorsEngine.currentAnchor, null);
+  assert.equal(nextState.stage, INTAKE_MACHINE_STATES.REALISM_GATE);
+  assert.equal(nextState.draft.answers.intake_completeness.fields.current_bodyweight.value, 205);
+  assert.equal(nextState.draft.answers.intake_completeness.fields.target_timeline, undefined);
 });
 
 test("current field validation ignores extra facts that do not match the active field schema", () => {
@@ -1181,6 +1156,7 @@ test("appearance proxy flow asks for a proxy choice first and then clears only t
   });
 
   assert.equal(appearanceState.draft.missingAnchorsEngine.currentAnchor.field_id, "current_waist");
+  assert.equal(appearanceState.draft.answers.intake_completeness.fields.appearance_proxy_plan.value, "current_waist");
 
   appearanceState = intakeReducer(appearanceState, {
     event_id: "evt_appearance_proxy_value",
@@ -1200,6 +1176,29 @@ test("appearance proxy flow asks for a proxy choice first and then clears only t
   assert.equal(appearanceState.draft.answers.intake_completeness.fields.current_waist.value, 35);
   assert.equal(appearanceState.draft.answers.intake_completeness.fields.current_bodyweight, undefined);
   assert.notEqual(appearanceState.draft.missingAnchorsEngine.currentAnchor?.field_id, "appearance_proxy_anchor_kind");
+});
+
+test("athletic-power anchors accept jump-style baseline text without forcing lift numbers", () => {
+  const applied = applyMissingAnchorAnswer({
+    answers: {},
+    anchor: {
+      anchor_id: "strength_baseline:current_strength_baseline",
+      field_id: "current_strength_baseline",
+      expected_value_type: "athletic_power_baseline",
+      kind: "athletic_power_baseline",
+    },
+    raw_text: "24 in vertical",
+    answer_value: {
+      value: "24 in vertical",
+      raw: "24 in vertical",
+    },
+    timestamp: TEST_NOW,
+    source: "test",
+  });
+
+  assert.equal(applied.validation.isValid, true);
+  assert.equal(applied.answers.intake_completeness.fields.current_strength_baseline.raw, "24 in vertical");
+  assert.equal(applied.answers.intake_completeness.fields.current_strength_baseline.value, "24 in vertical");
 });
 
 test("appearance proxy skip path stores defer-for-now and user-back clears it cleanly", () => {

@@ -109,6 +109,13 @@ export const SYNTHETIC_ATHLETE_RELEASE_GATE_PERSONA_IDS = Object.freeze([
   "hybrid_athlete_split",
 ]);
 
+export const SYNTHETIC_ATHLETE_CATALOG_MODES = Object.freeze({
+  focus: "focus",
+  releaseGate: "release_gate",
+  expanded: "expanded",
+  all: "all",
+});
+
 const FAILURE_CLUSTER_META = Object.freeze({
   intake_friction: {
     severity: "medium",
@@ -295,6 +302,18 @@ const BROWSER_PROBES = Object.freeze([
     stepRef: "review hierarchy and audit disclosure framing",
     rationale: "Protects trust-sensitive review language and audit demotion.",
   },
+  {
+    id: "exact_multigoal_probe",
+    specRef: "e2e/synthetic-athlete-lab.spec.js",
+    stepRef: "bench 225 plus aesthetics intake, inline baseline capture, and advisory coach boundary",
+    rationale: "Catches exact multi-goal intake and coach non-mutation issues that synthetic scoring can miss.",
+  },
+  {
+    id: "swim_anchor_probe",
+    specRef: "e2e/synthetic-athlete-lab.spec.js",
+    stepRef: "swim anchor capture, swim access reality, and swim baseline provenance after build",
+    rationale: "Adds browser-level protection for swim-domain anchor timing and settings provenance.",
+  },
 ]);
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
@@ -346,7 +365,7 @@ const addDaysToDateKey = (dateKey = LAB_START_DATE_KEY, days = 0) => {
 
 const weekStartDateKeyFor = (weekNumber = 1) => addDaysToDateKey(LAB_START_DATE_KEY, (Math.max(1, Number(weekNumber || 1)) - 1) * 7);
 const scoreSeverityPenalty = (severity = "medium") => (severity === "severe" ? 30 : severity === "medium" ? 14 : 5);
-const hasLaneTheater = (value = "") => /leading now|maintain|support in the background|deferring/i.test(String(value || ""));
+const hasLaneTheater = (value = "") => /leading now|we will maintain|support in the background|we will support|we are deferring|defer(?:ring)?/i.test(String(value || ""));
 const hasRevisionHeroCopy = (value = "") => /rev(?:ision)?\s*\d+|plan changed|timeline mechanics/i.test(String(value || ""));
 
 const buildManualProgressInputs = (baselineMetrics = {}, todayKey = LAB_START_DATE_KEY) => ({
@@ -426,17 +445,158 @@ const normalizeIntentEntries = (persona = {}) => (
     .filter((entry) => entry.text)
 );
 
+const inferCoachUsageStyle = (persona = {}) => {
+  const text = `${persona.coachInteractionBehavior || ""} ${toArray(persona.likelyFailureModes || []).join(" ")}`.toLowerCase();
+  if (/never chats|never chat|rarely chats|hates chat|as few decisions as possible|never uses coach/.test(text)) return "never";
+  if (/overuses coach|overuse|asks for reassurance often|compare every option|asks for help when sleep is wrecked/.test(text)) return "overuse";
+  if (/concise|decision support|short answers|only when stuck|only when totally lost/.test(text)) return "minimal";
+  return "balanced";
+};
+
+const inferChaosLevel = (persona = {}) => {
+  const text = [
+    persona.scheduleReality,
+    persona.travelLikelihood,
+    persona.loggingBehavior,
+    persona.nutritionBehavior,
+    persona.injuryContext,
+    persona.bodyCompContext,
+    persona.coachInteractionBehavior,
+    toArray(persona.likelyFailureModes || []).join(" "),
+  ].filter(Boolean).join(" ").toLowerCase();
+  let score = 0;
+  if (/wildly inconsistent|unpredictable|fragmented|night shift|rotating|travel|hotel|airport|newborn|kids|sleep disruption|limited sleep|chaotic/.test(text)) score += 2;
+  if (/sporadic|missed sessions|motivation|drift|forgets|dropped balls|late meetings|compressed/.test(text)) score += 1;
+  if (/pain|ache|rehab|injury|knee|shoulder|back|hip|achilles|pelvic floor/.test(text)) score += 1;
+  return score >= 3 ? "high" : score >= 1 ? "medium" : "low";
+};
+
+const inferGoalPrecision = (persona = {}) => {
+  const text = normalizeIntentEntries(persona).map((entry) => entry.text).join(" ").toLowerCase();
+  if (!text) return "none";
+  const hasExact = /\b\d+(?::\d+)?\b|\b(?:january|february|march|april|may|june|july|august|september|october|november|december|summer|fall|winter|spring)\b|20\d{2}/.test(text);
+  const hasVague = /look athletic again|tone up|get fitter|fighter shape|back in shape|stay capable|for life|kinda stronger|slimmer|more energy/.test(text);
+  if (hasExact && hasVague) return "hybrid";
+  if (hasExact) return "exact";
+  if (hasVague) return "vague";
+  return normalizeIntentEntries(persona).length > 1 ? "hybrid" : "exact";
+};
+
+const inferGoalTimingStyle = (persona = {}) => {
+  const text = `${normalizeIntentEntries(persona).map((entry) => entry.text).join(" ")} ${persona.bodyCompContext || ""}`.toLowerCase();
+  if (/open-ended|no hard end date|for life|healthspan|no exact timeline|open ended/.test(text)) return "open_ended";
+  if (/\bby\s+(?:summer|fall|winter|spring|january|february|march|april|may|june|july|august|september|october|november|december|[a-z]+)\b|\bwithin?\s+\d+\s+weeks?\b|20\d{2}/.test(text)) return "date_based";
+  if (/\b\d+\b/.test(text) && /\bbench|squat|deadlift|mile|marathon|5k|10k|half marathon|lb|pounds?\b/.test(text)) return "exact_metric";
+  return "open_ended";
+};
+
+const buildPersonaCatalogCoverage = (personas = []) => {
+  const coverage = {
+    exactUsers: 0,
+    vagueUsers: 0,
+    hybridUsers: 0,
+    chaoticUsers: 0,
+    dateBasedGoalUsers: 0,
+    openEndedGoalUsers: 0,
+    multiGoalUsers: 0,
+    coachNeverUsers: 0,
+    coachOveruseUsers: 0,
+    travelHeavyUsers: 0,
+    painSensitiveUsers: 0,
+    swimUsers: 0,
+    strengthUsers: 0,
+    hybridDomainUsers: 0,
+  };
+
+  personas.forEach((persona) => {
+    const text = normalizeIntentEntries(persona).map((entry) => entry.text).join(" ").toLowerCase();
+    const precision = inferGoalPrecision(persona);
+    const coachUsageStyle = inferCoachUsageStyle(persona);
+    const timingStyle = inferGoalTimingStyle(persona);
+    const goalCount = normalizeIntentEntries(persona).length;
+    const domainFlags = {
+      swim: /swim|pool|open water/.test(text) || /swim/.test(`${persona.enduranceContext || ""}`.toLowerCase()),
+      strength: /bench|squat|deadlift|strength|stronger|muscle|lift/.test(text) || /strength|lifter|muscle/.test(`${persona.strengthContext || ""}`.toLowerCase()),
+      endurance: /run|marathon|5k|10k|half|conditioning|endurance|hyrox|triathlon|soccer|basketball|boxing|fighter/.test(text),
+      bodyComp: /lean|fat|weight|abs|six pack|tone|defined|look|appearance|body composition|lose/.test(text),
+    };
+
+    if (precision === "exact") coverage.exactUsers += 1;
+    if (precision === "vague") coverage.vagueUsers += 1;
+    if (precision === "hybrid") coverage.hybridUsers += 1;
+    if (inferChaosLevel(persona) === "high") coverage.chaoticUsers += 1;
+    if (timingStyle === "date_based" || timingStyle === "exact_metric") coverage.dateBasedGoalUsers += 1;
+    if (timingStyle === "open_ended") coverage.openEndedGoalUsers += 1;
+    if (goalCount > 1) coverage.multiGoalUsers += 1;
+    if (coachUsageStyle === "never") coverage.coachNeverUsers += 1;
+    if (coachUsageStyle === "overuse") coverage.coachOveruseUsers += 1;
+    if (/high|travel|hotel|airport/.test(`${persona.travelLikelihood || ""} ${persona.scheduleReality || ""} ${persona.equipmentReality || ""}`.toLowerCase())) coverage.travelHeavyUsers += 1;
+    if (/pain|ache|rehab|injury|knee|shoulder|back|hip|achilles|pelvic floor/.test(`${persona.injuryContext || ""}`.toLowerCase())) coverage.painSensitiveUsers += 1;
+    if (domainFlags.swim) coverage.swimUsers += 1;
+    if (domainFlags.strength) coverage.strengthUsers += 1;
+    if (Object.values(domainFlags).filter(Boolean).length > 1) coverage.hybridDomainUsers += 1;
+  });
+
+  return coverage;
+};
+
+const selectSyntheticAthletePersonas = ({
+  personas = null,
+  catalogMode = SYNTHETIC_ATHLETE_CATALOG_MODES.focus,
+  targetPersonaCount = 100,
+} = {}) => {
+  if (Array.isArray(personas) && personas.length) return personas;
+  if (catalogMode === SYNTHETIC_ATHLETE_CATALOG_MODES.releaseGate) {
+    return SYNTHETIC_ATHLETE_RELEASE_GATE_PERSONA_IDS
+      .map((personaId) => SYNTHETIC_ATHLETE_PERSONAS.find((persona) => persona.id === personaId))
+      .filter(Boolean);
+  }
+  if (catalogMode === SYNTHETIC_ATHLETE_CATALOG_MODES.expanded || catalogMode === SYNTHETIC_ATHLETE_CATALOG_MODES.all) {
+    const limit = Math.max(1, Math.min(Number(targetPersonaCount || 100) || 100, SYNTHETIC_ATHLETE_PERSONAS.length));
+    return SYNTHETIC_ATHLETE_PERSONAS.slice(0, limit);
+  }
+  return SYNTHETIC_ATHLETE_PERSONAS.filter((persona) => persona.id === "novice_obese_beginner").slice(0, 1);
+};
+
 const buildGoalsFromPersona = (persona = {}) => {
   const intents = normalizeIntentEntries(persona);
   const resolvedGoals = [];
   const planningGoals = [];
   intents.forEach((intent, intentIndex) => {
+    const additionalContext = [
+      persona.bodyCompContext,
+      persona.strengthContext,
+      persona.enduranceContext,
+      persona.scheduleReality,
+      persona.injuryContext,
+      persona.equipmentReality,
+    ].filter(Boolean).join(". ");
     const resolution = resolveGoalTranslation({
       rawUserGoalIntent: intent.text,
       typedIntakePacket: {
         version: "2026-04-v1",
         intake: {
           rawGoalText: intent.text,
+          baselineContext: {
+            primaryGoalLabel: intent.text,
+            currentBaseline: [persona.strengthContext, persona.enduranceContext].filter(Boolean).join(". "),
+          },
+          scheduleReality: {
+            trainingDaysPerWeek: inferDaysPerWeek(persona.scheduleReality),
+            sessionLength: persona.sessionLength || "45",
+            trainingLocation: persona.environmentMode || "Gym",
+          },
+          equipmentAccessContext: {
+            trainingLocation: persona.environmentMode || "Gym",
+            equipment: [persona.equipmentReality || persona.equipmentAccess || "basic_gym"].filter(Boolean),
+          },
+          injuryConstraintContext: {
+            injuryText: persona.injuryContext || "",
+            constraints: [persona.injuryContext].filter(Boolean),
+          },
+          userProvidedConstraints: {
+            additionalContext,
+          },
         },
       },
       explicitUserConfirmation: { confirmed: true, acceptedProposal: true, source: "synthetic_lab_persona" },
@@ -645,6 +805,26 @@ const buildAnchorAnswerForPersona = ({
       },
     };
   }
+  if (fieldId === "current_strength_baseline" && persona?.baselineMetrics?.jump) {
+    const raw = `${persona.baselineMetrics.jump.value}${persona.baselineMetrics.jump.unit || " in"} vertical`;
+    return {
+      rawText: raw,
+      answerValue: { value: raw, raw },
+    };
+  }
+  if (fieldId === "target_timeline") {
+    const rawGoalText = normalizeIntentEntries(persona).map((entry) => entry.text).join(". ");
+    const explicitTimeline = rawGoalText.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december|spring|summer|fall|autumn|winter)\b/i)?.[1]
+      || rawGoalText.match(/\b(20\d{2}-\d{2}(?:-\d{2})?)\b/)?.[1]
+      || rawGoalText.match(/\b(\d+\s+weeks?)\b/i)?.[1]
+      || "";
+    const inferredTimeline = explicitTimeline || "October";
+    if (!inferredTimeline) return null;
+    return {
+      rawText: inferredTimeline,
+      answerValue: { value: inferredTimeline, raw: inferredTimeline },
+    };
+  }
   if (fieldId === "recent_swim_anchor" && persona?.baselineMetrics?.swim) {
     const raw = persona.baselineMetrics.swim.raw
       || `${persona.baselineMetrics.swim.distance || ""} ${persona.baselineMetrics.swim.distanceUnit || ""} in ${persona.baselineMetrics.swim.duration || ""}`.trim();
@@ -717,6 +897,7 @@ const applyIntakeAnswersToState = ({
   state = {},
 } = {}) => {
   let nextAnswers = cloneValue(state.answers || {});
+  let bindingsByFieldId = {};
   const askedFields = [];
   const answeredFields = [];
   const failures = [];
@@ -725,6 +906,7 @@ const applyIntakeAnswersToState = ({
     resolvedGoals: state.resolvedGoals,
     answers: nextAnswers,
     userContext: buildUserContextForAnchors(persona),
+    bindingsByFieldId,
   });
 
   while (engine?.currentAnchor && askedFields.length < 12) {
@@ -755,12 +937,19 @@ const applyIntakeAnswersToState = ({
       break;
     }
     nextAnswers = applied.answers;
+    if (applied.binding?.field_id) {
+      bindingsByFieldId = {
+        ...bindingsByFieldId,
+        [applied.binding.field_id]: applied.binding,
+      };
+    }
     answeredFields.push(engine.currentAnchor.field_id);
     passes += 1;
     engine = buildMissingAnchorsEngine({
       resolvedGoals: state.resolvedGoals,
       answers: nextAnswers,
       userContext: buildUserContextForAnchors(persona),
+      bindingsByFieldId,
     });
   }
 
@@ -910,116 +1099,186 @@ const buildPlanDayRecord = ({
   });
 
 const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
+  const coachUsageStyle = inferCoachUsageStyle(persona);
+  const chaosLevel = inferChaosLevel(persona);
+  const timingStyle = inferGoalTimingStyle(persona);
+  const goalCount = normalizeIntentEntries(persona).length;
+  const hasMultiGoal = goalCount > 1;
+  const isTravelHeavy = /high|travel|hotel|airport/.test(`${persona.travelLikelihood || ""} ${persona.scheduleReality || ""} ${persona.equipmentReality || ""}`.toLowerCase());
+  const isPainSensitive = /pain|ache|rehab|back|hip|achilles|knee|shoulder|pelvic floor|injury/.test(String(persona.injuryContext || "").toLowerCase());
+  const nutritionRisk = /fat loss|lose|cut|lean|restaurant|airport|night shift|protein|chaotic|dieter|meal|snack/.test(`${persona.bodyCompContext || ""} ${persona.nutritionBehavior || ""} ${normalizeIntentEntries(persona).map((entry) => entry.text).join(" ")}`.toLowerCase());
+  const equipmentVolatile = /hotel|travel|bands|minimal|apartment|home dumbbells/.test(`${persona.equipmentReality || ""} ${persona.environmentMode || ""}`.toLowerCase());
+  const baseAdherence = chaosLevel === "high" ? 0.64 : chaosLevel === "medium" ? 0.72 : 0.8;
+  const baseLogging = coachUsageStyle === "never" ? 0.58 : chaosLevel === "high" ? 0.64 : 0.76;
+  const defaultCoachUsage = coachUsageStyle === "never"
+    ? "none"
+    : coachUsageStyle === "overuse"
+    ? week % 3 === 0 ? "overuse" : "ask_anything"
+    : coachUsageStyle === "minimal"
+    ? week % 8 === 0 ? "change_plan" : "none"
+    : week % 7 === 0
+    ? "ask_anything"
+    : week % 5 === 0
+    ? "change_plan"
+    : "none";
+
   const generic = {
     label: "steady usage",
-    adherencePct: 0.78,
-    loggingPct: 0.76,
+    adherencePct: baseAdherence,
+    loggingPct: baseLogging,
     nutritionDrift: false,
     travel: false,
     painFlare: false,
     scheduleChange: false,
     equipmentMode: "normal",
-    coachUsage: week % 7 === 0 ? "ask_anything" : week % 5 === 0 ? "change_plan" : "none",
-    motivation: week % 6 === 0 ? "mixed" : "steady",
+    coachUsage: defaultCoachUsage,
+    motivation: chaosLevel === "high" && week % 6 === 0 ? "low" : week % 6 === 0 ? "mixed" : "steady",
     goalChange: null,
   };
 
-  if (persona.id !== "novice_obese_beginner") {
-    if (week === 4 && /high/i.test(String(persona.travelLikelihood || ""))) {
-      return { ...generic, label: "travel disruption", adherencePct: 0.5, loggingPct: 0.45, travel: true, coachUsage: "change_plan" };
+  if (persona.id === "novice_obese_beginner") {
+    if (week === 2) return { ...generic, label: "half-finished week", adherencePct: 0.5, loggingPct: 0.45, motivation: "shaky" };
+    if (week === 4) return { ...generic, label: "travel week", adherencePct: 0.38, loggingPct: 0.35, travel: true, scheduleChange: true, equipmentMode: "hotel", coachUsage: "change_plan" };
+    if (week === 6) return { ...generic, label: "knee flare", adherencePct: 0.32, loggingPct: 0.65, painFlare: true, coachUsage: "change_plan", motivation: "low" };
+    if (week === 8) return { ...generic, label: "motivation dip", adherencePct: 0.42, loggingPct: 0.25, motivation: "low", coachUsage: "none" };
+    if (week === 10) return { ...generic, label: "schedule changed", adherencePct: 0.58, loggingPct: 0.52, scheduleChange: true, coachUsage: "ask_anything" };
+    if (week === 12) {
+      return {
+        ...generic,
+        label: "goal edited to an exact date",
+        adherencePct: 0.68,
+        loggingPct: 0.72,
+        coachUsage: "change_plan",
+        goalChange: {
+          kind: "edit",
+          timingMode: "exact_date",
+          targetDate: "2026-09-30",
+        },
+      };
     }
-    if (week === 8 && /pain|ache|rehab|back|hip|achilles|knee/i.test(String(persona.injuryContext || ""))) {
-      return { ...generic, label: "pain flare", adherencePct: 0.4, loggingPct: 0.6, painFlare: true, coachUsage: "change_plan" };
-    }
+    if (week === 14) return { ...generic, label: "goals reprioritized", adherencePct: 0.64, loggingPct: 0.74, coachUsage: "change_plan", goalChange: { kind: "reprioritize" } };
+    if (week === 16) return { ...generic, label: "equipment changed", adherencePct: 0.52, loggingPct: 0.55, equipmentMode: "bands_only", coachUsage: "change_plan", goalChange: { kind: "edit", timingMode: "target_horizon", targetHorizonWeeks: 20 } };
+    if (week === 18) return { ...generic, label: "nutrition drift", adherencePct: 0.48, loggingPct: 0.5, nutritionDrift: true, coachUsage: "ask_anything", goalChange: { kind: "edit", timingMode: "open_ended" } };
+    if (week === 20) return { ...generic, label: "coach overuse week", adherencePct: 0.56, loggingPct: 0.7, coachUsage: "overuse", motivation: "mixed" };
+    if (week === 22) return { ...generic, label: "archive lower-priority goal", adherencePct: 0.62, loggingPct: 0.72, coachUsage: "change_plan", goalChange: { kind: "archive" } };
+    if (week === 24) return { ...generic, label: "restore goal", adherencePct: 0.7, loggingPct: 0.78, coachUsage: "change_plan", goalChange: { kind: "restore" } };
+    if (week === 26) return { ...generic, label: "steady finish", adherencePct: 0.82, loggingPct: 0.84, motivation: "steady" };
     return generic;
   }
 
-  if (week === 2) return { ...generic, label: "half-finished week", adherencePct: 0.5, loggingPct: 0.45, motivation: "shaky" };
-  if (week === 4) return { ...generic, label: "travel week", adherencePct: 0.38, loggingPct: 0.35, travel: true, scheduleChange: true, equipmentMode: "hotel", coachUsage: "change_plan" };
-  if (week === 6) return { ...generic, label: "knee flare", adherencePct: 0.32, loggingPct: 0.65, painFlare: true, coachUsage: "change_plan", motivation: "low" };
-  if (week === 8) return { ...generic, label: "motivation dip", adherencePct: 0.42, loggingPct: 0.25, motivation: "low", coachUsage: "none" };
-  if (week === 10) return { ...generic, label: "schedule changed", adherencePct: 0.58, loggingPct: 0.52, scheduleChange: true, coachUsage: "ask_anything" };
-  if (week === 12) {
+  if (week === 4 && isTravelHeavy) {
     return {
       ...generic,
-      label: "goal edited to an exact date",
-      adherencePct: 0.68,
-      loggingPct: 0.72,
-      coachUsage: "change_plan",
-      goalChange: {
-        kind: "edit",
-        timingMode: "exact_date",
-        targetDate: "2026-09-30",
-      },
+      label: "travel disruption",
+      adherencePct: Math.max(0.36, baseAdherence - 0.22),
+      loggingPct: Math.max(0.35, baseLogging - 0.18),
+      travel: true,
+      scheduleChange: true,
+      equipmentMode: "hotel",
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      motivation: chaosLevel === "high" ? "low" : "mixed",
     };
   }
-  if (week === 14) {
+  if (week === 8 && isPainSensitive) {
+    return {
+      ...generic,
+      label: "pain flare",
+      adherencePct: Math.max(0.34, baseAdherence - 0.26),
+      loggingPct: Math.min(0.78, baseLogging + 0.04),
+      painFlare: true,
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      motivation: "low",
+    };
+  }
+  if (week === 10 && chaosLevel !== "low") {
+    return {
+      ...generic,
+      label: "schedule changed",
+      adherencePct: Math.max(0.48, baseAdherence - 0.12),
+      loggingPct: Math.max(0.46, baseLogging - 0.1),
+      scheduleChange: true,
+      coachUsage: coachUsageStyle === "never" ? "none" : "ask_anything",
+      motivation: "mixed",
+    };
+  }
+  if (week === 12 && (hasMultiGoal || timingStyle !== "open_ended")) {
+    const goalChange = timingStyle === "open_ended"
+      ? { kind: "edit", timingMode: "target_horizon", targetHorizonWeeks: 16 }
+      : timingStyle === "date_based"
+      ? { kind: "edit", timingMode: "target_horizon", targetHorizonWeeks: 20 }
+      : { kind: "edit", timingMode: "exact_date", targetDate: "2026-09-30" };
+    return {
+      ...generic,
+      label: timingStyle === "open_ended" ? "goal sharpened into a milestone horizon" : timingStyle === "date_based" ? "timeline softened into a milestone horizon" : "goal pinned to an exact date",
+      adherencePct: Math.max(0.6, baseAdherence - 0.04),
+      loggingPct: Math.max(0.68, baseLogging),
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      goalChange,
+    };
+  }
+  if (week === 14 && hasMultiGoal) {
     return {
       ...generic,
       label: "goals reprioritized",
-      adherencePct: 0.64,
-      loggingPct: 0.74,
-      coachUsage: "change_plan",
-      goalChange: {
-        kind: "reprioritize",
-      },
+      adherencePct: Math.max(0.6, baseAdherence - 0.02),
+      loggingPct: Math.max(0.7, baseLogging),
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      goalChange: { kind: "reprioritize" },
     };
   }
-  if (week === 16) {
+  if (week === 16 && equipmentVolatile) {
     return {
       ...generic,
       label: "equipment changed",
-      adherencePct: 0.52,
-      loggingPct: 0.55,
+      adherencePct: Math.max(0.46, baseAdherence - 0.14),
+      loggingPct: Math.max(0.48, baseLogging - 0.06),
       equipmentMode: "bands_only",
-      coachUsage: "change_plan",
-      goalChange: {
-        kind: "edit",
-        timingMode: "target_horizon",
-        targetHorizonWeeks: 20,
-      },
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      goalChange: timingStyle === "date_based" ? { kind: "edit", timingMode: "target_horizon", targetHorizonWeeks: 20 } : null,
     };
   }
-  if (week === 18) {
+  if (week === 18 && nutritionRisk) {
     return {
       ...generic,
       label: "nutrition drift",
-      adherencePct: 0.48,
-      loggingPct: 0.5,
+      adherencePct: Math.max(0.44, baseAdherence - 0.18),
+      loggingPct: Math.max(0.5, baseLogging - 0.1),
       nutritionDrift: true,
-      coachUsage: "ask_anything",
-      goalChange: {
-        kind: "edit",
-        timingMode: "open_ended",
-      },
+      coachUsage: coachUsageStyle === "never" ? "none" : "ask_anything",
+      goalChange: timingStyle !== "open_ended" ? { kind: "edit", timingMode: "open_ended" } : null,
     };
   }
-  if (week === 20) return { ...generic, label: "coach overuse week", adherencePct: 0.56, loggingPct: 0.7, coachUsage: "overuse", motivation: "mixed" };
-  if (week === 22) {
+  if (week === 20 && coachUsageStyle === "overuse") {
+    return {
+      ...generic,
+      label: "coach overuse week",
+      adherencePct: Math.max(0.54, baseAdherence - 0.08),
+      loggingPct: Math.max(0.7, baseLogging),
+      coachUsage: "overuse",
+      motivation: "mixed",
+    };
+  }
+  if (week === 22 && hasMultiGoal) {
     return {
       ...generic,
       label: "archive lower-priority goal",
-      adherencePct: 0.62,
-      loggingPct: 0.72,
-      coachUsage: "change_plan",
-      goalChange: {
-        kind: "archive",
-      },
+      adherencePct: Math.max(0.6, baseAdherence - 0.02),
+      loggingPct: Math.max(0.7, baseLogging),
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      goalChange: { kind: "archive" },
     };
   }
-  if (week === 24) {
+  if (week === 24 && hasMultiGoal) {
     return {
       ...generic,
-      label: "restore goal",
-      adherencePct: 0.7,
-      loggingPct: 0.78,
-      coachUsage: "change_plan",
-      goalChange: {
-        kind: "restore",
-      },
+      label: "restore archived goal",
+      adherencePct: Math.max(0.68, baseAdherence),
+      loggingPct: Math.max(0.76, baseLogging),
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      goalChange: { kind: "restore" },
     };
   }
-  if (week === 26) return { ...generic, label: "steady finish", adherencePct: 0.82, loggingPct: 0.84, motivation: "steady" };
+  if (week === 26) return { ...generic, label: "steady finish", adherencePct: Math.max(0.8, baseAdherence), loggingPct: Math.max(0.82, baseLogging), motivation: "steady" };
   return generic;
 };
 
@@ -1180,6 +1439,8 @@ const evaluateGoalManagement = ({
   const activeCardIds = currentView.currentGoalOrder || [];
   const activeCards = currentView.currentGoals || [];
   const weightGoalCard = activeCards.find((card) => /lose|lean/i.test(`${card.summary || ""} ${card.primaryMetricLabel || ""}`));
+  const fallbackGoalCard = activeCards.find((card) => card?.id && card.id !== activeCardIds[0]) || activeCards[0] || null;
+  const editableGoalCard = weightGoalCard || fallbackGoalCard;
   const change = (() => {
     if (event.goalChange.kind === "reprioritize" && activeCardIds.length >= 2) {
       return {
@@ -1187,28 +1448,30 @@ const evaluateGoalManagement = ({
         orderedGoalIds: [...activeCardIds.slice(1, 2), ...activeCardIds.slice(0, 1), ...activeCardIds.slice(2)],
       };
     }
-    if (event.goalChange.kind === "archive" && weightGoalCard?.id) {
+    if (event.goalChange.kind === "archive" && editableGoalCard?.id) {
       return {
         type: GOAL_MANAGEMENT_CHANGE_TYPES.archive,
-        goalId: weightGoalCard.id,
+        goalId: editableGoalCard.id,
         archiveStatus: GOAL_ARCHIVE_STATUSES.archived,
       };
     }
     if (event.goalChange.kind === "restore") {
-      const archivedCard = (currentView.archivedGoals || []).find((card) => /lose|lean/i.test(`${card.summary || ""} ${card.primaryMetricLabel || ""}`));
+      const archivedCard = (currentView.archivedGoals || []).find((card) => /lose|lean/i.test(`${card.summary || ""} ${card.primaryMetricLabel || ""}`))
+        || (currentView.archivedGoals || [])[0]
+        || null;
       if (!archivedCard?.id) return null;
       return {
         type: GOAL_MANAGEMENT_CHANGE_TYPES.restore,
         goalId: archivedCard.id,
       };
     }
-    if (event.goalChange.kind === "edit" && weightGoalCard?.id) {
+    if (event.goalChange.kind === "edit" && editableGoalCard?.id) {
       const draft = buildGoalEditorDraft({
-        goal: (state.goals || []).find((goal) => String(goal.goalRecordId || goal.resolvedGoal?.id || goal.id) === weightGoalCard.id) || null,
+        goal: (state.goals || []).find((goal) => String(goal.goalRecordId || goal.resolvedGoal?.id || goal.id) === editableGoalCard.id) || null,
       });
       return {
         type: GOAL_MANAGEMENT_CHANGE_TYPES.edit,
-        goalId: weightGoalCard.id,
+        goalId: editableGoalCard.id,
         draft: {
           ...draft,
           timingMode: event.goalChange.timingMode,
@@ -1986,12 +2249,17 @@ export const runSyntheticAthleteLab = ({
   personas = null,
   weeks = LAB_SIMULATION_WEEKS,
   includeArchetypeMatrix = true,
+  catalogMode = SYNTHETIC_ATHLETE_CATALOG_MODES.focus,
+  targetPersonaCount = 100,
 } = {}) => {
-  const selectedPersonas = Array.isArray(personas) && personas.length
-    ? personas
-    : SYNTHETIC_ATHLETE_PERSONAS.filter((persona) => SYNTHETIC_ATHLETE_RELEASE_GATE_PERSONA_IDS.includes(persona.id) || persona.id === "novice_obese_beginner").slice(0, 1);
+  const selectedPersonas = selectSyntheticAthletePersonas({
+    personas,
+    catalogMode,
+    targetPersonaCount,
+  });
   const personaResults = selectedPersonas.map((persona) => runPersona(persona, { weeks }));
   const clusterTaxonomy = buildClusterTaxonomy(personaResults);
+  const catalogCoverage = buildPersonaCatalogCoverage(selectedPersonas);
   const subsystemHeatmap = {};
   const clusters = Object.values(clusterTaxonomy)
     .filter((cluster) => cluster.count > 0)
@@ -2022,6 +2290,7 @@ export const runSyntheticAthleteLab = ({
 
   return {
     summary: {
+      catalogMode,
       personaCount: personaResults.length,
       simulationWeeks: weeks,
       passedCount: personaResults.filter((result) => result.overallPass).length,
@@ -2031,6 +2300,7 @@ export const runSyntheticAthleteLab = ({
       mediumIssueCount,
       overallPass,
       releaseGateCandidate: overallPass && severeBlockerCount === 0 && releaseGateMatrix.every((entry) => entry.verdict === "credible"),
+      catalogCoverage,
     },
     globalChecks: {
       transientCloudStatus: classifyStorageError(new Error("fetch_timeout")),
@@ -2042,6 +2312,7 @@ export const runSyntheticAthleteLab = ({
     personaResults,
     releaseGateMatrix,
     browserProbes: cloneValue(BROWSER_PROBES),
+    catalogCoverage,
     clusterTaxonomy,
     clusters,
     failsForWho: clusters.slice(0, 10).map((cluster) => ({

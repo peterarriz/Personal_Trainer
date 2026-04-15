@@ -21,6 +21,8 @@ const buildIntakePacket = ({
   rawGoalText,
   timingConstraints = [],
   appearanceConstraints = [],
+  additionalContext = "",
+  injuryText = "",
 } = {}) => ({
   version: "2026-04-v1",
   intent: "intake_interpretation",
@@ -40,13 +42,13 @@ const buildIntakePacket = ({
       equipment: ["Dumbbells", "Pull-up bar"],
     },
     injuryConstraintContext: {
-      injuryText: "",
-      constraints: [],
+      injuryText,
+      constraints: injuryText ? [injuryText] : [],
     },
     userProvidedConstraints: {
       timingConstraints,
       appearanceConstraints,
-      additionalContext: "Find the balance",
+      additionalContext: additionalContext || "Find the balance",
     },
   },
 });
@@ -112,6 +114,39 @@ test("swim goals keep swim-specific summaries and domain adapter hints", () => {
   assert.equal(result.resolvedGoals[0].primaryDomain, "swimming_endurance_technique");
   assert.ok(result.resolvedGoals[0].candidateDomainAdapters.includes("swimming_endurance_technique"));
   assert.ok(result.unresolvedGaps.some((gap) => /pool|swim/i.test(gap)));
+});
+
+test("swim goals no longer collapse into running planning categories", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "love swim training again",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "love swim training again",
+      additionalContext: "former competitive swimmer returning from burnout. pool access only.",
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-14",
+  });
+
+  assert.equal(result.resolvedGoals[0].goalFamily, "performance");
+  assert.equal(result.resolvedGoals[0].planningCategory, "general_fitness");
+  assert.equal(result.planningGoals[0].category, "general_fitness");
+  assert.equal(result.resolvedGoals[0].primaryDomain, "swimming_endurance_technique");
+});
+
+test("jiu-jitsu wording does not false-trigger swim parsing from collapse-style substrings", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "cut weight slowly",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "cut weight slowly",
+      additionalContext: "slow cut without performance collapse. grappling gym and basic weights.",
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-14",
+  });
+
+  assert.equal(result.resolvedGoals[0].goalFamily, "body_comp");
+  assert.equal(result.resolvedGoals[0].planningCategory, "body_comp");
+  assert.notEqual(result.resolvedGoals[0].primaryDomain, "swimming_endurance_technique");
 });
 
 test("pure running goals do not become hybrid even if provider interpretation drifts", () => {
@@ -200,6 +235,21 @@ test("resolves a fully measurable strength goal into logged-lift planning input"
   assert.equal(result.resolvedGoals[0].primaryMetric.key, "bench_press_weight");
   assert.equal(result.planningGoals[0].tracking.mode, "logged_lifts");
   assert.match(result.planningGoals[0].measurableTarget, /225 lb/i);
+});
+
+test("muscle-gain goals resolve into strength planning instead of generic consistency fallback", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "gain muscle and build confidence",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "gain muscle and build confidence" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-14",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "strength");
+  assert.equal(result.resolvedGoals[0].planningCategory, "strength");
+  assert.equal(result.resolvedGoals[0].summary, "Gain muscle with repeatable training");
+  assert.equal(result.planningGoals[0].category, "strength");
 });
 
 test("strength goal parsing preserves four-digit lift targets for downstream realism checks", () => {
@@ -335,6 +385,24 @@ test("re-entry goals stay exploratory and become 30-day success definitions inst
   assert.ok(result.unresolvedGaps.some((gap) => /stronger metrics/i.test(gap)));
 });
 
+test("safe rebuild language with postpartum context resolves into re-entry instead of generic strength", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "rebuild strength and energy safely",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "rebuild strength and energy safely",
+      additionalContext: "postpartum return with limited sleep and pelvic floor caution",
+      injuryText: "pelvic floor caution and sleep disruption",
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-14",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "re_entry");
+  assert.equal(result.resolvedGoals[0].planningCategory, "general_fitness");
+  assert.equal(result.resolvedGoals[0].primaryDomain, "durability_rebuild");
+});
+
 test("mixed lose-fat-but-keep-strength intent resolves into body-comp plus strength-maintenance goals with tradeoffs", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "lose fat but keep strength",
@@ -369,6 +437,24 @@ test("explicit strength plus leaning-out phrasing resolves into separate goals i
   assert.equal(result.resolvedGoals[1].planningCategory, "body_comp");
   assert.match(result.resolvedGoals[1].summary, /lean/i);
   assert.ok(result.tradeoffs.some((item) => /fat loss may limit strength/i.test(item)));
+});
+
+test("strength plus aesthetics phrasing keeps the exact lift goal and an explicit appearance goal", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "bench 225 and visible upper-body aesthetics",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "bench 225 and visible upper-body aesthetics",
+      appearanceConstraints: ["visible upper-body aesthetics"],
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-14",
+  });
+
+  assert.equal(result.resolvedGoals.length, 2);
+  assert.equal(result.resolvedGoals[0].summary, "Bench press 225 lb");
+  assert.equal(result.resolvedGoals[1].goalFamily, "appearance");
+  assert.equal(result.resolvedGoals[1].planningCategory, "body_comp");
+  assert.equal(result.resolvedGoals[1].summary, "Improve upper-body aesthetics");
 });
 
 test("running plus maintained strength stays run-led and event-specific when explicitly expressed", () => {

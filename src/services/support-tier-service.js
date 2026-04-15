@@ -54,7 +54,7 @@ const collectGoalSignals = (goals = []) => {
     hasBodyComp: activeGoals.some((goal) => goal?.category === "body_comp") || /\b(fat loss|lean|recomp|body comp|physique|look athletic)\b/.test(text),
     hasSwim: /\b(swim|swimming|pool|open water)\b/.test(text),
     hasPower: activeGoals.some((goal) => goal?.resolvedGoal?.goalFamily === "athletic_power") || /\b(vertical|jump|dunk|explosive|power)\b/.test(text),
-    hasDurability: activeGoals.some((goal) => goal?.category === "injury_prevention") || /\b(rehab|durability|prehab|return to training|rebuild)\b/.test(text),
+    hasDurability: activeGoals.some((goal) => goal?.category === "injury_prevention" || goal?.resolvedGoal?.goalFamily === "re_entry") || /\b(rehab|durability|prehab|return to training|rebuild|postpartum|recover)\b/.test(text),
     hasHybrid: /\b(hybrid|multi-domain|split focus)\b/.test(text),
   };
 };
@@ -105,11 +105,15 @@ export const resolveSupportTier = ({
     return SUPPORT_TIER_LEVELS.tier2;
   }
 
+  if (signals.hasDurability) {
+    return SUPPORT_TIER_LEVELS.tier2;
+  }
+
   if (signals.hasRunning || signals.hasStrength || signals.hasBodyComp) {
     return SUPPORT_TIER_LEVELS.tier1;
   }
 
-  if (signals.hasSwim || signals.hasPower || signals.hasDurability || signals.hasHybrid) {
+  if (signals.hasSwim || signals.hasPower || signals.hasHybrid) {
     return SUPPORT_TIER_LEVELS.tier2;
   }
 

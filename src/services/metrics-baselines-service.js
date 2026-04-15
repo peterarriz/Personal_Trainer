@@ -556,7 +556,7 @@ export const buildPlanningBaselineInfluence = ({
         ? `${cardsById.swim_benchmark.value} is anchoring swim volume.`
         : "",
       swimRealityRow?.value && !cardsById.swim_access_reality?.missing
-        ? `${cardsById.swim_access_reality.value} is shaping swim structure.`
+        ? `${cardsById.swim_access_reality?.value || swimRealityRow?.label || swimRealityRow?.value} is shaping swim structure.`
         : "",
       safeStartLevel && !cardsById.starting_capacity?.missing
         ? `${cardsById.starting_capacity.value} is shaping the starting block.`

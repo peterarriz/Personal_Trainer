@@ -53,6 +53,7 @@ const REFINE_TRIGGER_BY_TIER = {
   [GOAL_MEASURABILITY_TIERS.proxyMeasurable]: "missing_metric_data",
   [GOAL_MEASURABILITY_TIERS.exploratoryFuzzy]: "30_day_resolution_review",
 };
+const SWIM_KEYWORD_PATTERN = /\b(swim|swimming|pool|open water|lap|laps|freestyle|backstroke|breaststroke|butterfly)\b/i;
 
 const MONTH_INDEX = {
   january: 0,
@@ -207,8 +208,8 @@ const getCorpusText = ({ rawUserGoalIntent = "", intakeContext = {} } = {}) => d
 const detectSignals = (text = "") => {
   const corpus = sanitizeText(text, 1200).toLowerCase();
   const runningTokens = "(run|marathon|half marathon|10k|5k|race|pace|endurance|aerobic)";
-  const strengthTokens = "(bench|squat|deadlift|overhead press|ohp|strength|lift|lifting|upper body)";
-  const bodyCompTokens = "(lose fat|fat loss|cut|lean|leaner|get lean|get leaner|drop weight|lose weight|six pack|look athletic|physique|appearance)";
+  const strengthTokens = "(bench|squat|deadlift|overhead press|ohp|strength|stronger|lift|lifting|upper body|gain muscle|build muscle|add muscle|put on muscle|muscle gain|hypertrophy)";
+  const bodyCompTokens = "(lose fat|fat loss|cut|lean|leaner|get lean|get leaner|drop weight|lose weight|six pack|look athletic|physique|appearance|aesthetic(?:s)?|defined|definition)";
   const mixedConnector = "(and|plus|while|but|without losing|without giving up|while keeping|while maintaining)";
   const explicitRunningStrengthMixPattern = new RegExp(
     `(?:${runningTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${strengthTokens})|(?:${strengthTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${runningTokens})`,
@@ -222,17 +223,17 @@ const detectSignals = (text = "") => {
   const bodyCompMentionIndex = corpus.search(/\b(lose fat|fat loss|cut|lean|leaner|get lean|get leaner|drop weight|lose weight|six pack|look athletic|physique|appearance)\b/i);
   return {
     hasRunning: /(run|marathon|half marathon|10k|5k|race|pace|endurance|aerobic)/i.test(corpus),
-    hasSwimming: /(swim|swimming|pool|open water|laps?|freestyle|backstroke|breaststroke|butterfly)/i.test(corpus),
+    hasSwimming: SWIM_KEYWORD_PATTERN.test(corpus),
     hasHalfMarathon: /\bhalf marathon\b/i.test(corpus),
     hasMarathon: /(^|\s)marathon(\s|$)/i.test(corpus) && !/\bhalf marathon\b/i.test(corpus),
     has10k: /\b10k\b/i.test(corpus),
     has5k: /\b5k\b/i.test(corpus),
-    hasStrength: /(bench|squat|deadlift|overhead press|ohp|strength|lift|lifting)/i.test(corpus),
+    hasStrength: /(bench|squat|deadlift|overhead press|ohp|strength|stronger|lift|lifting|gain muscle|build muscle|add muscle|put on muscle|muscle gain|hypertrophy)/i.test(corpus),
     hasBench: /\bbench(?: press)?\b/i.test(corpus),
     hasSquat: /\bsquat\b/i.test(corpus),
     hasDeadlift: /\bdeadlift\b/i.test(corpus),
     hasFatLoss: /(lose fat|fat loss|cut|lean|leaner|drop weight|lose weight|lose\s+\d{1,3}\s*(?:lb|lbs|pounds?))/i.test(corpus),
-    hasAppearance: /(abs|six pack|look athletic|appearance|physique|toned|defined|lean for)/i.test(corpus),
+    hasAppearance: /(abs|six pack|look athletic|appearance|physique|aesthetic(?:s)?|toned|defined|definition|lean for)/i.test(corpus),
     hasAthleticPower: /(dunk|vertical jump|vertical|jump higher|jumping higher|increase vertical|explosive power|athletic power|more explosive|jump performance)/i.test(corpus),
     hasSwimBenchmark: /\b(100|200|400|500|800|1000|1500|1650|mile|2\.4)\b/i.test(corpus),
     hasHybrid: /\bhybrid athlete\b|\bhybrid\b/i.test(corpus),
@@ -242,7 +243,8 @@ const detectSignals = (text = "") => {
     strengthMentionIndex,
     bodyCompMentionIndex,
     hasMalformedBmiPercent: /(?:\bbmi\b[\s\S]{0,18}\b\d{1,2}(?:\.\d+)?\s*%)|(?:\b\d{1,2}(?:\.\d+)?\s*%\b[\s\S]{0,18}\bbmi\b)/i.test(corpus),
-    hasReEntry: /(back in shape|get back in shape|again|feel like myself again|return to form)/i.test(corpus),
+    hasReEntry: /(back in shape|get back in shape|get back into shape|again|feel like myself again|return to form|return to training|re-entry|re entry)/i.test(corpus),
+    hasSafeRebuild: /(postpartum|after having a baby|after baby|pelvic floor|rebuild[\s\S]{0,24}safely|safe rebuild|without getting hurt|stop hurting|without making .* worse|recover|recovery)/i.test(corpus),
     raw: corpus,
   };
 };
@@ -354,7 +356,7 @@ const extractAthleticPowerPrimaryMetric = (text = "") => {
 
 const extractSwimmingPrimaryMetric = (text = "") => {
   const raceTime = extractTimeToken(text);
-  if (!raceTime || !/(swim|swimming|pool|open water|laps?)/i.test(text)) return null;
+  if (!raceTime || !SWIM_KEYWORD_PATTERN.test(text)) return null;
   if (/\bmile\b/i.test(text)) {
     return { key: "swim_mile_time", label: "Swim mile time", unit: "time", kind: "primary", targetValue: raceTime };
   }
@@ -641,6 +643,19 @@ const inferGoalFamily = ({
   if (signals.hasAthleticPower) return GOAL_FAMILIES.athleticPower;
   if (signals.hasAppearance) return GOAL_FAMILIES.appearance;
   if (signals.hasFatLoss) return GOAL_FAMILIES.bodyComp;
+  if (
+    (signals.hasSafeRebuild || signals.hasReEntry)
+    && !signals.hasFatLoss
+    && !signals.hasAppearance
+    && !signals.hasBench
+    && !signals.hasSquat
+    && !signals.hasDeadlift
+    && !signals.hasRunning
+    && !signals.hasSwimming
+    && !signals.hasAthleticPower
+  ) {
+    return GOAL_FAMILIES.reEntry;
+  }
   if (signals.hasStrength) return GOAL_FAMILIES.strength;
   if (signals.hasSwimming) return GOAL_FAMILIES.performance;
   if (signals.hasRunning) return GOAL_FAMILIES.performance;
@@ -779,6 +794,15 @@ const buildSummary = ({
   }
   if (goalFamily === GOAL_FAMILIES.appearance && /\blook athletic again\b/i.test(rawText)) {
     return "Look athletic again with repeatable training";
+  }
+  if (goalFamily === GOAL_FAMILIES.appearance && /\bupper[- ]body\b/i.test(rawText) && /\b(aesthetic(?:s)?|defined|definition|visible)\b/i.test(rawText)) {
+    return "Improve upper-body aesthetics";
+  }
+  if (planningCategory === "strength" && !primaryMetric?.targetValue && /\b(gain|build|add|put on)\s+muscle\b/i.test(rawText)) {
+    return "Gain muscle with repeatable training";
+  }
+  if (planningCategory === "strength" && !primaryMetric?.targetValue && /(?:\bget stronger\b|\bstronger\b)/i.test(rawText)) {
+    return "Get stronger with repeatable training";
   }
   if (goalFamily === GOAL_FAMILIES.performance && /\b(swim|swimming|pool|open water|laps?)\b/i.test(rawText)) {
     if (primaryMetric?.targetValue && /mile/i.test(primaryMetric?.label || rawText)) {
@@ -1050,16 +1074,19 @@ const buildGoalBlueprints = ({
   signals = {},
 } = {}) => {
   if (signals.hasExplicitStrengthBodyCompMix) {
+    const secondaryBodyCompFamily = signals.hasAppearance && !signals.hasFatLoss
+      ? GOAL_FAMILIES.appearance
+      : GOAL_FAMILIES.bodyComp;
     const strengthLeads = Number.isFinite(signals.strengthMentionIndex)
       && signals.strengthMentionIndex >= 0
       && (!Number.isFinite(signals.bodyCompMentionIndex) || signals.bodyCompMentionIndex < 0 || signals.strengthMentionIndex <= signals.bodyCompMentionIndex);
     return strengthLeads
       ? [
           { goalFamily: GOAL_FAMILIES.strength, planningCategory: "strength", priority: 1, variant: "strength_primary" },
-          { goalFamily: GOAL_FAMILIES.bodyComp, planningCategory: "body_comp", priority: 2, variant: "body_comp_secondary" },
+          { goalFamily: secondaryBodyCompFamily, planningCategory: "body_comp", priority: 2, variant: "body_comp_secondary" },
         ]
       : [
-          { goalFamily: GOAL_FAMILIES.bodyComp, planningCategory: "body_comp", priority: 1, variant: "body_comp_primary_with_strength_retention" },
+          { goalFamily: secondaryBodyCompFamily, planningCategory: "body_comp", priority: 1, variant: "body_comp_primary_with_strength_retention" },
           { goalFamily: GOAL_FAMILIES.strength, planningCategory: "strength", priority: 2, variant: "strength_maintenance" },
         ];
   }
@@ -1072,6 +1099,11 @@ const buildGoalBlueprints = ({
   if (goalFamily === GOAL_FAMILIES.athleticPower) {
     return [
       { goalFamily: GOAL_FAMILIES.athleticPower, planningCategory: "strength", priority: 1, variant: "athletic_power_primary" },
+    ];
+  }
+  if (signals.hasSwimming && !signals.hasRunning) {
+    return [
+      { goalFamily: GOAL_FAMILIES.performance, planningCategory: "general_fitness", priority: 1, variant: "swim_primary" },
     ];
   }
   if (signals.hasRunning && (signals.hasKeepStrength || signals.hasExplicitRunningStrengthMix)) {
