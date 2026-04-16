@@ -5947,12 +5947,19 @@ export default function TrainerDashboard() {
       runtimeState,
       transformPersonalization: (draftPersonalization) => buildPersistedPersonalization(draftPersonalization, normalizedGoalPayload),
     });
-    if (authSession?.user?.id) {
+    const signedIn = Boolean(authSession?.user?.id);
+    if (signedIn) {
       markLocalMutation();
       noteCloudSyncStarted("persist_all");
     }
-    const persistResult = await authStorage.persistAll({ payload, authSession, setStorageStatus, setAuthSession });
-    if (!authSession?.user?.id) return persistResult;
+    let persistResult;
+    try {
+      persistResult = await authStorage.persistAll({ payload, authSession, setStorageStatus, setAuthSession });
+    } catch (unexpectedError) {
+      if (signedIn) noteCloudSyncFailed({ source: "persist_all", error: unexpectedError });
+      return { ok: false, synced: false, error: unexpectedError };
+    }
+    if (!signedIn) return persistResult;
     if (persistResult?.ok && persistResult?.synced) {
       noteCloudSyncSucceeded("persist_all");
       return persistResult;
@@ -6521,7 +6528,7 @@ export default function TrainerDashboard() {
       if (realtimeResyncTimerRef.current) clearTimeout(realtimeResyncTimerRef.current);
       realtimeInterruptedRef.current = false;
       try { channel.unsubscribe(); } catch {}
-      try { client.removeChannel(channel); } catch {}
+      try { client.removeAllChannels(); } catch {}
       if (realtimeChannelRef.current === channel) realtimeChannelRef.current = null;
       if (realtimeClientRef.current === client) realtimeClientRef.current = null;
     };
