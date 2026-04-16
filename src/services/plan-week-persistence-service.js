@@ -114,11 +114,11 @@ const buildPersistedPlanWeekStory = ({
   if (isCurrentWeek) {
     nextEffect = "Use the remaining days to stay on intent instead of forcing make-up volume.";
   } else if (lowEnergy || highStress) {
-    nextEffect = "Keep the next week conservative until energy and stress settle.";
+    nextEffect = "Start the next week a touch more conservatively until energy and stress settle.";
   } else if (classificationKey === "partial") {
-    nextEffect = "The next week should respect the completed work and avoid cramming missed sessions.";
+    nextEffect = "Build the next week from the work that landed instead of cramming in what was missed.";
   } else if (classificationKey === "changed") {
-    nextEffect = "The next week should adapt to what actually happened rather than chase the old script.";
+    nextEffect = "Let the next week start from what actually happened rather than chasing the earlier draft.";
   }
 
   return {

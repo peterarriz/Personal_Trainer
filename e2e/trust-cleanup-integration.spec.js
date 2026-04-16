@@ -189,23 +189,31 @@ test("Program and Log history copy stays free of internal jargon", async ({ page
   await openApp(page);
 
   await openTab(page, "app-tab-program");
-  await expect(page.getByText("CURRENT WEEK DETAIL")).toBeVisible();
+  await expect(page.getByTestId("program-this-week")).toBeVisible();
+  await expect(page.getByTestId("program-week-review")).toBeVisible();
+  await expect(page.getByTestId("program-week-review")).toContainText("WHAT WAS PLANNED");
+  await expect(page.getByTestId("program-week-review")).toContainText("WHAT CHANGES NEXT");
   await expect(page.getByText("COMMITTED WEEK HISTORY")).toHaveCount(0);
   await expect(page.getByText(/durable\s+PlanWeek|canonical\s+PlanWeek|PlanWeek snapshot/i)).toHaveCount(0);
+  await expect(page.getByTestId("program-week-review").getByText(/Capture \d+:|revision|Durability:/i)).toHaveCount(0);
 
   await openTab(page, "app-tab-log");
   const logTab = page.getByTestId("log-tab");
   await logTab.getByTestId("log-day-review-disclosure").getByText("Day review", { exact: true }).click();
   const dayReview = logTab.locator("[data-testid='history-day-review-card']").first();
   await expect(dayReview).toBeVisible();
-  await expect(dayReview.getByText("What mattered", { exact: true })).toBeVisible();
-  await expect(dayReview.getByText("What changes next", { exact: true })).toBeVisible();
-  await expect(page.getByText("WEEK REVIEW HISTORY")).toBeVisible();
+  const dayReviewPrimary = dayReview.getByTestId("history-day-review-primary");
+  await expect(dayReviewPrimary).toBeVisible();
+  await expect(dayReviewPrimary.getByText("Why It Mattered", { exact: true })).toBeVisible();
+  await expect(dayReviewPrimary.getByText("What changes next", { exact: true })).toBeVisible();
+  await expect(dayReviewPrimary.getByText(/Capture \d+:|Saved because:|Durability:/i)).toHaveCount(0);
+  await expect(page.getByText("WEEK REVIEW HISTORY")).toHaveCount(1);
   await expect(page.getByText(/Rev\s+\d+\s+of\s+\d+/i)).toHaveCount(0);
   await expect(page.getByText(/durable\s+PlanWeek|canonical\s+PlanWeek|PlanWeek snapshot/i)).toHaveCount(0);
 
-  await dayReview.getByText("Audit detail").click();
+  await dayReview.getByText("Audit mode").click();
   await expect(dayReview.getByText("Plan capture history")).toBeVisible();
+  await expect(dayReview.getByText(/Saved because:/i)).toBeVisible();
 });
 
 test("Today keeps one workout surface and Log keeps detailed entry inside Log workout", async ({ page }) => {

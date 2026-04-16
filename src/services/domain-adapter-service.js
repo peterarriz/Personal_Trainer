@@ -3,6 +3,7 @@ import {
   DOMAIN_ADAPTER_IDS,
   resolveGoalCapabilityStack,
 } from "./goal-capability-resolution-service.js";
+import { NUTRITION_DAY_TYPES } from "./nutrition-day-taxonomy-service.js";
 
 const clonePlainValue = (value) => {
   if (value == null) return value;
@@ -18,14 +19,14 @@ const normalizeSessionLabel = (value = "") => String(value || "").replace(/\s+/g
 const restDay = (label = "Active Recovery") => ({
   type: "rest",
   label,
-  nutri: "rest",
+  nutri: NUTRITION_DAY_TYPES.recovery,
   isRecoverySlot: true,
 });
 
 const buildConditioningSession = ({
   label = "Conditioning",
   detail = "20-30 min zone-2 bike, rower, incline walk, or circuit",
-  nutri = "easyRun",
+  nutri = NUTRITION_DAY_TYPES.conditioningMixed,
   lowImpact = false,
 } = {}) => ({
   type: "conditioning",
@@ -42,7 +43,7 @@ const buildSwimSession = ({
   focus = "Technique",
   duration = "35-45 min",
   setLine = "",
-  nutri = "easyRun",
+  nutri = NUTRITION_DAY_TYPES.swimAerobic,
 } = {}) => ({
   type,
   label,
@@ -62,7 +63,7 @@ const buildPowerSession = ({
   focus = "Explosive lower-body work",
   dose = "25-35 min",
   support = "",
-  nutri = "strength",
+  nutri = NUTRITION_DAY_TYPES.strengthSupport,
 } = {}) => ({
   type,
   label,
@@ -288,8 +289,9 @@ export const buildDomainSpecificDayTemplates = ({
         type: "strength+prehab",
         label: strengthPriority ? "Dryland Strength A" : "Dryland Support A",
         strSess: "A",
-        nutri: "strength",
+        nutri: NUTRITION_DAY_TYPES.strengthSupport,
         strengthDose: strengthPriority ? "35-45 min dryland strength" : "20-30 min dryland support",
+        optionalSecondary: "Optional: shoulder mobility reset after the main dryland work.",
       },
       3: buildSwimSession({
         type: "swim-aerobic",
@@ -304,14 +306,15 @@ export const buildDomainSpecificDayTemplates = ({
         focus: "Threshold pacing",
         duration: baseWeek?.thu?.d || "35-45 min",
         setLine: "Main set at controlled threshold effort with generous form guardrails.",
-        nutri: "hardRun",
+        nutri: NUTRITION_DAY_TYPES.swimQuality,
       }),
       5: {
         type: "strength+prehab",
         label: strengthPriority ? "Dryland Strength B" : "Shoulder / Core Support",
         strSess: "B",
-        nutri: "strength",
+        nutri: NUTRITION_DAY_TYPES.strengthSupport,
         strengthDose: strengthPriority ? "30-40 min dryland strength" : "20-25 min shoulder durability + trunk work",
+        optionalSecondary: "Optional: 5-8 min band activation before the next swim day.",
       },
       6: buildSwimSession({
         type: "swim-endurance",
@@ -319,7 +322,7 @@ export const buildDomainSpecificDayTemplates = ({
         focus: "Sustained endurance",
         duration: baseWeek?.sat?.d || "45-60 min",
         setLine: "Broken or continuous mile-context work with even pacing.",
-        nutri: "longRun",
+        nutri: NUTRITION_DAY_TYPES.swimEndurance,
       }),
       0: restDay("Shoulder recovery"),
     };
@@ -338,8 +341,9 @@ export const buildDomainSpecificDayTemplates = ({
         type: "strength+prehab",
         label: "Lower-Body Strength Support",
         strSess: "A",
-        nutri: "strength",
+        nutri: NUTRITION_DAY_TYPES.strengthSupport,
         strengthDose: "35-45 min force-production strength",
+        optionalSecondary: "Optional: ankle and foot stiffness drills after the main sets.",
       },
       3: buildConditioningSession({
         label: "Tissue Recovery + Tempo",
@@ -357,8 +361,9 @@ export const buildDomainSpecificDayTemplates = ({
         type: "strength+prehab",
         label: "Full-Body Strength B",
         strSess: "B",
-        nutri: "strength",
+        nutri: NUTRITION_DAY_TYPES.strengthSupport,
         strengthDose: "30-40 min lower-body and trunk support",
+        optionalSecondary: "Optional: trunk bracing finisher if contacts stayed crisp.",
       },
       6: buildPowerSession({
         type: "sprint-support",

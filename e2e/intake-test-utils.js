@@ -283,14 +283,16 @@ async function installStorageInstrumentation(page) {
   await page.addInitScript(() => {
     window.__E2E_STORAGE_OPS = [];
     window.__E2E_APP_EVENTS = [];
-    window.addEventListener("trainer:intake-commit", (event) => {
+    const pushEvent = (type) => (event) => {
       try {
         window.__E2E_APP_EVENTS.push({
-          type: "trainer:intake-commit",
+          type,
           detail: event?.detail || null,
         });
       } catch {}
-    });
+    };
+    window.addEventListener("trainer:intake-commit", pushEvent("trainer:intake-commit"));
+    window.addEventListener("trainer:analytics", pushEvent("trainer:analytics"));
     const originalSetItem = Storage.prototype.setItem;
     const originalRemoveItem = Storage.prototype.removeItem;
     Storage.prototype.setItem = function setItemPatched(key, value) {

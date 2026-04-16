@@ -111,7 +111,7 @@ It should always show the latest version of:
 - `Your words`
 - `Interpreted goal`
 - `Track at start`
-- `Still fuzzy`
+- `Still open`
 - `Tradeoffs`
 
 If a section is still empty, show an explicit placeholder:
@@ -171,7 +171,7 @@ Example:
 - `You said:` "look athletic again"
 - `We think this means:` improve body composition and rebuild training consistency
 - `We'd likely track:` waist trend, bodyweight trend, weekly training completion
-- `Still fuzzy:` exact timeline and what "athletic" means for you
+- `Still open:` exact timeline and what "athletic" means for you
 
 Important rule:
 
@@ -313,7 +313,7 @@ The confirmation card should show:
 - `Target date or horizon`
 - `Confidence`
 - `What we'll track`
-- `What's still fuzzy`
+- `What's still open`
 - `Tradeoffs`
 - `Review trigger`
 
@@ -325,7 +325,7 @@ Example:
 
 - `Resolved goal:` look leaner and more athletic again
 - `Track:` waist trend, bodyweight trend, 3 training sessions per week
-- `Still fuzzy:` exact appearance endpoint
+- `Still open:` exact appearance endpoint
 - `First 30-day win:` complete 10 of the next 12 planned sessions and reduce waist by 0.5 to 1.0 inches
 
 Primary actions:

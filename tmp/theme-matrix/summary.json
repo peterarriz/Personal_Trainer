@@ -1,0 +1,26 @@
+{
+  "generatedAt": "2026-04-15T20:45:35.556Z",
+  "url": "http://127.0.0.1:4173",
+  "files": [
+    {
+      "file": "dark.png",
+      "mode": "Dark",
+      "colorScheme": "dark"
+    },
+    {
+      "file": "light.png",
+      "mode": "Light",
+      "colorScheme": "light"
+    },
+    {
+      "file": "system-dark.png",
+      "mode": "System",
+      "colorScheme": "dark"
+    },
+    {
+      "file": "system-light.png",
+      "mode": "System",
+      "colorScheme": "light"
+    }
+  ]
+}

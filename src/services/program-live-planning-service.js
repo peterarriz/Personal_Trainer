@@ -18,6 +18,7 @@ import { resolveStyleOverlayImpact } from "./style-overlay-service.ts";
 import { buildPlanBasisExplanation } from "./program-explanation-service.ts";
 import { listCommittedPlanWeekRecords } from "./plan-week-persistence-service.js";
 import { getCurrentPrescribedDayRecord } from "./prescribed-day-history-service.js";
+import { NUTRITION_DAY_TYPES } from "./nutrition-day-taxonomy-service.js";
 
 export const PLANNING_PRECEDENCE_STACK = Object.freeze([
   "hard safety, injury, and contraindications",
@@ -133,14 +134,15 @@ const buildExercise = (ex, sets, reps, note = "") => ({
 const restDay = (label = "Active Recovery") => ({
   type: "rest",
   label,
-  nutri: "rest",
+  nutri: NUTRITION_DAY_TYPES.recovery,
   isRecoverySlot: true,
 });
 
 const conditioningDay = ({
   label = "Conditioning",
   detail = "20-30 min controlled conditioning",
-  nutri = "easyRun",
+  nutri = NUTRITION_DAY_TYPES.conditioningMixed,
+  optionalSecondary = "",
   optional = false,
   planningPriority = 4,
   keySession = false,
@@ -154,6 +156,7 @@ const conditioningDay = ({
   planningPriority,
   keySession,
   programLabel,
+  optionalSecondary,
   intensityGuidance: /interval|quality|tempo/i.test(label) ? "Controlled hard efforts" : "Controlled aerobic conditioning",
 });
 
@@ -184,14 +187,15 @@ const strengthDay = ({
   planningPriority,
   keySession,
   programLabel,
-  nutri: "strength",
+  nutri: NUTRITION_DAY_TYPES.strengthSupport,
 });
 
 const runDay = ({
   type = "easy-run",
   label = "Easy Run",
   run = null,
-  nutri = "easyRun",
+  nutri = NUTRITION_DAY_TYPES.runEasy,
+  optionalSecondary = "",
   optional = false,
   planningPriority = 2,
   keySession = false,
@@ -205,6 +209,7 @@ const runDay = ({
   planningPriority,
   keySession,
   programLabel,
+  optionalSecondary,
 });
 
 const applyAvailabilityTrim = ({
@@ -360,31 +365,31 @@ const buildProgramBackboneSessions = ({
       break;
     case "program_half_marathon_base":
       sessions = {
-        1: runDay({ type: "easy-run", label: "Easy Run", run: baseWeek?.mon || { t: "Easy", d: "30-40 min" }, keySession: true, planningPriority: 1, programLabel: labelPrefix }),
-        3: runDay({ type: "hard-run", label: "Steady / Quality Run", run: baseWeek?.thu || { t: "Tempo", d: "20-30 min" }, nutri: "hardRun", keySession: true, planningPriority: 1, programLabel: labelPrefix }),
-        5: runDay({ type: "easy-run", label: "Easy Run + Strides", run: baseWeek?.fri || { t: "Easy", d: "25-35 min" }, keySession: true, planningPriority: 2, programLabel: labelPrefix }),
-        6: runDay({ type: "long-run", label: "Long Run", run: baseWeek?.sat || { t: "Long", d: "45-65 min" }, nutri: "longRun", keySession: true, planningPriority: 1, programLabel: labelPrefix }),
-        2: strengthDay({ label: "Strength Maintenance", strSess: "A", strengthDuration: "20-30 min supportive strength", prescribedExercises: buildFoundationStrengthB(equipmentProfile), optional: true, planningPriority: 5, strengthTrackLabel: equipmentProfile.isHotel ? "Hotel gym" : "Gym", programLabel: labelPrefix }),
+        1: runDay({ type: "easy-run", label: "Easy Run", run: baseWeek?.mon || { t: "Easy", d: "30-40 min" }, keySession: true, planningPriority: 1, programLabel: labelPrefix, optionalSecondary: "Optional: mobility reset after the run." }),
+        3: runDay({ type: "hard-run", label: "Steady / Quality Run", run: baseWeek?.thu || { t: "Tempo", d: "20-30 min" }, nutri: NUTRITION_DAY_TYPES.runQuality, keySession: true, planningPriority: 1, programLabel: labelPrefix, optionalSecondary: "Optional: fueling reset and calf mobility." }),
+        5: runDay({ type: "easy-run", label: "Easy Run + Strides", run: baseWeek?.fri || { t: "Easy", d: "25-35 min" }, keySession: true, planningPriority: 2, programLabel: labelPrefix, optionalSecondary: "Optional: 4-6 relaxed strides if recovery is good." }),
+        6: runDay({ type: "long-run", label: "Long Run", run: baseWeek?.sat || { t: "Long", d: "45-65 min" }, nutri: NUTRITION_DAY_TYPES.runLong, keySession: true, planningPriority: 1, programLabel: labelPrefix, optionalSecondary: "Optional: 10 min walk and mobility cooldown." }),
+        2: strengthDay({ label: "Strength Maintenance", strSess: "A", strengthDuration: "20-30 min supportive strength", prescribedExercises: buildFoundationStrengthB(equipmentProfile), optionalSecondary: "Optional: trunk and hip support so the run block stays stable.", optional: true, planningPriority: 5, strengthTrackLabel: equipmentProfile.isHotel ? "Hotel gym" : "Gym", programLabel: labelPrefix }),
         0: restDay("Active Recovery"),
       };
       break;
     case "program_marathon_base":
       sessions = {
-        1: runDay({ type: "easy-run", label: "Easy Run", run: baseWeek?.mon || { t: "Easy", d: "35-45 min" }, keySession: true, planningPriority: 1, programLabel: labelPrefix }),
-        2: runDay({ type: "easy-run", label: "Aerobic Support Run", run: { t: "Easy", d: "25-35 min" }, keySession: true, planningPriority: 3, programLabel: labelPrefix }),
-        4: runDay({ type: "hard-run", label: "Steady / Aerobic Quality Run", run: baseWeek?.thu || { t: "Steady", d: "30-40 min" }, nutri: "hardRun", keySession: true, planningPriority: 1, programLabel: labelPrefix }),
-        5: runDay({ type: "easy-run", label: "Easy Run", run: baseWeek?.fri || { t: "Easy", d: "30-40 min" }, keySession: true, planningPriority: 2, programLabel: labelPrefix }),
-        6: runDay({ type: "long-run", label: "Long Run", run: baseWeek?.sat || { t: "Long", d: "60-90 min" }, nutri: "longRun", keySession: true, planningPriority: 1, programLabel: labelPrefix }),
+        1: runDay({ type: "easy-run", label: "Easy Run", run: baseWeek?.mon || { t: "Easy", d: "35-45 min" }, keySession: true, planningPriority: 1, programLabel: labelPrefix, optionalSecondary: "Optional: mobility reset after the run." }),
+        2: runDay({ type: "easy-run", label: "Aerobic Support Run", run: { t: "Easy", d: "25-35 min" }, keySession: true, planningPriority: 3, programLabel: labelPrefix, optionalSecondary: "Optional: short strength support if readiness is good." }),
+        4: runDay({ type: "hard-run", label: "Steady / Aerobic Quality Run", run: baseWeek?.thu || { t: "Steady", d: "30-40 min" }, nutri: NUTRITION_DAY_TYPES.runQuality, keySession: true, planningPriority: 1, programLabel: labelPrefix, optionalSecondary: "Optional: fueling reset after the quality work." }),
+        5: runDay({ type: "easy-run", label: "Easy Run", run: baseWeek?.fri || { t: "Easy", d: "30-40 min" }, keySession: true, planningPriority: 2, programLabel: labelPrefix, optionalSecondary: "Optional: mobility and calf reset." }),
+        6: runDay({ type: "long-run", label: "Long Run", run: baseWeek?.sat || { t: "Long", d: "60-90 min" }, nutri: NUTRITION_DAY_TYPES.runLong, keySession: true, planningPriority: 1, programLabel: labelPrefix, optionalSecondary: "Optional: walk and refuel before the rest of the day." }),
         0: restDay("Active Recovery"),
       };
       break;
     case "program_hal_higdon_inspired_half":
       sessions = {
-        1: runDay({ type: "easy-run", label: "Short Easy Run", run: baseWeek?.mon || { t: "Easy", d: "25-35 min" }, keySession: true, planningPriority: 1, programLabel: labelPrefix }),
+        1: runDay({ type: "easy-run", label: "Short Easy Run", run: baseWeek?.mon || { t: "Easy", d: "25-35 min" }, keySession: true, planningPriority: 1, programLabel: labelPrefix, optionalSecondary: "Optional: easy mobility finish." }),
         2: conditioningDay({ label: "Cross-Train", detail: "20-35 min low-impact cross-training or easy conditioning", optional: !strict, planningPriority: 4, programLabel: labelPrefix }),
-        4: runDay({ type: "hard-run", label: "Steady / Quality Run", run: baseWeek?.thu || { t: "Tempo", d: "20-30 min" }, nutri: "hardRun", keySession: true, planningPriority: 1, programLabel: labelPrefix }),
-        5: runDay({ type: "easy-run", label: "Easy Run", run: baseWeek?.fri || { t: "Easy", d: "25-35 min" }, keySession: true, planningPriority: 2, programLabel: labelPrefix }),
-        6: runDay({ type: "long-run", label: "Long Run", run: baseWeek?.sat || { t: "Long", d: "45-70 min" }, nutri: "longRun", keySession: true, planningPriority: 1, programLabel: labelPrefix }),
+        4: runDay({ type: "hard-run", label: "Steady / Quality Run", run: baseWeek?.thu || { t: "Tempo", d: "20-30 min" }, nutri: NUTRITION_DAY_TYPES.runQuality, keySession: true, planningPriority: 1, programLabel: labelPrefix, optionalSecondary: "Optional: fueling reset after the main set." }),
+        5: runDay({ type: "easy-run", label: "Easy Run", run: baseWeek?.fri || { t: "Easy", d: "25-35 min" }, keySession: true, planningPriority: 2, programLabel: labelPrefix, optionalSecondary: "Optional: relaxed strides or mobility if recovery is good." }),
+        6: runDay({ type: "long-run", label: "Long Run", run: baseWeek?.sat || { t: "Long", d: "45-70 min" }, nutri: NUTRITION_DAY_TYPES.runLong, keySession: true, planningPriority: 1, programLabel: labelPrefix, optionalSecondary: "Optional: walk cooldown and refuel." }),
         0: restDay("Active Recovery"),
       };
       break;

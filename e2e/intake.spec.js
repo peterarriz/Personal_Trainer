@@ -20,6 +20,20 @@ const expectNoFakeTranscript = async (page) => {
   await expect(page.getByTestId("intake-transcript")).toHaveCount(0);
 };
 
+const expectStructuredSetupCopy = async (page) => {
+  await expect(page.getByTestId("intake-shell-title")).toHaveText("Setup");
+  await expect(page.getByTestId("intake-shell-subtitle")).toContainText("Draft until you confirm.");
+  await expect(page.getByTestId("intake-shell-helper")).toContainText("Add detail only where it changes the first plan.");
+};
+
+const expectNoFauxChatCopy = async (page) => {
+  await expect(page.getByText("Coach", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Proposal only until you confirm.", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Guided", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("In your words", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/custom fallback/i)).toHaveCount(0);
+};
+
 const expectSummaryRail = async (page) => {
   await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
   await expect(page.getByTestId("intake-summary-section-your-words")).toBeVisible();
@@ -58,6 +72,7 @@ test.describe("intake onboarding e2e", () => {
 
   test("exact running goal goes straight into clarify and builds deterministically", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
+    await expectStructuredSetupCopy(page);
     await completeIntroQuestionnaire(page, {
       goalText: "run a 1:45 half marathon",
       experienceLevel: "Intermediate",
@@ -73,6 +88,9 @@ test.describe("intake onboarding e2e", () => {
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1"]);
     await expectSummaryRail(page);
     await expectNoFakeTranscript(page);
+    await expectNoFauxChatCopy(page);
+    await expect(page.getByText("Structured", { exact: true })).toBeVisible();
+    await expect(page.getByText("Free text", { exact: true })).toBeVisible();
     const visitedFields = await completeAnchors(page, {
       target_timeline: { type: "natural", value: "October" },
       current_run_frequency: { type: "natural", value: "3 runs/week" },

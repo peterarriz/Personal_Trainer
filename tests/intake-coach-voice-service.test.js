@@ -45,8 +45,10 @@ test("valid coach-voice phrasing can upgrade copy without changing the active fi
   assert.equal(anchor.anchor_id, "running_baseline:current_run_frequency");
   assert.equal(anchor.field_id, "current_run_frequency");
   assert.equal(fallbackCopy.questionText, "How many times are you running in a normal week?");
+  assert.equal(fallbackCopy.reassuranceLine, "give me your normal week, not your best one.");
   assert.equal(aiCopy.questionText, "On a normal week, how many runs are you getting in?");
   assert.equal(aiCopy.helperText.includes("running"), true);
+  assert.equal(aiCopy.reassuranceLine, "a normal week is exactly what I want here.");
 });
 
 test("coach-voice sanitizer rejects extra fields and unsupported claims", () => {
@@ -83,10 +85,10 @@ test("coach-voice display falls back to deterministic copy when phrasing fails s
 
   assert.equal(displayCopy.questionText, anchor.question);
   assert.equal(displayCopy.helperText, anchor.why_it_matters);
-  assert.equal(displayCopy.reassuranceLine, anchor.coach_voice_line);
+  assert.equal(displayCopy.reassuranceLine, "a rough month is enough if you do not know the exact date yet.");
 });
 
-test("coach-voice display copy strips backticks and internal tokens before rendering", () => {
+test("coach-voice display copy strips backticks, internal tokens, and legacy coach prefixes before rendering", () => {
   const displayCopy = resolveCoachVoiceDisplayCopy({
     anchor: {
       anchor_id: "running_baseline:current_run_frequency",
@@ -100,6 +102,7 @@ test("coach-voice display copy strips backticks and internal tokens before rende
 
   const combined = [displayCopy.questionText, displayCopy.helperText, displayCopy.reassuranceLine].join(" ");
   assert.equal(combined.includes("`"), false);
+  assert.equal(/coach note:/i.test(combined), false);
   assert.equal(/current_run_frequency|goal_stack_confirmation|running_endurance_anchor_kind/i.test(combined), false);
   assert.match(combined, /runs per week|goal order|running benchmark/i);
 });

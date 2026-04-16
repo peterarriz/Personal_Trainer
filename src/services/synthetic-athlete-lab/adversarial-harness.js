@@ -107,6 +107,7 @@ export const SYNTHETIC_ATHLETE_RELEASE_GATE_PERSONA_IDS = Object.freeze([
   "recreational_swimmer",
   "bench_225_office_worker",
   "hybrid_athlete_split",
+  "hostile_trainer_anti_ai",
 ]);
 
 export const SYNTHETIC_ATHLETE_CATALOG_MODES = Object.freeze({
@@ -114,6 +115,72 @@ export const SYNTHETIC_ATHLETE_CATALOG_MODES = Object.freeze({
   releaseGate: "release_gate",
   expanded: "expanded",
   all: "all",
+});
+
+export const SYNTHETIC_ATHLETE_RELEASE_GATE_SCHEMA_VERSION = "2026-04-release-gate-v2";
+
+const RELEASE_GATE_DIMENSION_META = Object.freeze({
+  coherence: {
+    label: "Coherence",
+    clusterIds: ["goal_miscapture", "hidden_secondary_goals", "long_horizon_time_confusion", "sport_domain_mismatch", "plan_degradation"],
+  },
+  progressionRealism: {
+    label: "Progression realism",
+    clusterIds: ["baseline_timing_problems", "long_horizon_time_confusion", "support_tier_dishonesty", "plan_degradation"],
+  },
+  safety: {
+    label: "Safety",
+    clusterIds: ["goal_miscapture", "baseline_timing_problems", "sport_domain_mismatch", "support_tier_dishonesty", "plan_degradation"],
+  },
+  adaptationQuality: {
+    label: "Adaptation quality",
+    clusterIds: ["coach_ambiguity", "audit_confidence_erosion", "plan_degradation"],
+  },
+  crossSurfaceConformity: {
+    label: "Cross-surface conformity",
+    clusterIds: ["hidden_secondary_goals", "ugly_confusing_copy", "audit_confidence_erosion", "sport_domain_mismatch", "plan_degradation"],
+  },
+});
+
+const RELEASE_GATE_DIMENSION_KEYS = Object.freeze(Object.keys(RELEASE_GATE_DIMENSION_META));
+
+const PERSONA_COHORT_META = Object.freeze({
+  beginners: { label: "Beginners", minimumCount: 10, required: true },
+  olderAdults: { label: "Older adults", minimumCount: 6, required: true },
+  obeseBeginners: { label: "Obese beginners", minimumCount: 1, required: true },
+  highlyTrainedAthletes: { label: "Highly trained athletes", minimumCount: 8, required: true },
+  swimmers: { label: "Swimmers", minimumCount: 5, required: true },
+  runners: { label: "Runners", minimumCount: 10, required: true },
+  lifters: { label: "Lifters", minimumCount: 12, required: true },
+  shiftWorkers: { label: "Shift workers", minimumCount: 3, required: true },
+  postpartumUsers: { label: "Postpartum users", minimumCount: 1, required: true },
+  injuryReturnUsers: { label: "Injury-return users", minimumCount: 6, required: true },
+  lowEquipmentUsers: { label: "Low-equipment users", minimumCount: 8, required: true },
+  travelHeavyUsers: { label: "Travel-heavy users", minimumCount: 5, required: true },
+  neurodivergentUsers: { label: "Neurodivergent users", minimumCount: 2, required: true },
+  timeCrunchedProfessionals: { label: "Time-crunched professionals", minimumCount: 6, required: true },
+  adaptiveAthletes: { label: "Adaptive athletes", minimumCount: 1, required: true },
+  youthAthletes: { label: "Youth athletes", minimumCount: 0, required: false },
+});
+
+const PERSONA_COHORT_KEYS = Object.freeze(Object.keys(PERSONA_COHORT_META));
+
+export const SYNTHETIC_ATHLETE_RELEASE_GATE_THRESHOLD_PROPOSAL = Object.freeze({
+  minimumPersonaCount: 100,
+  minimumSimulationWeeks: LAB_SIMULATION_WEEKS,
+  minimumAverageOverallScore: 85,
+  minimumAverageDimensionScore: 85,
+  maximumSevereBlockers: 0,
+  maximumMediumIssues: 0,
+  maximumCohortAverageGap: 8,
+  maximumCohortDimensionGap: 8,
+  requiredCohorts: PERSONA_COHORT_KEYS
+    .map((id) => ({
+      id,
+      label: PERSONA_COHORT_META[id].label,
+      minimumCount: PERSONA_COHORT_META[id].minimumCount,
+      required: PERSONA_COHORT_META[id].required,
+    })),
 });
 
 const FAILURE_CLUSTER_META = Object.freeze({
@@ -314,6 +381,19 @@ const BROWSER_PROBES = Object.freeze([
     stepRef: "swim anchor capture, swim access reality, and swim baseline provenance after build",
     rationale: "Adds browser-level protection for swim-domain anchor timing and settings provenance.",
   },
+  {
+    id: "skeptical_trust_probe",
+    specRef: "e2e/adversarial-trust.spec.js",
+    stepRef: "skeptical-user regressions for dead ends, contradictions, unreadable actions, and taxonomy leakage",
+    rationale: "Acts like a skeptical user instead of a cooperative tester and produces screenshot-heavy failure artifacts.",
+    failureClassifications: [
+      "trust break",
+      "dead end",
+      "contradiction",
+      "accessibility bug",
+      "polish bug",
+    ],
+  },
 ]);
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
@@ -490,6 +570,87 @@ const inferGoalTimingStyle = (persona = {}) => {
   return "open_ended";
 };
 
+const buildPersonaTextCorpus = (persona = {}) => (
+  [
+    persona.id,
+    persona.name,
+    normalizeIntentEntries(persona).map((entry) => entry.text).join(" "),
+    persona.bodyCompContext,
+    persona.strengthContext,
+    persona.enduranceContext,
+    persona.scheduleReality,
+    persona.injuryContext,
+    persona.equipmentReality,
+    persona.equipmentAccess,
+    persona.environmentMode,
+    persona.coachInteractionBehavior,
+    persona.loggingBehavior,
+    persona.nutritionBehavior,
+    persona.travelLikelihood,
+    toArray(persona.likelyFailureModes).join(" "),
+    JSON.stringify(persona.baselineMetrics || {}),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+);
+
+const buildPersonaDomainFlags = (persona = {}, text = buildPersonaTextCorpus(persona)) => ({
+  swim: /swim|swimmer|pool|open water|masters nationals|dryland/.test(text),
+  run: /run|runner|marathon|5k|10k|half marathon|trail|road running/.test(text),
+  strength: /bench|squat|deadlift|strength|stronger|muscle|lift|lifter|hypertrophy|powerbuild|powerlift|bodybuilder/.test(text),
+  bodyComp: /lean|fat|weight|abs|six pack|tone|defined|look|appearance|body composition|lose/.test(text),
+});
+
+const hasMeaningfulInjuryContext = (persona = {}, text = buildPersonaTextCorpus(persona)) => {
+  const injuryText = `${persona.injuryContext || ""}`.trim().toLowerCase();
+  if (!injuryText || /none reported|none\b/.test(injuryText)) return false;
+  return /injury|pain|ache|rehab|history|flare|stiff|caution|setback|pelvic floor|achilles|back|knee|hip|shoulder|ankle|calf|hamstring/.test(text);
+};
+
+const classifyPersonaCohorts = (persona = {}) => {
+  const text = buildPersonaTextCorpus(persona);
+  const age = midpointAge(persona.ageRange);
+  const trainingAgeYears = Number(persona.trainingAgeYears || 0);
+  const bodyweight = Number(persona?.baselineMetrics?.bodyweight || 0);
+  const domainFlags = buildPersonaDomainFlags(persona, text);
+  const beginners = trainingAgeYears <= 1 || /beginner|just starting|new to training|deconditioned|walking only|learn how to work out|return to health/.test(text);
+  const olderAdults = age >= 55;
+  const obeseBeginners = beginners && (/obese|morbidly obese/.test(text) || bodyweight >= 250 || /pre-diabetic|hypertension risk/.test(text));
+  const highlyTrainedAthletes = trainingAgeYears >= 6 || /advanced|experienced swimmer|experienced runner|competitive|nationals|serious runner|pro facility|college swimmer|former competitive|advanced machine/.test(text);
+  const shiftWorkers = /shift|night shift|overnight|rotating shifts|hospital shifts|police shifts|nurse|hospital|police/.test(text);
+  const postpartumUsers = /postpartum|having a baby|newborn|pelvic floor|stroller pushes/.test(text);
+  const injuryReturnUsers = hasMeaningfulInjuryContext(persona, text) && /rehab|return|coming back|history|flare|caution|post-rehab|setback|injury/.test(text);
+  const lowEquipmentUsers = /bands|apartment gym|home dumbbells|hotel gyms only|light home equipment|minimal equipment|no equipment|basic home setup/.test(text)
+    || ["none", "mixed", "dumbbells"].includes(String(persona.equipmentAccess || "").toLowerCase());
+  const travelHeavyUsers = /travel|hotel|airport/.test(text) || /high/.test(`${persona.travelLikelihood || ""}`.toLowerCase());
+  const neurodivergentUsers = /adhd|autistic|autism|neurodivergent|sensory|routine-driven/.test(text);
+  const timeCrunchedProfessionals = /office|professional|consultant|lawyer|executive|resident|director|manager|student/.test(text)
+    || /short|20-minute|compressed|fragmented|quick|reliable mornings|optional weekend|around rotating night shifts/.test(`${persona.scheduleReality || ""}`.toLowerCase());
+  const adaptiveAthletes = /wheelchair|adaptive|prosthetic|para/.test(text);
+  const youthAthletes = age > 0 && age < 18;
+
+  return PERSONA_COHORT_KEYS.filter((cohortId) => {
+    if (cohortId === "beginners") return beginners;
+    if (cohortId === "olderAdults") return olderAdults;
+    if (cohortId === "obeseBeginners") return obeseBeginners;
+    if (cohortId === "highlyTrainedAthletes") return highlyTrainedAthletes;
+    if (cohortId === "swimmers") return domainFlags.swim;
+    if (cohortId === "runners") return domainFlags.run;
+    if (cohortId === "lifters") return domainFlags.strength;
+    if (cohortId === "shiftWorkers") return shiftWorkers;
+    if (cohortId === "postpartumUsers") return postpartumUsers;
+    if (cohortId === "injuryReturnUsers") return injuryReturnUsers;
+    if (cohortId === "lowEquipmentUsers") return lowEquipmentUsers;
+    if (cohortId === "travelHeavyUsers") return travelHeavyUsers;
+    if (cohortId === "neurodivergentUsers") return neurodivergentUsers;
+    if (cohortId === "timeCrunchedProfessionals") return timeCrunchedProfessionals;
+    if (cohortId === "adaptiveAthletes") return adaptiveAthletes;
+    if (cohortId === "youthAthletes") return youthAthletes;
+    return false;
+  });
+};
+
 const buildPersonaCatalogCoverage = (personas = []) => {
   const coverage = {
     exactUsers: 0,
@@ -506,20 +667,17 @@ const buildPersonaCatalogCoverage = (personas = []) => {
     swimUsers: 0,
     strengthUsers: 0,
     hybridDomainUsers: 0,
+    cohortCounts: Object.fromEntries(PERSONA_COHORT_KEYS.map((cohortId) => [cohortId, 0])),
   };
 
   personas.forEach((persona) => {
-    const text = normalizeIntentEntries(persona).map((entry) => entry.text).join(" ").toLowerCase();
+    const text = buildPersonaTextCorpus(persona);
     const precision = inferGoalPrecision(persona);
     const coachUsageStyle = inferCoachUsageStyle(persona);
     const timingStyle = inferGoalTimingStyle(persona);
     const goalCount = normalizeIntentEntries(persona).length;
-    const domainFlags = {
-      swim: /swim|pool|open water/.test(text) || /swim/.test(`${persona.enduranceContext || ""}`.toLowerCase()),
-      strength: /bench|squat|deadlift|strength|stronger|muscle|lift/.test(text) || /strength|lifter|muscle/.test(`${persona.strengthContext || ""}`.toLowerCase()),
-      endurance: /run|marathon|5k|10k|half|conditioning|endurance|hyrox|triathlon|soccer|basketball|boxing|fighter/.test(text),
-      bodyComp: /lean|fat|weight|abs|six pack|tone|defined|look|appearance|body composition|lose/.test(text),
-    };
+    const domainFlags = buildPersonaDomainFlags(persona, text);
+    const cohortTags = classifyPersonaCohorts(persona);
 
     if (precision === "exact") coverage.exactUsers += 1;
     if (precision === "vague") coverage.vagueUsers += 1;
@@ -535,7 +693,21 @@ const buildPersonaCatalogCoverage = (personas = []) => {
     if (domainFlags.swim) coverage.swimUsers += 1;
     if (domainFlags.strength) coverage.strengthUsers += 1;
     if (Object.values(domainFlags).filter(Boolean).length > 1) coverage.hybridDomainUsers += 1;
+    cohortTags.forEach((cohortId) => {
+      coverage.cohortCounts[cohortId] = (coverage.cohortCounts[cohortId] || 0) + 1;
+    });
   });
+
+  coverage.coveredRequiredCohorts = PERSONA_COHORT_KEYS.filter((cohortId) => PERSONA_COHORT_META[cohortId].required && coverage.cohortCounts[cohortId] >= PERSONA_COHORT_META[cohortId].minimumCount).length;
+  coverage.requiredCohortTotal = PERSONA_COHORT_KEYS.filter((cohortId) => PERSONA_COHORT_META[cohortId].required).length;
+  coverage.requiredCohortGaps = PERSONA_COHORT_KEYS
+    .filter((cohortId) => PERSONA_COHORT_META[cohortId].required && coverage.cohortCounts[cohortId] < PERSONA_COHORT_META[cohortId].minimumCount)
+    .map((cohortId) => ({
+      id: cohortId,
+      label: PERSONA_COHORT_META[cohortId].label,
+      minimumCount: PERSONA_COHORT_META[cohortId].minimumCount,
+      actualCount: coverage.cohortCounts[cohortId],
+    }));
 
   return coverage;
 };
@@ -1625,6 +1797,241 @@ const averageCategoryScores = (scores = {}) => {
   return Number((values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length)).toFixed(1));
 };
 
+const computeReleaseDimensionScores = (failures = []) => (
+  Object.fromEntries(
+    RELEASE_GATE_DIMENSION_KEYS.map((dimensionId) => {
+      const relevantClusterIds = RELEASE_GATE_DIMENSION_META[dimensionId]?.clusterIds || [];
+      const relevantFailures = failures.filter((failure) => relevantClusterIds.includes(failure.clusterId));
+      const penalty = relevantFailures.reduce((sum, failure) => sum + scoreSeverityPenalty(failure.severity), 0);
+      return [dimensionId, Math.max(0, 100 - penalty)];
+    })
+  )
+);
+
+const averageReleaseDimensionScores = (personaResults = []) => (
+  Object.fromEntries(
+    RELEASE_GATE_DIMENSION_KEYS.map((dimensionId) => {
+      const average = personaResults.reduce((sum, result) => sum + Number(result?.releaseDimensionScores?.[dimensionId] || 0), 0) / Math.max(1, personaResults.length);
+      return [dimensionId, Number(average.toFixed(1))];
+    })
+  )
+);
+
+const buildReleaseDimensionSummary = (personaResults = []) => {
+  const averageScores = averageReleaseDimensionScores(personaResults);
+  const dimensions = RELEASE_GATE_DIMENSION_KEYS.map((dimensionId) => {
+    const scores = personaResults.map((result) => Number(result?.releaseDimensionScores?.[dimensionId] || 0));
+    const belowThresholdPersonaIds = personaResults
+      .filter((result) => Number(result?.releaseDimensionScores?.[dimensionId] || 0) < SYNTHETIC_ATHLETE_RELEASE_GATE_THRESHOLD_PROPOSAL.minimumAverageDimensionScore)
+      .map((result) => result.personaId)
+      .slice(0, 12);
+    return {
+      id: dimensionId,
+      label: RELEASE_GATE_DIMENSION_META[dimensionId]?.label || dimensionId,
+      averageScore: averageScores[dimensionId],
+      minimumPersonaScore: Number((scores.length ? Math.min(...scores) : 0).toFixed(1)),
+      personasBelowThreshold: belowThresholdPersonaIds.length,
+      samplePersonaIds: belowThresholdPersonaIds,
+    };
+  });
+
+  return {
+    averageScores,
+    dimensions,
+  };
+};
+
+const buildCohortCoverage = (personaResults = []) => {
+  const rows = PERSONA_COHORT_KEYS.map((cohortId) => {
+    const meta = PERSONA_COHORT_META[cohortId];
+    const matching = personaResults.filter((result) => toArray(result?.cohortTags || []).includes(cohortId));
+    return {
+      id: cohortId,
+      label: meta.label,
+      required: meta.required,
+      minimumCount: meta.minimumCount,
+      personaCount: matching.length,
+      meetsMinimum: matching.length >= meta.minimumCount,
+      samplePersonaIds: matching.slice(0, 8).map((result) => result.personaId),
+    };
+  });
+
+  return {
+    required: rows.filter((row) => row.required),
+    optional: rows.filter((row) => !row.required),
+    requiredMissing: rows.filter((row) => row.required && !row.meetsMinimum),
+  };
+};
+
+const buildFairnessSignals = (personaResults = [], releaseDimensionSummary = null) => {
+  const globalAverageOverallScore = Number((
+    personaResults.reduce((sum, result) => sum + Number(result?.overallScore || 0), 0)
+    / Math.max(1, personaResults.length)
+  ).toFixed(1));
+  const globalAverageDimensionScores = releaseDimensionSummary?.averageScores || averageReleaseDimensionScores(personaResults);
+
+  const cohorts = PERSONA_COHORT_KEYS.map((cohortId) => {
+    const matching = personaResults.filter((result) => toArray(result?.cohortTags || []).includes(cohortId));
+    if (!matching.length) {
+      return {
+        id: cohortId,
+        label: PERSONA_COHORT_META[cohortId].label,
+        personaCount: 0,
+        averageOverallScore: null,
+        overallGapFromGlobal: null,
+        maximumDimensionGapFromGlobal: null,
+        averageDimensionScores: Object.fromEntries(RELEASE_GATE_DIMENSION_KEYS.map((dimensionId) => [dimensionId, null])),
+        severeBlockers: 0,
+        mediumIssues: 0,
+        samplePersonaIds: [],
+      };
+    }
+
+    const averageOverallScore = Number((
+      matching.reduce((sum, result) => sum + Number(result?.overallScore || 0), 0)
+      / Math.max(1, matching.length)
+    ).toFixed(1));
+    const averageDimensionScores = Object.fromEntries(
+      RELEASE_GATE_DIMENSION_KEYS.map((dimensionId) => {
+        const average = matching.reduce((sum, result) => sum + Number(result?.releaseDimensionScores?.[dimensionId] || 0), 0) / Math.max(1, matching.length);
+        return [dimensionId, Number(average.toFixed(1))];
+      })
+    );
+    const maximumDimensionGapFromGlobal = Number((
+      RELEASE_GATE_DIMENSION_KEYS.reduce((maxGap, dimensionId) => {
+        const gap = Math.abs(Number(averageDimensionScores[dimensionId] || 0) - Number(globalAverageDimensionScores[dimensionId] || 0));
+        return Math.max(maxGap, gap);
+      }, 0)
+    ).toFixed(1));
+
+    return {
+      id: cohortId,
+      label: PERSONA_COHORT_META[cohortId].label,
+      personaCount: matching.length,
+      averageOverallScore,
+      overallGapFromGlobal: Number((Math.abs(averageOverallScore - globalAverageOverallScore)).toFixed(1)),
+      maximumDimensionGapFromGlobal,
+      averageDimensionScores,
+      severeBlockers: matching.reduce((sum, result) => sum + toArray(result?.severeBlockers || []).length, 0),
+      mediumIssues: matching.reduce((sum, result) => sum + toArray(result?.mediumIssues || []).length, 0),
+      samplePersonaIds: matching.slice(0, 8).map((result) => result.personaId),
+    };
+  });
+
+  return {
+    globalAverageOverallScore,
+    globalAverageDimensionScores,
+    maximumAverageGap: Number(cohorts.reduce((maxGap, cohort) => Math.max(maxGap, Number(cohort.overallGapFromGlobal || 0)), 0).toFixed(1)),
+    maximumDimensionGap: Number(cohorts.reduce((maxGap, cohort) => Math.max(maxGap, Number(cohort.maximumDimensionGapFromGlobal || 0)), 0).toFixed(1)),
+    cohorts,
+  };
+};
+
+const buildReleaseGateEvaluation = ({
+  personaResults = [],
+  weeks = LAB_SIMULATION_WEEKS,
+  releaseDimensionSummary = null,
+  cohortCoverage = null,
+  fairnessSignals = null,
+  releaseGateMatrix = [],
+  includeArchetypeMatrix = true,
+} = {}) => {
+  const thresholds = cloneValue(SYNTHETIC_ATHLETE_RELEASE_GATE_THRESHOLD_PROPOSAL);
+  const averageOverallScore = Number((
+    personaResults.reduce((sum, result) => sum + Number(result?.overallScore || 0), 0)
+    / Math.max(1, personaResults.length)
+  ).toFixed(1));
+  const severeBlockerCount = personaResults.reduce((sum, result) => sum + toArray(result?.severeBlockers || []).length, 0);
+  const mediumIssueCount = personaResults.reduce((sum, result) => sum + toArray(result?.mediumIssues || []).length, 0);
+  const requiredCohortFailures = toArray(cohortCoverage?.requiredMissing || []).map((row) => row.id);
+  const checks = [
+    {
+      id: "persona_count",
+      label: "Persona count",
+      passed: personaResults.length >= thresholds.minimumPersonaCount,
+      actual: personaResults.length,
+      expected: { atLeast: thresholds.minimumPersonaCount },
+    },
+    {
+      id: "simulation_weeks",
+      label: "Simulation horizon",
+      passed: Number(weeks || 0) >= thresholds.minimumSimulationWeeks,
+      actual: Number(weeks || 0),
+      expected: { atLeast: thresholds.minimumSimulationWeeks },
+    },
+    {
+      id: "average_overall_score",
+      label: "Average overall score",
+      passed: averageOverallScore >= thresholds.minimumAverageOverallScore,
+      actual: averageOverallScore,
+      expected: { atLeast: thresholds.minimumAverageOverallScore },
+    },
+    {
+      id: "severe_blockers",
+      label: "Severe blockers",
+      passed: severeBlockerCount <= thresholds.maximumSevereBlockers,
+      actual: severeBlockerCount,
+      expected: { atMost: thresholds.maximumSevereBlockers },
+    },
+    {
+      id: "medium_issues",
+      label: "Medium issues",
+      passed: mediumIssueCount <= thresholds.maximumMediumIssues,
+      actual: mediumIssueCount,
+      expected: { atMost: thresholds.maximumMediumIssues },
+    },
+    ...RELEASE_GATE_DIMENSION_KEYS.map((dimensionId) => ({
+      id: `dimension_${dimensionId}`,
+      label: `${RELEASE_GATE_DIMENSION_META[dimensionId]?.label || dimensionId} average`,
+      passed: Number(releaseDimensionSummary?.averageScores?.[dimensionId] || 0) >= thresholds.minimumAverageDimensionScore,
+      actual: Number(releaseDimensionSummary?.averageScores?.[dimensionId] || 0),
+      expected: { atLeast: thresholds.minimumAverageDimensionScore },
+    })),
+    ...PERSONA_COHORT_KEYS
+      .filter((cohortId) => PERSONA_COHORT_META[cohortId].required)
+      .map((cohortId) => {
+        const row = toArray(cohortCoverage?.required || []).find((entry) => entry.id === cohortId);
+        return {
+          id: `cohort_${cohortId}`,
+          label: `${PERSONA_COHORT_META[cohortId].label} coverage`,
+          passed: Boolean(row?.meetsMinimum),
+          actual: Number(row?.personaCount || 0),
+          expected: { atLeast: PERSONA_COHORT_META[cohortId].minimumCount },
+        };
+      }),
+    {
+      id: "cohort_average_gap",
+      label: "Cohort average gap",
+      passed: Number(fairnessSignals?.maximumAverageGap || 0) <= thresholds.maximumCohortAverageGap,
+      actual: Number(fairnessSignals?.maximumAverageGap || 0),
+      expected: { atMost: thresholds.maximumCohortAverageGap },
+    },
+    {
+      id: "cohort_dimension_gap",
+      label: "Cohort dimension gap",
+      passed: Number(fairnessSignals?.maximumDimensionGap || 0) <= thresholds.maximumCohortDimensionGap,
+      actual: Number(fairnessSignals?.maximumDimensionGap || 0),
+      expected: { atMost: thresholds.maximumCohortDimensionGap },
+    },
+    {
+      id: "archetype_quick_probe",
+      label: "Archetype quick probe",
+      passed: includeArchetypeMatrix ? releaseGateMatrix.every((entry) => entry.verdict === "credible") : true,
+      actual: includeArchetypeMatrix ? releaseGateMatrix.map((entry) => `${entry.personaId}:${entry.verdict}`) : "skipped",
+      expected: includeArchetypeMatrix ? { everyVerdict: "credible" } : { skipped: true },
+    },
+  ];
+
+  return {
+    schemaVersion: SYNTHETIC_ATHLETE_RELEASE_GATE_SCHEMA_VERSION,
+    passed: checks.every((check) => check.passed),
+    thresholds,
+    checks,
+    failingChecks: checks.filter((check) => !check.passed),
+    cohortFailures: requiredCohortFailures,
+  };
+};
+
 const buildClusterTaxonomy = (personaResults = []) => {
   const taxonomy = Object.fromEntries(REQUIRED_CLUSTER_IDS.map((clusterId) => [clusterId, {
     clusterId,
@@ -1639,6 +2046,7 @@ const buildClusterTaxonomy = (personaResults = []) => {
     recommendedFixCluster: FAILURE_CLUSTER_META[clusterId]?.recommendedFixCluster || "",
     likelyFiles: cloneValue(FAILURE_CLUSTER_META[clusterId]?.likelyFiles || []),
     specRefs: cloneValue(FAILURE_CLUSTER_META[clusterId]?.specRefs || []),
+    countByCohort: {},
   }]));
 
   personaResults.forEach((result) => {
@@ -1651,7 +2059,21 @@ const buildClusterTaxonomy = (personaResults = []) => {
       bucket.personas = [...new Set([...bucket.personas, result.personaId])];
       bucket.stepRefs = [...new Set([...bucket.stepRefs, failure.stepRef])].slice(0, 8);
       if (!bucket.sampleMessage) bucket.sampleMessage = failure.message;
+      toArray(result?.cohortTags || []).forEach((cohortId) => {
+        bucket.countByCohort[cohortId] = (bucket.countByCohort[cohortId] || 0) + 1;
+      });
     });
+  });
+
+  Object.values(taxonomy).forEach((bucket) => {
+    bucket.cohorts = Object.entries(bucket.countByCohort || {})
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([cohortId, count]) => ({
+        id: cohortId,
+        label: PERSONA_COHORT_META[cohortId]?.label || cohortId,
+        count,
+      }));
+    delete bucket.countByCohort;
   });
 
   return taxonomy;
@@ -1664,6 +2086,7 @@ const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS } = {}) => {
   const timeline = [];
   const personaLabel = persona.id || persona.name || "persona";
   const rawGoalTexts = normalizeIntentEntries(persona).map((entry) => entry.text);
+  const cohortTags = classifyPersonaCohorts(persona);
 
   if (rawGoalTexts.length > 1 && state.goals.length < rawGoalTexts.length) {
     failures.push(createFailureRecord({
@@ -2203,6 +2626,7 @@ const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS } = {}) => {
   }
 
   const categoryScores = computeCategoryScores(failures);
+  const releaseDimensionScores = computeReleaseDimensionScores(failures);
   const overallScore = averageCategoryScores(categoryScores);
   const severeBlockers = failures.filter((failure) => failure.severity === "severe");
   const mediumIssues = failures.filter((failure) => failure.severity === "medium");
@@ -2228,6 +2652,8 @@ const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS } = {}) => {
     severeBlockers,
     mediumIssues,
     categoryScores,
+    cohortTags,
+    releaseDimensionScores,
     overallScore,
     score: Number((overallScore / 100).toFixed(2)),
     overallPass,
@@ -2260,6 +2686,9 @@ export const runSyntheticAthleteLab = ({
   const personaResults = selectedPersonas.map((persona) => runPersona(persona, { weeks }));
   const clusterTaxonomy = buildClusterTaxonomy(personaResults);
   const catalogCoverage = buildPersonaCatalogCoverage(selectedPersonas);
+  const releaseDimensionSummary = buildReleaseDimensionSummary(personaResults);
+  const cohortCoverage = buildCohortCoverage(personaResults);
+  const fairnessSignals = buildFairnessSignals(personaResults, releaseDimensionSummary);
   const subsystemHeatmap = {};
   const clusters = Object.values(clusterTaxonomy)
     .filter((cluster) => cluster.count > 0)
@@ -2287,8 +2716,18 @@ export const runSyntheticAthleteLab = ({
   const severeBlockerCount = personaResults.reduce((sum, result) => sum + toArray(result.severeBlockers || []).length, 0);
   const mediumIssueCount = personaResults.reduce((sum, result) => sum + toArray(result.mediumIssues || []).length, 0);
   const overallPass = personaResults.every((result) => result.overallPass);
+  const releaseGate = buildReleaseGateEvaluation({
+    personaResults,
+    weeks,
+    releaseDimensionSummary,
+    cohortCoverage,
+    fairnessSignals,
+    releaseGateMatrix,
+    includeArchetypeMatrix,
+  });
 
   return {
+    schemaVersion: SYNTHETIC_ATHLETE_RELEASE_GATE_SCHEMA_VERSION,
     summary: {
       catalogMode,
       personaCount: personaResults.length,
@@ -2299,7 +2738,7 @@ export const runSyntheticAthleteLab = ({
       severeBlockerCount,
       mediumIssueCount,
       overallPass,
-      releaseGateCandidate: overallPass && severeBlockerCount === 0 && releaseGateMatrix.every((entry) => entry.verdict === "credible"),
+      releaseGateCandidate: releaseGate.passed,
       catalogCoverage,
     },
     globalChecks: {
@@ -2310,11 +2749,16 @@ export const runSyntheticAthleteLab = ({
       browserProbeCount: BROWSER_PROBES.length,
     },
     personaResults,
+    releaseDimensionSummary,
+    cohortCoverage,
+    fairnessSignals,
+    releaseGate,
     releaseGateMatrix,
     browserProbes: cloneValue(BROWSER_PROBES),
     catalogCoverage,
     clusterTaxonomy,
     clusters,
+    rootCauseClusters: cloneValue(clusters),
     failsForWho: clusters.slice(0, 10).map((cluster) => ({
       clusterId: cluster.clusterId,
       subsystem: cluster.subsystem,

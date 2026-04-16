@@ -19,6 +19,12 @@ const eyebrowStyle = {
   textTransform: "uppercase",
 };
 
+const primaryContextStyle = {
+  fontSize: "0.52rem",
+  color: "#8fa5c8",
+  lineHeight: 1.55,
+};
+
 const buildLocalTone = (kind = "", palette = {}) => {
   const C = palette;
   const normalized = String(kind || "").trim().toLowerCase();
@@ -97,7 +103,7 @@ export function HistoryAuditDayReviewCard({
           {sanitizeDisplayText(story?.classificationLabel || summarizeExecutionDelta(review?.comparison))}
         </span>
         {story?.auditSummary && (
-          <span style={{ fontSize: "0.5rem", color: "#8fa5c8" }}>
+          <span style={primaryContextStyle}>
             {sanitizeDisplayText(story.auditSummary)}
           </span>
         )}
@@ -106,7 +112,7 @@ export function HistoryAuditDayReviewCard({
       <div data-testid="history-day-review-primary" style={{ display: "grid", gap: "0.55rem" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: "0.45rem" }}>
           <div style={basePanelCardStyle}>
-            <div style={eyebrowStyle}>Planned</div>
+            <div style={eyebrowStyle}>What Was Planned</div>
             <div style={{ fontSize: "0.62rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
               {sanitizeDisplayText(story?.plannedSummary?.label || currentSummary.label)}
             </div>
@@ -115,7 +121,7 @@ export function HistoryAuditDayReviewCard({
             </div>
           </div>
           <div style={basePanelCardStyle}>
-            <div style={eyebrowStyle}>Actual</div>
+            <div style={eyebrowStyle}>What Happened</div>
             <div style={{ fontSize: "0.62rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
               {sanitizeDisplayText(story?.actualSummary?.label || cleanHistorySessionName(review?.actualLog?.type || "No workout log"))}
             </div>
@@ -127,7 +133,7 @@ export function HistoryAuditDayReviewCard({
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem" }}>
           <div style={basePanelCardStyle}>
-            <div style={eyebrowStyle}>What mattered</div>
+            <div style={eyebrowStyle}>Why It Mattered</div>
             <div style={{ fontSize: "0.57rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.6 }}>
               {sanitizeDisplayText(story?.mainLesson || review?.comparison?.summary || "No lesson is available yet.")}
             </div>
@@ -180,8 +186,11 @@ export function HistoryAuditDayReviewCard({
       </div>
 
       <details style={{ ...detailDisclosureStyle, marginTop: "0.6rem" }} data-testid="history-day-review-audit">
-        <summary style={{ cursor: "pointer", fontSize: "0.55rem", color: "#dbe7f6" }}>Audit detail</summary>
+        <summary style={{ cursor: "pointer", fontSize: "0.55rem", color: "#dbe7f6" }}>Audit mode</summary>
         <div style={{ marginTop: "0.4rem", display: "grid", gap: "0.45rem" }}>
+          <div style={{ ...primaryContextStyle, color: "#94a3b8" }}>
+            Review the full saved plan-capture trail here without crowding the main training story.
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem" }}>
             <div style={basePanelCardStyle}>
               <div style={eyebrowStyle}>Active plan capture</div>
@@ -308,9 +317,12 @@ export function HistoryAuditWeekHistorySection({
 }) {
   const C = palette;
   return (
-    <details className="card" style={{ marginBottom: "0.8rem" }} open={entries.length > 0} data-testid="history-week-history-section">
+    <details className="card" style={{ marginBottom: "0.8rem" }} data-testid="history-week-history-section">
       <summary style={{ cursor: "pointer", fontSize: "0.58rem", color: "#94a3b8", letterSpacing: "0.06em" }}>{title}</summary>
       <div style={{ marginTop: "0.45rem", display: "grid", gap: "0.45rem" }}>
+        <div style={primaryContextStyle}>
+          Each saved week review keeps the training story in the main view and leaves the deeper storage detail inside audit mode.
+        </div>
         {entries.length === 0 ? (
           <div style={{ fontSize: "0.55rem", color: "#64748b", lineHeight: 1.55 }}>{emptyState}</div>
         ) : entries.slice(0, 8).map((entry) => {
@@ -337,13 +349,13 @@ export function HistoryAuditWeekHistorySection({
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem", marginTop: "0.45rem" }}>
                 <div style={basePanelCardStyle}>
-                  <div style={eyebrowStyle}>What was planned</div>
+                  <div style={eyebrowStyle}>What Was Planned</div>
                   <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
                     {story?.plannedSummary || `Planned ${entry?.plannedSessionCount || 0} sessions.`}
                   </div>
                 </div>
                 <div style={basePanelCardStyle}>
-                  <div style={eyebrowStyle}>What actually happened</div>
+                  <div style={eyebrowStyle}>What Happened</div>
                   <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
                     {story?.actualSummary || `Logged ${entry?.loggedSessionCount || 0} sessions.`}
                   </div>
@@ -352,7 +364,7 @@ export function HistoryAuditWeekHistorySection({
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem", marginTop: "0.45rem" }}>
                 <div style={basePanelCardStyle}>
-                  <div style={eyebrowStyle}>What mattered</div>
+                  <div style={eyebrowStyle}>Why It Mattered</div>
                   <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
                     {story?.whatMattered || entry?.focus || entry?.summary || "No weekly context was saved."}
                   </div>
@@ -366,8 +378,11 @@ export function HistoryAuditWeekHistorySection({
               </div>
 
               <details style={{ ...detailDisclosureStyle, marginTop: "0.45rem" }}>
-                <summary style={{ cursor: "pointer", fontSize: "0.53rem", color: "#cbd5e1" }}>Audit detail</summary>
+                <summary style={{ cursor: "pointer", fontSize: "0.53rem", color: "#cbd5e1" }}>Audit mode</summary>
                 <div style={{ marginTop: "0.35rem", display: "grid", gap: "0.32rem" }}>
+                  <div style={{ ...primaryContextStyle, color: "#94a3b8" }}>
+                    Commitment, durability, and weekly-check-in storage stay visible here for users who want the deeper record.
+                  </div>
                   <div style={{ fontSize: "0.5rem", color: "#8fa5c8", lineHeight: 1.5 }}>
                     Status: {formatAuditLabel(entry?.status || "planned")} • {entry?.plannedSessionCount || 0} planned • {entry?.loggedSessionCount || 0} logged
                   </div>

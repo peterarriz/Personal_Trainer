@@ -1,5 +1,7 @@
 # Workout Source Of Truth Contract
 
+For the broader planning and history model, read `docs/PLANNING_SOURCE_OF_TRUTH_OVERVIEW.md` alongside this contract.
+
 ## Canonical Source
 The canonical prescribed session for the day is `PlanDay.resolved.training`, with prescribed exercise rows attached where available.
 

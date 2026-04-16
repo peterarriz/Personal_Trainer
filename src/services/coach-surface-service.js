@@ -1,5 +1,6 @@
 import { COACH_TOOL_ACTIONS } from "../modules-coach-engine.js";
 import { describeProvenanceRecord } from "./provenance-service.js";
+import { getNutritionDayTypeLabel } from "./nutrition-day-taxonomy-service.js";
 
 const sanitizeText = (value = "", maxLength = 200) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
@@ -226,7 +227,7 @@ export const buildCoachActionPreviewModel = ({
         ? `Week ${nextWeekKey} volume target becomes ${futureWeekVolumePct}% of normal.`
         : "",
       nutritionOverride?.dayType
-        ? `Today's nutrition day changes to ${humanizeText(nutritionOverride.dayType)}.`
+        ? `Today's nutrition day changes to ${getNutritionDayTypeLabel(nutritionOverride.dayType) || humanizeText(nutritionOverride.dayType)}.`
         : "",
       injuryLevel && injuryArea
         ? `${humanizeText(injuryArea)} is tracked as ${humanizeText(injuryLevel)} for future plan safeguards.`

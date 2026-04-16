@@ -108,7 +108,7 @@ test.describe("goal-library intake paths", () => {
     await waitForPostOnboarding(page);
   });
 
-  test("custom fallback path still completes without the featured library", async ({ page }) => {
+  test("custom goal path still completes without the featured library", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
       goalText: "gain muscle",

@@ -188,7 +188,7 @@ test("summary rail keeps exact multi-goal intent visible before build", () => {
 
   assert.deepEqual(
     summaryRail.sections.map((section) => section.label),
-    ["Your words", "Interpreted goals", "What we will track", "What is still fuzzy", "Tradeoffs"]
+    ["Goal request", "Priority draft", "Tracking focus", "Still open", "Balancing notes"]
   );
   assert.ok(summaryRail.yourWords.some((item) => /bench 225/i.test(item)));
   assert.ok(summaryRail.yourWords.some((item) => /get leaner by summer/i.test(item)));
@@ -197,7 +197,7 @@ test("summary rail keeps exact multi-goal intent visible before build", () => {
   assert.ok(summaryRail.interpretedGoals.some((goal) => /lean|fat|body/i.test(goal.summary)));
   assert.ok(summaryRail.interpretedGoals.some((goal) => /target horizon/i.test(goal.timingLabel || "")));
   assert.ok(summaryRail.interpretedGoals.some((goal) => /target date/i.test(goal.timingLabel || "")));
-  assert.ok(summaryRail.sections.find((section) => section.label === "Interpreted goals")?.items.some((item) => /target horizon|target date/i.test(item)));
+  assert.ok(summaryRail.sections.find((section) => section.label === "Priority draft")?.items.some((item) => /target horizon|target date/i.test(item)));
   assert.ok(summaryRail.tradeoffItems.length >= 1);
 });
 
@@ -247,9 +247,9 @@ test("summary rail stays coherent for hybrid multi-goal users", () => {
   });
 
   assert.ok(summaryRail.interpretedGoals.length >= 2);
-  assert.ok(summaryRail.sections.find((section) => section.label === "Interpreted goals")?.items.length >= 2);
-  assert.ok(summaryRail.sections.find((section) => section.label === "What we will track")?.items.length >= 1);
-  assert.ok(summaryRail.sections.find((section) => section.label === "Tradeoffs")?.items.length >= 1);
+  assert.ok(summaryRail.sections.find((section) => section.label === "Priority draft")?.items.length >= 2);
+  assert.ok(summaryRail.sections.find((section) => section.label === "Tracking focus")?.items.length >= 1);
+  assert.ok(summaryRail.sections.find((section) => section.label === "Balancing notes")?.items.length >= 1);
 });
 
 test("review model surfaces proxy tracking and missing info for vague appearance goals", () => {

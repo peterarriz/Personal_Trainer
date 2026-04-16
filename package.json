@@ -5,9 +5,15 @@
   "scripts": {
     "build": "node scripts/build.js",
     "dev": "npx serve . -p 3000",
-    "lab:synthetic": "node -r sucrase/register scripts/run-synthetic-athlete-lab.js",
+    "lab:synthetic": "node -r sucrase/register scripts/run-synthetic-athlete-lab.js --catalog expanded --count 101 --weeks 26",
+    "lab:synthetic:quick": "node -r sucrase/register scripts/run-synthetic-athlete-lab.js --catalog focus --weeks 4",
+    "lab:synthetic:matrix": "node -r sucrase/register scripts/run-synthetic-athlete-lab.js --catalog release-gate --weeks 12",
+    "qa:manual-pack": "node scripts/run-manual-qa-pack.cjs",
+    "qa:release-gate": "node scripts/run-manual-qa-pack.cjs",
     "test": "node -r sucrase/register --test tests/*.test.js",
     "e2e": "playwright test",
+    "e2e:adversarial": "playwright test e2e/adversarial-trust.spec.js",
+    "e2e:adversarial:ci": "playwright test e2e/adversarial-trust.spec.js --reporter=line,html",
     "e2e:headed": "playwright test --headed",
     "e2e:debug": "playwright test --debug",
     "e2e:install": "playwright install chromium"

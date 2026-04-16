@@ -197,42 +197,72 @@ const buildDayReviewNextEffect = ({
   actualCheckin = {},
 } = {}) => {
   if (actualCheckin?.blocker === "pain_injury") {
-    return "Carry pain-aware modifications into the next plan touch.";
+    return "Keep the next day pain-aware instead of forcing the original dose back in.";
   }
   if (comparison?.completionKind === "pending") {
-    return "Keep the plan unchanged for now and update it once this outcome is logged.";
+    return "Keep the near-term plan steady for now and update it once this outcome is logged.";
   }
   if (comparison?.differenceKind === "not_logged_over_48h") {
-    return "Future adjustments should stay conservative until this day is clarified.";
+    return "Keep the next few decisions conservative until this day is clarified.";
   }
   if (comparison?.completionKind === "skipped") {
-    return "Do not assume this stimulus happened when shaping the next hard push.";
+    return "Treat this as a missed stimulus and move forward without trying to cram it back in.";
   }
   if (comparison?.completionKind === "custom_session") {
-    return "Use the work that actually happened here when shaping the next few days.";
+    return "Let the next few days build from the work that actually happened here.";
   }
   if (comparison?.completionKind === "modified") {
     return comparison?.sameSessionFamily
       ? "Keep the session theme, but let fatigue and recovery guide the next progression step."
-      : "The next plan touch should respect the changed session instead of the original prescription.";
+      : "Let the next plan decision follow the changed session that actually happened.";
   }
   if (comparison?.completionKind === "as_prescribed" && (nutritionComparison?.deviationKind === "under_fueled" || nutritionComparison?.matters === "high")) {
     return "Keep progression measured until fueling catches up with the training demand.";
   }
   if (comparison?.completionKind === "as_prescribed") {
-    return "The next plan touch can treat this session as completed and progress normally.";
+    return "The next plan touch can treat this session as complete and stay on its normal path.";
   }
   if (comparison?.completionKind === "recovery_day") {
     return comparison?.customSession
-      ? "The next plan touch should account for the extra work done on the recovery day."
+      ? "Account for the extra work that landed on the recovery day before pushing again."
       : "No immediate plan change is needed from this recovery day alone.";
   }
   return "Let this day influence the next adjustment without overreacting to one datapoint.";
 };
 
+const buildDayReviewPrimarySummary = ({
+  revisions = [],
+  latestPrescription = null,
+  originalPrescription = null,
+  comparison = {},
+} = {}) => {
+  const latestLabel = String(latestPrescription?.label || latestPrescription?.run?.t || latestPrescription?.type || "").trim().toLowerCase();
+  const originalLabel = String(originalPrescription?.label || originalPrescription?.run?.t || originalPrescription?.type || "").trim().toLowerCase();
+  const planSettledToDifferentPrescription = Boolean(revisions.length > 1 && latestLabel && originalLabel && latestLabel !== originalLabel);
+
+  if (comparison?.completionKind === "pending") {
+    return planSettledToDifferentPrescription
+      ? "The saved plan settled before the session window closed, and this review stays anchored to that final prescription."
+      : "This review stays anchored to the saved prescription until an actual outcome is logged.";
+  }
+  if (comparison?.differenceKind === "not_logged_over_48h") {
+    return planSettledToDifferentPrescription
+      ? "The day settled before execution, and the review still follows that final prescription while the outcome remains unresolved."
+      : "The outcome is still unresolved, so this review stays anchored to the saved prescription.";
+  }
+  if (planSettledToDifferentPrescription) {
+    return "The day settled into a different saved prescription before execution, so this review follows the final plan instead of the earlier draft.";
+  }
+  if (revisions.length > 1) {
+    return "This review follows the prescription that was active when the day arrived.";
+  }
+  return "This review follows the saved prescription for the day.";
+};
+
 const buildDayReviewStory = ({
   revisions = [],
   latestPrescription = null,
+  originalPrescription = null,
   actualLog = {},
   actualCheckin = {},
   comparison = {},
@@ -245,9 +275,12 @@ const buildDayReviewStory = ({
     actualSummary: buildActualOutcomeSummary({ actualLog, actualCheckin, comparison }),
     mainLesson: buildDayReviewLesson({ comparison, nutritionComparison, actualCheckin }),
     nextEffect: buildDayReviewNextEffect({ comparison, nutritionComparison, actualCheckin }),
-    auditSummary: revisions.length > 1
-      ? "The active plan was revised before execution."
-      : "One saved plan capture is attached to this day.",
+    auditSummary: buildDayReviewPrimarySummary({
+      revisions,
+      latestPrescription,
+      originalPrescription,
+      comparison,
+    }),
   };
 };
 
@@ -321,6 +354,7 @@ export const buildDayReview = ({
   const story = buildDayReviewStory({
     revisions,
     latestPrescription,
+    originalPrescription,
     actualLog,
     actualCheckin,
     comparison,

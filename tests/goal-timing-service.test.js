@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  buildTimingModeHelpText,
   buildGoalTimingPresentation,
   buildVisiblePlanningHorizonLabel,
   OPEN_ENDED_TIMING_VALUE,
@@ -40,4 +41,11 @@ test("open-ended timing shape stays first-class in normalization", () => {
 
   assert.equal(timing.mode, "open_ended");
   assert.equal(timing.openEnded, true);
+});
+
+test("open-ended timing help text avoids deadline-heavy wording", () => {
+  const helpText = buildTimingModeHelpText({ timingMode: "open_ended", visibleHorizonWeeks: 12 });
+
+  assert.match(helpText, /no fixed deadline/i);
+  assert.doesNotMatch(helpText, /no hard end date/i);
 });

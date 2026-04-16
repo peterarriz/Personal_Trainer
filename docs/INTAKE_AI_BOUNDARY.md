@@ -4,12 +4,16 @@
 
 This document defines the intake AI boundary after moving provider access behind a backend gateway.
 
+For the current end-to-end setup contract, also read `docs/PLANNING_SOURCE_OF_TRUTH_OVERVIEW.md` and `docs/IDEAL_INTAKE_FLOW.md`.
+
 The architecture rule is unchanged:
 
 1. user gives raw intent
 2. AI proposes interpretation
 3. user confirms or edits
 4. only confirmed structured goal state becomes canonical planner input
+
+The live intake is structured-first and goal-type-first. AI participates after the app has enough typed context to ask for a proposal.
 
 ## Boundary Summary
 
@@ -117,6 +121,7 @@ It may:
 - suggest clarifying questions
 - surface tradeoffs
 - suggest a horizon
+- suggest whether the goal looks open-ended, horizon-based, or date-based
 
 It may not:
 
@@ -125,6 +130,7 @@ It may not:
 - write `planDay`
 - write `planWeek`
 - bypass explicit user confirmation
+- force an exact target date when the user only has a loose horizon or an ongoing goal
 
 Canonical planning state still comes from:
 
@@ -144,6 +150,12 @@ after explicit user confirmation.
 6. The client re-sanitizes the interpretation.
 7. The review UI shows the interpretation and goal stack proposal.
 8. If the user confirms, deterministic goal-resolution code writes canonical planner-facing state.
+
+That means:
+
+- AI can help turn messy intent into a proposal
+- the user still confirms the ordered priority stack
+- exact date vs target horizon vs open-ended timing is still a deterministic app decision after confirmation
 
 ## Failure Flow
 
