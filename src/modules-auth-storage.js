@@ -1068,22 +1068,22 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       lastPersistedUserId = currentUserId;
       const nextGoalsFingerprint = createStableFingerprint(payload?.goals || []);
       const nextCoachMemoryFingerprint = createStableFingerprint((payload?.personalization || DEFAULT_PERSONALIZATION)?.coachMemory || {});
-      try {
-        if (nextGoalsFingerprint !== lastSyncedGoalsFingerprint) {
-          await syncGoals({ goals: payload?.goals || [], authSession, setAuthSession });
-          lastSyncedGoalsFingerprint = nextGoalsFingerprint;
-        }
-      } catch (e) {
-        logDiag("goals sync failed", e?.message || "unknown");
+      const shadowSyncs = [];
+      if (nextGoalsFingerprint !== lastSyncedGoalsFingerprint) {
+        shadowSyncs.push(
+          syncGoals({ goals: payload?.goals || [], authSession, setAuthSession })
+            .then(() => { lastSyncedGoalsFingerprint = nextGoalsFingerprint; })
+            .catch((e) => { logDiag("goals sync failed", e?.message || "unknown"); })
+        );
       }
-      try {
-        if (nextCoachMemoryFingerprint !== lastSyncedCoachMemoryFingerprint) {
-          await syncCoachMemory({ personalization: payload?.personalization || DEFAULT_PERSONALIZATION, authSession, setAuthSession });
-          lastSyncedCoachMemoryFingerprint = nextCoachMemoryFingerprint;
-        }
-      } catch (e) {
-        logDiag("coach memory sync failed", e?.message || "unknown");
+      if (nextCoachMemoryFingerprint !== lastSyncedCoachMemoryFingerprint) {
+        shadowSyncs.push(
+          syncCoachMemory({ personalization: payload?.personalization || DEFAULT_PERSONALIZATION, authSession, setAuthSession })
+            .then(() => { lastSyncedCoachMemoryFingerprint = nextCoachMemoryFingerprint; })
+            .catch((e) => { logDiag("coach memory sync failed", e?.message || "unknown"); })
+        );
       }
+      if (shadowSyncs.length) await Promise.allSettled(shadowSyncs);
       const syncedStatus = buildStorageStatus({
         mode: "cloud",
         label: "SYNCED",
