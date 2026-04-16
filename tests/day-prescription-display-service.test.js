@@ -109,3 +109,27 @@ test("exercise preview keeps the full prescribed structure available for Today e
   assert.equal(summary.exercisePreview.rows.length, 5);
   assert.equal(summary.exercisePreview.note, "");
 });
+
+test("optional support work stays visible in the canonical session preview", () => {
+  const summary = buildDayPrescriptionDisplay({
+    training: {
+      type: "swim-threshold",
+      label: "Threshold Swim",
+      swim: {
+        focus: "Threshold pacing",
+        d: "40 min",
+        setLine: "6 x 200 at threshold effort with clean form.",
+      },
+      optionalSecondary: "Shoulder stability circuit + 5 min mobility reset",
+      supportSummary: "Dryland support keeps the swim block resilient without pretending it is another swim.",
+    },
+  });
+
+  assert.equal(summary.sessionPlan.available, true);
+  assert.ok(summary.sessionPlan.sections.some((section) => section.key === "support_work"));
+  const supportRows = summary.sessionPlan.sections.find((section) => section.key === "support_work")?.rows || [];
+  assert.equal(supportRows.length, 1);
+  assert.equal(supportRows[0].title, "Support work");
+  assert.match(supportRows[0].detail, /shoulder stability circuit/i);
+  assert.match(supportRows[0].note, /dryland support/i);
+});

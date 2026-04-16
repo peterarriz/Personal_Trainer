@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const {
   applyIntakeStarterMetrics,
   buildIntakeClickCountReport,
+  INTAKE_COPY_DECK,
+  INTAKE_STAGE_CONTRACT,
   buildIntakeStarterGoalTypes,
   buildIntakeStarterMetricQuestions,
   inferIntakeStarterGoalTypeId,
@@ -13,7 +15,7 @@ const {
   buildGoalTemplateSelection,
 } = require("../src/services/goal-template-catalog-service.js");
 
-test("starter goal types lead with common goal families and keep custom as fallback", () => {
+test("starter goal types lead with common goal families and keep custom as a deliberate final path", () => {
   const starterTypes = buildIntakeStarterGoalTypes();
   assert.deepEqual(starterTypes.map((item) => item.id), [
     "running",
@@ -24,6 +26,17 @@ test("starter goal types lead with common goal families and keep custom as fallb
     "custom",
   ]);
   assert.equal(starterTypes.at(-1)?.label, "Custom");
+  assert.equal(starterTypes.at(-1)?.eyebrow, "Custom");
+});
+
+test("intake copy deck keeps the staged setup vocabulary concise and non-chatty", () => {
+  assert.deepEqual(INTAKE_STAGE_CONTRACT.map((stage) => stage.label), ["Goals", "Details", "Confirm", "Build"]);
+  assert.equal(INTAKE_COPY_DECK.shell.title, "Setup");
+  assert.equal(INTAKE_COPY_DECK.summaryRail.title, "What the plan will use");
+  assert.equal(INTAKE_COPY_DECK.clarify.structuredToggle, "Structured");
+  assert.equal(INTAKE_COPY_DECK.clarify.naturalToggle, "Free text");
+  assert.match(INTAKE_COPY_DECK.shell.helper, /changes the first plan/i);
+  assert.doesNotMatch(JSON.stringify(INTAKE_COPY_DECK), /coach note|tell me|proposal only until you confirm|guided|in your words|fallback/i);
 });
 
 test("featured starter templates keep the common paths mapped to clear presets", () => {

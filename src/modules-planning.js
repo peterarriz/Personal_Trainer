@@ -43,6 +43,9 @@ import {
   buildPlanningBaselineInfluence,
 } from "./services/metrics-baselines-service.js";
 import { buildSupportTierModel } from "./services/support-tier-service.js";
+import {
+  NUTRITION_DAY_TYPES,
+} from "./services/nutrition-day-taxonomy-service.js";
 import { dedupeStrings } from "./utils/collection-utils.js";
 
 export { daysUntil, deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
@@ -109,7 +112,7 @@ const resolvePlannedSessionKind = (plannedSession = null) => {
 const buildConditioningSession = ({
   label = "Conditioning",
   detail = "20-30 min zone-2 bike, rower, incline walk, or circuit",
-  nutri = "easyRun",
+  nutri = NUTRITION_DAY_TYPES.conditioningMixed,
   lowImpact = false,
 } = {}) => ({
   type: "conditioning",
@@ -221,14 +224,14 @@ const resolveWeeklyFocusLabel = ({
 };
 
 const buildSessionsByDayFromTemplate = (template = {}) => {
-  const restDay = { type: "rest", label: "Active Recovery", nutri: "rest", isRecoverySlot: true };
+  const restDay = { type: "rest", label: "Active Recovery", nutri: NUTRITION_DAY_TYPES.recovery, isRecoverySlot: true };
   return {
-    1: template?.mon ? normalizeSessionEntryLabel({ type: "easy-run", label: `${template.mon.t || "Easy"} Run`, run: clonePlainValue(template.mon), nutri: template?.nutri || "easyRun" }) : null,
+    1: template?.mon ? normalizeSessionEntryLabel({ type: "easy-run", label: `${template.mon.t || "Easy"} Run`, run: clonePlainValue(template.mon), nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: mobility reset or short strength support if recovery is good." }) : null,
     2: null,
-    3: template?.str ? normalizeSessionEntryLabel({ type: "strength+prehab", label: `Strength ${template.str}`, strSess: template.str, nutri: "strength" }) : null,
-    4: template?.thu ? normalizeSessionEntryLabel({ type: "hard-run", label: `${template.thu.t || "Quality"} Run`, run: clonePlainValue(template.thu), nutri: template?.nutri || "hardRun" }) : null,
-    5: template?.fri ? normalizeSessionEntryLabel({ type: "easy-run", label: `${template.fri.t || "Easy"} Run`, run: clonePlainValue(template.fri), nutri: "easyRun" }) : null,
-    6: template?.sat ? normalizeSessionEntryLabel({ type: "long-run", label: `${template.sat.t || "Long"} Run`, run: clonePlainValue(template.sat), nutri: "longRun" }) : null,
+    3: template?.str ? normalizeSessionEntryLabel({ type: "strength+prehab", label: `Strength ${template.str}`, strSess: template.str, nutri: NUTRITION_DAY_TYPES.strengthSupport }) : null,
+    4: template?.thu ? normalizeSessionEntryLabel({ type: "hard-run", label: `${template.thu.t || "Quality"} Run`, run: clonePlainValue(template.thu), nutri: NUTRITION_DAY_TYPES.runQuality }) : null,
+    5: template?.fri ? normalizeSessionEntryLabel({ type: "easy-run", label: `${template.fri.t || "Easy"} Run`, run: clonePlainValue(template.fri), nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: mobility reset or strides if recovery is good." }) : null,
+    6: template?.sat ? normalizeSessionEntryLabel({ type: "long-run", label: `${template.sat.t || "Long"} Run`, run: clonePlainValue(template.sat), nutri: NUTRITION_DAY_TYPES.runLong, optionalSecondary: "Optional: short mobility and fueling reset after the run." }) : null,
     0: restDay,
   };
 };
@@ -1920,75 +1923,75 @@ export const composeGoalNativePlan = ({
   }
   if (planningBasis?.compromiseLine) constraints.push(planningBasis.compromiseLine);
 
-  const restDay = (label = "Active Recovery") => ({ type: "rest", label, nutri: "rest", isRecoverySlot: true });
+  const restDay = (label = "Active Recovery") => ({ type: "rest", label, nutri: NUTRITION_DAY_TYPES.recovery, isRecoverySlot: true });
 
   const dayTemplates = {
     event_prep_upper_body_maintenance: {
-      1: { type: "hard-run", label: `${baseWeek.mon?.t || "Quality"} Run`, run: baseWeek.mon, nutri: "hardRun" },
-      2: { type: "strength+prehab", label: "Upper-Body Maintenance A", strSess: baseWeek.str || "A", nutri: "strength", upperBodyBias: true },
-      3: { type: "easy-run", label: "Easy Run", run: baseWeek.fri || { t: "Easy", d: "25-35 min" }, nutri: "easyRun" },
-      4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
-      5: { type: "strength+prehab", label: "Upper-Body Maintenance B", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength", upperBodyBias: true },
-      6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: "longRun" },
+      1: { type: "hard-run", label: `${baseWeek.mon?.t || "Quality"} Run`, run: baseWeek.mon, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: short trunk support after the run." },
+      2: { type: "strength+prehab", label: "Upper-Body Maintenance A", strSess: baseWeek.str || "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, upperBodyBias: true, optionalSecondary: "Optional: 8 min shoulder mobility reset." },
+      3: { type: "easy-run", label: "Easy Run", run: baseWeek.fri || { t: "Easy", d: "25-35 min" }, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: 5-10 min mobility finish." },
+      4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: fueling and calf reset after the main work." },
+      5: { type: "strength+prehab", label: "Upper-Body Maintenance B", strSess: baseWeek.str === "A" ? "B" : "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, upperBodyBias: true, optionalSecondary: "Optional: cuff or scap stability finisher." },
+      6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: NUTRITION_DAY_TYPES.runLong, optionalSecondary: "Optional: 10 min walk and mobility cooldown." },
       0: restDay("Active Recovery"),
     },
     race_prep_dominant: {
-      1: { type: "run+strength", label: "Quality Run + Strength Finish", run: baseWeek.mon, strSess: baseWeek.str, nutri: "hardRun" },
-      2: { type: "conditioning", label: "Conditioning Intervals", nutri: "otf" },
-      3: { type: "strength+prehab", label: "Strength + Durability", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
-      4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" },
-      5: { type: "easy-run", label: "Easy Run", run: baseWeek.fri, nutri: "easyRun" },
-      6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: "longRun" },
+      1: { type: "run+strength", label: "Quality Run + Strength Finish", run: baseWeek.mon, strSess: baseWeek.str, nutri: NUTRITION_DAY_TYPES.hybridSupport, optionalSecondary: "Optional: short lift finisher only if the run stayed smooth." },
+      2: { type: "conditioning", label: "Conditioning Intervals", nutri: NUTRITION_DAY_TYPES.conditioningMixed, optionalSecondary: "Optional: mobility reset to keep legs fresh for the next run." },
+      3: { type: "strength+prehab", label: "Strength + Durability", strSess: baseWeek.str === "A" ? "B" : "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: calf and foot durability work." },
+      4: { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: short mobility and fueling reset." },
+      5: { type: "easy-run", label: "Easy Run", run: baseWeek.fri, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: 4-6 relaxed strides if recovery is good." },
+      6: { type: "long-run", label: "Long Run", run: baseWeek.sat, nutri: NUTRITION_DAY_TYPES.runLong, optionalSecondary: "Optional: walk, calf work, and fueling reset after the run." },
       0: restDay("Active Recovery"),
     },
     strength_dominant: {
-      1: { type: "strength+prehab", label: "Full-Body Strength A", strSess: "A", nutri: "strength" },
+      1: { type: "strength+prehab", label: "Full-Body Strength A", strSess: "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: carry or trunk finisher." },
       2: hasRunningGoal
-        ? { type: "easy-run", label: "Easy Conditioning Run", run: { t: "Easy", d: "20-30 min zone-2" }, nutri: "easyRun" }
+        ? { type: "easy-run", label: "Easy Conditioning Run", run: { t: "Easy", d: "20-30 min zone-2" }, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: mobility reset after the run." }
         : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min zone-2 bike, rower, incline walk, or circuit", lowImpact: true }),
-      3: { type: "strength+prehab", label: "Full-Body Strength B", strSess: "B", nutri: "strength" },
-      4: { type: "strength+prehab", label: "Upper Push/Pull Strength", strSess: "A", nutri: "strength" },
+      3: { type: "strength+prehab", label: "Full-Body Strength B", strSess: "B", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: short mobility or trunk finisher." },
+      4: { type: "strength+prehab", label: "Upper Push/Pull Strength", strSess: "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: shoulder-health accessory work." },
       5: hasRunningGoal
-        ? { type: "easy-run", label: "Conditioning Support", run: { t: "Easy", d: "20-25 min + strides optional" }, nutri: "easyRun" }
+        ? { type: "easy-run", label: "Conditioning Support", run: { t: "Easy", d: "20-25 min + strides optional" }, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: strides or light mobility if readiness is good." }
         : buildConditioningSession({ label: "Conditioning Support", detail: "15-25 min controlled conditioning + mobility finish", lowImpact: true }),
-      6: { type: "strength+prehab", label: "Full-Body Strength", strSess: "B", nutri: "strength" },
+      6: { type: "strength+prehab", label: "Full-Body Strength", strSess: "B", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: short walk cooldown to support recovery." },
       0: restDay("Active Recovery"),
     },
     body_comp_conditioning: {
-      1: { type: "strength+prehab", label: "Strength Circuit A", strSess: "A", nutri: "strength" },
+      1: { type: "strength+prehab", label: "Strength Circuit A", strSess: "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: 5-10 min trunk finish." },
       2: hasRunningGoal
-        ? { type: "easy-run", label: "Conditioning (low-friction)", run: { t: "Easy", d: "25-35 min zone-2" }, nutri: "easyRun" }
+        ? { type: "easy-run", label: "Conditioning (low-friction)", run: { t: "Easy", d: "25-35 min zone-2" }, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: mobility reset to keep tomorrow easier." }
         : buildConditioningSession({ label: "Conditioning (low-friction)", detail: "25-35 min zone-2 bike, incline walk, or circuit", lowImpact: true }),
-      3: { type: "strength+prehab", label: "Strength Circuit B", strSess: "B", nutri: "strength" },
-      4: { type: "conditioning", label: "Conditioning Intervals", nutri: "otf" },
-      5: { type: "strength+prehab", label: "Strength Retention", strSess: "A", nutri: "strength" },
+      3: { type: "strength+prehab", label: "Strength Circuit B", strSess: "B", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: loaded carry finisher." },
+      4: { type: "conditioning", label: "Conditioning Intervals", nutri: NUTRITION_DAY_TYPES.conditioningMixed, optionalSecondary: "Optional: 5 min walk cooldown after intervals." },
+      5: { type: "strength+prehab", label: "Strength Retention", strSess: "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: easy mobility reset." },
       6: hasRunningGoal
-        ? { type: "easy-run", label: "Easy Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: "easyRun" }
+        ? { type: "easy-run", label: "Easy Run/Walk", run: { t: "Easy", d: "20-30 min" }, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: short core or mobility finisher." }
         : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min easy conditioning or brisk walk", lowImpact: true }),
       0: restDay("Active Recovery - Steps + Mobility"),
     },
     hybrid_performance: {
       1: hasRunningGoal
-        ? { type: "run+strength", label: "Easy Run + Strength Finish", run: baseWeek.mon, strSess: baseWeek.str, nutri: "easyRun" }
-        : { type: "strength+prehab", label: "Strength + Conditioning Primer", strSess: baseWeek.str, nutri: "strength" },
-      2: { type: "conditioning", label: "Conditioning", nutri: "otf" },
-      3: { type: "strength+prehab", label: "Full-Body Strength B + Durability", strSess: baseWeek.str === "A" ? "B" : "A", nutri: "strength" },
+        ? { type: "run+strength", label: "Easy Run + Strength Finish", run: baseWeek.mon, strSess: baseWeek.str, nutri: NUTRITION_DAY_TYPES.hybridSupport, optionalSecondary: "Optional: short lift finisher if the run stayed easy." }
+        : { type: "strength+prehab", label: "Strength + Conditioning Primer", strSess: baseWeek.str, nutri: NUTRITION_DAY_TYPES.hybridSupport, optionalSecondary: "Optional: easy aerobic cooldown." },
+      2: { type: "conditioning", label: "Conditioning", nutri: NUTRITION_DAY_TYPES.conditioningMixed, optionalSecondary: "Optional: mobility reset to keep hybrid load coherent." },
+      3: { type: "strength+prehab", label: "Full-Body Strength B + Durability", strSess: baseWeek.str === "A" ? "B" : "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: durability finisher for shoulders, hips, or trunk." },
       4: hasRunningGoal
-        ? { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: "hardRun" }
+        ? { type: "hard-run", label: `${baseWeek.thu?.t || "Tempo"} Run`, run: baseWeek.thu, nutri: NUTRITION_DAY_TYPES.runQuality, optionalSecondary: "Optional: short mobility and fueling reset." }
         : buildConditioningSession({ label: "Conditioning Intervals", detail: "20-30 min controlled intervals or mixed-modality conditioning" }),
-      5: { type: "strength+prehab", label: "Full-Body Strength Focus", strSess: baseWeek.str, nutri: "strength" },
+      5: { type: "strength+prehab", label: "Full-Body Strength Focus", strSess: baseWeek.str, nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: low-drama carry or trunk finisher." },
       6: hasRunningGoal
-        ? { type: "easy-run", label: "Supportive Endurance", run: baseWeek.fri, nutri: "easyRun" }
+        ? { type: "easy-run", label: "Supportive Endurance", run: baseWeek.fri, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: strides or mobility if recovery is still good." }
         : buildConditioningSession({ label: "Supportive Conditioning", detail: "20-30 min easy conditioning to keep work capacity alive", lowImpact: true }),
       0: restDay("Active Recovery"),
     },
     maintenance_rebuild: {
-      1: { type: "strength+prehab", label: "Short Full-Body Strength A", strSess: "A", nutri: "strength" },
+      1: { type: "strength+prehab", label: "Short Full-Body Strength A", strSess: "A", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: simple mobility reset." },
       2: restDay("Active Recovery - Walk"),
       3: hasRunningGoal
-        ? { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: "easyRun" }
+        ? { type: "easy-run", label: "Short Conditioning", run: { t: "Easy", d: "20-25 min" }, nutri: NUTRITION_DAY_TYPES.runEasy, optionalSecondary: "Optional: easy mobility finish." }
         : buildConditioningSession({ label: "Short Conditioning", detail: "15-20 min easy conditioning or brisk walk", lowImpact: true }),
-      4: { type: "strength+prehab", label: "Short Full-Body Strength B", strSess: "B", nutri: "strength" },
+      4: { type: "strength+prehab", label: "Short Full-Body Strength B", strSess: "B", nutri: NUTRITION_DAY_TYPES.strengthSupport, optionalSecondary: "Optional: trunk finisher if energy is good." },
       5: restDay("Active Recovery"),
       6: buildConditioningSession({ label: "Optional Conditioning", detail: "15-20 min optional easy conditioning", lowImpact: true }),
       0: restDay("Active Recovery"),

@@ -1,744 +1,212 @@
 # Ideal Intake Flow
 
-## Current Runtime Notes (2026-04)
+This document describes the current intended intake contract for the live app.
 
-- After goal interpretation, the live app now shows a short "Here's what I heard" review with one row per parsed goal before required anchor collection begins.
-- The current correction surface is deterministic goal removal/editing from that review state, rather than a separate AI accept/revise screen.
-- Partial intake progress is restored from browser session storage until the user confirms and builds the plan or abandons the browser session.
-- Review-lane edits now re-run the intake machine silently. They do not replay AI summaries or anchor prompts into the transcript just because review state was recomputed.
-- Confirmation and missing-required gating now follow the active goal stack only. Deferred/background goals stay visible in review, but they do not block confirmation until the user promotes them back into the active stack.
+Use this together with:
 
-## 1. Product Objective
+- `docs/PLANNING_SOURCE_OF_TRUTH_OVERVIEW.md`
+- `docs/INTAKE_AI_BOUNDARY.md`
+- `docs/INTAKE_FIELD_INPUT_CONTRACT.md`
 
-### What intake is supposed to accomplish
+## Current Runtime Notes
 
-Intake exists to turn messy human intent into a believable, confirmed planning brief.
+- Intake is a guided setup flow, not a fake chat transcript.
+- The live entry point is goal-type-first, with custom text as a fallback rather than the default.
+- The flow is structured-first: when a required field has a primary control, that control leads.
+- The user sees ordered priorities, not lead/maintained/background lane jargon.
+- Confirmation and plan build operate only on the active ordered goal stack.
+- Open-ended goals remain valid. Not every goal needs a hard end date.
 
-By the end of intake, the app should have:
+## Product Objective
 
-- the user's raw goal intent in their own words
-- a clear interpreted primary goal
-- the minimum required anchors needed to build a credible first plan
-- realism guidance for the stated target
-- an explicit answer on whether anything should be maintained in the background
-- a confirmed resolved goal object and canonical planner input
+By the time intake finishes, the app should have:
 
-### What intake is not supposed to do
+- the user’s raw goal intent
+- an ordered priority stack the user understands
+- the minimum anchors required for a credible first plan
+- an honest timing shape: exact date, target horizon, or open-ended
+- enough training-context reality to avoid obviously fake prescriptions
+- explicit confirmation before canonical goal state is written
 
-Intake is not supposed to:
+Intake should not:
 
-- feel like a giant settings form
-- force users into rigid canned goal categories before they can explain themselves
-- expose internal schema or planner vocabulary
-- fake certainty when the app lacks enough information
-- quietly invent secondary goals, training context, or realism assumptions
-- become a general chat experience
+- feel like chat theater
+- bury users in schema language
+- ask optional questions before the first plan is credible
+- invent secondary goals or fake timing precision
+- strand users if AI interpretation is unavailable
 
-### What "good" feels like for a user
+## High-Level Flow
 
-Good intake feels like a short trainer interview:
+### 1. Goal entry
 
-- the user can start vague or exact
-- the app quickly reflects back what it thinks the goal means
-- the app asks only the next necessary question
-- the user can see what will be tracked and what still needs clarification
-- the app clearly says when the goal is workable, aggressive, or not realistic yet
-- confirmation feels trustworthy because the app is explicit about what it knows and what it is planning around
+The user starts with:
 
-## 2. Guiding Principles
+- a goal type selection for common paths
+- a library-backed goal choice when one exists
+- a custom goal path when the user needs it
 
-- The user can start vague.
-- The app asks only what is necessary to build the first credible block.
-- AI may interpret, but the user confirms.
-- Only confirmed structured goal state becomes canonical planner input.
-- The UI should use plain English, not internal schema language.
-- No fake precision.
-- No silent assumptions.
-- No hidden secondary goals.
-- No stale interpretation after the goal changes.
-- One answer should only satisfy the field it was asked for.
-- If the app is blocked, it must say why.
-- If the app is uncertain, it must sound appropriately uncertain.
+The opening should feel like premium setup, not a transcript.
 
-## 3. End-to-End Ideal Flow
+### 2. Inline anchor collection
 
-### Step 1: Opening question
-
-The app opens with one simple prompt:
-
-`What do you want from this plan? Exact or vague both work.`
-
-The user can answer with:
-
-- `Run a 1:45 half marathon`
-- `Bench 225`
-- `Lose 20 lb`
-- `Look athletic again`
-- `Get abs by summer`
-- `Be a hybrid athlete`
-
-The app then asks a small number of general planning-context questions:
-
-- training background
-- days per week
-- session window
-- training environment
-- coaching style
-
-These questions should stay lightweight and should not pretend to resolve the goal yet.
-
-### Step 2: Interpretation step
-
-After the base intake answers are in, the app shows a short interpretation card:
-
-- what the app thinks the goal is
-- what kind of goal it is
-- what it plans to track first
-
-This is not final confirmation yet. It is a checkpoint.
-
-### Step 3: Required follow-up step(s)
-
-The app computes the minimum required anchors for the interpreted goal.
-
-It then asks only the next missing required question, one at a time.
+Once the app knows the goal direction, it asks only for anchors that materially change the first plan.
 
 Examples:
 
-- `What's your current bench baseline right now?`
-- `What's the race date or target month?`
-- `What's your current running baseline: runs per week, plus either your longest recent run or a recent pace/race result?`
-- `What's your current bodyweight, and roughly how much are you trying to lose?`
-- `What's one proxy we can track for this right now: current bodyweight or waist?`
+- running baseline
+- swim access and recent swim benchmark
+- current bodyweight or proxy metric
+- current strength baseline
+- days per week, session window, and training environment
 
-After every answer:
+### 3. Proposal and review
 
-- the field is bound and saved
-- completeness recomputes immediately
-- the same question is not asked again unless the answer was still incomplete
+AI or deterministic interpretation may propose structure, but the app shows that as a reviewable draft.
 
-### Step 4: Realism check
+The review step should clarify:
 
-Once the minimum anchors exist, the app evaluates realism.
+- the ordered priority stack
+- what the app will optimize first
+- what is supportive but still intentional
+- what timing is known right now
+- what is still uncertain
 
-It does not merely say "ready" or "not ready." It classifies the target as:
-
-- workable
-- aggressive but plausible
-- underconstrained
-- unrealistic
-- conflicted because the goal stack pulls in different directions
-
-The realism step should sound like coaching guidance, not a validator message.
-
-### Step 5: Optional secondary-goal step
-
-After the primary goal and required anchors are stable, the app asks one optional question:
-
-`Anything else you want to maintain while chasing this?`
-
-This is where the app makes multi-goal support explicit.
-
-The user can:
-
-- skip it
-- keep a common maintained goal
-- enter a custom maintained goal
-
-The app should not ask this before the core primary goal is stable.
-
-### Step 6: Final confirmation
-
-The app shows a concise confirmation surface that answers:
-
-- what the lead goal is
-- what, if anything, is being maintained
-- what will be tracked
-- what tradeoff the plan will respect
-- whether the plan is good to build now
-
-The user can:
-
-- confirm and build the plan
-- edit the interpretation
-- revise the target if realism blocks it
-
-### Step 7: Handoff into plan generation
+### 4. Confirmation
 
 Only after explicit confirmation does the app:
 
 - finalize resolved goals
-- finalize goal-stack ordering
-- write canonical goal state
-- hand off the confirmed result into planning
+- finalize ordered priorities
+- finalize timing shape
+- hand off canonical planner-facing state
 
-No provider output or preview object should write canonical state directly.
+## Priority Language
 
-## 4. User-Facing Screen/Message Structure
+User-facing intake should use:
 
-### Opening intake
+- `Priority 1`
+- `Priority 2`
+- `Priority 3`
+- `Later priority`
 
-What the user sees:
+Avoid older phrasing like:
 
-- one chat-style opening prompt
-- one answer box
-- lightweight follow-up buttons for planning context
+- `lead goal`
+- `maintained goal`
+- `background goal`
+- `deferred lane`
 
-What the app says:
+Internal arbitration can still use those terms, but the setup UI should not lean on them.
 
-- `What do you want from this plan? Exact or vague both work.`
+## Timing Rules
 
-Actions/buttons:
+Timing should be honest and minimal.
 
-- normal answer submission
-- standard button choices for context questions
+Supported shapes:
 
-Hidden/collapsed:
+- `Exact date`
+- `Target horizon`
+- `Open-ended`
 
-- any internal labels like goal family, measurability, confirmation gate
+Rules:
 
-Plain-English labels:
+- race or event goals may need a real date or month window
+- body-composition or general-fitness goals do not need a fake deadline
+- open-ended goals still deserve a real first plan
+- the visible 12-week plan is not the same thing as the full goal deadline
 
-- `Training background`
-- `Training days`
-- `Session length`
-- `Where you train`
-- `How hard you want to be pushed`
+User-facing language should make that explicit:
 
-### Interpretation checkpoint
+- `No fixed deadline. We will treat this as an ongoing goal and show the next phase in the visible plan.`
 
-What the user sees:
+## AI Boundary Inside Intake
 
-- one concise summary block
-- one tracking block
-- one missing-info block if needed
+AI is allowed to:
 
-What the app says:
+- interpret messy wording
+- suggest structure
+- propose metrics
+- suggest a timing shape
+- surface missing clarifications
 
-- `Here's what I'm hearing`
-- `Here's what I'll track first`
+AI is not allowed to:
 
-Actions/buttons:
+- write canonical goals directly
+- decide the final priority order without confirmation
+- bypass deterministic validation
+- create plan state by itself
 
-- `That looks right`
-- `I want to change something`
+If the intake gateway fails, the local deterministic path still has to keep the user moving.
 
-Hidden/collapsed:
+## Structured-First Contract
 
-- confidence internals
-- schema terms like `fully measurable` unless translated
+Required fields should use one primary control each.
 
-Plain-English labels:
+Examples:
 
-- `Goal`
-- `What we'll track`
-- `Still needed`
+- date or month input for time-bound goals
+- numeric input for baseline quantities
+- top-set widget for strength baseline
+- chips or buttons for small enumerated choices
 
-### Required follow-up
+Natural language is still allowed, but only through an explicit fallback like `Type instead`.
 
-What the user sees:
+## Minimum Questions
 
-- one targeted follow-up prompt
-- a short status line if needed
+Ask only what changes the first plan materially.
 
-What the app says:
+Ask now:
 
-- targeted question first
-- status/explanation second
+- primary goal direction
+- priority order when multiple goals matter
+- training frequency and session window
+- environment and equipment when they affect exercise selection
+- baseline anchors that materially change starting dose or safety
 
-Actions/buttons:
+Defer until later if they do not block credibility:
 
-- submit answer
-- optional skip only when the question is genuinely optional
+- nice-to-have style nuance
+- optional deeper metrics
+- secondary optimization details
+- aspirational future goals that are not active priorities yet
 
-Hidden/collapsed:
+## Confirmation Copy Contract
 
-- broader review card while the app is still blocked
+The confirmation surface should answer:
 
-Plain-English labels:
+- what the planner is optimizing first
+- what else is still being balanced
+- what the first plan is planning around
+- whether timing is exact, horizon-based, or open-ended
+- whether anything important is still unknown
 
-- avoid labels entirely where possible
-- show just the question and a small helper example
+It should not:
 
-### Realism step
+- dump internal tokens
+- expose role jargon
+- sound like the AI is the source of truth
 
-What the user sees:
+## Hand-Off To Planning
 
-- one concise realism card
-- one suggested revision if needed
+After confirmation, the handoff is:
 
-What the app says:
+`raw goal intent -> interpreted proposal -> confirmed resolved goals -> ordered priorities -> planner`
 
-- realistic: `This looks buildable from where you are now.`
-- warning: `This is possible, but the timeline is tight.`
-- blocked: `That target is not realistic yet as written.`
+The planner then owns:
 
-Actions/buttons:
+- ProgramBlock
+- WeeklyIntent
+- PlanWeek
+- PlanDay
+- adaptation from actual behavior
 
-- `Keep this target`
-- `Revise the target`
-- `Use the suggested first block`
+## Verification
 
-Hidden/collapsed:
+Primary runtime and contract coverage:
 
-- internal scoring rationale
-
-Plain-English labels:
-
-- `Looks buildable`
-- `Needs a more realistic first target`
-- `Still need one more anchor`
-
-### Optional secondary-goal step
-
-What the user sees:
-
-- one short question
-- a few tappable options
-- one custom input if needed
-
-What the app says:
-
-- `Anything else you want to maintain while chasing this?`
-
-Actions/buttons:
-
-- `Keep strength`
-- `Keep upper body`
-- `Maintain conditioning`
-- `Avoid slowing down`
-- `No, just this goal`
-- `Something else`
-
-Hidden/collapsed:
-
-- the full goal-stack model
-- background priority internals unless there is a meaningful conflict
-
-Plain-English labels:
-
-- `Primary goal`
-- `Maintained goal`
-
-### Final confirmation
-
-What the user sees:
-
-- lead goal
-- maintained goal if present
-- what the app will track
-- a short tradeoff statement if relevant
-- one clear build CTA
-
-What the app says:
-
-- `This is the plan direction I'm going to build from.`
-
-Actions/buttons:
-
-- `Confirm and build my plan`
-- `Adjust the goal`
-- `Revise the target`
-
-Hidden/collapsed:
-
-- low-value implementation detail
-- AI/provider provenance
-
-Plain-English labels:
-
-- `Lead goal`
-- `Maintain while chasing it`
-- `What we'll measure`
-- `Main tradeoff`
-
-## 5. Goal-Family-Specific Required Anchors
-
-### Strength goals
-
-Required to build:
-
-- current baseline for the lift or movement that matters
-- timing only if the goal clearly implies a target date or compressed horizon
-
-Helpful but optional:
-
-- recent top set trend
-- training history for the lift
-- current bodyweight
-
-Can be deferred until later review:
-
-- exact estimated one-rep max
-- accessory lift details
-
-### Running/event goals
-
-Required to build:
-
-- race date or target month
-- current run frequency
-- either longest recent run or recent pace/race result
-
-Helpful but optional:
-
-- recent weekly mileage
-- preferred race terrain
-- injury sensitivity around running volume
-
-Can be deferred until later review:
-
-- exact training zones
-- shoe rotation
-- race logistics
-
-### Body-comp / weight-loss goals
-
-Required to build:
-
-- current bodyweight
-- desired change if the goal text did not already supply it
-- rough timeline
-
-Helpful but optional:
-
-- waist measurement
-- current nutrition friction
-- recent adherence pattern
-
-Can be deferred until later review:
-
-- detailed nutrition preferences
-- photo-based review
-
-### Appearance/proxy goals
-
-Required to build:
-
-- one real proxy anchor the app can actually use now
-  - current bodyweight
-  - waist measurement
-- timeline only if the user clearly implies one
-
-Helpful but optional:
-
-- second proxy anchor
-- clothing-fit marker
-- subjective look/feel success marker
-
-Can be deferred until later review:
-
-- manual photo review
-- more detailed physique preferences
-
-### Hybrid/mixed goals
-
-Required to build:
-
-- one explicit lead goal
-- one explicit maintained goal if a second lane matters
-- required anchors for the lead goal
-- enough baseline to avoid nonsense tradeoffs
-
-Helpful but optional:
-
-- clearer preference on what gets sacrificed first
-- preferred weekly emphasis
-
-Can be deferred until later review:
-
-- exact weekly ratio between the two lanes
-
-## 6. Realism/Feasibility Behavior
-
-### Realistic goals
-
-Behavior:
-
-- show as buildable
-- allow direct confirmation
-- do not over-dramatize
-
-User-facing behavior:
-
-- status: `Looks buildable`
-- CTA: enabled
-
-### Aggressive but plausible goals
-
-Behavior:
-
-- allow confirmation
-- surface the risk plainly
-- show the tradeoff the plan will respect
-
-User-facing behavior:
-
-- status: `Possible, but tight`
-- CTA: enabled
-- short caution note under the CTA
-
-### Impossible goals
-
-Behavior:
-
-- block confirmation
-- explain why
-- suggest a more realistic first target or phased path
-
-User-facing behavior:
-
-- status: `Needs a more realistic first target`
-- CTA: disabled
-- show `Revise target` path
-
-### Underconstrained goals
-
-Behavior:
-
-- treat as incomplete, not realistic
-- ask the next required anchor
-
-User-facing behavior:
-
-- status: `Still need one more anchor`
-- CTA: disabled
-- targeted next question shown
-
-### Mixed-goal conflicts
-
-Behavior:
-
-- make the tradeoff explicit
-- require the app or user to identify the lead goal
-- do not hide the maintained lane
-
-User-facing behavior:
-
-- status: `We can do both, but one should lead`
-- CTA: enabled only when the stack is explicit enough
-
-### Proceed / warn / block definitions
-
-Proceed:
-
-- completeness satisfied
-- realism acceptable
-- goal stack explicit enough
-
-Warn:
-
-- completeness satisfied
-- realism aggressive but plausible, or mixed-goal tension is meaningful
-
-Block and revise:
-
-- goal is impossible as written
-- goal is too underspecified to build safely
-- target conflicts are too unresolved to plan around honestly
-
-## 7. Secondary-Goal Design
-
-### When to ask
-
-Ask only after:
-
-- the primary goal interpretation is stable
-- required anchors for the primary goal are satisfied
-- the app is no longer looping on basic clarification
-
-### How to phrase it
-
-Preferred wording:
-
-- `Anything else you want to maintain while chasing this?`
-
-Acceptable helper text:
-
-- `Optional. If not, we can keep this plan focused on the primary goal.`
-
-### How to present tradeoffs
-
-Only show tradeoffs when a second lane is actually present.
-
-Good examples:
-
-- `Fat loss will lead, so strength is being protected rather than pushed.`
-- `The race goal leads, so lifting stays supportive.`
-
-Bad examples:
-
-- exposing `rolesByGoalId`
-- exposing `background priority` by default
-
-### How much of the underlying goal-stack model should be visible
-
-Visible to user:
-
-- lead goal
-- maintained goal
-- one short tradeoff sentence
-
-Hidden:
-
-- role enums
-- planner internals
-- resilience/background machinery unless it changes behavior in a user-meaningful way
-
-## 8. User-Facing Language Guide
-
-The UI should hide internal system vocabulary unless translated into plain English.
-
-Before -> after:
-
-- `exploratory` -> `Starting with a 30-day baseline`
-- `confirmation gate` -> `Ready to build`
-- `keep protected` -> `Keep recovery protected`
-- `add back as maintained` -> `Keep as a maintained goal`
-- `build aerobic base for hybrid training` -> `Build half-marathon endurance while strength stays supportive`
-- `fully measurable` -> `Has a clear measurable target`
-- `proxy measurable` -> `We'll track progress with a few practical markers`
-- `resolved goal` -> `Confirmed goal`
-- `current running baseline` -> `Where your running is right now`
-- `goal family` -> never shown directly
-- `background priority` -> `Protect recovery` or hide it entirely
-- `blocked by realism` -> `This target needs a more realistic first step`
-- `incomplete details` -> `Still need one more anchor`
-
-Language rules:
-
-- prefer trainer language over planner language
-- prefer "right now," "first block," and "while chasing this" over internal taxonomy
-- never imply certainty that the app does not have
-
-## 9. Failure Modes and Anti-Patterns
-
-The app must not:
-
-- repeat the same clarification after a valid answer
-- let one answer contaminate another field
-- show stale interpretation after a goal change
-- confirm impossible goals
-- imply progress-photo support if upload or review flow does not exist
-- sound more certain than the data supports
-- silently invent a maintained strength lane for a plain running goal
-- silently assume home/gym/equipment context when unknown
-- allow the CTA to look active when the state is still blocked
-- show the user one interpretation while writing a different canonical goal state
-- stream messages out of order
-- surface internal implementation terms as if they are product copy
-
-## 10. Implementation Mapping
-
-### AI interpretation layer
-
-Responsibility:
-
-- interpret messy raw goal language
-- propose goal family, metrics, open questions, and conflicts
-
-Must not:
-
-- write canonical state
-- invent confirmed secondary goals
-- overrule explicit user confirmation
-
-### Deterministic completeness layer
-
-Responsibility:
-
-- compute required anchors by goal family
-- bind answers to exact fields
-- decide whether the app has enough to build
-
-Must not:
-
-- infer completion from vague prose when the required field is still missing
-
-### Feasibility gate
-
-Responsibility:
-
-- classify realistic / warn / block
-- explain the realism state in user-facing terms
-- propose a smaller first target when needed
-
-Must not:
-
-- silently pass impossible goals through
-
-### Confirmation layer
-
-Responsibility:
-
-- show the interpreted lead goal
-- show maintained goal if present
-- show what will be tracked
-- show tradeoff and realism status
-- gate the final build CTA correctly
-
-Must not:
-
-- expose raw schema terms
-- show an enabled CTA when the state is not actually confirmable
-
-### Canonical write
-
-Responsibility:
-
-- take only confirmed resolved goal state
-- write canonical goal stack and planner-facing goal state
-
-Must not:
-
-- reuse stale preview state after a goal change
-- write from unconfirmed AI proposal data
-
-### Handoff into ProgramBlock / planning
-
-Responsibility:
-
-- treat the confirmed lead goal as the primary planning driver
-- include maintained goals only when explicitly confirmed
-- keep Program, Today, and current-week shape aligned to the same stack
-
-Must not:
-
-- default plain running goals into hybrid plans
-- inject unsupported environment or issue context
-
-## 11. Definition Of Done
-
-Intake is good enough to move on when all of the following are true:
-
-- A vague user can finish intake without feeling forced into a giant form.
-- A precise user can move quickly without redundant questions.
-- Every required clarification is field-scoped.
-- Valid answers clear the required state immediately.
-- Goal changes fully reset stale interpretation and stale follow-up state.
-- The app can clearly distinguish incomplete, warn, and block.
-- The final CTA is enabled only when the state is actually confirmable.
-- The user can explicitly add or decline a maintained secondary goal.
-- The confirmation screen shows the actual goal stack that will be written.
-- Canonical planner input matches the latest confirmed review state.
-- Plain running goals stay plain running goals.
-- Appearance goals rely only on real current proxies.
-- Transcript/message ordering is stable and readable.
-- The flow feels like a short trainer interview, not a schema debugger.
-
-## Top 5 Implementation Priorities From This Spec
-
-1. Make the confirmation screen the single source of truth for whether intake is proceed, warn, block, or incomplete.
-2. Tighten field-scoped completeness binding so valid answers always clear the right required question immediately.
-3. Remove remaining internal language from the live intake UI and replace it with trainer-style plain English.
-4. Keep goal-family interpretation and summary generation specific, especially for plain running/event goals versus explicit mixed-goal stacks.
-5. Make the optional secondary-goal step consistently visible after required anchors clear, with simple choices and clean canonical goal-stack handoff.
-
-## What Can Wait Until Later
-
-- richer profile/settings editing outside intake
-- photo upload or structured physique check-in support
-- broader AI chat infrastructure beyond intake interpretation
-- advanced explanation detail for why the planner made a given block choice
-- more nuanced weekly emphasis controls for hybrid users
-- richer post-intake goal review workflows after the first plan is live
+- `tests/intake-goal-flow-service.test.js`
+- `tests/intake-entry-service.test.js`
+- `tests/intake-transcript-service.test.js`
+- `tests/ai-boundary-regression.test.js`
+- `e2e/intake.spec.js`

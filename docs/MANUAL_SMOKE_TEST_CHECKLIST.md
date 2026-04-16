@@ -2,6 +2,8 @@
 
 Use this after each architecture wave. Keep it fast: the goal is to catch obvious regressions in core flows, not to exhaustively QA the app.
 
+For pre-release signoff, use `docs/MANUAL_QA_RELEASE_PACK.md` instead of this shorter smoke pass.
+
 ## 1. App Boot
 
 - Open the app from a clean refresh.

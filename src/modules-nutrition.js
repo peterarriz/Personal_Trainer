@@ -1,13 +1,20 @@
-export const NUTRITION = {
-  longRun:   { cal: 2900, p: 190, c: 320, f: 70, label: "Long Run Day" },
-  hardRun:   { cal: 2700, p: 190, c: 280, f: 68, label: "Hard Run Day" },
-  easyRun:   { cal: 2600, p: 190, c: 255, f: 68, label: "Easy Run Day" },
-  otf:       { cal: 2650, p: 190, c: 265, f: 68, label: "OTF Day" },
-  strength:  { cal: 2500, p: 190, c: 220, f: 72, label: "Strength Only Day" },
-  rest:      { cal: 2350, p: 185, c: 195, f: 72, label: "Rest Day" },
-  travelRun: { cal: 2650, p: 185, c: 270, f: 68, label: "Travel + Run Day" },
-  travelRest:{ cal: 2300, p: 180, c: 190, f: 70, label: "Travel Rest Day" },
-};
+import {
+  buildNutritionDayTargetsMap,
+  getNutritionDayTypeLabel,
+  isBaseEnduranceNutritionDayType,
+  isConditioningNutritionDayType,
+  isEnduranceNutritionDayType,
+  isHardNutritionDayType,
+  isHybridNutritionDayType,
+  isLongEnduranceNutritionDayType,
+  isRecoveryNutritionDayType,
+  isStrengthNutritionDayType,
+  normalizeNutritionDayType,
+  NUTRITION_DAY_TYPES,
+  resolveWorkoutNutritionDayType,
+} from "./services/nutrition-day-taxonomy-service.js";
+
+export const NUTRITION = Object.freeze(buildNutritionDayTargetsMap());
 
 export const MEAL_PLANS = {
   home: {
@@ -63,35 +70,36 @@ export const getGoalContext = (goals) => {
 export const applyGoalNutritionTargets = (targets, dayType, goalContext) => {
   if (!targets) return null;
   const primary = goalContext.primary;
+  const normalizedDayType = normalizeNutritionDayType(dayType);
   let out = { ...targets };
   if (!primary) return out;
   if (primary.category === "body_comp") {
-    out.cal = dayType === "longRun" ? Math.max(out.cal - 50, 2300) : Math.max(out.cal - 120, 2200);
+    out.cal = isLongEnduranceNutritionDayType(normalizedDayType) ? Math.max(out.cal - 50, 2300) : Math.max(out.cal - 120, 2200);
     out.p = Math.max(out.p, 195);
   }
   if (primary.category === "running") {
-    if (["hardRun","longRun","travelRun"].includes(dayType)) out.c += 25;
+    if (isHardNutritionDayType(normalizedDayType)) out.c += 25;
     out.f = Math.max(60, out.f - 3);
   }
   if (primary.category === "strength") {
-    if (["strength","otf"].includes(dayType)) { out.p += 10; out.c += 10; }
+    if (
+      isStrengthNutritionDayType(normalizedDayType)
+      || isConditioningNutritionDayType(normalizedDayType)
+      || isHybridNutritionDayType(normalizedDayType)
+    ) {
+      out.p += 10;
+      out.c += 10;
+    }
   }
   return out;
 };
 
-export const mapWorkoutToNutritionDayType = (todayWorkout, environmentMode) => {
-  const explicitDayType = String(todayWorkout?.nutri || "").trim();
-  if (explicitDayType && NUTRITION[explicitDayType]) return explicitDayType;
-  const workoutType = String(todayWorkout?.type || "").toLowerCase();
-  const runType = String(todayWorkout?.run?.t || "").toLowerCase();
-  if (workoutType === "long" || workoutType === "long-run" || /long/.test(runType)) return "longRun";
-  if (workoutType === "hard" || workoutType === "hard-run" || /tempo|interval/.test(runType)) return "hardRun";
-  if (workoutType === "easy" || workoutType === "easy-run" || /easy/.test(runType)) return environmentMode.includes("travel") ? "travelRun" : "easyRun";
-  if (workoutType === "otf" || workoutType === "conditioning") return "otf";
-  if (workoutType === "strength" || workoutType === "strength+prehab") return "strength";
-  if (workoutType === "recovery" || workoutType === "rest") return environmentMode.includes("travel") ? "travelRest" : "rest";
-  return "easyRun";
-};
+export const mapWorkoutToNutritionDayType = (todayWorkout, environmentMode) => (
+  resolveWorkoutNutritionDayType({
+    todayWorkout,
+    environmentMode,
+  })
+);
 
 const clonePlainValueNutrition = (value) => {
   if (value == null) return value;
@@ -346,8 +354,8 @@ export const mergeActualNutritionLogUpdate = ({
 export const compareNutritionPrescriptionToActual = ({ nutritionPrescription = null, actualNutritionLog = null } = {}) => {
   const actual = actualNutritionLog ? normalizeActualNutritionLog({ dateKey: actualNutritionLog?.dateKey || "", feedback: actualNutritionLog }) : null;
   const hasActual = Boolean(actual?.loggedAt);
-  const dayType = String(nutritionPrescription?.dayType || "").toLowerCase();
-  const hardDay = ["hardrun", "longrun", "travelrun", "otf"].includes(dayType);
+  const dayType = normalizeNutritionDayType(nutritionPrescription?.dayType || "");
+  const hardDay = isHardNutritionDayType(dayType);
   const hydrationPct = Number(actual?.hydration?.pct || 0);
   const deviationKind = actual?.deviationKind || "unknown";
   const matters = !hasActual
@@ -394,15 +402,22 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
   const schedule = personalization?.environmentConfig?.schedule || [];
   const isScheduledTravelDate = schedule.some(s => s?.mode === "Travel" && s?.startDate && s?.endDate && todayKey >= s.startDate && todayKey <= s.endDate);
   const environmentMode = isScheduledTravelDate ? "travel" : (personalization.travelState.environmentMode || "home");
-  const rawDayTypeOverride = coachPlanAdjustments?.nutritionOverrides?.[new Date().toISOString().split("T")[0]];
+  const rawDayTypeOverride = coachPlanAdjustments?.nutritionOverrides?.[todayKey];
   const dayTypeOverride = rawDayTypeOverride?.dayType || rawDayTypeOverride || "";
-  const mappedDay = dayTypeOverride || mapWorkoutToNutritionDayType(todayWorkout, environmentMode);
   const travelMode = environmentMode.includes("travel") || isScheduledTravelDate || personalization?.travelState?.isTravelWeek;
-  const dayType = travelMode
-    ? (["hardRun", "longRun", "easyRun", "otf"].includes(mappedDay) ? "travelRun" : "travelRest")
-    : mappedDay;
+  const mappedDay = dayTypeOverride
+    ? normalizeNutritionDayType(dayTypeOverride)
+    : mapWorkoutToNutritionDayType(todayWorkout, environmentMode);
+  let dayType = normalizeNutritionDayType(mappedDay);
+  if (travelMode) {
+    if (isRecoveryNutritionDayType(dayType)) {
+      dayType = NUTRITION_DAY_TYPES.travelRecovery;
+    } else if (isEnduranceNutritionDayType(dayType) || isConditioningNutritionDayType(dayType)) {
+      dayType = NUTRITION_DAY_TYPES.travelEndurance;
+    }
+  }
   const goalContext = getGoalContext(goals);
-  const baseTargets = NUTRITION[dayType] || NUTRITION.easyRun;
+  const baseTargets = NUTRITION[dayType] || NUTRITION[NUTRITION_DAY_TYPES.runEasy];
   let targets = applyGoalNutritionTargets(baseTargets, dayType, goalContext);
   let phaseAwareAdjustment = null;
   const currentPhase = todayWorkout?.week?.phase || "BASE";
@@ -411,12 +426,17 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
   const hasBodyCompGoal = activeGoals.some(g => g.category === "body_comp");
   const hasStrengthGoal = activeGoals.some(g => g.category === "strength");
   if (hasBodyCompGoal && hasStrengthGoal) {
-    const heavyLiftDay = ["strength", "otf"].includes(dayType) || ["run+strength", "strength+prehab"].includes(todayWorkout?.type);
-    const easyRunWeek = !!todayWorkout?.week?.cutback || ["easyRun", "rest", "travelRest"].includes(dayType);
+    const heavyLiftDay = (
+      isStrengthNutritionDayType(dayType)
+      || isConditioningNutritionDayType(dayType)
+      || isHybridNutritionDayType(dayType)
+      || ["run+strength", "strength+prehab"].includes(todayWorkout?.type)
+    );
+    const easyRunWeek = !!todayWorkout?.week?.cutback || isBaseEnduranceNutritionDayType(dayType) || isRecoveryNutritionDayType(dayType);
     if (heavyLiftDay) {
       const prev = { ...targets };
-      targets.cal = Math.max(targets.cal, NUTRITION.strength.cal);
-      targets.c = Math.max(targets.c, NUTRITION.strength.c);
+      targets.cal = Math.max(targets.cal, NUTRITION[NUTRITION_DAY_TYPES.strengthSupport].cal);
+      targets.c = Math.max(targets.c, NUTRITION[NUTRITION_DAY_TYPES.strengthSupport].c);
       targets.p = Math.max(targets.p, 200);
       phaseAwareAdjustment = {
         active: true,
@@ -463,7 +483,7 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
     }
   }
 
-  if (goalContext.primary?.category === "running" && ["hardRun","longRun","travelRun"].includes(dayType)) {
+  if (goalContext.primary?.category === "running" && isHardNutritionDayType(dayType)) {
     if (learningLayer?.stats?.harder >= 2) {
       targets.c += 20;
       targets.cal += 70;
@@ -471,7 +491,11 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
   }
 
   if (salvageLayer?.active || failureMode?.hardeningMode) {
-    targets = { ...targets, cal: Math.max(targets.cal, NUTRITION.easyRun.cal), p: Math.max(targets.p, 190) };
+    targets = {
+      ...targets,
+      cal: Math.max(targets.cal, NUTRITION[NUTRITION_DAY_TYPES.runEasy].cal),
+      p: Math.max(targets.p, 190),
+    };
   }
 
   let phaseMode = "maintain";
@@ -479,24 +503,32 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
   else if (phaseAwareAdjustment?.mode === "deficit_on_easy_weeks") phaseMode = "cut";
   else if (goalContext.primary?.category === "strength" || ["PEAKBUILD", "PEAK"].includes(currentPhase)) phaseMode = "build";
   else if (goalContext.primary?.category === "body_comp") phaseMode = ["BASE", "BUILDING"].includes(currentPhase) ? "cut" : "maintain";
-  else if (["hardRun", "longRun", "otf"].includes(dayType)) phaseMode = "build";
+  else if (isHardNutritionDayType(dayType) || isConditioningNutritionDayType(dayType)) phaseMode = "build";
 
   const templateKey = travelMode ? "travel" : "home";
   const mealPlan = templateKey === "travel"
     ? { tips: MEAL_PLANS.travel.tips, gym: MEAL_PLANS.travel.gym }
-    : (["longRun","hardRun","travelRun"].includes(dayType) ? MEAL_PLANS.home.longRun : dayType === "rest" ? MEAL_PLANS.home.rest : MEAL_PLANS.home.training);
+    : (
+      isLongEnduranceNutritionDayType(dayType)
+        ? MEAL_PLANS.home.longRun
+        : isRecoveryNutritionDayType(dayType)
+        ? MEAL_PLANS.home.rest
+        : MEAL_PLANS.home.training
+    );
 
   const simplified = learningLayer?.adjustmentBias === "simplify" || momentum.momentumState.includes("drifting") || offTrackHits >= 3;
   const strategy = simplified
     ? ["3 simple meals + 1 protein snack", "Use one saved safe default meal", "Anchor breakfast + protein-forward dinner"]
     : ["Distribute protein across 4+ meals", "Front-load carbs around key run", "Keep hydration + sodium stable"];
+  const dayTypeLabel = getNutritionDayTypeLabel(dayType);
 
   const explanation = goalContext.primary
-    ? `Nutrition adapts to primary goal (${goalContext.primary.name}) and today (${dayType}).`
-    : `Nutrition follows training demand for today (${dayType}).`;
+    ? `Nutrition adapts to primary goal (${goalContext.primary.name}) and today (${dayTypeLabel}).`
+    : `Nutrition follows training demand for today (${dayTypeLabel}).`;
 
   return {
     dayType,
+    dayTypeLabel,
     targets,
     mealPlan,
     strategy,
@@ -513,12 +545,14 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
 
 export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext, nutritionLayer, momentum, favorites, travelMode, learningLayer, timeOfDay, loggedIntake }) => {
   const city = (location || "").trim() || "your area";
-  const key = `${city.toLowerCase()}_${dayType}`;
+  const normalizedDayType = normalizeNutritionDayType(dayType || nutritionLayer?.dayType || "");
+  const dayTypeLabel = getNutritionDayTypeLabel(normalizedDayType);
+  const key = `${city.toLowerCase()}_${normalizedDayType}`;
   const favoriteRestaurants = favorites?.restaurants || [];
   const favoriteSafeMeals = favorites?.safeMeals || [];
   const groceryPrefs = favorites?.groceries || [];
   const workoutType = String(nutritionLayer?.workoutType || "").toLowerCase();
-  const workoutLabel = String(nutritionLayer?.workoutLabel || dayType || "session");
+  const workoutLabel = String(nutritionLayer?.workoutLabel || dayTypeLabel || normalizedDayType || "session");
   const primaryCategory = goalContext?.primary?.category || "general_fitness";
   const timeBucket = String(timeOfDay || "").toLowerCase() || "afternoon";
   const intakeStatus = String(loggedIntake?.status || "").toLowerCase();
@@ -528,9 +562,9 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
   const missedProteinSignal = /protein|shake|missed meal|skipped|underate|under ate|not enough/.test(intakeIssue) || /protein|skip|missed|under/.test(intakeNote);
   const hungerSignal = intakeIssue === "hunger" || /hungry|ravenous/.test(intakeNote);
   const offTrackSignal = intakeStatus === "off_track";
-  const hardSession = ["hardRun", "longRun", "travelRun", "otf"].includes(dayType) || /hard|long|tempo|interval/.test(workoutType);
-  const strengthSession = dayType === "strength" || /strength/.test(workoutType);
-  const recoverySession = ["rest", "travelRest"].includes(dayType) || /rest|recovery/.test(workoutType);
+  const hardSession = isHardNutritionDayType(normalizedDayType) || /hard|long|tempo|interval/.test(workoutType);
+  const strengthSession = isStrengthNutritionDayType(normalizedDayType) || /strength/.test(workoutType);
+  const recoverySession = isRecoveryNutritionDayType(normalizedDayType) || /rest|recovery/.test(workoutType);
 
   const quickOptions = [
     { name: `Chipotle (${city})`, meal: "Double chicken rice bowl + fajita veg + pico", type: "restaurant", macroFit: "high_protein_high_carb" },
@@ -690,7 +724,7 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
     notes: travelMode
       ? "Travel mode: prioritize convenience + protein certainty."
       : "Home mode: prioritize prep consistency + meal anchors.",
-    summary: `${city}: ${recommendations.length} quick nutrition options aligned to ${dayType}.`,
+    summary: `${city}: ${recommendations.length} quick nutrition options aligned to ${dayTypeLabel || normalizedDayType}.`,
   };
 };
 
@@ -703,8 +737,9 @@ export const LOCAL_PLACE_TEMPLATES = {
 };
 
 export const explainMacroShift = (dayType) => {
-  if (["longRun", "hardRun", "travelRun"].includes(dayType)) return "Higher carbs support quality run output and glycogen restoration. Fat stays moderate to keep digestion smooth around sessions.";
-  if (["rest", "travelRest"].includes(dayType)) return "Slightly lower carbs on rest days maintains energy balance while keeping protein high to preserve lean mass and recovery.";
+  const normalizedDayType = normalizeNutritionDayType(dayType);
+  if (isHardNutritionDayType(normalizedDayType)) return "Higher carbs support harder or longer training output and glycogen restoration. Fat stays moderate to keep digestion smooth around the session.";
+  if (isRecoveryNutritionDayType(normalizedDayType)) return "Slightly lower carbs on recovery days maintains energy balance while keeping protein high to preserve lean mass and recovery.";
   return "Balanced carbs/protein supports training quality, recovery, and consistency.";
 };
 
@@ -715,7 +750,16 @@ export const getPlaceRecommendations = ({ city, dayType, favorites, mode, query 
   const all = [...new Set([...saved, ...base])];
   const q = (query || "").toLowerCase().trim();
   const filtered = q ? all.filter(name => name.toLowerCase().includes(q)) : all;
-  return filtered.slice(0, 8).map(name => ({ name, meal: mode === "travel" ? "Lean protein + carb side + veg" : ["longRun","hardRun","travelRun"].includes(dayType) ? "Protein bowl + extra rice" : "Protein-heavy plate + produce", source: saved.includes(name) ? "saved" : "local" }));
+  const normalizedDayType = normalizeNutritionDayType(dayType);
+  return filtered.slice(0, 8).map(name => ({
+    name,
+    meal: mode === "travel"
+      ? "Lean protein + carb side + veg"
+      : isHardNutritionDayType(normalizedDayType)
+      ? "Protein bowl + extra rice"
+      : "Protein-heavy plate + produce",
+    source: saved.includes(name) ? "saved" : "local",
+  }));
 };
 
 export const buildGroceryBasket = ({ store, city, days, dayType }) => {
@@ -725,7 +769,13 @@ export const buildGroceryBasket = ({ store, city, days, dayType }) => {
   const produce = ["bagged salad", "steam-in-bag veggies", "berries"];
   const extras = ["electrolytes", "sparkling water", "salsa/hot sauce"];
   const runBonus = ["bagels", "honey", "rice cakes"];
-  return { store, city, days, items: [...protein, ...carbs, ...fats, ...produce, ...extras, ...(["longRun", "hardRun", "travelRun"].includes(dayType) ? runBonus : [])] };
+  const normalizedDayType = normalizeNutritionDayType(dayType);
+  return {
+    store,
+    city,
+    days,
+    items: [...protein, ...carbs, ...fats, ...produce, ...extras, ...(isHardNutritionDayType(normalizedDayType) ? runBonus : [])],
+  };
 };
 
 const buildAnchorMealLabel = (anchor = null) => {
@@ -789,7 +839,7 @@ export const deriveGroceryExecutionSupport = ({
     store: preferredStore,
     city,
     days: basketType === "two_day_recovery_basket" ? 2 : 1,
-    dayType: dayType || nutritionLayer?.dayType || "easyRun",
+    dayType: dayType || nutritionLayer?.dayType || NUTRITION_DAY_TYPES.runEasy,
   });
 
   const modeSpecificItems = basketType === "travel_hotel_mini_fridge_basket"
@@ -863,7 +913,7 @@ export const deriveGroceryExecutionSupport = ({
   };
 };
 
-export const deriveFridgeCoachMealSuggestion = ({ fridgeInput, dayType = "easyRun" }) => {
+export const deriveFridgeCoachMealSuggestion = ({ fridgeInput, dayType = NUTRITION_DAY_TYPES.runEasy }) => {
   const raw = String(fridgeInput || "").trim().toLowerCase();
   if (!raw) {
     return { meal: "", coachLine: "Add a few fridge items first (example: eggs, rice, spinach)." };
@@ -877,7 +927,7 @@ export const deriveFridgeCoachMealSuggestion = ({ fridgeInput, dayType = "easyRu
   const fat = hasAny(["avocado", "olive oil", "nuts", "nut butter", "cheese", "seed"]);
 
   const proteinPick = protein || "eggs or Greek yogurt";
-  const carbPick = carb || (["longRun", "hardRun", "travelRun"].includes(dayType) ? "rice or oats" : "fruit or potato");
+  const carbPick = carb || (isHardNutritionDayType(dayType) ? "rice or oats" : "fruit or potato");
   const producePick = produce || "any frozen or fresh vegetable";
   const fatPick = fat || "olive oil or a few nuts";
   const meal = `${proteinPick} + ${carbPick} + ${producePick} (${fatPick} optional)`;

@@ -50,7 +50,7 @@ This document records the repo-grounded hardening pass that focused on the remai
 
 ### Tier 4: Pressure testing
 
-- Added a deterministic synthetic-athlete lab with 61 personas.
+- Added a deterministic synthetic-athlete lab with a 100-persona long-horizon release gate.
 - Added clustered failure reporting and subsystem heatmaps.
 - Added browser coverage for signup, logout, delete account, theme changes, weekly nutrition visibility, mobile surfaces, and intake structured-field behavior.
 

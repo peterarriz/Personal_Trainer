@@ -1,4 +1,10 @@
 import { appendProvenanceSidecar, buildProvenanceEvent, PROVENANCE_ACTORS } from "./services/provenance-service.js";
+import {
+  isHardNutritionDayType,
+  isLongEnduranceNutritionDayType,
+  normalizeNutritionDayType,
+  NUTRITION_DAY_TYPES,
+} from "./services/nutrition-day-taxonomy-service.js";
 
 export const COACH_TOOL_ACTIONS = {
   SET_PAIN_STATE: "SET_PAIN_STATE",
@@ -255,7 +261,7 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
     effects.push("Plan friction is reduced with simpler sessions and portable meal options.");
     actions.push(
       { type: COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS, payload: { enabled: true } },
-      { type: COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY, payload: { dayType: "travelRun" } }
+      { type: COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY, payload: { dayType: NUTRITION_DAY_TYPES.travelEndurance } }
     );
   }
 
@@ -276,7 +282,7 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
     );
   }
 
-  if ((s.running || todayWorkout?.type === "long") && nutritionLayer?.dayType === "longRun") {
+  if ((s.running || todayWorkout?.type === "long") && isLongEnduranceNutritionDayType(nutritionLayer?.dayType || "")) {
     notices.push("Long-run fueling context active.");
     addRecommendation("increase pre-long-run carbs to improve quality and recovery.", "moderate");
     effects.push("Higher carb availability should improve long-run quality and reduce late-session fade.");
@@ -286,7 +292,12 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
   if (s.nutrition && nutritionLayer?.simplified) {
     notices.push("Nutrition friction detected; simplification mode already favored.");
     addRecommendation("anchor meals to defaults for 3-7 days and reduce decision load.", "high");
-    actions.push({ type: COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY, payload: { dayType: todayWorkout?.type === "rest" ? "rest" : "easyRun" } });
+    actions.push({
+      type: COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY,
+      payload: {
+        dayType: todayWorkout?.type === "rest" ? NUTRITION_DAY_TYPES.recovery : NUTRITION_DAY_TYPES.runEasy,
+      },
+    });
   }
 
   if (nutritionComparison?.hasActual && nutritionComparison?.deviationKind === "under_fueled") {
@@ -359,7 +370,7 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
     actions.push({ type: COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS, payload: { weeks: 1, reason: "progress_prompt" } });
   }
 
-  if (nutritionLayer?.dayType && ["hardRun", "longRun", "travelRun"].includes(nutritionLayer.dayType)) {
+  if (nutritionLayer?.dayType && isHardNutritionDayType(nutritionLayer.dayType)) {
     addRecommendation("shift more carbs pre/post workout to support quality output.", "moderate");
     actions.push({ type: COACH_TOOL_ACTIONS.SHIFT_CARBS_AROUND_WORKOUT, payload: { pre: 30, post: 40 } });
   }
@@ -616,7 +627,7 @@ export const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWo
       label: "Recovery Day Override",
       type: "rest",
       reason: action.payload.reason,
-      nutri: "rest",
+      nutri: NUTRITION_DAY_TYPES.recovery,
       provenance: actionProvenance,
     };
     nextAlerts = [{ id:`coach_${Date.now()}`, type:"warning", msg:"Coach swapped today to recovery based on risk signals." }, ...nextAlerts].slice(0, 10);
@@ -654,7 +665,7 @@ export const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWo
   }
   if (action.type === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) {
     nextAdjustments.nutritionOverrides[dateKey] = {
-      dayType: action.payload.dayType,
+      dayType: normalizeNutritionDayType(action.payload.dayType, NUTRITION_DAY_TYPES.runEasy),
       reason: action.payload.reason || action.rationale || "coach_action",
       provenance: actionProvenance,
     };
@@ -666,7 +677,7 @@ export const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWo
   if (action.type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS) {
     nextPersonalization = mergePersonalization(nextPersonalization, { travelState: { ...nextPersonalization.travelState, isTravelWeek: true, access: "hotel" } });
     nextAdjustments.nutritionOverrides[dateKey] = {
-      dayType: "travelRun",
+      dayType: NUTRITION_DAY_TYPES.travelEndurance,
       reason: action.payload.reason || action.rationale || "travel_meal_switch",
       provenance: actionProvenance,
     };
@@ -706,7 +717,7 @@ export const applyCoachActionMutation = ({ action, runtime, currentWeek, todayWo
   if (action.type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE) {
     nextAdjustments.extra.travelNutritionMode = true;
     nextAdjustments.nutritionOverrides[dateKey] = {
-      dayType: "travelRun",
+      dayType: NUTRITION_DAY_TYPES.travelEndurance,
       reason: action.payload.reason || action.rationale || "travel_nutrition_mode",
       provenance: actionProvenance,
     };

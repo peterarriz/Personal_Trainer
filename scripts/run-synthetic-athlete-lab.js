@@ -3,6 +3,7 @@ const {
   runSyntheticAthleteLab,
   SYNTHETIC_ATHLETE_CATALOG_MODES,
   SYNTHETIC_ATHLETE_RELEASE_GATE_PERSONA_IDS,
+  SYNTHETIC_ATHLETE_RELEASE_GATE_SCHEMA_VERSION,
 } = require("../src/services/synthetic-athlete-lab/runner.js");
 const {
   SYNTHETIC_ATHLETE_PERSONAS,
@@ -22,14 +23,17 @@ const requestedCatalogMode = catalogArgIndex >= 0 ? String(args[catalogArgIndex 
 
 const catalogModeMap = {
   focus: SYNTHETIC_ATHLETE_CATALOG_MODES.focus,
+  quick: SYNTHETIC_ATHLETE_CATALOG_MODES.focus,
   "release-gate": SYNTHETIC_ATHLETE_CATALOG_MODES.releaseGate,
+  matrix: SYNTHETIC_ATHLETE_CATALOG_MODES.releaseGate,
+  archetype: SYNTHETIC_ATHLETE_CATALOG_MODES.releaseGate,
   release_gate: SYNTHETIC_ATHLETE_CATALOG_MODES.releaseGate,
   releasegate: SYNTHETIC_ATHLETE_CATALOG_MODES.releaseGate,
   expanded: SYNTHETIC_ATHLETE_CATALOG_MODES.expanded,
   full: SYNTHETIC_ATHLETE_CATALOG_MODES.expanded,
   all: SYNTHETIC_ATHLETE_CATALOG_MODES.all,
 };
-const selectedCatalogMode = catalogModeMap[requestedCatalogMode] || SYNTHETIC_ATHLETE_CATALOG_MODES.focus;
+const selectedCatalogMode = catalogModeMap[requestedCatalogMode] || SYNTHETIC_ATHLETE_CATALOG_MODES.expanded;
 
 const selectedPersonas = selectedPersonaId
   ? SYNTHETIC_ATHLETE_PERSONAS.filter((persona) => persona.id === selectedPersonaId)
@@ -60,6 +64,8 @@ const summarizePersona = (result = {}) => ({
   simulationWeeks: result.simulationWeeks,
   overallScore: result.overallScore,
   overallPass: result.overallPass,
+  cohortTags: result.cohortTags || [],
+  releaseDimensionScores: result.releaseDimensionScores || {},
   supportTierExpected: result.supportTierExpected,
   supportTierActual: result.supportTierActual,
   categoryScores: result.categoryScores,
@@ -76,7 +82,9 @@ const report = runSyntheticAthleteLab({
 });
 
 console.log(JSON.stringify({
+  schemaVersion: report.schemaVersion || SYNTHETIC_ATHLETE_RELEASE_GATE_SCHEMA_VERSION,
   summary: report.summary,
+  releaseGate: report.releaseGate,
   catalog: {
     availablePersonas: SYNTHETIC_ATHLETE_PERSONAS.length,
     selectedCatalogMode: report.summary.catalogMode,
@@ -85,8 +93,11 @@ console.log(JSON.stringify({
     releaseGatePersonas: SYNTHETIC_ATHLETE_RELEASE_GATE_PERSONA_IDS,
   },
   catalogCoverage: report.catalogCoverage,
+  releaseDimensionSummary: report.releaseDimensionSummary,
+  cohortCoverage: report.cohortCoverage,
+  fairnessSignals: report.fairnessSignals,
   personaResults: report.personaResults.map(summarizePersona),
   releaseGateMatrix: report.releaseGateMatrix,
-  topClusters: report.clusters.slice(0, 12),
+  topClusters: report.rootCauseClusters.slice(0, 12),
   browserProbes: report.browserProbes,
 }, null, 2));

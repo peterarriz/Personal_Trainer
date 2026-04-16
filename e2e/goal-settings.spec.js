@@ -190,6 +190,7 @@ const openGoalManagement = async (page) => {
   await page.getByTestId("settings-surface-goals").click();
   await expect(page.getByTestId("settings-goals-section")).toBeVisible();
   await expect(page.getByTestId("settings-goals-management")).toBeVisible();
+  await expect(page.getByTestId("settings-goals-section")).not.toContainText(/authoritative place|older plan-management/i);
 };
 
 test("Settings goals management reprioritizes with preview before commit", async ({ page }) => {

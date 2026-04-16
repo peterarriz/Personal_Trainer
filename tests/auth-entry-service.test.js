@@ -88,6 +88,7 @@ test("provider-unavailable auth model keeps the local path explicit instead of h
   assert.ok(model.localAction);
   assert.match(model.localAction?.description || "", /device|offline|local/i);
   assert.match(model.pathCards[0]?.description || "", /temporarily unavailable|offline/i);
+  assert.doesNotMatch(model.localAction?.badge || "", /fallback/i);
 });
 
 test("auth entry theme keeps primary and local-secondary contrast safe across all curated themes", () => {

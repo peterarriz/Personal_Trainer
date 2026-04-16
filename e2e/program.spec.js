@@ -31,6 +31,10 @@ async function completeRunningOnboarding(page) {
 }
 
 test.describe("program inline session detail", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 960 });
+  });
+
   test("program labels the visible planning window as the next 3 months", async ({ page }) => {
     await completeRunningOnboarding(page);
     await page.getByTestId("app-tab-program").click();
@@ -38,14 +42,15 @@ test.describe("program inline session detail", () => {
     await expect(page.getByTestId("program-future-weeks")).toContainText("NEXT 3 MONTHS");
     await expect(page.getByTestId("program-future-weeks")).toContainText("visible planning window");
     await expect(page.getByTestId("program-future-weeks")).toContainText("not the deadline for every goal");
-    await expect(page.getByText(/saved week snapshot.*next 3 months stay projected/i)).toBeVisible();
+    await expect(page.getByText(/saved week snapshot.*next 3 months stay projected/i).first()).toBeVisible();
   });
 
-  test("current week opens detail inline and keeps only one row expanded", async ({ page }) => {
+  test("current week opens detail in the anchored panel and keeps only one row selected", async ({ page }) => {
     await completeRunningOnboarding(page);
     await page.getByTestId("app-tab-program").click();
 
     const thisWeek = page.getByTestId("program-this-week");
+    const detailPanel = thisWeek.getByTestId("program-this-week-session-detail-panel");
     const rows = thisWeek.locator("[data-testid^='program-this-week-session-item-']");
     expect(await rows.count()).toBeGreaterThan(1);
 
@@ -54,12 +59,17 @@ test.describe("program inline session detail", () => {
     const firstButton = firstRow.locator("[data-testid^='program-this-week-session-button-']");
     const secondButton = secondRow.locator("[data-testid^='program-this-week-session-button-']");
 
+    await expect(detailPanel).toBeVisible();
+    await expect(detailPanel).toContainText("Select a current-week day");
+
     await firstButton.focus();
     await firstButton.press("Enter");
     await expect(firstButton).toHaveAttribute("aria-expanded", "true");
     await expect(firstRow).toHaveAttribute("data-session-selected", "true");
-    await expect(firstRow.getByTestId("planned-session-plan")).toBeVisible();
+    await expect(firstRow.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel.getByTestId("planned-session-plan")).toBeVisible();
     await expect(thisWeek.getByTestId("planned-session-plan")).toHaveCount(1);
+    const firstPanelText = await detailPanel.innerText();
 
     await secondButton.click();
     await expect(firstButton).toHaveAttribute("aria-expanded", "false");
@@ -67,16 +77,51 @@ test.describe("program inline session detail", () => {
     await expect(firstRow.getByTestId("planned-session-plan")).toHaveCount(0);
     await expect(secondButton).toHaveAttribute("aria-expanded", "true");
     await expect(secondRow).toHaveAttribute("data-session-selected", "true");
-    await expect(secondRow.getByTestId("planned-session-plan")).toBeVisible();
+    await expect(secondRow.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel.getByTestId("planned-session-plan")).toBeVisible();
     await expect(thisWeek.getByTestId("planned-session-plan")).toHaveCount(1);
+    expect(await detailPanel.innerText()).not.toBe(firstPanelText);
 
     await secondButton.click();
     await expect(secondButton).toHaveAttribute("aria-expanded", "false");
-    await expect(secondRow).toHaveAttribute("data-session-selected", "false");
-    await expect(thisWeek.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel).toContainText("Select a current-week day");
   });
 
-  test("future week preview expands detail under the selected row", async ({ page }) => {
+  test("keyboard navigation moves between days and current-week selection survives rerenders", async ({ page }) => {
+    await completeRunningOnboarding(page);
+    await page.getByTestId("app-tab-program").click();
+
+    const thisWeek = page.getByTestId("program-this-week");
+    const detailPanel = thisWeek.getByTestId("program-this-week-session-detail-panel");
+    const rows = thisWeek.locator("[data-testid^='program-this-week-session-item-']");
+    expect(await rows.count()).toBeGreaterThan(1);
+
+    const firstButton = rows.nth(0).locator("[data-testid^='program-this-week-session-button-']");
+    const secondButton = rows.nth(1).locator("[data-testid^='program-this-week-session-button-']");
+
+    await firstButton.focus();
+    await firstButton.press("ArrowDown");
+    await expect(secondButton).toBeFocused();
+
+    await secondButton.press("Enter");
+    await expect(secondButton).toHaveAttribute("aria-expanded", "true");
+    await expect(detailPanel.getByTestId("planned-session-plan")).toBeVisible();
+
+    const futureWeekCard = page.getByTestId("program-future-weeks").locator("div[data-testid^='program-future-week-card-']").first();
+    await futureWeekCard.locator("[data-testid^='program-future-week-toggle-']").click();
+
+    await expect(secondButton).toHaveAttribute("aria-expanded", "true");
+    await expect(detailPanel.getByTestId("planned-session-plan")).toBeVisible();
+
+    await secondButton.focus();
+    await secondButton.press("Escape");
+    await expect(secondButton).toHaveAttribute("aria-expanded", "false");
+    await expect(detailPanel.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel).toContainText("Select a current-week day");
+  });
+
+  test("future week preview opens detail in the adjacent panel", async ({ page }) => {
     await completeRunningOnboarding(page);
     await page.getByTestId("app-tab-program").click();
 
@@ -84,6 +129,7 @@ test.describe("program inline session detail", () => {
     const futureWeekCard = futureWeeks.locator("div[data-testid^='program-future-week-card-']").first();
     await futureWeekCard.locator("[data-testid^='program-future-week-toggle-']").click();
 
+    const detailPanel = futureWeekCard.getByTestId("program-future-week-session-detail-panel");
     const rows = futureWeekCard.locator("[data-testid^='program-future-week-session-item-']");
     expect(await rows.count()).toBeGreaterThan(1);
 
@@ -92,19 +138,27 @@ test.describe("program inline session detail", () => {
     const firstButton = firstRow.locator("[data-testid^='program-future-week-session-button-']");
     const secondButton = secondRow.locator("[data-testid^='program-future-week-session-button-']");
 
+    await expect(detailPanel).toBeVisible();
+    await expect(detailPanel).toContainText("Select a projected day");
+
     await firstButton.click();
     await expect(firstButton).toHaveAttribute("aria-expanded", "true");
-    await expect(firstRow.getByTestId("planned-session-plan")).toBeVisible();
+    await expect(firstRow.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel.getByTestId("planned-session-plan")).toBeVisible();
     await expect(secondRow.getByTestId("planned-session-plan")).toHaveCount(0);
+    const firstPanelText = await detailPanel.innerText();
 
     await secondButton.click();
     await expect(firstButton).toHaveAttribute("aria-expanded", "false");
     await expect(firstRow.getByTestId("planned-session-plan")).toHaveCount(0);
     await expect(secondButton).toHaveAttribute("aria-expanded", "true");
-    await expect(secondRow.getByTestId("planned-session-plan")).toBeVisible();
+    await expect(secondRow.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel.getByTestId("planned-session-plan")).toBeVisible();
+    expect(await detailPanel.innerText()).not.toBe(firstPanelText);
 
     await secondButton.click();
     await expect(secondButton).toHaveAttribute("aria-expanded", "false");
-    await expect(futureWeekCard.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel.getByTestId("planned-session-plan")).toHaveCount(0);
+    await expect(detailPanel).toContainText("Select a projected day");
   });
 });

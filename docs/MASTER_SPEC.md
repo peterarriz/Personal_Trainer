@@ -2,9 +2,22 @@
 
 This document is the single source of truth for product architecture. When implementation details conflict with this spec, update the code or explicitly revise this document.
 
+For the contributor-facing planning contract, read `docs/PLANNING_SOURCE_OF_TRUTH_OVERVIEW.md` alongside this spec.
+
 ## Product Definition
 
 The app is a stateful fitness operating system for a hybrid athlete. Its purpose is to decide what to do today across training, nutrition, supplements, and recovery, explain why, capture what actually happened, and adapt future decisions accordingly. AI should be used selectively for synthesis, interpretation, and coaching language, but not as the system of record.
+
+## Contributor Reading Order
+
+When touching planning, intake, adaptation, or trust-sensitive UI:
+
+1. `docs/PLANNING_SOURCE_OF_TRUTH_OVERVIEW.md`
+2. `docs/MASTER_SPEC.md`
+3. `docs/DYNAMIC_PLAN_ENGINE_AND_ADAPTATION_SPEC.md`
+4. `docs/INTAKE_AI_BOUNDARY.md`
+5. `docs/PLAN_WEEK_PERSISTENCE_MODEL.md`
+6. `docs/WORKOUT_SOURCE_OF_TRUTH_CONTRACT.md`
 
 ## Core User Promise
 
@@ -92,6 +105,7 @@ Interpretation:
 - `PlanDay` is the single daily operating decision.
 - Domain prescriptions are children of the day, not separate competing plans.
 - Actual outcomes influence future plan generation, never rewrite history.
+- The visible 12-week horizon is a preview window, not a promise that every goal finishes inside that window.
 
 ## Dynamic Planning Engine
 
@@ -207,6 +221,7 @@ AI is allowed to:
 - summarize patterns and tradeoffs
 - generate coaching tone and user-facing language
 - suggest options based on a typed input packet
+- suggest timing interpretation or target horizons during intake
 
 AI is not allowed to:
 
@@ -214,6 +229,7 @@ AI is not allowed to:
 - silently write canonical state
 - replace deterministic calculations for readiness, prescriptions, or provenance
 - infer actual completion without an explicit user log or trusted device record
+- force a hard end date when the goal is genuinely open-ended
 
 ## Rules For Planned State Vs Actual State
 
@@ -223,6 +239,7 @@ AI is not allowed to:
 - A modified completion is an actual result, not proof that the plan was wrong.
 - Future planning may learn from actual state, but past planned state remains historically true for that date.
 - UI components must never blur these two concepts for convenience.
+- Durable week snapshots and prescribed-day revisions preserve historical truth, while projected future weeks stay preview-only until they become current.
 
 ## Provenance And Trust Principles
 

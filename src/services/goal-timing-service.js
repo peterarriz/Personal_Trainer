@@ -51,7 +51,7 @@ export const buildTimingModeHelpText = ({
   if (timingMode === "target_horizon") {
     return `Use a target window in weeks. The ${visibleHorizonLabel} stay a visible plan, not a forced finish line.`;
   }
-  return `No hard end date. The ${visibleHorizonLabel} show the next phase, not the whole journey.`;
+  return `No fixed deadline. The ${visibleHorizonLabel} show the next phase, not the whole journey.`;
 };
 
 export const resolveGoalTimingShape = (goal = {}) => {

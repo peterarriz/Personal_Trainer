@@ -260,6 +260,28 @@ const buildPowerPlanRows = (training = {}) => {
   ];
 };
 
+const buildSupportPlanRows = (training = {}) => {
+  const supportBlocks = Array.isArray(training?.supportBlocks) ? training.supportBlocks : [];
+  const explicitBlocks = supportBlocks
+    .map((block = {}) => buildPlanRow({
+      title: block?.title || "Support work",
+      detail: block?.detail || block?.dose || block?.summary || "",
+      note: block?.note || training?.supportSummary || "",
+    }))
+    .filter((row) => row.detail || row.note);
+  if (explicitBlocks.length > 0) return explicitBlocks;
+
+  const optionalSecondary = sanitizeText(training?.optionalSecondary || "", 160);
+  if (!optionalSecondary) return [];
+  return [
+    buildPlanRow({
+      title: "Support work",
+      detail: optionalSecondary,
+      note: sanitizeText(training?.supportSummary || training?.environmentNote || "", 180),
+    }),
+  ];
+};
+
 const buildStrengthPlanRows = ({ training = {}, prescribedExercises = [] } = {}) => {
   const rawType = sanitizeText(training?.type || "", 40).toLowerCase();
   const isStrengthSession = ["strength", "strength+prehab", "run+strength"].includes(rawType) || Boolean(training?.strSess);
@@ -329,6 +351,15 @@ const buildSessionPlanPreview = ({ training = {}, prescribedExercises = [] } = {
       key: "support",
       title: "Support block",
       rows: powerRows,
+    });
+  }
+
+  const supportRows = buildSupportPlanRows(safeTraining);
+  if (supportRows.length) {
+    sections.push({
+      key: "support_work",
+      title: "Support work",
+      rows: supportRows,
     });
   }
 

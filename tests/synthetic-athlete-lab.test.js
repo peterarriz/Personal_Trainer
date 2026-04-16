@@ -8,6 +8,8 @@ const {
   runSyntheticAthleteLab,
   SYNTHETIC_ATHLETE_CATALOG_MODES,
   SYNTHETIC_ATHLETE_RELEASE_GATE_PERSONA_IDS,
+  SYNTHETIC_ATHLETE_RELEASE_GATE_SCHEMA_VERSION,
+  SYNTHETIC_ATHLETE_RELEASE_GATE_THRESHOLD_PROPOSAL,
 } = require("../src/services/synthetic-athlete-lab/runner.js");
 
 const REQUIRED_CLUSTER_IDS = [
@@ -76,13 +78,20 @@ test("synthetic athlete lab keeps the required failure cluster taxonomy and brow
   assert.ok(report.browserProbes.some((probe) => probe.specRef === "e2e/coach.spec.js"));
   assert.ok(report.browserProbes.some((probe) => probe.specRef === "e2e/program.spec.js"));
   assert.ok(report.browserProbes.some((probe) => probe.specRef === "e2e/goal-settings.spec.js"));
+  const skepticalProbe = report.browserProbes.find((probe) => probe.specRef === "e2e/adversarial-trust.spec.js");
+  assert.ok(skepticalProbe);
+  assert.deepEqual(
+    skepticalProbe.failureClassifications,
+    ["trust break", "dead end", "contradiction", "accessibility bug", "polish bug"]
+  );
 });
 
-test("synthetic athlete lab release gate matrix covers obese beginner, swimmer, strength, and hybrid archetypes", () => {
+test("synthetic athlete lab release gate matrix covers obese beginner, swimmer, strength, hybrid, and hostile-trainer archetypes", () => {
   const report = runSyntheticAthleteLab();
   const matrixIds = report.releaseGateMatrix.map((entry) => entry.personaId).sort();
 
   assert.deepEqual(matrixIds, SYNTHETIC_ATHLETE_RELEASE_GATE_PERSONA_IDS.slice().sort());
+  assert.ok(matrixIds.includes("hostile_trainer_anti_ai"));
   assert.ok(report.releaseGateMatrix.every((entry) => entry.verdict === "credible"));
 });
 
@@ -101,16 +110,20 @@ test("synthetic athlete lab can target a selected persona and shorter simulation
   assert.deepEqual(report.releaseGateMatrix, []);
 });
 
-test("synthetic athlete lab can run the expanded 100-persona catalog with meaningful coverage", () => {
+test("synthetic athlete lab can run the expanded 100-persona release gate for six months with cohort and fairness reporting", () => {
   const report = runSyntheticAthleteLab({
     catalogMode: SYNTHETIC_ATHLETE_CATALOG_MODES.expanded,
     targetPersonaCount: 100,
-    weeks: 4,
+    weeks: 26,
     includeArchetypeMatrix: false,
   });
 
+  assert.equal(report.schemaVersion, SYNTHETIC_ATHLETE_RELEASE_GATE_SCHEMA_VERSION);
   assert.equal(report.summary.personaCount, 100);
   assert.equal(report.summary.catalogMode, SYNTHETIC_ATHLETE_CATALOG_MODES.expanded);
+  assert.equal(report.summary.simulationWeeks, 26);
+  assert.equal(report.releaseGate.thresholds.minimumPersonaCount, SYNTHETIC_ATHLETE_RELEASE_GATE_THRESHOLD_PROPOSAL.minimumPersonaCount);
+  assert.equal(report.releaseGate.thresholds.minimumSimulationWeeks, SYNTHETIC_ATHLETE_RELEASE_GATE_THRESHOLD_PROPOSAL.minimumSimulationWeeks);
   assert.ok(report.catalogCoverage.exactUsers > 0);
   assert.ok(report.catalogCoverage.vagueUsers > 0);
   assert.ok(report.catalogCoverage.chaoticUsers > 0);
@@ -120,6 +133,58 @@ test("synthetic athlete lab can run the expanded 100-persona catalog with meanin
   assert.ok(report.catalogCoverage.coachOveruseUsers > 0);
   assert.ok(report.catalogCoverage.swimUsers > 0);
   assert.ok(report.catalogCoverage.hybridDomainUsers > 0);
+  assert.deepEqual(
+    report.releaseDimensionSummary.dimensions.map((dimension) => dimension.id),
+    ["coherence", "progressionRealism", "safety", "adaptationQuality", "crossSurfaceConformity"]
+  );
+  assert.ok(report.cohortCoverage.required.every((cohort) => cohort.meetsMinimum));
+  assert.equal(report.cohortCoverage.requiredMissing.length, 0);
+  assert.equal(typeof report.fairnessSignals.maximumAverageGap, "number");
+  assert.equal(typeof report.fairnessSignals.maximumDimensionGap, "number");
+  assert.ok(report.rootCauseClusters.every((cluster) => Array.isArray(cluster.cohorts)));
+  assert.ok(report.personaResults.every((result) => Array.isArray(result.cohortTags)));
+  assert.ok(report.personaResults.every((result) => typeof result.releaseDimensionScores.coherence === "number"));
+});
+
+test("synthetic athlete lab stays reproducible for the same personas and horizon", () => {
+  const personas = [
+    SYNTHETIC_ATHLETE_PERSONAS.find((entry) => entry.id === "novice_obese_beginner"),
+    SYNTHETIC_ATHLETE_PERSONAS.find((entry) => entry.id === "recreational_swimmer"),
+  ].filter(Boolean);
+  const first = runSyntheticAthleteLab({
+    personas,
+    weeks: 8,
+    includeArchetypeMatrix: false,
+  });
+  const second = runSyntheticAthleteLab({
+    personas,
+    weeks: 8,
+    includeArchetypeMatrix: false,
+  });
+
+  const summarize = (report) => ({
+    summary: report.summary,
+    releaseDimensionSummary: report.releaseDimensionSummary,
+    cohortCoverage: report.cohortCoverage,
+    fairnessSignals: report.fairnessSignals,
+    clusters: report.rootCauseClusters,
+    personaResults: report.personaResults.map((result) => ({
+      personaId: result.personaId,
+      cohortTags: result.cohortTags,
+      releaseDimensionScores: result.releaseDimensionScores,
+      overallScore: result.overallScore,
+      overallPass: result.overallPass,
+      failures: result.failures.map((failure) => ({
+        clusterId: failure.clusterId,
+        severity: failure.severity,
+        message: failure.message,
+        stepRef: failure.stepRef,
+      })),
+      timeline: result.timeline,
+    })),
+  });
+
+  assert.deepEqual(summarize(first), summarize(second));
 });
 
 test("synthetic athlete lab no longer loops proxy-choice intake or flags plain-English maintenance copy as lane theater", () => {

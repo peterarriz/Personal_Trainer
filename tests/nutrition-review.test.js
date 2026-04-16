@@ -149,5 +149,7 @@ test("day review keeps original and latest prescription separate from actual exe
   assert.equal(review.story.actualSummary.label, "Upper Strength plus accessories");
   assert.match(review.story.mainLesson, /intent but changed the dose|readiness signal/i);
   assert.match(review.story.nextEffect, /session theme|next progression step/i);
+  assert.doesNotMatch(review.story.auditSummary, /rev(?:ision)?\s*\d+|Capture\s+\d+|timeline mechanics|plan changed/i);
+  assert.match(review.story.auditSummary, /final plan|final prescription|saved prescription/i);
   assert.equal(review.revisionTimeline.length, 2);
 });

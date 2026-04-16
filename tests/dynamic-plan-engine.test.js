@@ -10,6 +10,7 @@ const {
   buildGoalCapabilityPacket,
   DOMAIN_ADAPTER_IDS,
 } = require("../src/services/goal-capability-resolution-service.js");
+const { NUTRITION_DAY_TYPES } = require("../src/services/nutrition-day-taxonomy-service.js");
 const { createEmptyTrainingContext } = require("../src/services/training-context-service.js");
 
 const BASE_WEEK = {
@@ -230,11 +231,32 @@ test("swim goals route through the shared swimming adapter instead of generic fa
     { name: "Swim a faster mile", category: "general_fitness" },
   ]);
   const composer = buildComposer({ goals });
+  const sessions = Object.values(composer.dayTemplates || {}).filter(Boolean);
+  const swimSessions = sessions.filter((session) => /^swim-/.test(String(session?.type || "")));
+  const drylandSupport = sessions.filter((session) => session?.type === "strength+prehab");
 
   assert.equal(composer.domainAdapter?.id, DOMAIN_ADAPTER_IDS.swimming);
   assert.equal(composer.goalCapabilityStack?.primary?.primaryDomain, DOMAIN_ADAPTER_IDS.swimming);
-  assert.ok(Object.values(composer.dayTemplates || {}).some((session) => /^swim-/.test(String(session?.type || ""))));
+  assert.ok(swimSessions.length >= 3);
+  assert.ok(swimSessions.every((session) => String(session?.nutri || "").startsWith("swim_")));
+  assert.ok(drylandSupport.length >= 2);
+  assert.ok(drylandSupport.every((session) => session?.nutri === NUTRITION_DAY_TYPES.strengthSupport));
+  assert.ok(drylandSupport.some((session) => /mobility|activation|support/i.test(String(session?.optionalSecondary || ""))));
   assert.equal(composer.programBlock?.dominantEmphasis?.category, "swimming");
+});
+
+test("run-focused goals keep explicit support work instead of run-only prescription spam", () => {
+  const goals = buildGoals([
+    { name: "Run a faster 5k", category: "running", targetDate: "2026-09-01" },
+  ]);
+  const composer = buildComposer({ goals });
+  const sessions = Object.values(composer.dayTemplates || {}).filter(Boolean);
+  const supportSessions = sessions.filter((session) => ["run+strength", "strength+prehab"].includes(String(session?.type || "")));
+
+  assert.ok(supportSessions.length >= 2);
+  assert.ok(supportSessions.some((session) => session?.nutri === NUTRITION_DAY_TYPES.hybridSupport));
+  assert.ok(supportSessions.some((session) => session?.nutri === NUTRITION_DAY_TYPES.strengthSupport));
+  assert.ok(supportSessions.every((session) => String(session?.optionalSecondary || "").trim().length > 0));
 });
 
 test("vertical jump goals route through the shared power adapter", () => {

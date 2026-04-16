@@ -4,6 +4,8 @@
 
 This spec defines the deterministic closed-loop planning engine that powers FORMA outside intake.
 
+For the contributor-facing summary of this contract, read `docs/PLANNING_SOURCE_OF_TRUTH_OVERVIEW.md` first.
+
 The planning hierarchy is:
 
 `profile -> resolved goal stack -> GoalCapabilityPacket -> domain adapter -> ProgramBlock -> WeeklyIntent -> PlanWeek -> PlanDay -> prescriptions -> actuals -> future adaptations`
@@ -32,6 +34,7 @@ Pre-remediation failures reproduced in the repo:
 - `Style`: a soft overlay that changes feel, emphasis, and flavor without becoming the full weekly backbone.
 - `Training Preference`: a planning-policy modifier. It changes progression tolerance, fatigue ceiling, density, and catch-up posture.
 - `Actuals`: observed outcomes. They never rewrite planned history.
+- `Visible horizon`: the next 12 weeks of projected work. It is a planning preview window, not the full goal deadline.
 
 ## Architecture
 
@@ -58,6 +61,7 @@ Pre-remediation failures reproduced in the repo:
 - `src/modules-planning.js` remains the source-of-truth composer.
 - `composeGoalNativePlan(...)` now:
   - resolves the training preference policy
+  - gives the highest-priority goal first claim on architecture and fatigue budget
   - selects the domain adapter
   - builds domain-specific day templates
   - layers Program / Style basis
@@ -98,6 +102,13 @@ Pre-remediation failures reproduced in the repo:
 - `Program / Style activation`: immediate basis change
 - `goal changes`: canonical re-resolution and re-planning
 
+The important rule is that adaptation changes future work, not historical committed truth.
+
+Historical preservation lives in:
+
+- `src/services/prescribed-day-history-service.js`
+- `src/services/plan-week-persistence-service.js`
+
 ## Unknown-Goal Fallback
 
 When a goal is vague, uncommon, or unsupported:
@@ -107,6 +118,29 @@ When a goal is vague, uncommon, or unsupported:
 3. surface missing anchors
 4. keep confidence honest
 5. use a foundation-first fallback mode instead of pretending exact sport mastery
+
+This same rule applies to timing:
+
+- exact dates matter when the calendar truly matters
+- target horizons are valid when only a time window is known
+- open-ended goals remain first-class and still build a real plan
+
+The planner should not invent fake deadline precision.
+
+## Visible Horizon And Historical Truth
+
+The live product keeps three different concepts separate:
+
+- goal deadline or target horizon
+- the visible 12-week planning window
+- committed historical week/day truth
+
+Current rules:
+
+- `DEFAULT_PLANNING_HORIZON_WEEKS` is `12`
+- the UI describes that as `next 3 months`
+- projected future weeks stay projected until they become current
+- committed week snapshots and prescribed-day revisions remain auditable history
 
 Examples:
 

@@ -1,0 +1,54 @@
+{
+  "capturedAt": "2026-04-15T23:40:26.598Z",
+  "viewport": "1440x1200 dark laptop",
+  "files": [
+    "auth-manual.png",
+    "coach-manual.png",
+    "intake-manual.png",
+    "log-manual.png",
+    "nutrition-manual.png",
+    "profile-setup-manual.png",
+    "program-manual.png",
+    "settings-account-manual.png",
+    "settings-goals-manual.png",
+    "today-manual.png"
+  ],
+  "notes": [
+    {
+      "surface": "auth",
+      "staleTerms": []
+    },
+    {
+      "surface": "intake",
+      "staleTerms": []
+    },
+    {
+      "surface": "today",
+      "staleTerms": []
+    },
+    {
+      "surface": "program",
+      "staleTerms": []
+    },
+    {
+      "surface": "log",
+      "staleTerms": []
+    },
+    {
+      "surface": "nutrition",
+      "staleTerms": []
+    },
+    {
+      "surface": "coach",
+      "staleTerms": []
+    },
+    {
+      "surface": "settings-account",
+      "staleTerms": []
+    },
+    {
+      "surface": "settings-goals",
+      "staleTerms": []
+    }
+  ]
+}

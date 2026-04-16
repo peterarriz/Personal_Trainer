@@ -78,6 +78,7 @@ test.describe("auth entry UI", () => {
     await expect(page.getByTestId("auth-mode-signin")).toHaveAttribute("data-auth-variant", "tertiary");
     await expect(page.getByTestId("auth-mode-signup")).toHaveAttribute("data-auth-variant", "tertiary");
     await expect(page.getByTestId("auth-local-cta-description")).toContainText(/this device|cloud/i);
+    await expect(page.getByTestId("auth-local-cta")).not.toContainText(/fallback/i);
 
     await page.getByTestId("auth-mode-signup").click();
     await expect(page.getByTestId("auth-signup-name")).toBeVisible();

@@ -584,14 +584,14 @@ export const buildAuthEntryViewModel = ({
   const hasLocalPath = Boolean(startupLocalResumeAvailable || authProviderUnavailable);
 
   const localPathDescription = startupLocalResumeAvailable
-    ? "Resume from the training data already stored on this device. Cloud backup, multi-device sync, and account recovery stay off until you sign in."
-    : "FORMA can keep working on this device only while cloud auth is offline. Your training state stays here until sign-in is available again.";
+    ? "Resume from the training data already stored on this device. Cloud backup, multi-device sync, and account recovery turn back on when you sign in."
+    : "FORMA can keep working on this device while cloud sign-in is offline. Your training data stays here until the cloud path returns.";
 
   const subtitle = authProviderUnavailable
-    ? "Cloud sign-in is offline right now. You can still keep training locally, and the device-only path is fully explained below."
+    ? "Cloud sign-in is offline right now. You can keep training on this device, and the local path below shows exactly what stays available."
     : startupLocalResumeAvailable
-    ? "Choose between restoring your synced account or continuing with the training data already saved on this device."
-    : "Sign in or create an account to unlock syncing, backup, and recovery without losing FORMA's local-first resilience.";
+    ? "Choose between your synced account and the training data already saved on this device."
+    : "Sign in or create an account to turn on syncing, backup, and recovery while keeping FORMA local-first.";
 
   return {
     eyebrow: "FORMA account access",
@@ -625,14 +625,14 @@ export const buildAuthEntryViewModel = ({
       },
       {
         id: "local",
-        kicker: startupLocalResumeAvailable ? "This device only" : "Local mode",
-        title: startupLocalResumeAvailable ? "Continue with the data already here" : "Keep training without the cloud",
+        kicker: startupLocalResumeAvailable ? "On this device" : "Local mode",
+        title: startupLocalResumeAvailable ? "Continue with the data on this device" : "Keep training without the cloud",
         description: localPathDescription,
         benefits: startupLocalResumeAvailable
           ? [
               "Uses the training history already saved in this browser.",
-              "Does not require email verification or cloud availability.",
-              "You can sign in later when you want sync and account recovery back.",
+              "No email verification or cloud availability needed.",
+              "You can sign in later to turn sync and recovery back on.",
             ]
           : [
               "Starts or continues in device-only storage.",
@@ -646,7 +646,7 @@ export const buildAuthEntryViewModel = ({
     form: {
       title: mode === "signup" ? "Create your account" : "Sign in",
       description: mode === "signup"
-        ? "Create the secure account first, then finish your athlete profile with the same full setup flow you get after sign-in."
+        ? "Create the account first, then finish setup with the same intake flow you get after sign-in."
         : "Use the email tied to your FORMA account to restore cloud sync, backup, and account controls.",
       modeOptions: [
         {
@@ -669,14 +669,14 @@ export const buildAuthEntryViewModel = ({
         variant: AUTH_ACTION_VARIANTS.primary,
       },
       primaryCaption: mode === "signup"
-        ? "Creating an account turns on cloud backup and lets you recover this training state on another device."
+        ? "Turns on cloud backup and lets you recover this training state on another device."
         : "Signing in turns cloud sync, backup, and account controls back on for this device.",
     },
     localAction: hasLocalPath ? {
       title: startupLocalResumeAvailable ? "Continue with local data" : "Continue in local mode",
       label: startupLocalResumeAvailable ? "Continue with local data" : "Continue in local mode",
       description: localPathDescription,
-      badge: startupLocalResumeAvailable ? "Device-only mode" : "Local-only fallback",
+      badge: startupLocalResumeAvailable ? "This device" : "Local mode",
       variant: AUTH_ACTION_VARIANTS.secondary,
     } : null,
   };

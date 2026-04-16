@@ -1,5 +1,7 @@
 # Goal Resolution Model
 
+For the contributor-facing planning contract, read `docs/PLANNING_SOURCE_OF_TRUTH_OVERVIEW.md` alongside this model.
+
 ## Purpose
 
 This model defines how the product should turn vague user goal language into structured planning inputs without making AI the system of record.

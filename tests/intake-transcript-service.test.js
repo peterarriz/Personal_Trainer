@@ -116,7 +116,7 @@ test("repeated clarification updates preserve stable order without letting a lat
 
 test("late goal edit follow-up messages keep insertion order stable across multiple queued batches", () => {
   const adjustmentQueue = queueCoachTranscriptMessages({
-    texts: ["Tell me what you want to change and I'll recalibrate it before I build."],
+    texts: ["Describe the change."],
     nextMessageId: 31,
   });
   const clarificationQueue = queueCoachTranscriptMessages({
@@ -129,7 +129,7 @@ test("late goal edit follow-up messages keep insertion order stable across multi
 
   const allTexts = [...adjustmentQueue.entries, ...clarificationQueue.entries].map((entry) => entry.text);
   assert.deepEqual(allTexts, [
-    "Tell me what you want to change and I'll recalibrate it before I build.",
+    "Describe the change.",
     "So I don't guess: What's the race date or target month?",
     "I still need one critical detail first: What's the race date or target month?",
   ]);
@@ -290,7 +290,7 @@ test("secondary-goal added note does not duplicate when a live UI note and the m
   const goalAddedKey = "goal_added:bench 225";
   const liveQueue = queueCoachTranscriptMessages({
     texts: [{
-      text: "Added bench 225. If there's another goal that matters, drop it in. Otherwise we can keep moving.",
+      text: "Added bench 225. Add another goal or continue.",
       message_key: goalAddedKey,
       idempotency_key: goalAddedKey,
       message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,

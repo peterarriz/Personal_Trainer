@@ -1980,6 +1980,34 @@ const ADDITIONAL_ADVERSARIAL_PERSONAS = [
     likelyFailureModes: ["mixed-domain translation", "grip goal can get hidden"],
     baselineMetrics: { bodyweight: 187, lift: { exercise: "Deadlift", weight: 275, reps: 5 } },
   }),
+  promptPersona({
+    id: "hostile_trainer_anti_ai",
+    name: "Grant",
+    age: 44,
+    trainingAgeYears: 18,
+    goalIntents: ["keep my strength high", "keep my conditioning sharp without generic filler"],
+    supportTierExpectation: "tier_1",
+    bodyCompContext: "skeptical veteran trainer using the product to hunt for contradictions and embarrass it in front of clients",
+    strengthContext: "experienced coach and lifter with strong opinions about exercise selection and progression logic",
+    enduranceContext: "wants useful conditioning support but hates canned running theater and dumb generic circuits",
+    equipmentReality: "full gym, turf, and enough equipment to notice lazy programming",
+    scheduleReality: "4 sessions between client blocks while actively pressure-testing the app",
+    loggingBehavior: "logs enough detail to pressure-test adaptations and look for contradictions",
+    nutritionBehavior: "solid habits; mostly evaluating training logic, not meal advice",
+    coachInteractionBehavior: "hostile and argumentative, using coach replies to challenge whether the app is trying to replace trainers",
+    likelyFailureModes: [
+      "generic prescriptive workouts trigger ridicule",
+      "trainer-replacement tone destroys trust immediately",
+      "any contradiction across surfaces becomes a screenshot for clients",
+      "support work must look deliberate instead of padded filler",
+    ],
+    baselineMetrics: {
+      bodyweight: 208,
+      waist: 37,
+      lift: { exercise: "Bench Press", weight: 235, reps: 5 },
+      run: { distanceMiles: 3, paceText: "8:20 pace" },
+    },
+  }),
 ];
 
 const SUPPORT_TIER_EXPECTATION_OVERRIDES = {

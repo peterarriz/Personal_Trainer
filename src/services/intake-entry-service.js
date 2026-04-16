@@ -16,25 +16,80 @@ const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [
 export const INTAKE_STAGE_CONTRACT = Object.freeze([
   Object.freeze({
     key: "goal_setup",
-    label: "Goal Setup",
-    helper: "Pick the goal path and the realities that shape the first block.",
+    label: "Goals",
+    helper: "Choose the goal path and the realities that shape week one.",
   }),
   Object.freeze({
     key: "needed_details",
-    label: "Needed Details",
-    helper: "Only the anchor details that still materially change the first plan.",
+    label: "Details",
+    helper: "Add only the details that still change the first plan.",
   }),
   Object.freeze({
     key: "review",
-    label: "Review",
-    helper: "See the resolved priority order before it becomes canonical.",
+    label: "Confirm",
+    helper: "Check the resolved priority order before build.",
   }),
   Object.freeze({
     key: "build",
     label: "Build",
-    helper: "Turn the confirmed stack into the first plan.",
+    helper: "Create the first plan from the confirmed setup.",
   }),
 ]);
+
+export const INTAKE_COPY_DECK = Object.freeze({
+  shell: Object.freeze({
+    title: "Setup",
+    progressSuffix: "Draft until you confirm.",
+    helper: "Set priorities fast. Add detail only where it changes the first plan.",
+  }),
+  summaryRail: Object.freeze({
+    eyebrow: "Current draft",
+    title: "What the plan will use",
+    helper: "Draft only until you confirm the stack.",
+  }),
+  goals: Object.freeze({
+    heroEyebrow: "DIRECT SETUP",
+    heroBody: "Choose a goal type, select the mapped path, then add only the inputs that sharpen week one.",
+    goalTypeHelper: "Start with the goal type, then pick a mapped goal instead of writing a full brief.",
+  }),
+  interpretation: Object.freeze({
+    title: "Draft",
+    readyHelper: "Review the draft before adding more detail.",
+    assessingHelper: "Resolving your priority order...",
+    bannerEyebrow: "DRAFT ONLY",
+    bannerHelper: "Nothing becomes final until you confirm.",
+    emptyState: "Your resolved priorities will appear here once the draft is ready.",
+  }),
+  clarify: Object.freeze({
+    helper: "Add only the details that still change the first plan.",
+    stackEyebrow: "CURRENT DRAFT",
+    baselineNote: "Saved to your baselines so you can edit it later in Settings.",
+    structuredToggle: "Structured",
+    naturalToggle: "Free text",
+    naturalPlaceholder: "Add the detail in your own words.",
+    genericPlaceholder: "Add the detail.",
+  }),
+  confirm: Object.freeze({
+    helper: "Confirm the priority order before we build.",
+  }),
+  adjust: Object.freeze({
+    title: "Adjust",
+    helper: "Describe what should change.",
+    placeholder: "Describe the change.",
+  }),
+  build: Object.freeze({
+    helper: "Turning the confirmed priorities into the first plan.",
+    status: "Building the first plan...",
+  }),
+  footer: Object.freeze({
+    goals: "Choose the goal path, then add only the details that shape week one.",
+    interpretation: "Check the draft before adding more detail.",
+    clarify: "Add only the remaining details that still change planning.",
+    confirm: "Confirm the priority order so the first plan starts from the right stack.",
+    building: "Building the first plan now.",
+    adjust: "Describe the change, then continue.",
+  }),
+});
 
 export const INTAKE_STARTER_GOAL_TYPES = Object.freeze([
   Object.freeze({
@@ -80,8 +135,8 @@ export const INTAKE_STARTER_GOAL_TYPES = Object.freeze([
   Object.freeze({
     id: "custom",
     label: "Custom",
-    eyebrow: "Fallback",
-    helper: "Use your own words when the library misses what you actually mean.",
+    eyebrow: "Custom",
+    helper: "Write your own goal when the library does not fit.",
     categoryId: "all",
     featuredTemplateIds: [],
   }),

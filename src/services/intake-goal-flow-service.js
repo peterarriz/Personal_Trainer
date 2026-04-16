@@ -2195,7 +2195,7 @@ export const buildIntakeSummaryRailModel = ({
     ),
     interpretedGoals,
     trackingItems: sanitizeDisplayList(
-      trackingItems.length ? trackingItems : ["We will propose the first tracking markers after interpretation."],
+      trackingItems.length ? trackingItems : ["First tracking markers appear with the draft."],
       180
     ),
     fuzzyItems: sanitizeDisplayList(
@@ -2203,13 +2203,13 @@ export const buildIntakeSummaryRailModel = ({
       180
     ),
     tradeoffItems: sanitizeDisplayList(
-      tradeoffItems.length ? tradeoffItems : ["Tradeoffs will show up here before anything becomes canonical."],
+      tradeoffItems.length ? tradeoffItems : ["Balancing notes appear before you confirm."],
       220
     ),
     sections: [
       {
         key: "your_words",
-        label: "Your words",
+        label: "Goal request",
         items: sanitizeDisplayList(
           yourWords.length ? yourWords : ["Add at least one goal."],
           180
@@ -2217,29 +2217,29 @@ export const buildIntakeSummaryRailModel = ({
       },
       {
         key: "interpreted_goals",
-        label: "Interpreted goals",
+        label: "Priority draft",
         items: sanitizeDisplayList(
           interpretedGoals.length
             ? interpretedGoals.map((goal) => (
                 `${goal.priorityLabel || goal.roleLabel ? `${goal.priorityLabel || goal.roleLabel}: ` : ""}${goal.summary}${goal.goalTypeLabel ? ` - ${goal.goalTypeLabel}` : ""}${goal.timingLabel ? ` - ${goal.timingLabel}` : ""}`
               ))
             : (yourWords.length
-              ? ["We will resolve your priority order after you continue."]
-              : ["Your interpreted goals will show up here."]),
+              ? ["Priority order resolves after you continue."]
+              : ["Resolved goals appear here."]),
           220
         ),
       },
       {
         key: "what_we_track",
-        label: "What we will track",
+        label: "Tracking focus",
         items: sanitizeDisplayList(
-          trackingItems.length ? trackingItems : ["We will propose the first tracking markers after interpretation."],
+          trackingItems.length ? trackingItems : ["First tracking markers appear with the draft."],
           180
         ),
       },
       {
         key: "what_is_fuzzy",
-        label: "What is still fuzzy",
+        label: "Still open",
         items: sanitizeDisplayList(
           fuzzyItems.length ? fuzzyItems : ["No open gaps once the stack is confirmed."],
           180
@@ -2247,9 +2247,9 @@ export const buildIntakeSummaryRailModel = ({
       },
       {
         key: "tradeoffs",
-        label: "Tradeoffs",
+        label: "Balancing notes",
         items: sanitizeDisplayList(
-          tradeoffItems.length ? tradeoffItems : ["Tradeoffs will show up here before anything becomes canonical."],
+          tradeoffItems.length ? tradeoffItems : ["Balancing notes appear before you confirm."],
           220
         ),
       },

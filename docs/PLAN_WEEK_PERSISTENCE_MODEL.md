@@ -1,5 +1,7 @@
 # PlanWeek Persistence Model
 
+For the higher-level planning contract, read `docs/PLANNING_SOURCE_OF_TRUTH_OVERVIEW.md` first.
+
 `PlanWeek` is now persisted as a first-class durable record for committed weeks.
 
 This does not replace the in-memory planner. It gives the existing planner a durable week-history layer so historical review does not have to reconstruct prior weeks from templates.
