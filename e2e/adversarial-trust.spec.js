@@ -118,6 +118,10 @@ const openSettingsAccountSurface = async (page) => {
   await expect(page.getByTestId("settings-account-section")).toBeVisible();
 };
 
+const openSettingsAccountAdvanced = async (page) => {
+  await page.getByTestId("settings-account-advanced").locator("summary").click();
+};
+
 const completeRunningOnboarding = async (page) => {
   await gotoIntakeInLocalMode(page);
   await completeIntroQuestionnaire(page, {
@@ -347,7 +351,7 @@ test.describe("skeptical user adversarial coverage", () => {
       concern: "A blocked delete path cannot strand the user in Settings or make the account lifecycle ambiguous.",
       surfaces: ["settings", "account", "auth"],
       notes: [
-        "Verifies diagnostics show up before a broken submit path and that sign-out still escapes immediately.",
+        "Verifies the blocked state still gives clear escape hatches and that sign-out still escapes immediately.",
       ],
     });
 
@@ -370,10 +374,12 @@ test.describe("skeptical user adversarial coverage", () => {
 
     await bootAppWithSupabaseSeeds(page, { session, payload });
     await openSettingsAccountSurface(page);
+    await openSettingsAccountAdvanced(page);
 
     await expect(page.getByTestId("settings-delete-account-status")).toContainText("not configured");
-    await expect(page.getByTestId("settings-delete-account-diagnostics")).toBeVisible();
-    await expect(page.getByTestId("settings-delete-account-missing-envs")).toContainText("SUPABASE_SERVICE_ROLE_KEY");
+    await expect(page.getByTestId("settings-delete-account-help")).toContainText("sign out or reset this device");
+    await expect(page.getByTestId("settings-delete-account-diagnostics")).toHaveCount(0);
+    await expect(page.getByTestId("settings-delete-account-missing-envs")).toHaveCount(0);
     await expect(page.getByTestId("settings-delete-account")).toBeDisabled();
     await expect(page.getByTestId("settings-delete-account-retry-diagnostics")).toBeEnabled();
     await expect(page.getByTestId("settings-reset-device")).toBeEnabled();
@@ -389,7 +395,9 @@ test.describe("skeptical user adversarial coverage", () => {
     );
 
     await page.getByTestId("settings-logout").click();
-    await expect(page.getByTestId("auth-gate")).toBeVisible({ timeout: 1200 });
+    await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible({ timeout: 1200 });
+    await page.getByTestId("settings-open-auth-gate").click();
+    await expect(page.getByTestId("auth-gate")).toBeVisible();
     await expect(page.getByTestId("continue-local-mode")).toBeVisible();
     await expect(page.getByTestId("auth-sync-status")).toContainText("Device-only");
   });
@@ -431,22 +439,23 @@ test.describe("skeptical user adversarial coverage", () => {
     await page.getByRole("button", { name: "Save profile" }).click();
     await page.getByTestId("settings-surface-account").click();
 
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Retrying cloud sync");
-    await expect(page.getByTestId("settings-sync-status")).toContainText("reload cloud data");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Retrying");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Cloud sync is retrying in the background");
     const settingsStatus = normalizeSurfaceText(await page.getByTestId("settings-sync-status").innerText());
 
     await page.getByTestId("app-tab-today").click();
-    await expect(page.getByTestId("today-sync-status")).toContainText("Retrying cloud sync");
-    await expect(page.getByTestId("today-sync-status")).toContainText("Local changes stay saved");
+    await expect(page.getByTestId("today-sync-status")).toContainText("Retrying");
+    await expect(page.getByTestId("today-sync-status")).toContainText("Cloud sync is retrying in the background");
     const todayStatus = normalizeSurfaceText(await page.getByTestId("today-sync-status").innerText());
 
     await page.getByTestId("app-tab-program").click();
-    await expect(page.getByTestId("program-sync-status")).toContainText("Retrying cloud sync");
+    await expect(page.getByTestId("program-sync-status")).toContainText("Retrying");
+    await expect(page.getByTestId("program-sync-status")).toContainText("Cloud sync is retrying in the background");
     const programStatus = normalizeSurfaceText(await page.getByTestId("program-sync-status").innerText());
 
-    expect(settingsStatus).toMatch(/retrying cloud sync/i);
-    expect(todayStatus).toMatch(/retrying cloud sync/i);
-    expect(programStatus).toMatch(/retrying cloud sync/i);
+    expect(settingsStatus).toMatch(/cloud sync is retrying in the background/i);
+    expect(todayStatus).toMatch(/cloud sync is retrying in the background/i);
+    expect(programStatus).toMatch(/cloud sync is retrying in the background/i);
     expect(settingsStatus).not.toMatch(/cloud unavailable|device-only/i);
     expect(todayStatus).not.toMatch(/cloud unavailable|device-only/i);
     expect(programStatus).not.toMatch(/cloud unavailable|device-only/i);

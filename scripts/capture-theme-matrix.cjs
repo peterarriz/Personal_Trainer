@@ -11,7 +11,7 @@ const {
 } = require("../e2e/auth-runtime-test-helpers.js");
 
 const ROOT = path.resolve(__dirname, "..");
-const OUTPUT_DIR = path.join(ROOT, "tmp", "theme-matrix");
+const OUTPUT_DIR = path.join(ROOT, "artifacts", "theme-matrix");
 const SERVER_URL = "http://127.0.0.1:4173";
 const BUILD_ENV = {
   ...process.env,

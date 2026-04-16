@@ -32,8 +32,10 @@ import {
 import {
   buildSyncStateModel,
   buildSyncSurfaceModel,
+  createInitialSyncPresentationState,
   createInitialSyncRuntimeState,
   reduceSyncRuntimeState,
+  stabilizeSyncStatePresentation,
   SYNC_RUNTIME_EVENT_TYPES,
   SYNC_STATE_IDS,
   SYNC_STATE_TONES,
@@ -149,7 +151,6 @@ import {
 } from "./services/intake-completeness-service.js";
 import {
   applyIntakeStarterMetrics,
-  buildIntakeClickCountReport,
   INTAKE_COPY_DECK,
   buildIntakeStarterGoalTypes,
   buildIntakeStarterMetricDraft,
@@ -2212,14 +2213,68 @@ function SyncStateCallout({ model = null, dataTestId = "", compact = false, styl
       <div style={{ fontSize:compact ? "0.5rem" : "0.56rem", color:toneStyle.title, lineHeight:1.45 }}>
         {model.title}
       </div>
-      <div style={{ fontSize:compact ? "0.47rem" : "0.49rem", color:toneStyle.body, lineHeight:1.5 }}>
-        {compact ? (model.compactDetail || model.detail) : model.detail}
-      </div>
+      {!!(compact ? (model.compactDetail || model.detail) : model.detail) && (
+        <div style={{ fontSize:compact ? "0.47rem" : "0.49rem", color:toneStyle.body, lineHeight:1.5 }}>
+          {compact ? (model.compactDetail || model.detail) : model.detail}
+        </div>
+      )}
       {!!model.support && (
         <div style={{ fontSize:compact ? "0.45rem" : "0.47rem", color:toneStyle.support, lineHeight:1.5 }}>
           {model.support}
         </div>
       )}
+    </div>
+  );
+}
+function CompactSyncStatus({ model = null, dataTestId = "", style = {} }) {
+  if (!model) return null;
+  const toneStyle = getSyncToneStyle(model.tone);
+  const message = model.compactMessage || model.compactDetail || model.title || model.detail;
+  if (!message) return null;
+  return (
+    <div
+      data-testid={dataTestId || undefined}
+      role="status"
+      aria-live={model.stateId === SYNC_STATE_IDS.synced ? "off" : "polite"}
+      style={{
+        height: "2.45rem",
+        border: `1px solid ${toneStyle.border}`,
+        borderRadius: 12,
+        background: toneStyle.bg,
+        padding: "0.42rem 0.56rem",
+        display: "grid",
+        gridTemplateColumns: "auto 1fr",
+        alignItems: "center",
+        gap: "0.4rem",
+        ...style,
+      }}
+    >
+      <span
+        style={{
+          fontSize: "0.44rem",
+          color: toneStyle.chipText,
+          background: toneStyle.chipBg,
+          border: `1px solid ${toneStyle.border}`,
+          borderRadius: 999,
+          padding: "0.12rem 0.36rem",
+          letterSpacing: "0.06em",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {model.chipLabel}
+      </span>
+      <span
+        style={{
+          fontSize: "0.48rem",
+          color: toneStyle.title,
+          lineHeight: 1.45,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+      >
+        {message}
+      </span>
     </div>
   );
 }
@@ -2490,22 +2545,81 @@ const buildNamedPhaseArc = ({ rollingHorizon = [], goals = [] }) => {
   return blocks.map(({ key, ...block }) => block);
 };
 const safeFetchWithTimeout = async (url, options = {}, timeoutMs = 8500) => {
+  const sanitizeDiagnosticsToken = (value = "", fallback = "unknown") => String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60) || fallback;
+  const buildDiagnosticsError = ({
+    message = "Cloud request could not be completed.",
+    code = "request_failed",
+    diagnosticsCode = "request_failed",
+    causeMessage = "",
+  } = {}) => {
+    const error = new Error(message);
+    error.code = code;
+    error.diagnosticsCode = diagnosticsCode;
+    error.causeMessage = String(causeMessage || "");
+    return error;
+  };
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await fetch(url, { ...options, signal: ctrl.signal });
   } catch (error) {
     if (error?.name === "AbortError") {
-      throw new Error(`FETCH_TIMEOUT:${timeoutMs}`);
+      throw buildDiagnosticsError({
+        message: "Cloud request timed out.",
+        code: "fetch_timeout",
+        diagnosticsCode: `fetch_timeout_${timeoutMs}`,
+      });
     }
     const message = String(error?.message || error || "");
     if (/failed to fetch|networkerror|network request failed|load failed/i.test(message)) {
-      throw new Error(`FETCH_NETWORK:${message || "request_failed"}`);
+      throw buildDiagnosticsError({
+        message: "Cloud request could not reach the network.",
+        code: "fetch_network",
+        diagnosticsCode: `fetch_network_${sanitizeDiagnosticsToken(message, "request_failed")}`,
+        causeMessage: message,
+      });
     }
     throw error;
   } finally {
     clearTimeout(timer);
   }
+};
+
+const getDiagnosticsCode = (error = null, fallback = "unknown") => String(
+  error?.diagnosticsCode
+  || error?.code
+  || error?.message
+  || error
+  || fallback
+)
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "_")
+  .replace(/^_+|_+$/g, "")
+  .slice(0, 60) || fallback;
+
+const getNormalizedStorageUserCopy = (error = null, fallback = "Cloud sync could not finish right now. This device is still using its saved local copy.") => {
+  if (!error) return fallback;
+  if (error?.code === "delete_account_not_configured") {
+    return "Permanent delete is not available here yet. You can still sign out or reset this device.";
+  }
+  const storageStatus = classifyStorageError(error);
+  if (storageStatus?.reason === STORAGE_STATUS_REASONS.authRequired) {
+    return "Your session expired before the cloud request could finish. Sign in again and try once more.";
+  }
+  if (storageStatus?.reason === STORAGE_STATUS_REASONS.providerUnavailable) {
+    return "Cloud account services are unavailable right now, so this device is staying local for now.";
+  }
+  if (storageStatus?.reason === STORAGE_STATUS_REASONS.dataIncompatible) {
+    return "Cloud data could not be applied safely right now. This device is still using its saved local copy.";
+  }
+  if (storageStatus?.reason === STORAGE_STATUS_REASONS.transient) {
+    return fallback;
+  }
+  return fallback;
 };
 
 const sameStorageStatus = (left = null, right = null) => (
@@ -2514,6 +2628,18 @@ const sameStorageStatus = (left = null, right = null) => (
   && String(left?.reason || "") === String(right?.reason || "")
   && String(left?.detail || "") === String(right?.detail || "")
 );
+
+const hasUsableLocalResumePayload = (payload = null) => {
+  const profile = payload?.personalization?.profile || {};
+  if (profile?.onboardingComplete || profile?.profileSetupComplete) return true;
+  if (Array.isArray(payload?.goals) && payload.goals.some((goal) => Boolean(goal?.active || goal?.name))) return true;
+  if (Object.keys(payload?.logs || {}).length > 0) return true;
+  if (Object.keys(payload?.dailyCheckins || {}).length > 0) return true;
+  if (Object.keys(payload?.plannedDayRecords || {}).length > 0) return true;
+  if (Object.keys(payload?.planWeekRecords || {}).length > 0) return true;
+  if (Object.keys(payload?.nutritionActualLogs || {}).length > 0) return true;
+  return false;
+};
 
 const PRIMARY_GOAL_OPTIONS = ["fat_loss", "muscle_gain", "endurance", "general_fitness"];
 const PRIMARY_GOAL_LABELS = { fat_loss: "Fat Loss", muscle_gain: "Muscle Gain", endurance: "Endurance", general_fitness: "General Fitness" };
@@ -3206,6 +3332,61 @@ const dedupeIntakeGoalEntries = (items = []) => {
       seen.add(key);
       return true;
     });
+};
+
+const EXPERIENCE_LEVEL_TO_TRAINING_AGE_YEARS = Object.freeze({
+  beginner: 0,
+  intermediate: 3,
+  advanced: 6,
+});
+
+const readSeededExperienceLevel = (profile = {}) => {
+  const explicitLevel = String(profile?.estimatedFitnessLevel || "").trim().toLowerCase();
+  if (EXPERIENCE_LEVEL_OPTIONS.includes(explicitLevel)) return explicitLevel;
+  const trainingAgeYears = Math.max(0, Number(profile?.trainingAgeYears || 0) || 0);
+  if (trainingAgeYears >= 5) return "advanced";
+  if (trainingAgeYears >= 2) return "intermediate";
+  return "";
+};
+
+const upsertSeededCurrentBodyweight = (answers = {}, rawValue = "") => {
+  const numericValue = Number(String(rawValue || "").trim());
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return answers;
+  return {
+    ...answers,
+    intake_completeness: {
+      version: "2026-04-v1",
+      ...(answers?.intake_completeness || {}),
+      fields: {
+        ...(answers?.intake_completeness?.fields || {}),
+        current_bodyweight: {
+          raw: `${numericValue} lb`,
+          value: numericValue,
+        },
+      },
+    },
+  };
+};
+
+const buildSeededIntakeAnswers = ({
+  baseAnswers = {},
+  personalization = {},
+} = {}) => {
+  const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
+  let nextAnswers = {
+    ...baseAnswers,
+  };
+  if (!nextAnswers?.experience_level) {
+    const seededExperienceLevel = readSeededExperienceLevel(profile);
+    if (seededExperienceLevel) {
+      nextAnswers.experience_level = seededExperienceLevel;
+    }
+  }
+  const existingBodyweight = nextAnswers?.intake_completeness?.fields?.current_bodyweight?.value;
+  if (!(Number(existingBodyweight) > 0) && Number(profile?.weight) > 0) {
+    nextAnswers = upsertSeededCurrentBodyweight(nextAnswers, profile.weight);
+  }
+  return nextAnswers;
 };
 
 const INTAKE_MULTI_GOAL_STARTERS = /^(?:get|lose|drop|bench|squat|deadlift|run|look|build|gain|keep|maintain|improve|move|be|become|add|cut|trim|finish|complete|hit|reach)\b/i;
@@ -4791,6 +4972,7 @@ export default function TrainerDashboard() {
   const [authError, setAuthError] = useState("");
   const [authInitializing, setAuthInitializing] = useState(true);
   const [startupLocalResumeAvailable, setStartupLocalResumeAvailable] = useState(false);
+  const [startupUsableLocalResumeAvailable, setStartupUsableLocalResumeAvailable] = useState(false);
   const [startupLocalResumeAccepted, setStartupLocalResumeAccepted] = useState(false);
   const realtimeClientRef = useRef(null);
   const realtimeChannelRef = useRef(null);
@@ -4813,16 +4995,7 @@ export default function TrainerDashboard() {
   const trackFrictionEvent = useMemo(() => ({ flow = "app", action = "interaction", outcome = "observed", props = {} } = {}) => {
     frictionAnalytics.track({ flow, action, outcome, props });
   }, [frictionAnalytics]);
-  const classifyFrictionErrorCode = (error = null) => String(
-    error?.code
-    || error?.message
-    || error
-    || "unknown"
-  )
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 60) || "unknown";
+  const classifyFrictionErrorCode = (error = null) => getDiagnosticsCode(error, "unknown");
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.addEventListener !== "function") return undefined;
     const handleAnalyticsEvent = () => setAnalyticsVersion((current) => current + 1);
@@ -4860,24 +5033,212 @@ export default function TrainerDashboard() {
     authInitializing,
     loading,
   ]);
+  const syncStateModelRef = useRef(syncStateModel);
+  useEffect(() => {
+    syncStateModelRef.current = syncStateModel;
+  }, [syncStateModel]);
+  const [syncPresentationState, setSyncPresentationState] = useState(() => createInitialSyncPresentationState({
+    syncState: syncStateModel,
+    now: Date.now(),
+  }));
+  const [syncTestOverride, setSyncTestOverride] = useState(null);
+  const syncPresentationStateRef = useRef(syncPresentationState);
+  const syncTestOverrideRef = useRef(syncTestOverride);
+  useEffect(() => {
+    syncPresentationStateRef.current = syncPresentationState;
+  }, [syncPresentationState]);
+  useEffect(() => {
+    syncTestOverrideRef.current = syncTestOverride;
+  }, [syncTestOverride]);
+  useEffect(() => {
+    setSyncPresentationState((current) => stabilizeSyncStatePresentation({
+      currentPresentation: current,
+      syncState: syncStateModel,
+      now: Date.now(),
+    }));
+  }, [syncStateModel]);
+  useEffect(() => {
+    const nextUpdateAt = Number(syncPresentationState?.nextUpdateAt || 0);
+    if (!nextUpdateAt || nextUpdateAt <= Date.now()) return undefined;
+    const timer = window.setTimeout(() => {
+      setSyncPresentationState((current) => stabilizeSyncStatePresentation({
+        currentPresentation: current,
+        syncState: syncStateModelRef.current,
+        now: Date.now(),
+      }));
+    }, Math.max(0, nextUpdateAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [syncPresentationState?.nextUpdateAt]);
+  const effectiveSyncStateModel = syncTestOverride?.rawState || syncStateModel;
+  const effectiveSyncPresentationState = syncTestOverride?.presentation || syncPresentationState;
+  const displayedSyncStateModel = effectiveSyncPresentationState?.displayedState || effectiveSyncStateModel;
   const syncSurfaceModels = useMemo(() => ({
     today: buildSyncSurfaceModel({
-      syncState: syncStateModel,
+      syncState: displayedSyncStateModel,
       surface: SYNC_SURFACE_KEYS.today,
     }),
     program: buildSyncSurfaceModel({
-      syncState: syncStateModel,
+      syncState: displayedSyncStateModel,
       surface: SYNC_SURFACE_KEYS.program,
     }),
     settings: buildSyncSurfaceModel({
-      syncState: syncStateModel,
+      syncState: displayedSyncStateModel,
       surface: SYNC_SURFACE_KEYS.settings,
     }),
     auth: buildSyncSurfaceModel({
-      syncState: syncStateModel,
+      syncState: displayedSyncStateModel,
       surface: SYNC_SURFACE_KEYS.auth,
     }),
-  }), [syncStateModel]);
+  }), [displayedSyncStateModel]);
+  useEffect(() => {
+    if (typeof window === "undefined" || window.__E2E_SYNC_TEST !== true) return undefined;
+    const buildSyncTestState = (preset = "synced", at = Date.now()) => {
+      const timestamp = Number(at) || Date.now();
+      const authState = authSessionRef.current || authSession || null;
+      const hasLocalCache = startupLocalResumeAvailable;
+      if (preset === "syncing") {
+        return buildSyncStateModel({
+          storageStatus: buildStorageStatus({
+            mode: "syncing",
+            label: "SYNCING",
+            reason: STORAGE_STATUS_REASONS.synced,
+            detail: "Cloud sync is working normally.",
+          }),
+          authSession: authState,
+          syncRuntime: {
+            ...createInitialSyncRuntimeState({ isOnline: true, now: timestamp }),
+            cloudSyncInFlight: true,
+            updatedAt: timestamp,
+          },
+          authError,
+          hasLocalCache,
+          authInitializing: false,
+          appLoading: false,
+          now: timestamp,
+        });
+      }
+      if (preset === "retrying") {
+        return buildSyncStateModel({
+          storageStatus: buildStorageStatus({
+            mode: "local",
+            label: "SYNC RETRYING",
+            reason: STORAGE_STATUS_REASONS.transient,
+            detail: "Cloud sync timed out. Local changes are still saved safely on this device.",
+          }),
+          authSession: authState,
+          syncRuntime: {
+            ...createInitialSyncRuntimeState({ isOnline: true, now: timestamp }),
+            retryEligible: true,
+            lastCloudFailureAt: timestamp,
+            lastErrorCode: "fetch_timeout",
+            lastErrorMessage: "Cloud request timed out.",
+            pendingLocalWrites: true,
+            updatedAt: timestamp,
+          },
+          authError,
+          hasLocalCache,
+          authInitializing: false,
+          appLoading: false,
+          now: timestamp,
+        });
+      }
+      if (preset === "stale") {
+        return buildSyncStateModel({
+          storageStatus: buildStorageStatus({
+            mode: "cloud",
+            label: "SYNCED",
+            reason: STORAGE_STATUS_REASONS.synced,
+            detail: "Cloud sync is working normally.",
+          }),
+          authSession: authState,
+          syncRuntime: {
+            ...createInitialSyncRuntimeState({ isOnline: true, now: timestamp }),
+            realtimeInterrupted: true,
+            updatedAt: timestamp,
+          },
+          authError,
+          hasLocalCache,
+          authInitializing: false,
+          appLoading: false,
+          now: timestamp,
+        });
+      }
+      return buildSyncStateModel({
+        storageStatus: buildStorageStatus({
+          mode: "cloud",
+          label: "SYNCED",
+          reason: STORAGE_STATUS_REASONS.synced,
+          detail: "Cloud sync is working normally.",
+        }),
+        authSession: authState,
+        syncRuntime: createInitialSyncRuntimeState({ isOnline: true, now: timestamp }),
+        authError,
+        hasLocalCache,
+        authInitializing: false,
+        appLoading: false,
+        now: timestamp,
+      });
+    };
+    const buildSyncTestSnapshot = () => ({
+      rawStateId: syncTestOverrideRef.current?.rawState?.id || syncStateModelRef.current?.id || "",
+      displayedStateId: syncTestOverrideRef.current?.presentation?.displayedState?.id || syncPresentationStateRef.current?.displayedState?.id || "",
+      todaySurface: buildSyncSurfaceModel({
+        syncState: syncTestOverrideRef.current?.presentation?.displayedState || syncTestOverrideRef.current?.rawState || syncPresentationStateRef.current?.displayedState || syncStateModelRef.current,
+        surface: SYNC_SURFACE_KEYS.today,
+      }),
+      programSurface: buildSyncSurfaceModel({
+        syncState: syncTestOverrideRef.current?.presentation?.displayedState || syncTestOverrideRef.current?.rawState || syncPresentationStateRef.current?.displayedState || syncStateModelRef.current,
+        surface: SYNC_SURFACE_KEYS.program,
+      }),
+    });
+    const applySyncPreset = (preset = "synced", at = Date.now()) => {
+      const timestamp = Number(at) || Date.now();
+      const rawState = buildSyncTestState(preset, timestamp);
+      const currentOverride = syncTestOverrideRef.current;
+      const nextOverride = {
+        rawState,
+        presentation: currentOverride?.presentation
+          ? stabilizeSyncStatePresentation({
+              currentPresentation: currentOverride.presentation,
+              syncState: rawState,
+              now: timestamp,
+            })
+          : createInitialSyncPresentationState({
+              syncState: rawState,
+              now: timestamp,
+            }),
+      };
+      syncTestOverrideRef.current = nextOverride;
+      setSyncTestOverride(nextOverride);
+      return true;
+    };
+    window.__TRAINER_SYNC_TEST_HELPERS = {
+      applyPreset: applySyncPreset,
+      reconcilePresentation: (offsetMs = 0) => {
+        const currentOverride = syncTestOverrideRef.current;
+        const rawState = currentOverride?.rawState || syncStateModelRef.current;
+        const currentPresentation = currentOverride?.presentation || syncPresentationStateRef.current;
+        const nextOverride = {
+          rawState,
+          presentation: stabilizeSyncStatePresentation({
+            currentPresentation,
+            syncState: rawState,
+            now: Date.now() + (Number(offsetMs) || 0),
+          }),
+        };
+        syncTestOverrideRef.current = nextOverride;
+        setSyncTestOverride(nextOverride);
+      },
+      snapshot: buildSyncTestSnapshot,
+    };
+    return () => {
+      syncTestOverrideRef.current = null;
+      setSyncTestOverride(null);
+      if (window.__TRAINER_SYNC_TEST_HELPERS?.snapshot === buildSyncTestSnapshot) {
+        delete window.__TRAINER_SYNC_TEST_HELPERS;
+      }
+    };
+  }, [authError, authInitializing, authSession, loading, startupLocalResumeAvailable]);
 
   const today = new Date();
   const currentWeek = resolveCurrentPlanWeekNumber({
@@ -5672,6 +6033,39 @@ export default function TrainerDashboard() {
   }), [frictionAnalytics]);
 
   const { SB_URL, SB_KEY, SB_CONFIG_ERROR, localLoad } = authStorage;
+  const readLocalResumeSnapshot = () => {
+    const snapshot = localLoad();
+    return {
+      payload: snapshot,
+      hasCache: Boolean(snapshot && typeof snapshot === "object"),
+      hasUsableState: hasUsableLocalResumePayload(snapshot),
+    };
+  };
+  const syncLocalResumeFlags = () => {
+    const snapshot = readLocalResumeSnapshot();
+    setStartupLocalResumeAvailable(snapshot.hasCache);
+    setStartupUsableLocalResumeAvailable(snapshot.hasUsableState);
+    return snapshot;
+  };
+  const resumeUsableLocalState = ({
+    statusOverride = null,
+    fallbackToAuthGate = false,
+  } = {}) => {
+    const snapshot = syncLocalResumeFlags();
+    if (!snapshot.hasUsableState) {
+      if (statusOverride && snapshot.hasCache) {
+        hydrateLocalRuntimeCache({ statusOverride });
+      }
+      if (fallbackToAuthGate) {
+        setStartupLocalResumeAccepted(false);
+      }
+      return false;
+    }
+    suspendLocalPersistenceRef.current = false;
+    hydrateLocalRuntimeCache({ statusOverride });
+    setStartupLocalResumeAccepted(true);
+    return true;
+  };
   const authGateVisible = !authSession?.user?.id && !startupLocalResumeAccepted;
   const authGateSignatureRef = useRef("");
 
@@ -5682,7 +6076,7 @@ export default function TrainerDashboard() {
     }
     const signature = [
       authMode,
-      startupLocalResumeAvailable ? "resume" : "blank",
+      startupUsableLocalResumeAvailable ? "resume" : "blank",
       SB_CONFIG_ERROR ? "provider_unavailable" : "provider_ready",
     ].join("|");
     if (authGateSignatureRef.current === signature) return;
@@ -5693,11 +6087,11 @@ export default function TrainerDashboard() {
       outcome: "viewed",
       props: {
         mode: authMode,
-        local_resume_available: startupLocalResumeAvailable,
+        local_resume_available: startupUsableLocalResumeAvailable,
         provider_ready: !SB_CONFIG_ERROR,
       },
     });
-  }, [SB_CONFIG_ERROR, authGateVisible, authMode, startupLocalResumeAvailable]);
+  }, [SB_CONFIG_ERROR, authGateVisible, authMode, startupUsableLocalResumeAvailable]);
 
   const handleSignIn = async () => {
     suspendLocalPersistenceRef.current = false;
@@ -5755,19 +6149,30 @@ export default function TrainerDashboard() {
   };
 
   const handleSignOut = () => {
+    const localResumeSnapshot = readLocalResumeSnapshot();
     trackFrictionEvent({
       flow: "auth",
       action: "sign_out",
       outcome: "requested",
       props: {
-        has_local_resume: Boolean(localLoad()),
+        has_local_resume: localResumeSnapshot.hasUsableState,
       },
     });
     authStorage.handleSignOut({ authSession, setAuthSession, setStorageStatus });
     setAuthMode("signin");
     setAuthError("");
-    setStartupLocalResumeAvailable(Boolean(localLoad()));
-    setStartupLocalResumeAccepted(false);
+    const resumedLocally = resumeUsableLocalState({
+      statusOverride: buildStorageStatus({
+        mode: "local",
+        label: "SIGNED OUT",
+        reason: STORAGE_STATUS_REASONS.signedOut,
+        detail: "Cloud sync is paused until you sign back in.",
+      }),
+      fallbackToAuthGate: true,
+    });
+    if (!resumedLocally) {
+      syncLocalResumeFlags();
+    }
     return { ok: true };
   };
 
@@ -5798,6 +6203,7 @@ export default function TrainerDashboard() {
     setAuthError("");
     setStartupLocalResumeAccepted(false);
     setStartupLocalResumeAvailable(false);
+    setStartupUsableLocalResumeAvailable(false);
   };
 
   const handleResetThisDevice = () => {
@@ -5848,8 +6254,16 @@ export default function TrainerDashboard() {
         const nextStatus = classifyStorageError(error);
         applyStorageStatus(nextStatus);
       }
-      const adminFix = String(error?.fix || "").trim();
-      const authMessage = [String(error?.message || "Account deletion failed."), adminFix].filter(Boolean).join(" ");
+      const diagnosticsCode = getDiagnosticsCode(error, "delete_account_failed");
+      const authMessage = getNormalizedStorageUserCopy(
+        error,
+        "Account deletion could not finish right now. This device is still using its saved local copy."
+      );
+      if (error && typeof error === "object") {
+        error.userMessage = authMessage;
+        error.diagnosticsCode = diagnosticsCode;
+      }
+      logDiag("auth.delete.failed", diagnosticsCode);
       setAuthError(authMessage);
       return { ok: false, error };
     }
@@ -5970,7 +6384,9 @@ export default function TrainerDashboard() {
   const hydrateLocalRuntimeCache = ({ statusOverride = null } = {}) => {
     const cache = localLoad();
     const hasCache = Boolean(cache && typeof cache === "object");
+    const hasUsableState = hasUsableLocalResumePayload(cache);
     setStartupLocalResumeAvailable(hasCache);
+    setStartupUsableLocalResumeAvailable(hasUsableState);
     if (hasCache) {
       try {
         const cachedRuntimeState = buildCanonicalRuntimeStateFromStorage({
@@ -5987,7 +6403,7 @@ export default function TrainerDashboard() {
       }
     }
     if (statusOverride) applyStorageStatus(statusOverride);
-    return hasCache;
+    return hasUsableState;
   };
 
   const sbLoad = async ({ source = "cloud_reload" } = {}) => {
@@ -6313,9 +6729,20 @@ export default function TrainerDashboard() {
         reason: STORAGE_STATUS_REASONS.providerUnavailable,
         detail: "Cloud sync provider is unavailable or misconfigured.",
       });
-      setAuthError(`Cloud sync provider unavailable: ${SB_CONFIG_ERROR}`);
-      hydrateLocalRuntimeCache({ statusOverride: providerStatus });
-      setStartupLocalResumeAccepted(true);
+      dispatchSyncRuntime({
+        type: SYNC_RUNTIME_EVENT_TYPES.cloudSyncFailed,
+        at: Date.now(),
+        retryEligible: false,
+        fatalErrorCode: "provider_unavailable",
+        errorCode: "provider_unavailable",
+        errorMessage: "Cloud sync provider is unavailable or misconfigured.",
+      });
+      setAuthError(
+        DEBUG_MODE
+          ? `Cloud sync is unavailable right now. Using local data on this device. (${SB_CONFIG_ERROR})`
+          : "Cloud sync is unavailable right now. Using local data on this device."
+      );
+      resumeUsableLocalState({ statusOverride: providerStatus, fallbackToAuthGate: true });
       setAuthInitializing(false);
       setLoading(false);
       return;
@@ -6338,7 +6765,18 @@ export default function TrainerDashboard() {
         }
       }
       if (!restored || !authSessionRef.current?.user?.id) {
-        setStartupLocalResumeAvailable(Boolean(localLoad()));
+        const localSnapshot = syncLocalResumeFlags();
+        if (localSnapshot.hasUsableState) {
+          resumeUsableLocalState({
+            statusOverride: buildStorageStatus({
+              mode: "local",
+              label: "NOT SIGNED IN",
+              reason: STORAGE_STATUS_REASONS.notSignedIn,
+              detail: "This device is using the last saved local copy until you sign in again.",
+            }),
+            fallbackToAuthGate: false,
+          });
+        }
       }
       setAuthInitializing(false);
       setLoading(false);
@@ -7539,7 +7977,7 @@ Keep it plain and specific.`;
   const authEntryTheme = buildAuthEntryTheme({ brandThemeState: authBrandThemeState });
   const authEntryView = buildAuthEntryViewModel({
     authMode,
-    startupLocalResumeAvailable,
+    startupLocalResumeAvailable: startupUsableLocalResumeAvailable,
     authProviderUnavailable,
     syncStateModel,
   });
@@ -8037,12 +8475,14 @@ Keep it plain and specific.`;
       todayKey,
       now: Date.now(),
     });
+    const mappedTrainingAgeYears = EXPERIENCE_LEVEL_TO_TRAINING_AGE_YEARS[experienceLevel] ?? 0;
     const nextPersonalizationBase = mergePersonalization(personalization, {
       profile: {
         ...personalization.profile,
         ...(intakeBaselineCapture.profilePatch || {}),
         profileSetupComplete: true,
         onboardingComplete: true,
+        trainingAgeYears: mappedTrainingAgeYears,
         preferredTrainingStyle: coachingStyle,
         goalMix,
         estimatedFitnessLevel: experienceLevel,
@@ -8707,13 +9147,8 @@ Keep it plain and specific.`;
         details[open]{animation:fi 0.18s ease}
       `}</style>
 
-      {!profileSetupComplete ? (
-        <ProfileSetupGate
-          personalization={personalization}
-          onComplete={finishProfileSetup}
-        />
-      ) : !onboardingComplete ? (
-        <OnboardingCoach onComplete={finishOnboarding} startingFresh={Boolean(personalization?.planResetUndo?.startedAt)} existingMemory={personalization?.coachMemory?.longTermMemory || []} onTrackFrictionEvent={trackFrictionEvent} />
+      {!onboardingComplete ? (
+        <OnboardingCoach onComplete={finishOnboarding} startingFresh={Boolean(personalization?.planResetUndo?.startedAt)} existingMemory={personalization?.coachMemory?.longTermMemory || []} personalization={personalization} onTrackFrictionEvent={trackFrictionEvent} />
       ) : (
       <div data-testid="app-shell" style={{ maxWidth:980, margin:"0 auto", background:"var(--shell-overlay)", color:"var(--text)" }}>
 
@@ -8780,7 +9215,10 @@ Keep it plain and specific.`;
           await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
 
-        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={syncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} focusSection={settingsFocus} frictionDashboard={frictionDashboard} onTrackFrictionEvent={trackFrictionEvent} onPersist={async (nextPersonalization) => {
+        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} onOpenAuthGate={() => {
+          setAuthMode("signin");
+          setStartupLocalResumeAccepted(false);
+        }} focusSection={settingsFocus} frictionDashboard={frictionDashboard} onTrackFrictionEvent={trackFrictionEvent} onPersist={async (nextPersonalization) => {
           setPersonalization(nextPersonalization);
           await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
@@ -8914,7 +9352,7 @@ function RuntimeInspector({ snapshot }) {
   );
 }
 
-function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [], onTrackFrictionEvent = () => {} }) {
+function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [], personalization = {}, onTrackFrictionEvent = () => {} }) {
   const initialPrompt = startingFresh
     ? "Starting fresh. I still remember everything from before — I'm just building a new plan from today. What do you want from this next plan? Exact or vague is fine."
     : "Hey. I'm going to ask you a few questions before I build your plan. Start with what you want from this plan — exact or vague both work.";
@@ -8944,10 +9382,15 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const processedIntakeMessageKeysRef = useRef(new Set(restoredIntakeSession?.processedMessageKeys || []));
   const processedTranscriptIdempotencyKeysRef = useRef(new Set(restoredIntakeSession?.processedTranscriptKeys || []));
   const secondaryGoalAddedMessageKeysRef = useRef(new Set(restoredIntakeSession?.secondaryGoalAddedMessageKeys || []));
+  const anchorCollectionGapRecoveryKeyRef = useRef("");
   const sessionPersistenceDisabledRef = useRef(false);
   const startedRef = useRef(Boolean(restoredIntakeSession?.messages?.length));
+  const seededInitialAnswers = useMemo(() => buildSeededIntakeAnswers({
+    baseAnswers: restoredIntakeSession?.answers || {},
+    personalization,
+  }), [personalization, restoredIntakeSession?.answers]);
   const [messages, setMessages] = useState(() => restoredIntakeSession?.messages || []);
-  const [answers, setAnswers] = useState(() => restoredIntakeSession?.answers || {});
+  const [answers, setAnswers] = useState(() => seededInitialAnswers);
   const [stepIndex, setStepIndex] = useState(() => Math.max(0, Number(restoredIntakeSession?.stepIndex) || 0));
   const [draft, setDraft] = useState(() => String(restoredIntakeSession?.draft || ""));
   const [extraGoalDraft, setExtraGoalDraft] = useState("");
@@ -8970,7 +9413,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [goalMetricFormError, setGoalMetricFormError] = useState("");
   const [equipmentSelection, setEquipmentSelection] = useState([]);
   const [equipmentOther, setEquipmentOther] = useState("");
-  const [phase, setPhase] = useState(() => restoredIntakeSession?.phase || INTAKE_UI_PHASES.goals);
+  const [phase, setPhase] = useState(() => (
+    restoredIntakeSession?.phase === INTAKE_UI_PHASES.confirm
+      ? INTAKE_UI_PHASES.clarify
+      : restoredIntakeSession?.phase || INTAKE_UI_PHASES.goals
+  ));
   const [assessmentText, setAssessmentText] = useState(() => String(restoredIntakeSession?.assessmentText || ""));
   const [assessmentBoundary, setAssessmentBoundary] = useState(() => restoredIntakeSession?.assessmentBoundary || { typedIntakePacket: null, aiInterpretationProposal: null, transition_id: "" });
   const [assessmentPreview, setAssessmentPreview] = useState(() => restoredIntakeSession?.assessmentPreview || { goalResolution: null, goalFeasibility: null, arbitration: null, orderedResolvedGoals: [], reviewModel: null });
@@ -8995,6 +9442,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const [confirmBuildError, setConfirmBuildError] = useState("");
   const [confirmBuildSubmitting, setConfirmBuildSubmitting] = useState(false);
   const [assessing, setAssessing] = useState(false);
+  const [reviewRefreshPending, setReviewRefreshPending] = useState(false);
   const [streamTargetId, setStreamTargetId] = useState(null);
   const [buildingStageIndex, setBuildingStageIndex] = useState(0);
   const [intakeMachine, setIntakeMachine] = useState(() => restoredIntakeSession?.intakeMachine || createIntakeMachineState());
@@ -9535,14 +9983,56 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     || milestoneDecisionModel?.longTermTargetSummary
     || ""
   ).trim();
+  const derivedGoalStackConfirmation = useMemo(() => buildIntakeGoalStackConfirmation({
+    resolvedGoals: activeReviewGoals,
+    goalStackConfirmation,
+    goalFeasibility: activeGoalFeasibility,
+  }), [activeReviewGoals, goalStackConfirmation, activeGoalFeasibility]);
+  const goalStackConfirmationNeedsSync = JSON.stringify(goalStackConfirmation || null) !== JSON.stringify(derivedGoalStackConfirmation || null);
+  const anchorCollectionGap = intakeMachine?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION && !activeMachineAnchor?.field_id;
+  const reviewStatePending = reviewRefreshPending || goalStackConfirmationNeedsSync || anchorCollectionGap;
 
   useEffect(() => {
-    setGoalStackConfirmation((prev) => buildIntakeGoalStackConfirmation({
-      resolvedGoals: activeReviewGoals,
-      goalStackConfirmation: prev,
-      goalFeasibility: activeGoalFeasibility,
-    }));
-  }, [reviewGoalSignature, activeReviewGoals, activeGoalFeasibility]);
+    if (!goalStackConfirmationNeedsSync) return;
+    setGoalStackConfirmation(derivedGoalStackConfirmation);
+    if (assessing) return;
+    const hasTypedPacket = Boolean(
+      intakeMachineRef.current?.draft?.typedIntakePacket
+      || assessmentBoundary?.typedIntakePacket
+    );
+    if (!hasTypedPacket) return;
+    const refreshedState = refreshReviewMachineState({
+      nextGoalStackConfirmation: derivedGoalStackConfirmation,
+    });
+    if (phase === INTAKE_UI_PHASES.clarify || phase === INTAKE_UI_PHASES.confirm) {
+      routeFromRefreshedReviewState({
+        refreshedState,
+        answersOverride: refreshedState?.draft?.answers || answers,
+      });
+    }
+  }, [goalStackConfirmationNeedsSync, derivedGoalStackConfirmation, assessing, assessmentBoundary?.typedIntakePacket, phase, answers]);
+  useEffect(() => {
+    if (!anchorCollectionGap) {
+      anchorCollectionGapRecoveryKeyRef.current = "";
+      return;
+    }
+    if (assessing) return;
+    const hasTypedPacket = Boolean(
+      intakeMachineRef.current?.draft?.typedIntakePacket
+      || assessmentBoundary?.typedIntakePacket
+    );
+    if (!hasTypedPacket) return;
+    const recoveryKey = `${String(intakeMachine?.transition_id || "").trim()}::${JSON.stringify(goalStackConfirmation || null)}`;
+    if (anchorCollectionGapRecoveryKeyRef.current === recoveryKey) return;
+    anchorCollectionGapRecoveryKeyRef.current = recoveryKey;
+    const refreshedState = refreshReviewMachineState();
+    if (phase === INTAKE_UI_PHASES.clarify || phase === INTAKE_UI_PHASES.confirm) {
+      routeFromRefreshedReviewState({
+        refreshedState,
+        answersOverride: refreshedState?.draft?.answers || answers,
+      });
+    }
+  }, [anchorCollectionGap, assessing, assessmentBoundary?.typedIntakePacket, intakeMachine?.transition_id, goalStackConfirmation, phase, answers]);
 
   const appendCoachMessages = (texts) => {
     const queue = queueCoachTranscriptMessages({
@@ -9631,11 +10121,15 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     return null;
   };
   const refreshReviewMachineState = ({
-    nextAnswers = answers,
+    nextAnswers = intakeMachineRef.current?.draft?.answers || answers,
     nextGoalStackConfirmation = goalStackConfirmation,
   } = {}) => {
     const typedIntakePacket = intakeMachineRef.current?.draft?.typedIntakePacket || assessmentBoundary?.typedIntakePacket || null;
-    if (!typedIntakePacket) return intakeMachineRef.current;
+    if (!typedIntakePacket) {
+      setReviewRefreshPending(false);
+      return intakeMachineRef.current;
+    }
+    setReviewRefreshPending(true);
     const refreshedState = settleIntakeMachine(dispatchIntakeMachineEvent(
       INTAKE_MACHINE_EVENTS.INTERPRETATION_READY,
       {
@@ -9653,6 +10147,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     syncMachineDraftToIntakeView(refreshedState);
     return refreshedState;
   };
+  useEffect(() => {
+    if (!reviewRefreshPending) return;
+    const timer = setTimeout(() => setReviewRefreshPending(false), 0);
+    return () => clearTimeout(timer);
+  }, [reviewRefreshPending]);
   const clearReviewEditingState = () => {
     setPendingClarifyingQuestion(null);
     setPendingSecondaryGoalPrompt(null);
@@ -9674,7 +10173,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       return;
     }
     setPendingSecondaryGoalPrompt(null);
-    setPhase(INTAKE_UI_PHASES.confirm);
+    setPhase(INTAKE_UI_PHASES.clarify);
   };
   const applyGoalStackConfirmationUpdate = (nextGoalStackConfirmation = null) => {
     setConfirmBuildError("");
@@ -9947,7 +10446,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       setPhase(INTAKE_UI_PHASES.clarify);
       return;
     }
-    setPhase(INTAKE_UI_PHASES.confirm);
+    setPhase(INTAKE_UI_PHASES.clarify);
   };
   const reopenLastAnsweredDetail = () => {
     if (!Array.isArray(intakeMachine?.anchorBindingLog) || intakeMachine.anchorBindingLog.length === 0) {
@@ -9969,7 +10468,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setDraft("");
     setPhase(nextMachineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION
       ? INTAKE_UI_PHASES.clarify
-      : INTAKE_UI_PHASES.confirm);
+      : INTAKE_UI_PHASES.clarify);
   };
   const appendUserMessage = (text) => {
     const clean = String(text || "").trim();
@@ -10145,7 +10644,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const resolvePostAssessmentPhase = (machineState = null) => (
     machineState?.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION
       ? INTAKE_UI_PHASES.clarify
-      : INTAKE_UI_PHASES.confirm
+      : INTAKE_UI_PHASES.clarify
   );
   const finalizeAssessmentState = ({
     assessment = null,
@@ -10296,8 +10795,69 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       )
         ? currentAnchorBindingTarget
         : null;
-      if (!activeBindingTarget) {
+      if (!activeBindingTarget && !multiAnchorCollectionMode) {
         setClarificationFormError("The current anchor lost its binding target. Please try the active card again.");
+        return;
+      }
+      if (multiAnchorCollectionMode) {
+        const visibleAnchors = visibleMachineAnchorCards.filter((anchor) => anchor?.field_id);
+        const fieldErrors = {};
+        const answeredLines = [];
+        visibleAnchors.forEach((anchor) => {
+          const submissionPayload = buildAnchorSubmissionPayload(anchor);
+          if (!submissionPayload?.raw_text) {
+            fieldErrors[anchor.field_id] = anchor?.validation?.message || "Add this detail before continuing.";
+          }
+        });
+        if (Object.keys(fieldErrors).length > 0) {
+          setClarificationFieldErrors(fieldErrors);
+          setClarificationFormError("Add the remaining highlighted details before continuing.");
+          return;
+        }
+        let latestMachineState = intakeMachineRef.current;
+        for (const anchor of visibleAnchors) {
+          const submissionPayload = buildAnchorSubmissionPayload(anchor);
+          const bindingTarget = {
+            anchor_id: String(anchor?.anchor_id || "").trim(),
+            field_id: String(anchor?.field_id || "").trim(),
+          };
+          latestMachineState = settleIntakeMachine(dispatchIntakeMachineEvent(
+            INTAKE_MACHINE_EVENTS.ANCHOR_ANSWERED,
+            {
+              anchor,
+              binding_target: bindingTarget,
+              anchor_id: bindingTarget.anchor_id,
+              field_id: bindingTarget.field_id,
+              answer_value: submissionPayload.answer_value,
+              raw_text: submissionPayload.raw_text,
+              source: "user",
+              now: new Date().toISOString(),
+            }
+          ));
+          if (latestMachineState?.ui?.lastParseError) {
+            setClarificationFieldErrors({ [anchor.field_id]: latestMachineState.ui.lastParseError });
+            setClarificationFormError(latestMachineState.ui.lastParseError);
+            return;
+          }
+          answeredLines.push(`${anchor.label || anchor.question || anchor.field_id}: ${submissionPayload.raw_text}`);
+        }
+        if (answeredLines.length > 0) {
+          appendUserMessage(answeredLines.join(" | "));
+        }
+        syncMachineDraftToIntakeView(latestMachineState);
+        setClarificationValues({});
+        setClarificationFieldErrors({});
+        setClarificationFormError("");
+        setNaturalAnchorDraft("");
+        setAnchorCapturePreview(null);
+        setPendingClarifyingQuestion(null);
+        const refreshedState = refreshReviewMachineState({
+          nextAnswers: latestMachineState?.draft?.answers || answers,
+        });
+        routeFromRefreshedReviewState({
+          refreshedState,
+          answersOverride: refreshedState?.draft?.answers || latestMachineState?.draft?.answers || answers,
+        });
         return;
       }
       const naturalReply = anchorEntryMode === "natural" && !activeAnchorStrictMode
@@ -10354,8 +10914,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             setPhase(INTAKE_UI_PHASES.clarify);
             return;
           }
-          setPendingSecondaryGoalPrompt(null);
-          setPhase(INTAKE_UI_PHASES.confirm);
+          const refreshedState = refreshReviewMachineState({
+            nextAnswers: nextMachineState?.draft?.answers || answers,
+          });
+          routeFromRefreshedReviewState({
+            refreshedState,
+            answersOverride: refreshedState?.draft?.answers || nextMachineState?.draft?.answers || answers,
+          });
           return;
         }
 
@@ -10431,8 +10996,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         setPhase(INTAKE_UI_PHASES.clarify);
         return;
       }
-      setPendingSecondaryGoalPrompt(null);
-      setPhase(INTAKE_UI_PHASES.confirm);
+      const refreshedState = refreshReviewMachineState({
+        nextAnswers: nextMachineState?.draft?.answers || answers,
+      });
+      routeFromRefreshedReviewState({
+        refreshedState,
+        answersOverride: refreshedState?.draft?.answers || nextMachineState?.draft?.answers || answers,
+      });
       return;
     }
     const questionSource = String(pendingClarifyingQuestion?.source || "").trim().toLowerCase();
@@ -10656,7 +11226,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setPendingClarifyingQuestion(null);
     if (!outcome.rerunAssessment) {
       setGoalStackConfirmation(outcome.goalStackConfirmation);
-      setPhase(INTAKE_UI_PHASES.confirm);
+      setPhase(INTAKE_UI_PHASES.clarify);
       appendCoachMessage(
         isSkipResponse
           ? "Main goal kept as the focus."
@@ -10709,7 +11279,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         action: "plan_build",
         outcome: "blocked",
         props: {
-          phase: INTAKE_UI_PHASES.confirm,
+          phase,
           stage: intakeMachineRef.current?.stage || intakeMachine?.stage || "",
           reason: latestConfirmationState?.next_required_field || "missing_required_field",
         },
@@ -10724,7 +11294,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       const currentTransitionId = intakeMachineRef.current?.transition_id || refreshedState?.transition_id || "";
       const currentStage = intakeMachineRef.current?.stage || refreshedState?.stage || INTAKE_MACHINE_STATES.REVIEW_CONFIRM;
       setConfirmBuildError(blockedReason);
-      setPhase(INTAKE_UI_PHASES.confirm);
+      setPhase(INTAKE_UI_PHASES.clarify);
       appendCoachMessage({
         text: blockedReason,
         message_kind: TRANSCRIPT_MESSAGE_KINDS.systemNote,
@@ -10738,7 +11308,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         action: "plan_build",
         outcome: "blocked",
         props: {
-          phase: INTAKE_UI_PHASES.confirm,
+          phase,
           stage: currentStage,
           reason: latestConfirmationState?.status || "confirmation_blocked",
         },
@@ -10750,14 +11320,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     const confirmedState = dispatchIntakeMachineEvent(INTAKE_MACHINE_EVENTS.USER_CONFIRMED, {
       now: new Date().toISOString(),
     });
-    appendUserMessage("Confirm and build my plan");
+    appendUserMessage("Build my plan");
     if (confirmedState?.draft?.commitRequested) {
       setPhase(INTAKE_UI_PHASES.building);
       return;
     }
     confirmBuildLockRef.current = false;
     setConfirmBuildSubmitting(false);
-    setPhase(INTAKE_UI_PHASES.confirm);
+    setPhase(INTAKE_UI_PHASES.clarify);
     setConfirmBuildError(confirmedState?.ui?.clearReason || "I couldn't lock the confirmed priority order yet.");
   };
   useEffect(() => {
@@ -10766,7 +11336,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     if (!commitValidation.ok || !commitValidation.commitRequest) {
       confirmBuildLockRef.current = false;
       setConfirmBuildSubmitting(false);
-      setPhase(INTAKE_UI_PHASES.confirm);
+      setPhase(INTAKE_UI_PHASES.clarify);
       if (commitValidation.reason) setConfirmBuildError(commitValidation.reason);
       return;
     }
@@ -10863,7 +11433,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         confirmBuildLockRef.current = false;
         setConfirmBuildError(failureMessage);
         setConfirmBuildSubmitting(false);
-        setPhase(INTAKE_UI_PHASES.confirm);
+        setPhase(INTAKE_UI_PHASES.clarify);
         appendCoachMessage(failureMessage);
       } finally {
         if (activeCommitSnapshotIdRef.current === snapshotId) {
@@ -10928,11 +11498,6 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     (goalStackReview?.activeGoals || []).flatMap((goal) => goal.trackingLabels || [])
   ));
   const starterGoalTypes = useMemo(() => buildIntakeStarterGoalTypes(), []);
-  const intakeClickCountReport = useMemo(() => buildIntakeClickCountReport(), []);
-  const clickCountReductionFloor = useMemo(() => {
-    const reductions = intakeClickCountReport.map((entry) => Number(entry?.reduction) || 0).filter((value) => value > 0);
-    return reductions.length ? Math.min(...reductions) : 0;
-  }, [intakeClickCountReport]);
   const goalTemplateCategories = useMemo(() => listGoalTemplateCategories(), []);
   const allGoalTemplates = useMemo(() => listGoalTemplates({ categoryId: "all" }), []);
   const activeGoalLibraryCategory = useMemo(
@@ -11025,10 +11590,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     setGoalMetricFormError("");
   }, [answers?.intake_completeness, primaryIntakeGoalSelection?.id, selectedStarterGoalTypeId]);
   const stageProgressIndex = phase === INTAKE_UI_PHASES.building
-    ? 3
-    : phase === INTAKE_UI_PHASES.confirm
     ? 2
-    : phase === INTAKE_UI_PHASES.clarify || phase === INTAKE_UI_PHASES.interpretation || phase === INTAKE_UI_PHASES.adjust
+    : phase === INTAKE_UI_PHASES.clarify || phase === INTAKE_UI_PHASES.interpretation || phase === INTAKE_UI_PHASES.adjust || phase === INTAKE_UI_PHASES.confirm
     ? 1
     : 0;
   const updateSimpleAnswer = (fieldKey, value) => {
@@ -11080,7 +11643,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   };
   const anchorCollectionViewModel = useMemo(() => buildAnchorCollectionViewModel({
     machineState: intakeMachine,
-    maxVisibleCards: 3,
+    maxVisibleCards: 8,
   }), [intakeMachine]);
   const machineDebugView = useMemo(() => buildIntakeMachineDebugView(intakeMachine), [intakeMachine]);
   const parseDebugView = useMemo(() => buildIntakeParseDebugView({
@@ -11091,6 +11654,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const visibleMachineAnchorCards = phase === INTAKE_UI_PHASES.clarify && anchorCollectionViewModel?.isVisible
     ? (Array.isArray(anchorCollectionViewModel?.visibleCards) ? anchorCollectionViewModel.visibleCards : [])
     : [];
+  const multiAnchorCollectionMode = visibleMachineAnchorCards.length > 1;
   const isMachineAnchorClarification = phase === INTAKE_UI_PHASES.clarify && Boolean(anchorCollectionViewModel?.isVisible);
   const activeAnchorFailureCount = isMachineAnchorClarification
     ? Number(intakeMachine?.anchorFailureCounts?.[activeMachineAnchor?.field_id] || 0)
@@ -11502,7 +12066,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL LIBRARY</div>
             <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>Start with a goal path. Write a custom goal only when the library misses the mark.</div>
             <div data-testid="intake-goal-library-summary" style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-              {allGoalTemplates.length} guided goal paths. {activeGoalLibraryCategory?.helper || "Pick a category or search the library first."}
+              Find the closest fit fast. {activeGoalLibraryCategory?.helper || "Pick a category or search the library first."}
             </div>
           </div>
           <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
@@ -11531,7 +12095,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             data-testid="intake-goal-library-search"
             value={goalLibrarySearch}
             onChange={(e) => setGoalLibrarySearch(e.target.value)}
-            placeholder={`Search ${allGoalTemplates.length}+ goal paths`}
+            placeholder="Search goal paths"
           />
           <div data-testid="intake-goal-library-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem", maxHeight:320, overflowY:"auto", paddingRight:"0.12rem", alignContent:"start" }}>
             {visibleGoalTemplates.map((template) => {
@@ -11822,9 +12386,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
           <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
             <div style={{ display:"grid", gap:"0.14rem" }}>
-              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>FEATURED GOAL PATHS</div>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXAMPLES THAT FIT</div>
               <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>
-                {activeStarterGoalType?.label || "Goal"} paths most people mean when they start here.
+                {activeStarterGoalType?.label || "Goal"} examples to help you pick the closest fit fast.
               </div>
             </div>
             <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Tap a card to make it Priority 1.</div>
@@ -11941,8 +12505,8 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       {primaryIntakeGoalSelection && activeStarterMetricQuestions.length > 0 ? (
         <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
           <div style={{ display:"grid", gap:"0.14rem" }}>
-            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>OPTIONAL FIRST-PLAN METRICS</div>
-            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>If you already know these, we can sharpen the first plan without sending you through extra steps.</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>STARTING POINT</div>
+            <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>If you already know these, week one can start from a more accurate baseline.</div>
           </div>
           <div style={{ display:"grid", gap:"0.6rem" }}>
             {activeStarterMetricQuestions.map((question) => renderGoalMetricQuestionCard(question))}
@@ -11956,7 +12520,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       <div data-testid="intake-selected-goals" style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.55)" }}>
         <div style={{ display:"grid", gap:"0.14rem" }}>
           <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT GOAL STACK</div>
-          <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Featured cards set your starting Priority 1. The full library below lets you add more priorities without leaving this screen.</div>
+          <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Reorder priorities here and build from this same intake instead of routing through a separate confirmation step.</div>
         </div>
         {intakeGoalSelections.length > 0 ? (
           <div style={{ display:"grid", gap:"0.42rem" }}>
@@ -12058,7 +12622,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
               data-testid="intake-goal-library-search"
               value={goalLibrarySearch}
               onChange={(e) => setGoalLibrarySearch(e.target.value)}
-              placeholder={`Search ${allGoalTemplates.length}+ goal paths`}
+              placeholder="Search goal paths"
             />
             <div data-testid="intake-goal-library-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem", maxHeight:320, overflowY:"auto", paddingRight:"0.12rem", alignContent:"start" }}>
               {visibleGoalTemplates.map((template) => {
@@ -12104,7 +12668,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   );
   const renderPlanningRealitySurface = () => (
     <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
-      {renderSectionLabel("Plan realities", "What shapes the first block", "Only the context that changes week one.")}
+      {renderSectionLabel("Constraints", "What shapes week one", "Separate the goal itself from the limits and realities around it.")}
       <div style={{ display:"grid", gap:"0.7rem" }}>
         <div style={{ display:"grid", gap:"0.35rem" }}>
           <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXPERIENCE</div>
@@ -12199,7 +12763,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           </div>
         ) : (
           <div data-testid="intake-goals-needs" style={{ fontSize:"0.54rem", color:"#9fe8c7", lineHeight:1.5 }}>
-            Enough to build a first draft. Optional anchors can still sharpen it before review.
+            Enough to shape week one. If anything still matters, you can add it on the next screen.
           </div>
         )}
       </div>
@@ -12207,7 +12771,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   );
   const renderGoalsStage = () => (
     <div data-testid="intake-goals-step" style={{ display:"grid", gap:"0.95rem" }}>
-      {renderSectionLabel("Stage 1", "Goals", `Most common paths now take ${clickCountReductionFloor}+ fewer clicks before the first draft.`)}
+      {renderSectionLabel("Stage 1", "Setup", "Choose what you want and the constraints that shape week one.")}
       <div style={{ display:"grid", gap:"0.8rem", border:"1px solid rgba(0,194,255,0.18)", borderRadius:22, padding:"1rem", background:"linear-gradient(180deg, rgba(0,194,255,0.08), rgba(8,14,25,0.82))" }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:"0.7rem", alignItems:"center", flexWrap:"wrap" }}>
           <div style={{ display:"grid", gap:"0.18rem", maxWidth:620 }}>
@@ -12215,11 +12779,11 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
             <div style={{ fontSize:"0.76rem", color:"#f8fbff", lineHeight:1.5 }}>{INTAKE_COPY_DECK.goals.heroBody}</div>
           </div>
           <div data-testid="intake-goal-library-summary" style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5, border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.3rem 0.6rem", background:"rgba(4,10,18,0.45)" }}>
-            {allGoalTemplates.length} guided goal paths. Custom stays available, but it no longer leads the screen.
+            Pick the path that fits best. You can always tune details before week one starts.
           </div>
         </div>
         <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
-          {["1. Goal type", "2. Goal path", "3. Optional anchors", "4. Plan realities"].map((label) => (
+          {["What you want", "Examples that fit", "Starting point", "Constraints that matter"].map((label) => (
             <div key={label} style={{ fontSize:"0.5rem", color:"#dbe7f6", border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.24rem 0.5rem", background:"rgba(4,10,18,0.5)" }}>
               {label}
             </div>
@@ -12261,241 +12825,256 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       )}
     </div>
   );
-  const renderClarifyStage = () => (
-    <div data-testid="intake-clarify-step" style={{ display:"grid", gap:"0.95rem" }}>
-      {renderSectionLabel("Stage 2", "Clarify", INTAKE_COPY_DECK.clarify.helper)}
-      {interpretedGoalCards.length > 0 ? (
-        <div style={{ display:"grid", gap:"0.55rem" }}>
-          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>{INTAKE_COPY_DECK.clarify.stackEyebrow}</div>
-          {renderGoalCardStack(interpretedGoalCards, { mode: "proposal" })}
-        </div>
-      ) : null}
-      {heardGoalRows.length > 0 ? (
-        <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
-          {heardGoalRows.map((goal) => (
-            <div key={goal.id} style={{ fontSize:"0.5rem", color:"#dbe7f6", border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.22rem 0.5rem", background:"rgba(15,23,42,0.72)" }}>
-              {goal.summary}
+  const renderMachineAnchorStructuredInput = (anchor = null) => {
+    const fieldId = String(anchor?.field_id || "").trim();
+    if (!fieldId) return null;
+    const fieldFragment = toTestIdFragment(fieldId);
+    if (anchor?.input_type === "choice_chips") {
+      return renderChoiceChips({
+        items: (Array.isArray(anchor?.options) ? anchor.options : []).map((option) => ({ value: option.value, label: option.label })),
+        selectedValue: clarificationValues?.[fieldId] || "",
+        onSelect: (value) => updateClarificationValue(fieldId, value),
+        testIdPrefix: `intake-anchor-choice-${fieldFragment}`,
+      });
+    }
+    if (anchor?.input_type === "date_or_month") {
+      return (
+        <div style={{ display:"grid", gap:"0.5rem" }}>
+          <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+            {[
+              { value: "month", label: "Target month" },
+              { value: "date", label: "Exact date" },
+              ...(anchor?.allow_open_ended ? [{ value: OPEN_ENDED_TIMING_VALUE, label: "Open-ended" }] : []),
+            ].map((modeOption) => (
+              <button
+                key={modeOption.value}
+                data-testid={`intake-anchor-mode-${fieldFragment}-${toTestIdFragment(modeOption.value)}`}
+                className={String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "btn btn-primary" : "btn"}
+                onClick={() => updateClarificationValue(`${fieldId}__mode`, modeOption.value)}
+                style={{ fontSize:"0.5rem", color:String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "#08111d" : "#dbe7f6", borderColor:String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "#dbe7f6" : "#324961", background:String(clarificationValues?.[`${fieldId}__mode`] || "month") === modeOption.value ? "#dbe7f6" : "transparent" }}
+              >
+                {modeOption.label}
+              </button>
+            ))}
+          </div>
+          {String(clarificationValues?.[`${fieldId}__mode`] || "month") === OPEN_ENDED_TIMING_VALUE ? (
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              No fixed deadline. We will treat this as an ongoing goal and show the next phase in the visible plan.
             </div>
-          ))}
+          ) : (
+            <input
+              data-testid={`intake-anchor-input-${fieldFragment}`}
+              type={String(clarificationValues?.[`${fieldId}__mode`] || "month") === "date" ? "date" : "month"}
+              value={clarificationValues?.[fieldId] || ""}
+              onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+            />
+          )}
         </div>
-      ) : null}
-      {visibleMachineAnchorCards.length > 0 ? (
-        <div data-testid="intake-anchor-stack" style={{ display:"grid", gap:"0.45rem" }}>
-          {visibleMachineAnchorCards.map((card) => (
-            <div
-              key={card.anchor_id || card.field_id}
-              data-testid={card.is_active ? "intake-anchor-stack-card-active" : "intake-anchor-stack-card-next"}
-              style={{
-                border:`1px solid ${card.is_active ? "rgba(0,194,255,0.24)" : "rgba(111,148,198,0.12)"}`,
-                borderRadius:18,
-                padding:"0.72rem 0.8rem",
-                background:card.is_active ? "rgba(7,18,33,0.88)" : "rgba(8,14,25,0.72)",
-                display:"grid",
-                gap:"0.26rem",
-              }}
-            >
-              <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
-                <div style={{ fontSize:"0.48rem", color:card.is_active ? "#dbe7f6" : "#8fa5c8", letterSpacing:"0.12em" }}>{card.status_label || (card.is_active ? "NOW" : "NEXT")}</div>
-                <div style={{ fontSize:"0.46rem", color:"#8fa5c8" }}>Saved to baselines</div>
-              </div>
-              <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.45 }}>{card.label}</div>
-              <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>{card.why_it_matters}</div>
-              {!card.is_active && card.placeholder ? (
-                <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{card.placeholder}</div>
-              ) : null}
-            </div>
-          ))}
+      );
+    }
+    if (anchor?.input_type === "number_with_unit") {
+      return (
+        <div style={{ display:"grid", gap:"0.5rem" }}>
+          <input
+            data-testid={`intake-anchor-input-${fieldFragment}`}
+            type="number"
+            value={clarificationValues?.[fieldId] || ""}
+            onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+            placeholder={anchor?.placeholder || ""}
+          />
+          {renderChoiceChips({
+            items: (Array.isArray(anchor?.unit_options) ? anchor.unit_options : []).map((option) => ({ value: option.value, label: option.label || option.value })),
+            selectedValue: clarificationValues?.[`${fieldId}__unit`] || anchor?.unit || "",
+            onSelect: (value) => updateClarificationValue(`${fieldId}__unit`, value),
+            testIdPrefix: `intake-anchor-unit-${fieldFragment}`,
+          })}
         </div>
-      ) : null}
-      <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
-        <div style={{ fontSize:"0.56rem", color:"#f8fbff", lineHeight:1.55 }}>{clarificationPromptText}</div>
-        {clarificationValidationMessage ? (
-          <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>{clarificationValidationMessage}</div>
-        ) : null}
-        {isMachineAnchorClarification ? (
-          <div
-            data-testid="intake-anchor-card-active"
-            data-field-id={activeMachineAnchor?.field_id || ""}
-            data-anchor-id={activeMachineAnchor?.anchor_id || ""}
-            style={{ display:"grid", gap:"0.6rem", border:"1px solid rgba(0,194,255,0.24)", borderRadius:18, padding:"0.85rem", background:"rgba(7,18,33,0.92)" }}
-          >
-            <div style={{ display:"grid", gap:"0.24rem" }}>
-              {(activeAnchorDisplayCopy?.helperText || activeMachineAnchor?.why_it_matters) ? (
-                <div data-testid="intake-anchor-why-it-matters" style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
-                  {activeAnchorDisplayCopy?.helperText || activeMachineAnchor?.why_it_matters}
-                </div>
-              ) : null}
-              <div data-testid="intake-anchor-provenance" style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.45 }}>
-                {INTAKE_COPY_DECK.clarify.baselineNote}
-              </div>
-              {activeAnchorDisplayCopy?.reassuranceLine ? (
-                <div data-testid="intake-anchor-context-line" style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.45 }}>{activeAnchorDisplayCopy.reassuranceLine}</div>
-              ) : null}
-            </div>
-            {allowNaturalAnchorMode ? (
-              <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
-                <button
-                  data-testid="intake-anchor-toggle-structured"
-                  className={anchorEntryMode === "structured" ? "btn btn-primary" : "btn"}
-                  onClick={() => setAnchorEntryMode("structured")}
-                  style={{ fontSize:"0.5rem", color:anchorEntryMode === "structured" ? "#08111d" : "#dbe7f6", borderColor:anchorEntryMode === "structured" ? "#dbe7f6" : "#324961", background:anchorEntryMode === "structured" ? "#dbe7f6" : "transparent" }}
-                >
-                  {INTAKE_COPY_DECK.clarify.structuredToggle}
-                </button>
-                <button
-                  data-testid="intake-anchor-toggle-natural"
-                  className={anchorEntryMode === "natural" ? "btn btn-primary" : "btn"}
-                  onClick={() => setAnchorEntryMode("natural")}
-                  style={{ fontSize:"0.5rem", color:anchorEntryMode === "natural" ? "#08111d" : "#dbe7f6", borderColor:anchorEntryMode === "natural" ? "#dbe7f6" : "#324961", background:anchorEntryMode === "natural" ? "#dbe7f6" : "transparent" }}
-                >
-                  {INTAKE_COPY_DECK.clarify.naturalToggle}
-                </button>
-              </div>
-            ) : null}
-            {anchorEntryMode === "natural" && allowNaturalAnchorMode ? (
-              <textarea
-                data-testid="intake-anchor-natural-input"
-                value={naturalAnchorDraft}
-                onChange={(e) => setNaturalAnchorDraft(e.target.value)}
-                placeholder={activeMachineAnchor?.placeholder || INTAKE_COPY_DECK.clarify.naturalPlaceholder}
-                rows={3}
-                style={{ minHeight:88, resize:"vertical", fontSize:"0.88rem", lineHeight:1.55 }}
-              />
-            ) : activeMachineAnchor?.input_type === "choice_chips" ? (
-              renderChoiceChips({
-                items: (Array.isArray(activeMachineAnchor?.options) ? activeMachineAnchor.options : []).map((option) => ({ value: option.value, label: option.label })),
-                selectedValue: clarificationValues?.[activeMachineAnchor?.field_id || ""] || "",
-                onSelect: (value) => updateClarificationValue(activeMachineAnchor.field_id, value),
-                testIdPrefix: `intake-anchor-choice-${toTestIdFragment(activeMachineAnchor?.field_id || "")}`,
-              })
-            ) : activeMachineAnchor?.input_type === "date_or_month" ? (
-              <div style={{ display:"grid", gap:"0.5rem" }}>
-                <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
-                  {[
-                    { value: "month", label: "Target month" },
-                    { value: "date", label: "Exact date" },
-                    ...(activeMachineAnchor?.allow_open_ended ? [{ value: OPEN_ENDED_TIMING_VALUE, label: "Open-ended" }] : []),
-                  ].map((modeOption) => (
-                    <button
-                      key={modeOption.value}
-                      data-testid={`intake-anchor-mode-${toTestIdFragment(activeMachineAnchor?.field_id || "")}-${toTestIdFragment(modeOption.value)}`}
-                      className={String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === modeOption.value ? "btn btn-primary" : "btn"}
-                      onClick={() => updateClarificationValue(`${activeMachineAnchor.field_id}__mode`, modeOption.value)}
-                      style={{ fontSize:"0.5rem", color:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === modeOption.value ? "#08111d" : "#dbe7f6", borderColor:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === modeOption.value ? "#dbe7f6" : "#324961", background:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === modeOption.value ? "#dbe7f6" : "transparent" }}
-                    >
-                      {modeOption.label}
-                    </button>
-                  ))}
-                </div>
-                {String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === OPEN_ENDED_TIMING_VALUE ? (
-                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                    No fixed deadline. We will treat this as an ongoing goal and show the next phase in the visible plan.
-                  </div>
-                ) : (
-                  <input
-                    data-testid={`intake-anchor-input-${toTestIdFragment(activeMachineAnchor?.field_id || "")}`}
-                    type={String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "month") === "date" ? "date" : "month"}
-                    value={clarificationValues?.[activeMachineAnchor?.field_id || ""] || ""}
-                    onChange={(e) => updateClarificationValue(activeMachineAnchor.field_id, e.target.value)}
-                  />
-                )}
-              </div>
-            ) : activeMachineAnchor?.input_type === "number_with_unit" ? (
-              <div style={{ display:"grid", gap:"0.5rem" }}>
-                <input
-                  data-testid={`intake-anchor-input-${toTestIdFragment(activeMachineAnchor?.field_id || "")}`}
-                  type="number"
-                  value={clarificationValues?.[activeMachineAnchor?.field_id || ""] || ""}
-                  onChange={(e) => updateClarificationValue(activeMachineAnchor.field_id, e.target.value)}
-                  placeholder={activeMachineAnchor?.placeholder || ""}
-                />
-                {renderChoiceChips({
-                  items: (Array.isArray(activeMachineAnchor?.unit_options) ? activeMachineAnchor.unit_options : []).map((option) => ({ value: option.value, label: option.label || option.value })),
-                  selectedValue: clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__unit`] || activeMachineAnchor?.unit || "",
-                  onSelect: (value) => updateClarificationValue(`${activeMachineAnchor.field_id}__unit`, value),
-                  testIdPrefix: `intake-anchor-unit-${toTestIdFragment(activeMachineAnchor?.field_id || "")}`,
-                })}
-              </div>
-            ) : activeMachineAnchor?.input_type === "strength_top_set" ? (
-              <div style={{ display:"grid", gap:"0.5rem" }}>
-                <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
-                  {[
-                    { value: "top_set", label: "Top set" },
-                    { value: "estimated_max", label: "Estimated max" },
-                  ].map((modeOption) => (
-                    <button
-                      key={modeOption.value}
-                      data-testid={`intake-anchor-mode-${toTestIdFragment(activeMachineAnchor?.field_id || "")}-${toTestIdFragment(modeOption.label)}`}
-                      className={String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "top_set") === modeOption.value ? "btn btn-primary" : "btn"}
-                      onClick={() => updateClarificationValue(`${activeMachineAnchor.field_id}__mode`, modeOption.value)}
-                      style={{ fontSize:"0.5rem", color:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "top_set") === modeOption.value ? "#08111d" : "#dbe7f6", borderColor:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "top_set") === modeOption.value ? "#dbe7f6" : "#324961", background:String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "top_set") === modeOption.value ? "#dbe7f6" : "transparent" }}
-                    >
-                      {modeOption.label}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:"0.5rem" }}>
-                  <input
-                    data-testid={`intake-anchor-input-${toTestIdFragment(activeMachineAnchor?.field_id || "")}-weight`}
-                    type="number"
-                    value={clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__weight`] || ""}
-                    onChange={(e) => updateClarificationValue(`${activeMachineAnchor.field_id}__weight`, e.target.value)}
-                    placeholder="Weight"
-                  />
-                  {String(clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__mode`] || "top_set") === "estimated_max" ? (
-                    <div />
-                  ) : (
-                    <input
-                      data-testid={`intake-anchor-input-${toTestIdFragment(activeMachineAnchor?.field_id || "")}-reps`}
-                      type="number"
-                      value={clarificationValues?.[`${activeMachineAnchor?.field_id || ""}__reps`] || ""}
-                      onChange={(e) => updateClarificationValue(`${activeMachineAnchor.field_id}__reps`, e.target.value)}
-                      placeholder="Reps"
-                    />
-                  )}
-                </div>
-              </div>
+      );
+    }
+    if (anchor?.input_type === "strength_top_set") {
+      return (
+        <div style={{ display:"grid", gap:"0.5rem" }}>
+          <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+            {[
+              { value: "top_set", label: "Top set" },
+              { value: "estimated_max", label: "Estimated max" },
+            ].map((modeOption) => (
+              <button
+                key={modeOption.value}
+                data-testid={`intake-anchor-mode-${fieldFragment}-${toTestIdFragment(modeOption.label)}`}
+                className={String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === modeOption.value ? "btn btn-primary" : "btn"}
+                onClick={() => updateClarificationValue(`${fieldId}__mode`, modeOption.value)}
+                style={{ fontSize:"0.5rem", color:String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === modeOption.value ? "#08111d" : "#dbe7f6", borderColor:String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === modeOption.value ? "#dbe7f6" : "#324961", background:String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === modeOption.value ? "#dbe7f6" : "transparent" }}
+              >
+                {modeOption.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:"0.5rem" }}>
+            <input
+              data-testid={`intake-anchor-input-${fieldFragment}-weight`}
+              type="number"
+              value={clarificationValues?.[`${fieldId}__weight`] || ""}
+              onChange={(e) => updateClarificationValue(`${fieldId}__weight`, e.target.value)}
+              placeholder="Weight"
+            />
+            {String(clarificationValues?.[`${fieldId}__mode`] || "top_set") === "estimated_max" ? (
+              <div />
             ) : (
               <input
-                data-testid={`intake-anchor-input-${toTestIdFragment(activeMachineAnchor?.field_id || "")}`}
-                value={clarificationValues?.[activeMachineAnchor?.field_id || ""] || ""}
-                onChange={(e) => updateClarificationValue(activeMachineAnchor.field_id, e.target.value)}
-                placeholder={activeMachineAnchor?.placeholder || ""}
+                data-testid={`intake-anchor-input-${fieldFragment}-reps`}
+                type="number"
+                value={clarificationValues?.[`${fieldId}__reps`] || ""}
+                onChange={(e) => updateClarificationValue(`${fieldId}__reps`, e.target.value)}
+                placeholder="Reps"
               />
             )}
-            {anchorCapturePreview?.captureText ? (
-              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                {anchorCapturePreview.captureText}
-                {anchorCapturePreview.question ? ` ${anchorCapturePreview.question}` : ""}
-              </div>
-            ) : null}
-            {clarificationFieldErrors?.[activeMachineAnchor?.field_id || ""] || clarificationFormError ? (
-              <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.5 }}>
-                {clarificationFieldErrors?.[activeMachineAnchor?.field_id || ""] || clarificationFormError}
-              </div>
-            ) : null}
           </div>
-        ) : (
-          <div style={{ display:"grid", gap:"0.55rem" }}>
-            <textarea
-              data-testid="intake-clarify-input"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder={INTAKE_COPY_DECK.clarify.genericPlaceholder}
-              rows={3}
-              style={{ minHeight:92, resize:"vertical", fontSize:"0.88rem", lineHeight:1.55 }}
-            />
-            {clarificationFormError ? (
-              <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.5 }}>{clarificationFormError}</div>
-            ) : null}
+        </div>
+      );
+    }
+    return (
+      <input
+        data-testid={`intake-anchor-input-${fieldFragment}`}
+        value={clarificationValues?.[fieldId] || ""}
+        onChange={(e) => updateClarificationValue(fieldId, e.target.value)}
+        placeholder={anchor?.placeholder || ""}
+      />
+    );
+  };
+  const renderMachineAnchorCard = (anchor = null, { isPrimary = false } = {}) => {
+    if (!anchor?.field_id) return null;
+    const displayCopy = isPrimary ? activeAnchorDisplayCopy : resolveCoachVoiceDisplayCopy({ anchor, phrasing: null });
+    const canUseNaturalMode = isPrimary && allowNaturalAnchorMode && !multiAnchorCollectionMode;
+    const fieldError = clarificationFieldErrors?.[anchor.field_id] || "";
+    return (
+      <div
+        key={anchor.anchor_id || anchor.field_id}
+        data-testid={isPrimary ? "intake-anchor-card-active" : "intake-anchor-card"}
+        data-field-id={anchor.field_id || ""}
+        data-anchor-id={anchor.anchor_id || ""}
+        style={{
+          display:"grid",
+          gap:"0.6rem",
+          border:`1px solid ${isPrimary ? "rgba(0,194,255,0.24)" : "rgba(111,148,198,0.16)"}`,
+          borderRadius:18,
+          padding:"0.85rem",
+          background:isPrimary ? "rgba(7,18,33,0.92)" : "rgba(8,14,25,0.82)",
+        }}
+      >
+        <div style={{ display:"grid", gap:"0.24rem" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+            <div style={{ fontSize:"0.48rem", color:isPrimary ? "#dbe7f6" : "#8fa5c8", letterSpacing:"0.12em" }}>{anchor.status_label || (isPrimary ? "REQUIRED NOW" : "ALSO REQUIRED")}</div>
+            <div data-testid="intake-anchor-provenance" style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {INTAKE_COPY_DECK.clarify.baselineNote}
+            </div>
           </div>
-        )}
+          <div style={{ fontSize:"0.62rem", color:"#f8fbff", lineHeight:1.45 }}>{displayCopy?.questionText || anchor?.question || anchor?.label}</div>
+          {(displayCopy?.helperText || anchor?.why_it_matters) ? (
+            <div data-testid="intake-anchor-why-it-matters" style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
+              {displayCopy?.helperText || anchor?.why_it_matters}
+            </div>
+          ) : null}
+          {displayCopy?.reassuranceLine ? (
+            <div data-testid="intake-anchor-context-line" style={{ fontSize:"0.46rem", color:"#8fa5c8", lineHeight:1.45 }}>{displayCopy.reassuranceLine}</div>
+          ) : null}
+        </div>
+        {canUseNaturalMode ? (
+          <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+            <button
+              data-testid="intake-anchor-toggle-structured"
+              className={anchorEntryMode === "structured" ? "btn btn-primary" : "btn"}
+              onClick={() => setAnchorEntryMode("structured")}
+              style={{ fontSize:"0.5rem", color:anchorEntryMode === "structured" ? "#08111d" : "#dbe7f6", borderColor:anchorEntryMode === "structured" ? "#dbe7f6" : "#324961", background:anchorEntryMode === "structured" ? "#dbe7f6" : "transparent" }}
+            >
+              {INTAKE_COPY_DECK.clarify.structuredToggle}
+            </button>
+            <button
+              data-testid="intake-anchor-toggle-natural"
+              className={anchorEntryMode === "natural" ? "btn btn-primary" : "btn"}
+              onClick={() => setAnchorEntryMode("natural")}
+              style={{ fontSize:"0.5rem", color:anchorEntryMode === "natural" ? "#08111d" : "#dbe7f6", borderColor:anchorEntryMode === "natural" ? "#dbe7f6" : "#324961", background:anchorEntryMode === "natural" ? "#dbe7f6" : "transparent" }}
+            >
+              {INTAKE_COPY_DECK.clarify.naturalToggle}
+            </button>
+          </div>
+        ) : null}
+        {canUseNaturalMode && anchorEntryMode === "natural" ? (
+          <textarea
+            data-testid="intake-anchor-natural-input"
+            value={naturalAnchorDraft}
+            onChange={(e) => setNaturalAnchorDraft(e.target.value)}
+            placeholder={anchor?.placeholder || INTAKE_COPY_DECK.clarify.naturalPlaceholder}
+            rows={3}
+            style={{ minHeight:88, resize:"vertical", fontSize:"0.88rem", lineHeight:1.55 }}
+          />
+        ) : renderMachineAnchorStructuredInput(anchor)}
+        {isPrimary && anchorCapturePreview?.captureText ? (
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+            {anchorCapturePreview.captureText}
+            {anchorCapturePreview.question ? ` ${anchorCapturePreview.question}` : ""}
+          </div>
+        ) : null}
+        {fieldError ? (
+          <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.5 }}>{fieldError}</div>
+        ) : null}
       </div>
-    </div>
-  );
-  const renderConfirmStage = () => (
+    );
+  };
+  const renderStructuredClarificationField = (field = null) => {
+    const fieldKey = String(field?.key || "").trim();
+    if (!fieldKey) return null;
+    const fieldError = clarificationFieldErrors?.[fieldKey] || "";
+    if (field?.inputType === "choice_chips") {
+      return (
+        <div key={fieldKey} style={{ display:"grid", gap:"0.38rem" }}>
+          <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45, fontWeight:600 }}>{field.label || fieldKey}</div>
+          {field?.helperText ? (
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>{field.helperText}</div>
+          ) : null}
+          {renderChoiceChips({
+            items: (Array.isArray(field?.choiceOptions) ? field.choiceOptions : []).map((option) => ({
+              value: option?.value || option,
+              label: option?.label || option?.value || option,
+            })),
+            selectedValue: clarificationValues?.[fieldKey] || "",
+            onSelect: (value) => updateClarificationValue(fieldKey, value),
+            testIdPrefix: `intake-clarify-field-${toTestIdFragment(fieldKey)}`,
+          })}
+          {fieldError ? (
+            <div style={{ fontSize:"0.48rem", color:"#ffd7d7", lineHeight:1.45 }}>{fieldError}</div>
+          ) : null}
+        </div>
+      );
+    }
+    return (
+      <label key={fieldKey} style={{ display:"grid", gap:"0.32rem" }}>
+        <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45, fontWeight:600 }}>{field.label || fieldKey}</div>
+        <input
+          data-testid={`intake-clarify-field-${toTestIdFragment(fieldKey)}`}
+          type={field?.inputType === "number" ? "number" : "text"}
+          inputMode={field?.inputType === "number" ? "decimal" : undefined}
+          min={field?.min}
+          max={field?.max}
+          value={clarificationValues?.[fieldKey] || ""}
+          onChange={(e) => updateClarificationValue(fieldKey, e.target.value)}
+          placeholder={field?.placeholder || ""}
+          style={{
+            borderColor: fieldError ? "rgba(255,123,123,0.55)" : "rgba(111,148,198,0.18)",
+            background:"rgba(4,10,18,0.62)",
+          }}
+        />
+        {field?.helperText ? (
+          <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>{field.helperText}</div>
+        ) : null}
+        {fieldError ? (
+          <div style={{ fontSize:"0.48rem", color:"#ffd7d7", lineHeight:1.45 }}>{fieldError}</div>
+        ) : null}
+      </label>
+    );
+  };
+  const renderReadyToBuildPanel = () => (
     <div data-testid="intake-confirm-step" style={{ display:"grid", gap:"0.95rem" }}>
-      {renderSectionLabel("Stage 3", "Confirm", INTAKE_COPY_DECK.confirm.helper)}
       <div data-testid="intake-review" style={{ display:"grid", gap:"0.7rem" }}>
         <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:18, padding:"0.9rem", background:"rgba(8,14,25,0.78)" }}>
           <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em", marginBottom:"0.22rem" }}>GOAL PRIORITY ORDER</div>
@@ -12531,15 +13110,22 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         ) : null}
         <div style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:18, padding:"0.9rem", background:"rgba(8,14,25,0.78)", display:"grid", gap:"0.45rem" }}>
           <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>READY TO BUILD</div>
-          <div style={{ fontSize:"0.66rem", color:confirmationTone, lineHeight:1.45 }}>{confirmationHeadline}</div>
-          {confirmationNeedsList.length > 0 ? (
+          <div style={{ fontSize:"0.66rem", color:reviewStatePending ? "#8fa5c8" : confirmationTone, lineHeight:1.45 }}>
+            {reviewStatePending ? "Updating the remaining build details." : confirmationHeadline}
+          </div>
+          {reviewStatePending ? (
+            <div data-testid="intake-review-refreshing" style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              Checking whether any week-one anchors still need to come back into view before build.
+            </div>
+          ) : null}
+          {!reviewStatePending && confirmationNeedsList.length > 0 ? (
             <div style={{ display:"grid", gap:"0.24rem" }}>
               {confirmationNeedsList.map((item) => (
                 <div key={item} style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.5 }}>{item}</div>
               ))}
             </div>
           ) : null}
-          {milestoneDecisionModel ? (
+          {!reviewStatePending && milestoneDecisionModel ? (
             <div data-testid="intake-target-shape" style={{ border:"1px solid rgba(111,148,198,0.14)", borderRadius:16, padding:"0.75rem", background:"rgba(15,23,42,0.72)", display:"grid", gap:"0.45rem" }}>
               <div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>TIMING</div>
               <div data-testid="intake-target-shape-headline" style={{ fontSize:"0.62rem", color:"#f8fbff", lineHeight:1.45 }}>{milestoneDecisionModel.headline}</div>
@@ -12585,12 +13171,12 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
               </div>
             </div>
           ) : null}
-          {activeConfirmationState?.reason || confirmBuildError ? (
+          {!reviewStatePending && (activeConfirmationState?.reason || confirmBuildError) ? (
             <div data-testid="intake-confirmation-message" style={{ fontSize:"0.54rem", color:confirmationTone, lineHeight:1.5 }}>
               {confirmBuildError || activeConfirmationState?.reason}
             </div>
           ) : null}
-          {(activeConfirmationState?.status === "block" || activeConfirmationState?.status === "incomplete") && activeConfirmationState?.next_required_field ? (
+          {!reviewStatePending && (activeConfirmationState?.status === "block" || activeConfirmationState?.status === "incomplete") && activeConfirmationState?.next_required_field ? (
             <div>
               <button
                 data-testid="intake-go-next-detail"
@@ -12606,6 +13192,65 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       </div>
     </div>
   );
+  const renderClarifyStage = () => (
+    <div data-testid="intake-clarify-step" style={{ display:"grid", gap:"0.95rem" }}>
+      {renderSectionLabel("Stage 2", "Details", INTAKE_COPY_DECK.clarify.helper)}
+      {heardGoalRows.length > 0 ? (
+        <div style={{ display:"flex", gap:"0.4rem", flexWrap:"wrap" }}>
+          {heardGoalRows.map((goal) => (
+            <div key={goal.id} style={{ fontSize:"0.5rem", color:"#dbe7f6", border:"1px solid rgba(111,148,198,0.16)", borderRadius:999, padding:"0.22rem 0.5rem", background:"rgba(15,23,42,0.72)" }}>
+              {goal.summary}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+        <div style={{ fontSize:"0.56rem", color:"#f8fbff", lineHeight:1.55 }}>
+          {clarificationPromptText || "Everything important for week one is on this page. Add whatever is still missing, then continue."}
+        </div>
+        {clarificationValidationMessage ? (
+          <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>{clarificationValidationMessage}</div>
+        ) : null}
+        {isMachineAnchorClarification ? (
+          <div data-testid="intake-anchor-sheet" style={{ display:"grid", gap:"0.65rem" }}>
+            {visibleMachineAnchorCards.map((anchor, index) => renderMachineAnchorCard(anchor, { isPrimary: index === 0 }))}
+          </div>
+        ) : isStructuredClarification ? (
+          <div style={{ display:"grid", gap:"0.55rem" }}>
+            <div style={{ display:"grid", gap:"0.7rem", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))" }}>
+              {clarificationInputFields.map((field) => renderStructuredClarificationField(field))}
+            </div>
+            {clarificationFormError ? (
+              <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.5 }}>{clarificationFormError}</div>
+            ) : null}
+          </div>
+        ) : pendingClarifyingQuestion?.prompt ? (
+          <div style={{ display:"grid", gap:"0.55rem" }}>
+            <textarea
+              data-testid="intake-clarify-input"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={INTAKE_COPY_DECK.clarify.genericPlaceholder}
+              rows={3}
+              style={{ minHeight:92, resize:"vertical", fontSize:"0.88rem", lineHeight:1.55 }}
+            />
+            {clarificationFormError ? (
+              <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.5 }}>{clarificationFormError}</div>
+            ) : null}
+          </div>
+        ) : (
+          <div style={{ fontSize:"0.54rem", color:"#9fe8c7", lineHeight:1.5 }}>
+            No extra detail is required right now. Review the stack below and continue when it looks right.
+          </div>
+        )}
+        {!isMachineAnchorClarification && clarificationFormError ? (
+          <div style={{ fontSize:"0.52rem", color:C.amber, lineHeight:1.5 }}>{clarificationFormError}</div>
+        ) : null}
+      </div>
+      {renderReadyToBuildPanel()}
+    </div>
+  );
+  const renderConfirmStage = () => renderClarifyStage();
   const renderAdjustStage = () => (
     <div data-testid="intake-adjust-step" style={{ display:"grid", gap:"0.95rem" }}>
       {renderSectionLabel("Correction", INTAKE_COPY_DECK.adjust.title, adjustmentTargetGoal?.summary ? `Describe what should change about "${adjustmentTargetGoal.summary}".` : INTAKE_COPY_DECK.adjust.helper)}
@@ -12624,7 +13269,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   );
   const renderBuildingStage = () => (
     <div data-testid="intake-building" style={{ display:"grid", gap:"0.8rem" }}>
-      {renderSectionLabel("Stage 4", "Build", INTAKE_COPY_DECK.build.helper)}
+      {renderSectionLabel("Stage 3", "Build", INTAKE_COPY_DECK.build.helper)}
       <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
         <div style={{ fontSize:"0.9rem", color:"#f8fbff" }}>{INTAKE_COPY_DECK.build.status}</div>
         <div data-testid="intake-building-stage" style={{ fontSize:"0.72rem", color:"#9fb4d3" }}>{BUILD_STAGES[buildingStageIndex]}</div>
@@ -12656,9 +13301,17 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       return;
     }
     if (phase === INTAKE_UI_PHASES.adjust) {
-      setPhase(activeReviewModel?.orderedResolvedGoals?.length ? INTAKE_UI_PHASES.confirm : INTAKE_UI_PHASES.goals);
+      setPhase(activeReviewModel?.orderedResolvedGoals?.length ? INTAKE_UI_PHASES.clarify : INTAKE_UI_PHASES.goals);
     }
   };
+  const clarifyReadyToBuild = phase === INTAKE_UI_PHASES.clarify
+    && !reviewStatePending
+    && !isMachineAnchorClarification
+    && !pendingClarifyingQuestion?.prompt
+    && !pendingSecondaryGoalPrompt
+    && confirmCtaEnabled;
+  const multiAnchorSheetComplete = multiAnchorCollectionMode
+    && visibleMachineAnchorCards.every((anchor) => Boolean(buildAnchorSubmissionPayload(anchor)?.raw_text));
   const handleFooterPrimaryAction = async () => {
     const nextAttempt = Number(stageAnalyticsRef.current?.continueClicks || 0) + 1;
     stageAnalyticsRef.current = {
@@ -12688,6 +13341,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       return;
     }
     if (phase === INTAKE_UI_PHASES.clarify) {
+      if (clarifyReadyToBuild) {
+        await finalizePlan();
+        return;
+      }
       await submitClarification();
       return;
     }
@@ -12700,9 +13357,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     }
   };
   const footerPrimaryLabel = phase === INTAKE_UI_PHASES.confirm
-    ? (confirmBuildSubmitting ? "Confirming..." : "Confirm")
+    ? (confirmBuildSubmitting ? "Continuing..." : "Continue")
     : phase === INTAKE_UI_PHASES.clarify
-    ? (naturalAnchorSubmitting ? "Capturing..." : "Save detail")
+    ? (clarifyReadyToBuild
+      ? (confirmBuildSubmitting ? "Continuing..." : "Continue")
+      : naturalAnchorSubmitting
+      ? "Capturing..."
+      : "Continue")
     : phase === INTAKE_UI_PHASES.adjust
     ? "Update goal"
     : phase === INTAKE_UI_PHASES.goals
@@ -12715,8 +13376,14 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     : phase === INTAKE_UI_PHASES.interpretation
     ? assessing || !assessmentBoundary?.typedIntakePacket
     : phase === INTAKE_UI_PHASES.clarify
-    ? (isMachineAnchorClarification
-      ? !(anchorEntryMode === "natural" ? String(naturalAnchorDraft || "").trim() : activeMachineAnchorSubmission?.raw_text) || naturalAnchorSubmitting
+    ? (reviewStatePending
+      ? true
+      : clarifyReadyToBuild
+      ? !confirmCtaEnabled || assessing || isCoachStreaming || confirmBuildSubmitting
+      : isMachineAnchorClarification
+      ? (multiAnchorCollectionMode
+        ? !multiAnchorSheetComplete || naturalAnchorSubmitting
+        : !(anchorEntryMode === "natural" ? String(naturalAnchorDraft || "").trim() : activeMachineAnchorSubmission?.raw_text) || naturalAnchorSubmitting)
       : isStructuredClarification
       ? clarificationInputFields.every((field) => !String(clarificationValues?.[field.key] || "").trim())
       : !draft.trim())
@@ -12737,6 +13404,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       data-current-field-id={String(activeMachineAnchor?.field_id || "")}
       data-current-anchor-id={String(activeMachineAnchor?.anchor_id || "")}
       data-confirmation-status={String(activeConfirmationState?.status || "")}
+      data-review-refresh-pending={reviewStatePending ? "true" : "false"}
       style={{ minHeight:"100vh", display:"flex", justifyContent:"center", background:"radial-gradient(120% 120% at 10% 0%, rgba(0,194,255,0.14), transparent 38%), radial-gradient(110% 110% at 100% 0%, rgba(255,138,0,0.12), transparent 36%), linear-gradient(180deg,#05080f 0%, #0a1322 55%, #0d182b 100%)", padding:"clamp(0.9rem, 2.6vw, 1.5rem)" }}
     >
       <div style={{ width:"100%", maxWidth:1180, display:"grid", gap:"1rem", minHeight:"calc(100vh - 2rem)" }}>
@@ -12838,13 +13506,13 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
               ) : null}
               {phase !== INTAKE_UI_PHASES.building ? (
                 <button
-                  data-testid={phase === INTAKE_UI_PHASES.confirm ? "intake-confirm-build" : "intake-footer-continue"}
+                  data-testid={phase === INTAKE_UI_PHASES.confirm || clarifyReadyToBuild ? "intake-confirm-build" : "intake-footer-continue"}
                   className="btn btn-primary"
                   onClick={handleFooterPrimaryAction}
                   disabled={footerPrimaryDisabled}
                 >
-                  {phase === INTAKE_UI_PHASES.confirm
-                    ? (confirmBuildSubmitting ? "Confirming..." : "Confirm and build")
+                  {phase === INTAKE_UI_PHASES.confirm || clarifyReadyToBuild
+                    ? (confirmBuildSubmitting ? "Continuing..." : "Continue")
                     : footerPrimaryLabel}
                 </button>
               ) : null}
@@ -13217,190 +13885,6 @@ function AppearanceThemeSection({ appearance = {}, onPatchAppearance = null }) {
       </div>
       <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.5 }}>
         Current direction: {PRODUCT_BRAND.name}. Themes now span editorial, technical, journal, signal, and classic athletic directions while keeping typography, controls, and body text readable.
-      </div>
-    </div>
-  );
-}
-
-function ProfileSetupGate({ personalization = {}, onComplete = async () => {} }) {
-  const settings = personalization?.settings || DEFAULT_PERSONALIZATION.settings;
-  const profile = personalization?.profile || DEFAULT_PERSONALIZATION.profile;
-  const activeTrainingContext = deriveTrainingContextFromPersonalization({ personalization });
-  const experienceOptions = [
-    { label: "Brand new", years: 0, helper: "Just starting or restarting" },
-    { label: "About 1 year", years: 1, helper: "Some consistency, still building basics" },
-    { label: "2-4 years", years: 3, helper: "Regular training background" },
-    { label: "5+ years", years: 5, helper: "Longer training history" },
-  ];
-  const [draft, setDraft] = useState({
-    name: profile?.name && profile.name !== "Athlete" ? profile.name : "",
-    units: settings?.units?.weight === "kg" ? "metric" : "imperial",
-    timezone: profile?.timezone || DEFAULT_TIMEZONE,
-    height: profile?.height || "",
-    weight: profile?.weight || "",
-    birthYear: profile?.birthYear || "",
-    trainingAgeYears: profile?.trainingAgeYears || "",
-    environmentMode: trainingEnvironmentToDisplayMode(activeTrainingContext?.environment?.value || "") || "Home",
-    equipmentAccess: activeTrainingContext?.equipmentAccess?.value || TRAINING_EQUIPMENT_VALUES.basicGym,
-    sessionLength: activeTrainingContext?.sessionDuration?.value || TRAINING_SESSION_DURATION_VALUES.min30,
-  });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const updateDraft = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
-  const canContinue = Boolean(
-    String(draft?.name || "").trim()
-    && String(draft?.timezone || "").trim()
-    && String(draft?.height || "").trim()
-    && String(draft?.weight || "").trim()
-    && String(draft?.birthYear || "").trim()
-  );
-
-  const handleContinue = async () => {
-    if (!canContinue) {
-      setError("Add name, timezone, height, weight, and birth year before continuing.");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      await onComplete(draft);
-    } catch (nextError) {
-      setError(nextError?.message || "Profile setup could not be saved.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div data-testid="profile-setup-gate" style={{ maxWidth:680, margin:"0 auto", minHeight:"100vh", display:"grid", placeItems:"center", padding:"1rem" }}>
-      <div className="card card-strong card-hero" style={{ width:"100%", borderColor:"var(--border-strong)" }}>
-        <div style={{ display:"grid", gap:"0.3rem", marginBottom:"0.9rem" }}>
-          <div className="sect-title">Profile Setup</div>
-          <div style={{ fontSize:"0.6rem", color:"var(--text-strong)", lineHeight:1.5 }}>
-            Set the person and training reality first. This is what lets FORMA stop guessing about your body, schedule, and setup before intake starts asking goal questions.
-          </div>
-          <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
-            {["Real name and timezone", "Body + units", "Training setup defaults"].map((label) => (
-              <span key={label} className="tag" style={{ fontSize:"0.44rem" }}>{label}</span>
-            ))}
-          </div>
-        </div>
-        <div style={{ display:"grid", gap:"0.6rem" }}>
-          <div style={{ border:"1px solid var(--border)", borderRadius:16, padding:"0.78rem", background:"var(--surface-2)", display:"grid", gap:"0.5rem" }}>
-            <div>
-              <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", marginBottom:"0.12rem" }}>About you</div>
-              <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.5 }}>
-                These fields make reminders, units, and baseline assumptions line up with a real person instead of a blank demo profile.
-              </div>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))", gap:"0.42rem" }}>
-              <label style={{ display:"grid", gap:"0.16rem" }}>
-                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Display name</span>
-                <input data-testid="profile-setup-name" value={draft.name} onChange={(e)=>updateDraft("name", e.target.value)} placeholder="What should coach call you?" />
-              </label>
-              <label style={{ display:"grid", gap:"0.16rem" }}>
-                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Timezone</span>
-                <input data-testid="profile-setup-timezone" value={draft.timezone} onChange={(e)=>updateDraft("timezone", e.target.value)} placeholder="America/Chicago" />
-              </label>
-              <label style={{ display:"grid", gap:"0.16rem" }}>
-                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Units</span>
-                <select data-testid="profile-setup-units" value={draft.units} onChange={(e)=>updateDraft("units", e.target.value)}>
-                  <option value="imperial">Imperial</option>
-                  <option value="metric">Metric</option>
-                </select>
-              </label>
-              <label style={{ display:"grid", gap:"0.16rem" }}>
-                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Birth year</span>
-                <input data-testid="profile-setup-birth-year" type="number" value={draft.birthYear} onChange={(e)=>updateDraft("birthYear", e.target.value)} placeholder="1992" />
-              </label>
-              <label style={{ display:"grid", gap:"0.16rem" }}>
-                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Height</span>
-                <input data-testid="profile-setup-height" value={draft.height} onChange={(e)=>updateDraft("height", e.target.value)} placeholder={draft.units === "metric" ? "Height in cm" : "e.g. 5'10\""} />
-              </label>
-              <label style={{ display:"grid", gap:"0.16rem" }}>
-                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Current bodyweight</span>
-                <input data-testid="profile-setup-weight" type="number" step="0.1" value={draft.weight} onChange={(e)=>updateDraft("weight", e.target.value)} placeholder={draft.units === "metric" ? "Weight in kg" : "Weight in lb"} />
-              </label>
-            </div>
-          </div>
-
-          <div style={{ border:"1px solid var(--border)", borderRadius:16, padding:"0.78rem", background:"var(--surface-2)", display:"grid", gap:"0.5rem" }}>
-            <div>
-              <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", marginBottom:"0.12rem" }}>Training reality</div>
-              <div style={{ fontSize:"0.49rem", color:"var(--text-soft)", lineHeight:1.5 }}>
-                These defaults shape the sessions the planner will prescribe on day one. They should reflect your normal week, not your ideal week.
-              </div>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.42rem" }}>
-              <label style={{ display:"grid", gap:"0.16rem" }}>
-                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Usual environment</span>
-                <select data-testid="profile-setup-environment" value={draft.environmentMode} onChange={(e)=>updateDraft("environmentMode", e.target.value)}>
-                  {["Home", "Gym", "Both", "Varies a lot"].map((option) => <option key={option} value={option}>{option}</option>)}
-                </select>
-              </label>
-              <label style={{ display:"grid", gap:"0.16rem" }}>
-                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Equipment access</span>
-                <select data-testid="profile-setup-equipment" value={draft.equipmentAccess} onChange={(e)=>updateDraft("equipmentAccess", e.target.value)}>
-                  <option value={TRAINING_EQUIPMENT_VALUES.none}>No equipment</option>
-                  <option value={TRAINING_EQUIPMENT_VALUES.dumbbells}>Dumbbells</option>
-                  <option value={TRAINING_EQUIPMENT_VALUES.basicGym}>Basic gym</option>
-                  <option value={TRAINING_EQUIPMENT_VALUES.fullGym}>Full gym</option>
-                  <option value={TRAINING_EQUIPMENT_VALUES.mixed}>Mixed setup</option>
-                </select>
-              </label>
-              <label style={{ display:"grid", gap:"0.16rem" }}>
-                <span style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Usual session length</span>
-                <select data-testid="profile-setup-session-length" value={draft.sessionLength} onChange={(e)=>updateDraft("sessionLength", e.target.value)}>
-                  <option value={TRAINING_SESSION_DURATION_VALUES.min20}>20 min</option>
-                  <option value={TRAINING_SESSION_DURATION_VALUES.min30}>30 min</option>
-                  <option value={TRAINING_SESSION_DURATION_VALUES.min45}>45 min</option>
-                  <option value={TRAINING_SESSION_DURATION_VALUES.min60Plus}>60+ min</option>
-                </select>
-              </label>
-            </div>
-            <div style={{ display:"grid", gap:"0.22rem" }}>
-              <div style={{ fontSize:"0.47rem", color:"var(--text-soft)" }}>Years of consistent training</div>
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.32rem" }}>
-                {experienceOptions.map((option) => {
-                  const selected = Number(draft.trainingAgeYears || 0) === option.years;
-                  return (
-                    <button
-                      key={option.label}
-                      type="button"
-                      className="btn"
-                      onClick={() => updateDraft("trainingAgeYears", String(option.years))}
-                      style={{
-                        textAlign:"left",
-                        display:"grid",
-                        gap:"0.12rem",
-                        borderColor:selected ? "var(--border-strong)" : "var(--border)",
-                        background:selected ? "var(--tab-active-bg)" : "var(--surface-1)",
-                        color:selected ? "var(--tab-active-text)" : "var(--text-soft)",
-                      }}
-                    >
-                      <span style={{ fontSize:"0.48rem", color:selected ? "var(--text-strong)" : "inherit" }}>{option.label}</span>
-                      <span style={{ fontSize:"0.43rem", lineHeight:1.4 }}>{option.helper}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <input data-testid="profile-setup-training-age" type="number" min="0" max="60" value={draft.trainingAgeYears} onChange={(e)=>updateDraft("trainingAgeYears", e.target.value)} placeholder="Or type the number of years directly" />
-              <div style={{ fontSize:"0.46rem", color:"var(--text-soft)", lineHeight:1.5 }}>
-                A close estimate is enough. This only prevents the planner from treating a detrained beginner and a longtime lifter like the same person.
-              </div>
-            </div>
-          </div>
-          {error && <div style={{ fontSize:"0.52rem", color:"#fbbf24", lineHeight:1.45 }}>{error}</div>}
-          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"center", flexWrap:"wrap" }}>
-            <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.55, maxWidth:430 }}>
-              Intake stays separate. This step only locks in the person, body defaults, and training setup the planner should trust before goal interpretation begins.
-            </div>
-            <button data-testid="profile-setup-save" className="btn btn-primary" onClick={handleContinue} disabled={!canContinue || saving} style={{ fontSize:"0.54rem" }}>
-              {saving ? "Saving..." : "Continue to intake"}
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -13927,7 +14411,7 @@ function MetricsBaselinesSection({
   );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, onResetThisDevice = async () => ({ ok: false }), storageStatus = null, syncStateModel = null, syncSurfaceModel = null, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], focusSection = "", frictionDashboard = null, onTrackFrictionEvent = () => {} }) {
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, onResetThisDevice = async () => ({ ok: false }), onOpenAuthGate = () => {}, storageStatus = null, syncStateModel = null, syncSurfaceModel = null, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], focusSection = "", frictionDashboard = null, onTrackFrictionEvent = () => {} }) {
   const appleHealth = personalization?.connectedDevices?.appleHealth || {};
   const garmin = personalization?.connectedDevices?.garmin || {};
   const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
@@ -14306,7 +14790,26 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   }, [activeSettingsSurface, authSession?.user?.email, onTrackFrictionEvent]);
   const garminLastSyncLabel = garmin?.lastSyncAt ? new Date(garmin.lastSyncAt).toLocaleString() : "never";
   const formatIntegrationTimestamp = (value) => value ? new Date(value).toLocaleString() : "never";
-  const settingsSaveColor = /^Cloud reload failed:/i.test(settingsSaveMsg) ? C.amber : C.green;
+  const settingsSaveColor = /could not be reloaded|failed:/i.test(settingsSaveMsg) ? C.amber : C.green;
+  const showInternalSettingsTools = debugMode;
+  const showProtectedDiagnostics = (() => {
+    if (!debugMode || typeof window === "undefined") return false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("diagnostics") === "1" || safeStorageGet(localStorage, "trainer_staff_diagnostics", "0") === "1";
+    } catch {
+      return false;
+    }
+  })();
+  const appendDebugDetail = (message = "", detail = "") => {
+    const base = String(message || "").trim();
+    const extra = String(detail || "").trim();
+    if (!base || !debugMode || !extra || base.includes(extra)) return base;
+    return `${base} (${extra})`;
+  };
+  const deleteAccountHelpText = deleteDiagnostics.configured === true
+    ? ""
+    : "Permanent delete is not available here yet. You can still sign out or reset this device.";
   const accountSyncState = {
     label: syncStateModel?.headline || "Cloud and device are aligned",
     detail: syncStateModel?.detail || "Cloud data is up to date.",
@@ -15315,16 +15818,20 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         },
       });
     } catch (error) {
-      setSettingsSaveMsg(`Cloud reload failed: ${error?.message || "unknown error"}`);
+      const reloadFailureMessage = appendDebugDetail(
+        "Cloud data could not be reloaded right now. This device is still using its saved local copy.",
+        error?.message || ""
+      );
+      setSettingsSaveMsg(reloadFailureMessage);
       setAccountActionTone("warn");
-      setAccountActionMsg(`Cloud reload failed: ${error?.message || "unknown error"}`);
+      setAccountActionMsg(reloadFailureMessage);
       onTrackFrictionEvent({
         flow: "settings",
         action: "reload_cloud",
         outcome: "error",
         props: {
           duration_ms: Date.now() - startedAt,
-          error_code: String(error?.message || "reload_cloud_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
+          error_code: getDiagnosticsCode(error, "reload_cloud_failed"),
         },
       });
     } finally {
@@ -15381,10 +15888,10 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     const deleteSupported = latestDiagnostics?.diagnostics?.configured === true;
     if (!deleteSupported) {
       setAccountActionTone("warn");
-      setAccountActionMsg([
-        latestDiagnostics?.diagnostics?.message || "Permanent delete is not available on this deployment.",
-        latestDiagnostics?.diagnostics?.fix || "",
-      ].filter(Boolean).join(" "));
+      setAccountActionMsg(appendDebugDetail(
+        "Permanent delete is not available here yet. You can still sign out or reset this device.",
+        latestDiagnostics?.diagnostics?.fix || latestDiagnostics?.diagnostics?.message || ""
+      ));
       onTrackFrictionEvent({
         flow: "settings",
         action: "delete_account",
@@ -15401,17 +15908,17 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
       const result = await onDeleteAccount?.();
       if (!result?.ok) {
         setAccountActionTone("warn");
-        setAccountActionMsg([
-          result?.error?.message || "Account deletion failed.",
-          result?.error?.fix || "",
-        ].filter(Boolean).join(" "));
+        setAccountActionMsg(appendDebugDetail(
+          result?.error?.userMessage || "Account deletion could not finish right now.",
+          result?.error?.diagnosticsCode || result?.error?.fix || ""
+        ));
         onTrackFrictionEvent({
           flow: "settings",
           action: "delete_account",
           outcome: "error",
           props: {
             duration_ms: Date.now() - startedAt,
-            error_code: String(result?.error?.code || result?.error?.message || "delete_account_failed").toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60),
+            error_code: getDiagnosticsCode(result?.error, "delete_account_failed"),
           },
         });
         return;
@@ -15487,7 +15994,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.7rem" }}>
           <div className="sect-title" style={{ color:"#9fb2d2", marginBottom:0 }}>SETTINGS</div>
           <div style={{ fontSize:"0.55rem", color:"#8ea4c7", lineHeight:1.55 }}>
-            Account controls, goals, baselines, programs, appearance, integrations, and advanced setup live here instead of inside the main training tabs.
+            Account controls, goals, baselines, programs, appearance, and integrations live here instead of leaking across the main training tabs.
           </div>
           {!!settingsSaveMsg && <div style={{ fontSize:"0.5rem", color:settingsSaveColor }}>{settingsSaveMsg}</div>}
         </div>
@@ -15495,7 +16002,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
         <div style={{ display:"grid", gap:"0.75rem" }}>
           <div data-testid="settings-surface-nav" style={{ display:"grid", gap:"0.35rem" }}>
             <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
-              Pick one management surface at a time so Settings stays focused instead of turning into one long admin page.
+              Pick one management surface at a time so Settings stays focused instead of turning into one long control panel.
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:"0.35rem" }}>
               {[
@@ -15505,7 +16012,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 { key: "baselines", label: "Baselines", helper: "Metrics, readiness inputs, and anchor confidence" },
                 { key: "programs", label: "Programs & styles", helper: "Plan basis, templates, and style layers" },
                 { key: "preferences", label: "Preferences", helper: "Environment, check-ins, and appearance" },
-                { key: "advanced", label: "Advanced", helper: "Coach setup and integrations" },
+                { key: "advanced", label: "Integrations", helper: "Connect services and device access" },
               ].map((surface) => {
                 const selected = activeSettingsSurface === surface.key;
                 return (
@@ -15586,12 +16093,36 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                   <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.62rem", display:"grid", gap:"0.34rem" }}>
                     <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.08em" }}>LEAVE THIS DEVICE</div>
                     <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>Sign out fast without deleting the cloud account.</div>
-                    <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.5 }}>This returns to the auth gate immediately. Local data stays available on this browser unless you choose a device reset.</div>
+                    <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.5 }}>This signs out immediately and keeps this browser in local mode unless you choose a device reset.</div>
                     <button data-testid="settings-logout" className="btn" disabled={accountActionBusy !== ""} onClick={handleLifecycleSignOut} style={{ width:"fit-content", fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324761" }}>
                       {accountActionBusy === "logout" ? "Signing out..." : "Sign out"}
                     </button>
                   </div>
                 </div>
+              </>
+            ) : (
+              <div style={{ display:"grid", gap:"0.35rem" }}>
+                <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                  Local mode is active on this device. Open sign-in only when you want cloud sync, device handoff, or permanent account controls. Recovery and reset tools stay tucked under the advanced panel below.
+                </div>
+                <button
+                  data-testid="settings-open-auth-gate"
+                  className="btn"
+                  onClick={onOpenAuthGate}
+                  style={{ width:"fit-content", fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}
+                >
+                  Sign in to cloud account
+                </button>
+              </div>
+            )}
+            <details data-testid="settings-account-advanced" style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem", display:"grid", gap:"0.45rem" }}>
+              <summary style={{ cursor:"pointer", fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                Advanced recovery and destructive actions
+              </summary>
+              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                Open this only when you want export, restore, reset this device, or permanently delete the signed-in account.
+              </div>
+              {authSession?.user?.email && (
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
                   <div style={{ border:"1px solid #2b3d55", borderRadius:12, background:"#0b1220", padding:"0.62rem", display:"grid", gap:"0.34rem" }}>
                     <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.08em" }}>LOCAL-ONLY RESET</div>
@@ -15665,17 +16196,29 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                       </button>
                     </div>
                     {deleteDiagnostics.checked && deleteDiagnostics.configured !== true && (
-                      <div data-testid="settings-delete-account-diagnostics" style={{ border:"1px solid #4a3946", borderRadius:10, padding:"0.5rem", display:"grid", gap:"0.24rem" }}>
-                        <div style={{ fontSize:"0.48rem", color:"#f1d4dd", lineHeight:1.5 }}>{deleteDiagnostics.detail || "This deployment cannot permanently delete auth identities yet."}</div>
-                        {deleteDiagnostics.missing.length > 0 && (
-                          <div style={{ fontSize:"0.47rem", color:"#c8a4b3", lineHeight:1.5 }}>
-                            Required env: <span data-testid="settings-delete-account-missing-envs">{deleteDiagnostics.missing.join(", ")}</span>
-                          </div>
-                        )}
-                        {!!deleteDiagnostics.fix && (
-                          <div style={{ fontSize:"0.47rem", color:"#f7d39a", lineHeight:1.5 }}>
-                            To enable delete: {deleteDiagnostics.fix}
-                          </div>
+                      <div data-testid="settings-delete-account-help" style={{ border:"1px solid #4a3946", borderRadius:10, padding:"0.5rem", display:"grid", gap:"0.3rem" }}>
+                        <div style={{ fontSize:"0.48rem", color:"#f1d4dd", lineHeight:1.5 }}>
+                          {deleteAccountHelpText}
+                        </div>
+                        {showInternalSettingsTools && (
+                          <details data-testid="settings-delete-account-diagnostics">
+                            <summary style={{ cursor:"pointer", fontSize:"0.47rem", color:"#c8a4b3" }}>Developer diagnostics</summary>
+                            <div style={{ marginTop:"0.3rem", display:"grid", gap:"0.24rem" }}>
+                              <div style={{ fontSize:"0.47rem", color:"#c8a4b3", lineHeight:1.5 }}>
+                                {deleteDiagnostics.detail || "This deployment cannot permanently delete auth identities yet."}
+                              </div>
+                              {deleteDiagnostics.missing.length > 0 && (
+                                <div style={{ fontSize:"0.47rem", color:"#c8a4b3", lineHeight:1.5 }}>
+                                  Required env: <span data-testid="settings-delete-account-missing-envs">{deleteDiagnostics.missing.join(", ")}</span>
+                                </div>
+                              )}
+                              {!!deleteDiagnostics.fix && (
+                                <div style={{ fontSize:"0.47rem", color:"#f7d39a", lineHeight:1.5 }}>
+                                  To enable delete: {deleteDiagnostics.fix}
+                                </div>
+                              )}
+                            </div>
+                          </details>
                         )}
                       </div>
                     )}
@@ -15697,28 +16240,24 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                     )}
                   </div>
                 </div>
-              </>
-            ) : (
-              <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
-                Local mode is active. Sign in from the auth gate if you want cloud sync, device handoff, or permanent account controls.
-              </div>
-            )}
-            <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem", display:"grid", gap:"0.4rem" }}>
-              <div style={{ display:"grid", gap:"0.14rem" }}>
-                <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>BACKUP AND RESET</div>
-                <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                  Export before destructive changes. Keep a backup code if you want an offline restore path, and use plan reset only when you want to rebuild training without changing the account itself.
+              )}
+              <div style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem", display:"grid", gap:"0.4rem" }}>
+                <div style={{ display:"grid", gap:"0.14rem" }}>
+                  <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>BACKUP AND RESET</div>
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                    Export before destructive changes. Keep a backup code if you want an offline restore path, and use plan reset only when you want to rebuild training without changing the account itself.
+                  </div>
                 </div>
+                <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+                  <button className="btn" onClick={exportData} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>Export data</button>
+                  <button className="btn" onClick={handleCopyBackup} style={{ fontSize:"0.48rem", color:"#dbe7f6" }}>Copy backup code</button>
+                  <button className="btn" onClick={onStartFresh} style={{ fontSize:"0.48rem", color:"#9fb2d2", borderColor:"#324761" }}>Reset plan</button>
+                </div>
+                {!!backupMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{backupMsg}</div>}
+                <textarea value={backupCode} onChange={e=>setBackupCode(e.target.value)} placeholder="Paste backup code to restore" style={{ minHeight:62, fontSize:"0.5rem" }} />
+                <button className="btn" onClick={handleRestoreRequest} style={{ width:"fit-content", fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>Review restore</button>
               </div>
-              <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
-                <button className="btn" onClick={exportData} style={{ fontSize:"0.48rem", color:C.blue, borderColor:C.blue+"35" }}>Export data</button>
-                <button className="btn" onClick={handleCopyBackup} style={{ fontSize:"0.48rem", color:"#dbe7f6" }}>Copy backup code</button>
-                <button className="btn" onClick={onStartFresh} style={{ fontSize:"0.48rem", color:"#9fb2d2", borderColor:"#324761" }}>Reset plan</button>
-              </div>
-              {!!backupMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{backupMsg}</div>}
-              <textarea value={backupCode} onChange={e=>setBackupCode(e.target.value)} placeholder="Paste backup code to restore" style={{ minHeight:62, fontSize:"0.5rem" }} />
-              <button className="btn" onClick={handleRestoreRequest} style={{ width:"fit-content", fontSize:"0.47rem", color:C.green, borderColor:C.green+"35" }}>Review restore</button>
-            </div>
+            </details>
           </section>
           )}
 
@@ -16207,10 +16746,19 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
 
           {activeSettingsSurface === "advanced" && (
           <section data-testid="settings-advanced-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.6rem" }}>
+            <div style={{ display:"grid", gap:"0.14rem" }}>
+              <div className="sect-title" style={{ color:"#dbe7f6", marginBottom:0 }}>INTEGRATIONS</div>
+              <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                Connect device and data sources here. Developer-only tooling stays hidden unless debug mode is enabled.
+              </div>
+            </div>
+            {showProtectedDiagnostics && (
             <div data-testid="settings-friction-summary" style={{ border:"1px solid #243752", borderRadius:14, background:"#0f172a", padding:"0.7rem", display:"grid", gap:"0.5rem" }}>
               <div style={{ display:"grid", gap:"0.12rem" }}>
-                <div className="sect-title" style={{ color:"#dbe7f6", marginBottom:0 }}>{frictionDashboard?.header?.title || "Friction summary"}</div>
-                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{frictionDashboard?.header?.detail || "Recent product drag on this device."}</div>
+                <div className="sect-title" style={{ color:"#dbe7f6", marginBottom:0 }}>Staff diagnostics</div>
+                <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
+                  Protected device diagnostics for staff/debug use only. Raw counters stay out of normal product surfaces.
+                </div>
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.35rem" }}>
                 {(frictionDashboard?.cards || []).map((card) => (
@@ -16230,6 +16778,13 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 </div>
               ))}
             </div>
+            )}
+            {showInternalSettingsTools && !showProtectedDiagnostics && (
+            <div style={{ border:"1px dashed #243752", borderRadius:14, background:"#0b1220", padding:"0.58rem 0.62rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              Staff diagnostics are hidden unless protected diagnostics mode is enabled.
+            </div>
+            )}
+            {showInternalSettingsTools && (
             <details data-testid="settings-advanced-goal-request">
               <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Experimental goal request</summary>
               <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
@@ -16262,7 +16817,9 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 )}
               </div>
             </details>
+            )}
 
+            {showInternalSettingsTools && (
             <details open>
               <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Advanced coach setup</summary>
               <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
@@ -16280,9 +16837,10 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 <button className="btn" onClick={saveCoachSetup} style={{ width:"fit-content", fontSize:"0.5rem", color:C.green, borderColor:C.green+"35" }}>Save coach setup</button>
               </div>
             </details>
+            )}
 
             <details open>
-              <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Integrations and imports</summary>
+              <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Integrations</summary>
               <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
                 <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
                   Apple Health, Garmin, and location stay de-emphasized until they are clearly live and useful.
@@ -16309,6 +16867,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 {!!checkMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{checkMsg}</div>}
                 {!!garminMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{garminMsg}</div>}
                 {!!locationMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{locationMsg}</div>}
+                {showInternalSettingsTools && (
                 <details>
                   <summary style={{ cursor:"pointer", fontSize:"0.5rem", color:"#8fa5c8" }}>Manual imports</summary>
                   <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.35rem" }}>
@@ -16319,6 +16878,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                     {!!importMsg && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{importMsg}</div>}
                   </div>
                 </details>
+                )}
               </div>
             </details>
           </section>
@@ -16342,7 +16902,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>GOAL LIBRARY</div>
                 <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>Use the library first. Custom text is still available, but only as the fallback.</div>
                 <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>
-                  {allGoalEditorTemplates.length} guided goal paths. {activeGoalEditorCategory?.helper || "Search or browse the library first."}
+                  {activeGoalEditorCategory?.helper || "Search or browse the library first to find the closest fit, then adjust from there."}
                 </div>
               </div>
               <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
@@ -16371,7 +16931,7 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
                 data-testid="settings-goal-editor-search"
                 value={goalEditorLibrarySearch}
                 onChange={(e)=>setGoalEditorLibrarySearch(e.target.value)}
-                placeholder={`Search ${allGoalEditorTemplates.length}+ goal paths`}
+                placeholder="Search goal paths"
               />
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.4rem", maxHeight:280, overflowY:"auto", paddingRight:"0.12rem", alignContent:"start" }}>
                 {visibleGoalEditorTemplates.map((template) => {
@@ -17932,12 +18492,11 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
     : sessionVariant === "extended"
     ? "Extended version active"
     : "Primary actions";
-  const storageBannerCopy = syncSurfaceModel?.compactDetail || syncSurfaceModel?.detail || storageStatus?.detail || "Cloud sync unavailable right now. Using local data safely.";
   const todayLoggedLine = checkinAck
     || (todayLog?.ts
       ? `Saved ${new Date(todayLog.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. ${sanitizeStatusLabel(todayLog?.checkin?.status, "logged")}.`
       : "");
-  const showTransientSyncLine = Boolean(syncSurfaceModel?.showInline);
+  const showPassiveSyncChip = Boolean(syncSurfaceModel?.showCompactChip);
   const showStorageBanner = Boolean(syncSurfaceModel?.showFullCard);
   const handleSaveTodayQuickCheckin = async () => {
     if (checkin.status === "not_logged" || checkinSaving) return;
@@ -18030,11 +18589,10 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
               </button>
             )}
           </div>
-          {showTransientSyncLine && (
-            <SyncStateCallout
+          {showPassiveSyncChip && (
+            <CompactSyncStatus
               model={syncSurfaceModel}
-              dataTestId="today-sync-status-inline"
-              compact
+              dataTestId="today-sync-status"
               style={{ background:"rgba(11, 20, 32, 0.62)" }}
             />
           )}
@@ -19998,12 +20556,11 @@ function PlanTab({ planDay = null, surfaceModel = null, currentPlanWeek = null, 
             )}
           </div>
           <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
-            {syncSurfaceModel?.showInline && (
-              <div style={{ minWidth:190 }}>
-                <SyncStateCallout
+            {syncSurfaceModel?.showCompactChip && (
+              <div style={{ minWidth:210 }}>
+                <CompactSyncStatus
                   model={syncSurfaceModel}
-                  dataTestId="program-sync-status-inline"
-                  compact
+                  dataTestId="program-sync-status"
                   style={{ background:"rgba(11, 20, 32, 0.62)" }}
                 />
               </div>
@@ -23037,6 +23594,47 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
           </div>
         </div>
       </div>
+
+      <details data-testid="nutrition-weekly-planning" className="card card-subtle" style={{ borderColor:C.amber+"28" }}>
+        <summary style={{ cursor:"pointer", fontSize:"0.56rem", color:"#dbe7f6" }}>
+          Weekly planning and grocery support
+        </summary>
+        <div style={{ display:"grid", gap:"0.42rem", marginTop:"0.5rem" }}>
+          <div style={{ display:"grid", gap:"0.14rem" }}>
+            <div style={{ fontSize:"0.58rem", color:"#f8fafc", lineHeight:1.45 }}>{weeklyNutritionHeadline}</div>
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{weeklyPlannedVsActualLine}</div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.35rem" }}>
+            {[
+              ["Adherence", weeklyAdherenceLine],
+              ["Hydration", weeklyHydrationLine],
+              ["Supplements", weeklySupplementLine],
+              ["Adaptation", weeklyAdaptationLine],
+            ].map(([label, line]) => (
+              <div key={label} style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
+                <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{label}</div>
+                <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>{line}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.52rem 0.56rem", display:"grid", gap:"0.18rem" }}>
+            <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>RECURRENT FRICTION</div>
+            <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>{weeklyFrictionLine}</div>
+            {weeklyTopCauses.length > 0 && (
+              <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                {weeklyTopCauses.map((cause) => `${cause.label} (${cause.count})`).join(" • ")}
+              </div>
+            )}
+          </div>
+          <div data-testid="nutrition-grocery-support" style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.52rem 0.56rem", display:"grid", gap:"0.18rem" }}>
+            <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>GROCERY SUPPORT</div>
+            <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.45 }}>{weeklyGrocerySupportLine}</div>
+            <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {groceryExecutionSupport?.summary || "Build one low-friction basket around repeatable protein, easy carbs, and hydration support."}
+            </div>
+          </div>
+        </div>
+      </details>
 
       <div className="card card-subtle">
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>HYDRATION / SUPPLEMENTS</div>

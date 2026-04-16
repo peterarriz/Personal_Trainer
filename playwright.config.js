@@ -19,7 +19,7 @@ module.exports = defineConfig({
   webServer: {
     command: "cmd /c \"set VITE_SUPABASE_URL=https://example.supabase.co&& set VITE_SUPABASE_ANON_KEY=anon-key&& npm.cmd run build&& npx.cmd serve . -l 4173\"",
     url: "http://127.0.0.1:4173",
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 180_000,
   },
 });

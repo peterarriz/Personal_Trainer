@@ -403,6 +403,22 @@ export const AUTH_ENTRY_STYLE_TEXT = `
     color:var(--auth-secondary-text, var(--text-strong, #f4fbfd));
     box-shadow:var(--auth-soft-shadow, 0 10px 24px rgba(2,10,18,0.24));
   }
+  .auth-action[data-auth-variant="tertiary"]{
+    width:auto;
+    min-height:40px;
+    justify-content:flex-start;
+    padding:0.2rem 0;
+    border:none;
+    border-radius:0;
+    background:transparent;
+    color:var(--auth-secondary-text, var(--text-strong, #f4fbfd));
+    font-size:0.68rem;
+    font-weight:700;
+    letter-spacing:0.02em;
+    box-shadow:none;
+    text-decoration:underline;
+    text-underline-offset:0.16rem;
+  }
   .auth-action-caption{
     font-size:0.64rem;
     line-height:1.55;
@@ -410,27 +426,24 @@ export const AUTH_ENTRY_STYLE_TEXT = `
   }
   .auth-local-cta{
     display:grid;
-    gap:0.78rem;
-    padding:1rem;
-    border-radius:22px;
-    border:1px solid var(--auth-border, var(--border, rgba(255,255,255,0.14)));
-    background:linear-gradient(180deg, var(--auth-panel-soft, rgba(9,18,28,0.78)) 0%, var(--auth-surface, var(--surface-1, #0f1d29)) 100%);
-    box-shadow:var(--auth-soft-shadow, 0 10px 24px rgba(2,10,18,0.24));
+    gap:0.35rem;
+    padding:0.8rem 0 0;
+    border-top:1px solid var(--auth-border, var(--border, rgba(255,255,255,0.14)));
   }
   .auth-local-cta-head{
     display:grid;
-    gap:0.3rem;
+    gap:0.22rem;
   }
   .auth-local-cta-title{
-    font-size:0.86rem;
-    font-weight:800;
-    line-height:1.2;
-    color:var(--auth-text-strong, var(--text-strong, #f4fbfd));
+    font-size:0.68rem;
+    font-weight:700;
+    line-height:1.4;
+    color:var(--auth-text-soft, var(--text-soft, #8ea7b8));
   }
   .auth-local-cta-description{
-    font-size:0.68rem;
+    font-size:0.62rem;
     line-height:1.58;
-    color:var(--auth-text, var(--text, #dce7f1));
+    color:var(--auth-text-soft, var(--text-soft, #8ea7b8));
   }
   .auth-error{
     padding:0.88rem 0.95rem;
@@ -581,21 +594,23 @@ export const buildAuthEntryViewModel = ({
   authProviderUnavailable = false,
 } = {}) => {
   const mode = normalizeAuthMode(authMode);
-  const hasLocalPath = Boolean(startupLocalResumeAvailable || authProviderUnavailable);
+  const hasLocalPath = true;
 
   const localPathDescription = startupLocalResumeAvailable
-    ? "Resume from the training data already stored on this device. Cloud backup, multi-device sync, and account recovery turn back on when you sign in."
-    : "FORMA can keep working on this device while cloud sign-in is offline. Your training data stays here until the cloud path returns.";
+    ? "If you only need the last usable training state on this device, keep going locally for now. Sign in later to turn cloud backup and multi-device sync back on."
+    : authProviderUnavailable
+    ? "FORMA can keep working on this device while cloud sign-in is offline. Your local training data stays here until the cloud path returns."
+    : "Use the local fallback only if you need this device right away. Sign in when you want cloud backup and multi-device sync.";
 
   const subtitle = authProviderUnavailable
-    ? "Cloud sign-in is offline right now. You can keep training on this device, and the local path below shows exactly what stays available."
+    ? "Cloud sign-in is offline right now. FORMA can still keep working on this device until account access comes back."
     : startupLocalResumeAvailable
-    ? "Choose between your synced account and the training data already saved on this device."
-    : "Sign in or create an account to turn on syncing, backup, and recovery while keeping FORMA local-first.";
+    ? "You can sign in to restore cloud backup and account controls. Your local training state is already safe on this device."
+    : "Sign in or create an account to turn on syncing, backup, and recovery. Local mode stays available only as a fallback.";
 
   return {
     eyebrow: "FORMA account access",
-    title: "Choose how you want to continue",
+    title: authProviderUnavailable ? "Keep training while cloud sign-in is offline" : "Sign in when you want cloud sync back",
     subtitle,
     statusBadges: [
       startupLocalResumeAvailable ? "Local data available on this device" : null,
@@ -622,25 +637,6 @@ export const buildAuthEntryViewModel = ({
             ],
         emphasis: "strong",
         tone: "cloud",
-      },
-      {
-        id: "local",
-        kicker: startupLocalResumeAvailable ? "On this device" : "Local mode",
-        title: startupLocalResumeAvailable ? "Continue with the data on this device" : "Keep training without the cloud",
-        description: localPathDescription,
-        benefits: startupLocalResumeAvailable
-          ? [
-              "Uses the training history already saved in this browser.",
-              "No email verification or cloud availability needed.",
-              "You can sign in later to turn sync and recovery back on.",
-            ]
-          : [
-              "Starts or continues in device-only storage.",
-              "No cloud backup, no recovery email, and no multi-device sync yet.",
-              "Best for resilience, testing, or temporary offline access.",
-            ],
-        emphasis: hasLocalPath ? "strong" : "quiet",
-        tone: "local",
       },
     ],
     form: {
@@ -673,11 +669,11 @@ export const buildAuthEntryViewModel = ({
         : "Signing in turns cloud sync, backup, and account controls back on for this device.",
     },
     localAction: hasLocalPath ? {
-      title: startupLocalResumeAvailable ? "Continue with local data" : "Continue in local mode",
-      label: startupLocalResumeAvailable ? "Continue with local data" : "Continue in local mode",
+      title: startupLocalResumeAvailable ? "Need the fallback instead?" : "Need a local fallback?",
+      label: "Use local data instead",
       description: localPathDescription,
-      badge: startupLocalResumeAvailable ? "This device" : "Local mode",
-      variant: AUTH_ACTION_VARIANTS.secondary,
+      badge: startupLocalResumeAvailable ? "This device" : "Fallback",
+      variant: AUTH_ACTION_VARIANTS.tertiary,
     } : null,
   };
 };

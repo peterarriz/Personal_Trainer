@@ -231,8 +231,10 @@ export const summarizeAnalyticsEvents = ({
       title: "Sync resilience",
       tone: sync.retries || sync.persistErrors || sync.entityErrors ? "warn" : "calm",
       ...buildSummaryValueLine(
-        `${sync.retries} retries`,
-        `${sync.persistErrors} persist errors, ${sync.entityErrors} entity sync errors, avg persist ${sync.avgPersistMs} ms`
+        sync.retries || sync.persistErrors || sync.entityErrors ? "Background sync needs review" : "Background sync looks calm",
+        sync.retries || sync.persistErrors || sync.entityErrors
+          ? "Recovery signals were recorded on this device. Use a protected diagnostics view before drawing conclusions from raw counts."
+          : "No retry or persistence warnings were recorded in the current window."
       ),
     },
     {
@@ -257,7 +259,7 @@ export const summarizeAnalyticsEvents = ({
     intake.repeatedContinues ? `${intake.repeatedContinues} intake continue clicks happened after the first click on the same stage.` : "No repeat-continue friction recorded in the current window.",
     auth.deleteBlockedCount ? `${auth.deleteBlockedCount} delete-account attempts were blocked by deployment support or diagnostics.` : "No delete-account configuration blockers were recorded.",
     sync.retries || sync.persistErrors || sync.entityErrors
-      ? `Sync logged ${sync.retries} retries, ${sync.persistErrors} persist errors, and ${sync.entityErrors} entity sync errors.`
+      ? "Sync recovery signals were recorded. Review them in protected diagnostics before treating the raw counts as product-facing truth."
       : "No sync retries or sync failures were recorded in the current window.",
     goals.previewCount > goals.applyCount
       ? `${goals.previewCount - goals.applyCount} goal previews did not turn into applies yet.`

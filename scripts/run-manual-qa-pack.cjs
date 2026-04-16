@@ -37,7 +37,7 @@ const envName = getArgValue("--env", "local");
 const targetUrl = getArgValue("--url", envName === "local" ? "http://localhost:3000" : "");
 const tester = getArgValue("--tester", "");
 const releaseLabel = getArgValue("--release", "");
-const outputRoot = getArgValue("--output", path.join("tmp", "manual-qa-pack"));
+const outputRoot = getArgValue("--output", path.join("artifacts", "manual-qa-pack"));
 
 const repoRoot = path.resolve(__dirname, "..");
 const outputDir = path.resolve(repoRoot, outputRoot, `${stamp}-${sanitizeSlug(envName)}`);

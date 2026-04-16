@@ -21,9 +21,9 @@ const expectNoFakeTranscript = async (page) => {
 };
 
 const expectStructuredSetupCopy = async (page) => {
-  await expect(page.getByTestId("intake-shell-title")).toHaveText("Setup");
-  await expect(page.getByTestId("intake-shell-subtitle")).toContainText("Draft until you confirm.");
-  await expect(page.getByTestId("intake-shell-helper")).toContainText("Add detail only where it changes the first plan.");
+  await expect(page.getByTestId("intake-shell-title")).toHaveText("Intake");
+  await expect(page.getByTestId("intake-shell-subtitle")).toContainText("Autosaves as you go.");
+  await expect(page.getByTestId("intake-shell-helper")).toContainText("details that change week one");
 };
 
 const expectNoFauxChatCopy = async (page) => {
@@ -84,13 +84,14 @@ test.describe("intake onboarding e2e", () => {
     });
 
     await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
-    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(1);
+    await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(1);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1"]);
     await expectSummaryRail(page);
     await expectNoFakeTranscript(page);
     await expectNoFauxChatCopy(page);
-    await expect(page.getByText("Structured", { exact: true })).toBeVisible();
-    await expect(page.getByText("Free text", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("profile-setup-gate")).toHaveCount(0);
+    await expect(page.getByTestId("intake-anchor-sheet")).toBeVisible();
+    await expect(page.locator("[data-testid='intake-anchor-card'], [data-testid='intake-anchor-card-active']")).toHaveCount(3);
     const visitedFields = await completeAnchors(page, {
       target_timeline: { type: "natural", value: "October" },
       current_run_frequency: { type: "natural", value: "3 runs/week" },
@@ -128,7 +129,7 @@ test.describe("intake onboarding e2e", () => {
     await expectSummaryRail(page);
     await expectNoFakeTranscript(page);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1"]);
-    await expect(page.locator("[data-testid='intake-goal-proposal-card']").first()).toContainText(/waist|bodyweight|block direction|planning focus/i);
+    await expect(page.locator("[data-testid='intake-confirm-goal-card']").first()).toContainText(/waist|bodyweight|block direction|planning focus/i);
     await expect(page.getByTestId("intake-summary-section-what-we-track")).toContainText(/waist|bodyweight|30/i);
     await expect(page.getByTestId("intake-summary-section-what-is-fuzzy")).toContainText(/30|waist|bodyweight|success/i);
 
@@ -168,7 +169,7 @@ test.describe("intake onboarding e2e", () => {
     await page.getByTestId("intake-footer-continue").click();
 
     await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
-    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(2);
+    await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(2);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2"]);
     await expectSummaryRail(page);
     await expectNoFakeTranscript(page);
@@ -254,9 +255,9 @@ test.describe("intake onboarding e2e", () => {
     await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
     await expectSummaryRail(page);
     await expectNoFakeTranscript(page);
-    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(2);
+    await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(2);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2"]);
-    await expect(page.getByTestId("intake-review")).toHaveCount(0);
+    await expect(page.getByTestId("intake-review")).toBeVisible();
     await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/bench|lean|body/i);
 
     await completeAnchors(page, {
@@ -348,14 +349,14 @@ test.describe("intake onboarding e2e", () => {
     await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
     await expectSummaryRail(page);
     await expectNoFakeTranscript(page);
-    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(4);
+    await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(4);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2", "Priority 3", "Priority 4"]);
-    await expect(page.getByTestId("intake-proposal-additional-goals")).toBeVisible();
+    await expect(page.getByTestId("intake-confirm-additional-goals")).toBeVisible();
     await expect(page.getByTestId("intake-summary-section-your-words")).toContainText(/bench 225|leaner|shoulders/i);
     await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/run|bench|lean|shoulder/i);
   });
 
-  test("confirm step keeps extra goals visible and lets the user reorder directly", async ({ page }) => {
+  test("details screen keeps extra goals visible and lets the user reorder directly", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
       goalText: "run a 1:45 half marathon",

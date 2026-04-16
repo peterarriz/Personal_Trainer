@@ -831,11 +831,12 @@ const orderGoalsByGoalIds = ({
   orderedGoalIds = [],
 } = {}) => {
   const cleanGoals = toArray(goals).filter(Boolean);
-  const goalsById = new Map(
-    cleanGoals
-      .filter((goal) => goal?.id)
-      .map((goal) => [sanitizeText(goal.id, 120), goal])
-  );
+  const goalsById = cleanGoals.reduce((map, goal) => {
+    const goalId = sanitizeText(goal?.id || "", 120);
+    if (!goalId || map.has(goalId)) return map;
+    map.set(goalId, goal);
+    return map;
+  }, new Map());
   const ordered = [];
   const seen = new Set();
   toArray(orderedGoalIds).forEach((goalId) => {
@@ -853,6 +854,15 @@ const orderGoalsByGoalIds = ({
   });
   return ordered;
 };
+
+const buildFirstGoalByIdMap = (goals = []) => toArray(goals)
+  .filter(Boolean)
+  .reduce((map, goal) => {
+    const goalId = sanitizeText(goal?.id || "", 120);
+    if (!goalId || map.has(goalId)) return map;
+    map.set(goalId, goal);
+    return map;
+  }, new Map());
 
 const buildLegacyPriorityOrderIds = ({
   orderedGoals = [],
@@ -1874,11 +1884,7 @@ const buildStageRoleLabel = ({
 
 const buildSummaryRailGoalRows = (reviewModel = null) => {
   const orderedResolvedGoals = toArray(reviewModel?.orderedResolvedGoals);
-  const goalById = new Map(
-    orderedResolvedGoals
-      .filter((goal) => goal?.id)
-      .map((goal) => [goal.id, goal])
-  );
+  const goalById = buildFirstGoalByIdMap(orderedResolvedGoals);
   const rows = [];
   const seen = new Set();
   const pushGoal = ({
@@ -1997,11 +2003,7 @@ export const buildIntakeGoalReviewModel = ({
     goalStackReview,
     goalStackConfirmation,
   });
-  const resolvedGoalById = new Map(
-    milestoneAdjustedCandidateGoals
-      .filter((goal) => goal?.id)
-      .map((goal) => [goal.id, goal])
-  );
+  const resolvedGoalById = buildFirstGoalByIdMap(milestoneAdjustedCandidateGoals);
   const stackActiveResolvedGoals = toArray(goalStackReview?.activeGoalIds)
     .map((goalId) => resolvedGoalById.get(goalId))
     .filter(Boolean);
@@ -2159,15 +2161,11 @@ export const buildIntakeSummaryRailModel = ({
     ...readAdditionalGoalEntries({ answers }),
   ]).slice(0, 6);
   const interpretedGoals = buildSummaryRailGoalRows(reviewModel);
-  const resolvedGoalById = new Map(
-    toArray(reviewModel?.orderedResolvedGoals)
-      .filter((goal) => goal?.id)
-      .map((goal) => [goal.id, goal])
-  );
+  const resolvedGoalById = buildFirstGoalByIdMap(reviewModel?.orderedResolvedGoals);
   const trackingItems = dedupeStrings([
     ...toArray(reviewModel?.trackingLabels),
     ...interpretedGoals.flatMap((goal) => {
-      const sourceGoal = goal?.id ? resolvedGoalById.get(goal.id) : null;
+      const sourceGoal = goal?.id ? resolvedGoalById.get(sanitizeText(goal.id, 120)) : null;
       return [
         ...toArray(goal?.trackingLabels),
         sourceGoal?.first30DaySuccessDefinition || "",

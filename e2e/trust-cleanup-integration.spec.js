@@ -7,6 +7,12 @@ const {
   DEFAULT_COACH_PLAN_ADJUSTMENTS,
   DEFAULT_NUTRITION_FAVORITES,
 } = require("../src/services/persistence-adapter-service.js");
+const {
+  bootAppWithSupabaseSeeds,
+  makeSession,
+  makeSignedInPayload,
+  mockSupabaseRuntime,
+} = require("./auth-runtime-test-helpers.js");
 
 const AUTH_CACHE_KEY = "trainer_auth_session_v1";
 const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
@@ -126,16 +132,27 @@ const readHydrationNumbers = async (page) => {
 };
 
 test("Settings account controls show visible feedback and sign-out result", async ({ page }) => {
-  await openApp(page);
+  const session = makeSession({ email: "tester@example.com" });
+  const payload = makeSignedInPayload();
+  await mockSupabaseRuntime(page, { session, payload });
+  await bootAppWithSupabaseSeeds(page, { session, payload });
+  await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
+  const skipAppleHealth = page.getByRole("button", { name: "Skip for now" });
+  await skipAppleHealth.waitFor({ state: "visible", timeout: 1500 }).catch(() => null);
+  if (await skipAppleHealth.isVisible().catch(() => false)) {
+    await skipAppleHealth.click({ force: true });
+    await expect(skipAppleHealth).toBeHidden();
+  }
   await openSettings(page);
 
   const accountSection = page.getByTestId("settings-account-section");
   await expect(accountSection.getByText("Account & sync")).toBeVisible();
   await expect(accountSection.getByText("Signed in as tester@example.com")).toBeVisible();
-  await expect(accountSection.getByText(/Cloud sync:/)).toBeVisible();
+  await expect(page.getByTestId("settings-sync-status")).toBeVisible();
+  await expect(page.getByTestId("settings-sync-status")).toContainText(/Cloud and device are aligned|Synced/i);
 
   await page.getByRole("button", { name: "Reload cloud data" }).click();
-  await expect(page.getByText(/Reloaded cloud data|Cloud reload failed:/)).toBeVisible();
+  await expect(page.getByText(/Reloaded cloud data|Cloud data could not be reloaded right now/i)).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByText("ACCOUNT ACCESS")).toBeVisible();

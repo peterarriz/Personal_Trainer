@@ -5,8 +5,12 @@ import { STORAGE_STATUS_REASONS, buildStorageStatus } from "../src/modules-auth-
 import {
   buildSyncStateModel,
   buildSyncSurfaceModel,
+  createInitialSyncPresentationState,
   createInitialSyncRuntimeState,
   reduceSyncRuntimeState,
+  stabilizeSyncStatePresentation,
+  SYNC_TRANSIENT_COOLDOWN_MS,
+  SYNC_TRANSIENT_MIN_DWELL_MS,
   SYNC_RUNTIME_EVENT_TYPES,
   SYNC_STATE_IDS,
   SYNC_STATE_TONES,
@@ -53,7 +57,7 @@ test("sync runtime reducer tracks start, retry, and recovery without losing loca
   assert.equal(runtime.lastErrorCode, "");
 });
 
-test("provider misconfiguration resolves to fatal-error state with admin guidance", () => {
+test("provider misconfiguration resolves to fatal-error state with local fallback guidance", () => {
   const model = buildSyncStateModel({
     storageStatus: buildStorageStatus({
       mode: "local",
@@ -69,7 +73,7 @@ test("provider misconfiguration resolves to fatal-error state with admin guidanc
 
   assert.equal(model.id, SYNC_STATE_IDS.fatalError);
   assert.equal(model.tone, SYNC_STATE_TONES.critical);
-  assert.match(model.nextStep, /admin action/i);
+  assert.match(model.nextStep, /keep using this device locally/i);
 });
 
 test("signed-out local resume path resolves to offline-local instead of fake syncing", () => {
@@ -118,8 +122,8 @@ test("realtime interruption surfaces stale-cloud while preserving local assuranc
   });
 
   assert.equal(model.id, SYNC_STATE_IDS.staleCloud);
-  assert.match(model.detail, /may lag|interrupted/i);
-  assert.match(model.assurance, /locally/i);
+  assert.match(model.detail, /little behind/i);
+  assert.equal(model.assurance, "");
 });
 
 test("retry-eligible sync stays in retrying state even if a fresh cloud attempt starts", () => {
@@ -158,7 +162,7 @@ test("retry-eligible sync stays in retrying state even if a fresh cloud attempt 
 
   assert.equal(model.id, SYNC_STATE_IDS.retrying);
   assert.equal(model.chipLabel, "Retrying");
-  assert.match(model.detail, /timed out|retries/i);
+  assert.equal(model.detail, "Cloud sync is retrying in the background.");
 });
 
 test("surface models keep settings persistent while today stays quiet when synced", () => {
@@ -188,6 +192,166 @@ test("surface models keep settings persistent while today stays quiet when synce
 
   assert.equal(todaySurface.showFullCard, false);
   assert.equal(todaySurface.showInline, false);
+  assert.equal(todaySurface.showCompactChip, true);
+  assert.equal(todaySurface.compactMessage, syncedState.headline);
   assert.equal(settingsSurface.showFullCard, true);
   assert.equal(settingsSurface.title, syncedState.headline);
+});
+
+test("compact workout surfaces use the passive chip for transient sync states", () => {
+  const retryingState = buildSyncStateModel({
+    storageStatus: buildStorageStatus({
+      mode: "local",
+      label: "SYNC RETRYING",
+      reason: STORAGE_STATUS_REASONS.transient,
+      detail: "Cloud sync timed out. Local changes are still saved safely on this device.",
+    }),
+    authSession: {
+      user: { id: "user_1" },
+    },
+    syncRuntime: createInitialSyncRuntimeState({ isOnline: true, now: 5000 }),
+    authInitializing: false,
+    appLoading: false,
+    now: 5000,
+  });
+
+  const todaySurface = buildSyncSurfaceModel({
+    syncState: retryingState,
+    surface: SYNC_SURFACE_KEYS.today,
+  });
+  const programSurface = buildSyncSurfaceModel({
+    syncState: retryingState,
+    surface: SYNC_SURFACE_KEYS.program,
+  });
+
+  assert.equal(todaySurface.showFullCard, false);
+  assert.equal(todaySurface.showCompactChip, true);
+  assert.equal(todaySurface.compactMessage, "Cloud sync is retrying in the background.");
+  assert.equal(programSurface.showFullCard, false);
+  assert.equal(programSurface.showCompactChip, true);
+});
+
+test("sync presentation holds a transient state for the minimum dwell before changing", () => {
+  const retryingState = buildSyncStateModel({
+    storageStatus: buildStorageStatus({
+      mode: "local",
+      label: "SYNC RETRYING",
+      reason: STORAGE_STATUS_REASONS.transient,
+    }),
+    authSession: {
+      user: { id: "user_1" },
+    },
+    syncRuntime: createInitialSyncRuntimeState({ isOnline: true, now: 6000 }),
+    authInitializing: false,
+    appLoading: false,
+    now: 6000,
+  });
+  const syncedState = buildSyncStateModel({
+    storageStatus: buildStorageStatus({
+      mode: "cloud",
+      label: "SYNCED",
+      reason: STORAGE_STATUS_REASONS.synced,
+      detail: "Cloud sync is working normally.",
+    }),
+    authSession: {
+      user: { id: "user_1" },
+    },
+    syncRuntime: createInitialSyncRuntimeState({ isOnline: true, now: 6000 }),
+    authInitializing: false,
+    appLoading: false,
+    now: 6000,
+  });
+
+  const initialPresentation = createInitialSyncPresentationState({
+    syncState: retryingState,
+    now: 6000,
+  });
+  const heldPresentation = stabilizeSyncStatePresentation({
+    currentPresentation: initialPresentation,
+    syncState: syncedState,
+    now: 6000 + 1000,
+  });
+
+  assert.equal(heldPresentation.displayedState.id, SYNC_STATE_IDS.retrying);
+  assert.equal(heldPresentation.nextUpdateAt, 6000 + SYNC_TRANSIENT_MIN_DWELL_MS);
+
+  const transitionedPresentation = stabilizeSyncStatePresentation({
+    currentPresentation: heldPresentation,
+    syncState: syncedState,
+    now: 6000 + SYNC_TRANSIENT_MIN_DWELL_MS,
+  });
+
+  assert.equal(transitionedPresentation.displayedState.id, SYNC_STATE_IDS.synced);
+});
+
+test("sync presentation enforces cool-down before reviving the same transient warning", () => {
+  const retryingState = buildSyncStateModel({
+    storageStatus: buildStorageStatus({
+      mode: "local",
+      label: "SYNC RETRYING",
+      reason: STORAGE_STATUS_REASONS.transient,
+    }),
+    authSession: {
+      user: { id: "user_1" },
+    },
+    syncRuntime: createInitialSyncRuntimeState({ isOnline: true, now: 7000 }),
+    authInitializing: false,
+    appLoading: false,
+    now: 7000,
+  });
+  const syncingState = buildSyncStateModel({
+    storageStatus: buildStorageStatus({
+      mode: "syncing",
+      label: "SYNCING",
+      reason: STORAGE_STATUS_REASONS.synced,
+      detail: "Cloud sync is working normally.",
+    }),
+    authSession: {
+      user: { id: "user_1" },
+    },
+    syncRuntime: {
+      ...createInitialSyncRuntimeState({ isOnline: true, now: 7000 }),
+      cloudSyncInFlight: true,
+      updatedAt: 7000,
+    },
+    authInitializing: false,
+    appLoading: false,
+    now: 7000,
+  });
+  const syncedState = buildSyncStateModel({
+    storageStatus: buildStorageStatus({
+      mode: "cloud",
+      label: "SYNCED",
+      reason: STORAGE_STATUS_REASONS.synced,
+      detail: "Cloud sync is working normally.",
+    }),
+    authSession: {
+      user: { id: "user_1" },
+    },
+    syncRuntime: createInitialSyncRuntimeState({ isOnline: true, now: 7000 }),
+    authInitializing: false,
+    appLoading: false,
+    now: 7000,
+  });
+
+  const initialPresentation = createInitialSyncPresentationState({
+    syncState: retryingState,
+    now: 7000,
+  });
+  const syncedPresentation = stabilizeSyncStatePresentation({
+    currentPresentation: initialPresentation,
+    syncState: syncedState,
+    now: 7000 + SYNC_TRANSIENT_MIN_DWELL_MS,
+  });
+  const cooledPresentation = stabilizeSyncStatePresentation({
+    currentPresentation: syncedPresentation,
+    syncState: syncingState,
+    now: 7000 + SYNC_TRANSIENT_MIN_DWELL_MS + 1000,
+  });
+
+  assert.equal(cooledPresentation.displayedState.id, SYNC_STATE_IDS.synced);
+  assert.equal(
+    cooledPresentation.nextUpdateAt,
+    7000 + SYNC_TRANSIENT_MIN_DWELL_MS + SYNC_TRANSIENT_COOLDOWN_MS
+  );
 });

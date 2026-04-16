@@ -53,9 +53,9 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
     await expect(page.getByTestId("intake-footer-continue")).toBeVisible();
     await expect(page.getByTestId("intake-transcript")).toHaveCount(0);
-    await expect(page.locator("[data-testid='intake-goal-proposal-card']")).toHaveCount(4);
+    await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(4);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2", "Priority 3", "Priority 4"]);
-    await expect(page.getByTestId("intake-proposal-additional-goals")).toBeVisible();
+    await expect(page.getByTestId("intake-confirm-additional-goals")).toBeVisible();
   });
 
   test("today is action-first, program is read-first, and settings owns plan management", async ({ page }) => {
@@ -96,8 +96,9 @@ test.describe("mobile surface simplification", () => {
 
     await page.getByTestId("settings-surface-advanced").click();
     await expect(page.getByTestId("settings-advanced-section")).toBeVisible();
-    await expect(page.getByText("Integrations and imports")).toBeVisible();
-    await expect(page.getByText("Experimental goal request")).toBeVisible();
+    await expect(page.getByTestId("settings-advanced-section").getByText("INTEGRATIONS", { exact: true })).toBeVisible();
+    await expect(page.getByText("Experimental goal request")).toHaveCount(0);
+    await expect(page.getByTestId("settings-friction-summary")).toHaveCount(0);
     await expect(page.getByText("Apple Health").first()).toBeVisible();
     await expect(page.getByText("Garmin Connect").first()).toBeVisible();
   });

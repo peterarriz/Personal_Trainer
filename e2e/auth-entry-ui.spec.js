@@ -60,7 +60,7 @@ async function bootAuthEntry(page, {
   await page.goto("/");
   await expect(page.getByTestId("auth-gate")).toBeVisible();
   await expect(page.getByTestId("auth-path-cloud")).toBeVisible();
-  await expect(page.getByTestId("auth-path-local")).toBeVisible();
+  await expect(page.getByTestId("auth-path-local")).toHaveCount(0);
 }
 
 test.describe("auth entry UI", () => {
@@ -74,11 +74,11 @@ test.describe("auth entry UI", () => {
     });
 
     await expect(page.getByTestId("auth-submit")).toHaveAttribute("data-auth-variant", "primary");
-    await expect(page.getByTestId("continue-local-mode")).toHaveAttribute("data-auth-variant", "secondary");
+    await expect(page.getByTestId("continue-local-mode")).toHaveAttribute("data-auth-variant", "tertiary");
     await expect(page.getByTestId("auth-mode-signin")).toHaveAttribute("data-auth-variant", "tertiary");
     await expect(page.getByTestId("auth-mode-signup")).toHaveAttribute("data-auth-variant", "tertiary");
     await expect(page.getByTestId("auth-local-cta-description")).toContainText(/this device|cloud/i);
-    await expect(page.getByTestId("auth-local-cta")).not.toContainText(/fallback/i);
+    await expect(page.getByTestId("auth-local-cta")).toContainText(/use local data instead/i);
 
     await page.getByTestId("auth-mode-signup").click();
     await expect(page.getByTestId("auth-signup-name")).toBeVisible();
@@ -133,12 +133,11 @@ test.describe("auth entry UI", () => {
       };
     });
 
-    expect(styles.variant).toBe("secondary");
+    expect(styles.variant).toBe("tertiary");
     expect(styles.opacity).toBe("1");
-    expect(styles.minHeight).toBeGreaterThan(48);
+    expect(styles.minHeight).toBeGreaterThan(32);
     expect(styles.color).not.toMatch(/rgba?\(0,\s*0,\s*0,\s*0\)|transparent/i);
-    expect(styles.borderColor).not.toMatch(/rgba?\(0,\s*0,\s*0,\s*0\)|transparent/i);
-    expect(styles.backgroundImage).not.toBe("none");
+    expect(styles.backgroundImage).toBe("none");
   });
 
   test("forced-colors mode keeps auth actions readable and present", async ({ page }) => {

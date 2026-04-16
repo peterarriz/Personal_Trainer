@@ -24,6 +24,9 @@ export const SYNC_SURFACE_KEYS = Object.freeze({
   auth: "auth",
 });
 
+export const SYNC_TRANSIENT_MIN_DWELL_MS = 10_000;
+export const SYNC_TRANSIENT_COOLDOWN_MS = 30_000;
+
 export const SYNC_RUNTIME_EVENT_TYPES = Object.freeze({
   onlineStatusChanged: "online_status_changed",
   cloudSyncStarted: "cloud_sync_started",
@@ -37,6 +40,17 @@ export const SYNC_RUNTIME_EVENT_TYPES = Object.freeze({
 
 export const STALE_CLOUD_AFTER_MS = 75_000;
 
+const TRANSIENT_SYNC_STATE_IDS = new Set([
+  SYNC_STATE_IDS.syncing,
+  SYNC_STATE_IDS.retrying,
+  SYNC_STATE_IDS.staleCloud,
+]);
+
+const CONFIRMED_RISK_SYNC_STATE_IDS = new Set([
+  SYNC_STATE_IDS.fatalError,
+  SYNC_STATE_IDS.conflictNeedsResolution,
+]);
+
 const normalizeTimestamp = (value, fallback = Date.now()) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -45,6 +59,21 @@ const normalizeTimestamp = (value, fallback = Date.now()) => {
 const sanitizeCopy = (value = "", maxLen = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLen);
 
 const coerceBoolean = (value, fallback = false) => (value == null ? fallback : Boolean(value));
+
+const pruneTransientCooldowns = (cooldowns = {}, now = Date.now()) => {
+  const currentTime = normalizeTimestamp(now);
+  return Object.entries(cooldowns || {}).reduce((next, [stateId, exitedAt]) => {
+    const normalizedExitAt = normalizeTimestamp(exitedAt, 0);
+    if (!normalizedExitAt) return next;
+    if ((currentTime - normalizedExitAt) >= SYNC_TRANSIENT_COOLDOWN_MS) return next;
+    next[stateId] = normalizedExitAt;
+    return next;
+  }, {});
+};
+
+export const isTransientSyncState = (stateId = "") => TRANSIENT_SYNC_STATE_IDS.has(String(stateId || "").trim());
+
+export const isConfirmedRiskSyncState = (stateId = "") => CONFIRMED_RISK_SYNC_STATE_IDS.has(String(stateId || "").trim());
 
 const inferRetryReasonKey = ({ storageStatus = null, syncRuntime = null } = {}) => {
   const rawError = [
@@ -255,7 +284,7 @@ export const buildSyncStateModel = ({
   const storageReason = String(storageStatus?.reason || "").trim();
   const detail = sanitizeCopy(storageStatus?.detail || "", 260);
   const authErrorText = sanitizeCopy(authError || "", 260);
-  const authProviderUnavailable = /provider unavailable|missing supabase|malformed supabase|anon key|supabase url/i.test(authErrorText.toLowerCase());
+  const authProviderUnavailable = /provider unavailable|missing supabase|malformed supabase|anon key|supabase url|cloud sync is unavailable/i.test(authErrorText.toLowerCase());
   const currentTime = normalizeTimestamp(now, runtime.updatedAt || Date.now());
   const browserOnline = runtime.isOnline !== false;
   const staleFailure = runtime.lastCloudFailureAt > 0 && (currentTime - runtime.lastCloudFailureAt) >= STALE_CLOUD_AFTER_MS;
@@ -278,10 +307,8 @@ export const buildSyncStateModel = ({
       reasonKey: "syncing",
       tone: SYNC_STATE_TONES.neutral,
       chipLabel: "Syncing",
-      headline: "Updating the cloud copy",
-      detail: detail || "FORMA is refreshing cloud state now.",
-      assurance: "Local changes are already saved on this device while sync runs.",
-      nextStep: "No action needed unless this stalls.",
+      headline: "Syncing in background",
+      detail: detail || "Cloud copy is updating in the background.",
     });
   }
 
@@ -294,7 +321,7 @@ export const buildSyncStateModel = ({
       headline: "Cloud sync is unavailable",
       detail: detail || authErrorText || "The cloud provider is unavailable or misconfigured, so FORMA is staying local on this device.",
       assurance: "Local training data remains usable on this device.",
-      nextStep: "Admin action is required before cloud features return.",
+      nextStep: "Keep using this device locally for now. Cloud features return once the deployment is fixed.",
     });
   }
 
@@ -317,30 +344,21 @@ export const buildSyncStateModel = ({
       reasonKey: runtime.realtimeInterrupted ? "realtime_interrupted" : "stale_after_retry",
       tone: SYNC_STATE_TONES.caution,
       chipLabel: "Cloud behind",
-      headline: "Cloud copy may be behind this device",
+      headline: "Cloud slightly behind",
       detail: runtime.realtimeInterrupted
-        ? "Live cloud updates were interrupted, so this device stays current while the cloud copy may lag."
-        : "Cloud retries have lasted long enough that the cloud copy may be behind this device for now.",
-      assurance: "Nothing is being discarded locally.",
-      nextStep: "Reload cloud data after the connection recovers if the lag continues.",
+        ? "Cloud copy may be a little behind this device right now."
+        : "Cloud copy may be a little behind this device right now.",
     });
   }
 
   if (storageReason === STORAGE_STATUS_REASONS.transient || runtime.retryEligible) {
-    const retryReasonKey = inferRetryReasonKey({ storageStatus, syncRuntime: runtime });
     return buildBaseStatePresentation({
       id: SYNC_STATE_IDS.retrying,
-      reasonKey: retryReasonKey,
+      reasonKey: inferRetryReasonKey({ storageStatus, syncRuntime: runtime }),
       tone: SYNC_STATE_TONES.caution,
       chipLabel: "Retrying",
       headline: "Retrying cloud sync",
-      detail: retryReasonKey === "timeout"
-        ? "Cloud sync timed out, so FORMA is keeping the latest state locally while it retries."
-        : retryReasonKey === "network"
-        ? "Cloud sync lost the network path, so FORMA is keeping the latest state locally while it retries."
-        : detail || "Cloud sync hit a temporary issue. FORMA is keeping the latest state locally while it retries.",
-      assurance: "Local changes stay saved on this device while retry logic continues.",
-      nextStep: "If this lasts, reload cloud data after the connection stabilizes.",
+      detail: "Cloud sync is retrying in the background.",
     });
   }
 
@@ -387,7 +405,7 @@ export const buildSyncStateModel = ({
       reasonKey,
       tone: SYNC_STATE_TONES.neutral,
       chipLabel: "Device-only",
-      headline: "This device is running without active cloud sync",
+      headline: "This device is running locally without cloud sync",
       detail: detailByReason[reasonKey] || detail || "FORMA is staying local on this device for now.",
       assurance: "Local resilience stays active unless you explicitly clear this device.",
       nextStep: nextStepByReason[reasonKey] || "Sign in when you want cloud sync back.",
@@ -412,10 +430,117 @@ export const buildSyncStateModel = ({
     reasonKey: "offline_local",
     tone: SYNC_STATE_TONES.neutral,
     chipLabel: "Device-only",
-    headline: "This device is running without active cloud sync",
+    headline: "This device is running locally without cloud sync",
     detail: detail || "FORMA is keeping this device active locally while cloud status settles.",
     assurance: "Local resilience stays active unless you explicitly clear this device.",
     nextStep: "Sign in when you want cloud sync back.",
+  });
+};
+
+export const createInitialSyncPresentationState = ({
+  syncState = null,
+  now = Date.now(),
+} = {}) => ({
+  displayedState: syncState || buildSyncStateModel(),
+  enteredAt: normalizeTimestamp(now),
+  transientCooldowns: {},
+  nextUpdateAt: 0,
+});
+
+const transitionSyncPresentationState = ({
+  currentPresentation = null,
+  targetState = null,
+  now = Date.now(),
+} = {}) => {
+  const currentTime = normalizeTimestamp(now);
+  const activePresentation = currentPresentation || createInitialSyncPresentationState({
+    syncState: targetState,
+    now: currentTime,
+  });
+  const currentState = activePresentation.displayedState || targetState || buildSyncStateModel();
+  const nextCooldowns = pruneTransientCooldowns(activePresentation.transientCooldowns, currentTime);
+
+  if (currentState?.id && currentState.id !== targetState?.id && isTransientSyncState(currentState.id)) {
+    nextCooldowns[currentState.id] = currentTime;
+  }
+
+  return {
+    displayedState: targetState || buildSyncStateModel(),
+    enteredAt: currentTime,
+    transientCooldowns: pruneTransientCooldowns(nextCooldowns, currentTime),
+    nextUpdateAt: 0,
+  };
+};
+
+export const stabilizeSyncStatePresentation = ({
+  currentPresentation = null,
+  syncState = null,
+  now = Date.now(),
+} = {}) => {
+  const currentTime = normalizeTimestamp(now);
+  const targetState = syncState || buildSyncStateModel();
+  if (!currentPresentation?.displayedState?.id) {
+    return createInitialSyncPresentationState({
+      syncState: targetState,
+      now: currentTime,
+    });
+  }
+
+  const activePresentation = {
+    ...createInitialSyncPresentationState({
+      syncState: currentPresentation.displayedState,
+      now: currentPresentation.enteredAt || currentTime,
+    }),
+    ...(currentPresentation || {}),
+    transientCooldowns: pruneTransientCooldowns(currentPresentation.transientCooldowns, currentTime),
+  };
+  const currentState = activePresentation.displayedState || targetState;
+
+  if (currentState.id === targetState.id) {
+    return {
+      ...activePresentation,
+      displayedState: targetState,
+      nextUpdateAt: 0,
+    };
+  }
+
+  if (isConfirmedRiskSyncState(targetState.id) || isConfirmedRiskSyncState(currentState.id)) {
+    return transitionSyncPresentationState({
+      currentPresentation: activePresentation,
+      targetState,
+      now: currentTime,
+    });
+  }
+
+  if (isTransientSyncState(currentState.id)) {
+    const dwellUntil = normalizeTimestamp(activePresentation.enteredAt, currentTime) + SYNC_TRANSIENT_MIN_DWELL_MS;
+    if (dwellUntil > currentTime) {
+      return {
+        ...activePresentation,
+        nextUpdateAt: dwellUntil,
+      };
+    }
+  }
+
+  if (isTransientSyncState(targetState.id)) {
+    const lastExitedAt = normalizeTimestamp(activePresentation.transientCooldowns?.[targetState.id], 0);
+    const mostRecentTransientExitAt = Object.values(activePresentation.transientCooldowns || {}).reduce(
+      (latest, value) => Math.max(latest, normalizeTimestamp(value, 0)),
+      0
+    );
+    const cooldownUntil = Math.max(lastExitedAt, mostRecentTransientExitAt) + (Math.max(lastExitedAt, mostRecentTransientExitAt) ? SYNC_TRANSIENT_COOLDOWN_MS : 0);
+    if (cooldownUntil > currentTime) {
+      return {
+        ...activePresentation,
+        nextUpdateAt: cooldownUntil,
+      };
+    }
+  }
+
+  return transitionSyncPresentationState({
+    currentPresentation: activePresentation,
+    targetState,
+    now: currentTime,
   });
 };
 
@@ -425,20 +550,37 @@ const createSurfaceModel = ({
 } = {}) => {
   const state = syncState || buildSyncStateModel();
   const compact = surface === SYNC_SURFACE_KEYS.today || surface === SYNC_SURFACE_KEYS.program;
+  const confirmedRisk = isConfirmedRiskSyncState(state.id);
+  const transient = isTransientSyncState(state.id);
   const showFullCard = surface === SYNC_SURFACE_KEYS.settings
     ? true
     : surface === SYNC_SURFACE_KEYS.auth
     ? true
-    : state.id !== SYNC_STATE_IDS.synced && state.id !== SYNC_STATE_IDS.syncing;
-  const showInline = compact && state.id === SYNC_STATE_IDS.syncing;
+    : confirmedRisk;
+  const showInline = false;
+  const showCompactChip = compact && !confirmedRisk;
   const eyebrow = surface === SYNC_SURFACE_KEYS.settings
     ? "SYNC STATE"
     : surface === SYNC_SURFACE_KEYS.auth
     ? "DEVICE + CLOUD"
     : "SYNC";
-  const compactDetail = surface === SYNC_SURFACE_KEYS.auth
-    ? state.detail
-    : `${state.detail} ${state.assurance}`.trim();
+  const title = transient && showFullCard
+    ? state.detail || state.headline
+    : state.headline;
+  const detail = transient && showFullCard
+    ? ""
+    : state.detail;
+  const support = transient
+    ? ""
+    : surface === SYNC_SURFACE_KEYS.settings
+    ? state.nextStep
+    : confirmedRisk
+    ? state.assurance
+    : "";
+  const compactMessage = transient
+    ? state.detail || state.headline
+    : state.headline || state.detail;
+  const compactDetail = confirmedRisk ? detail : compactMessage;
   return {
     surface,
     tone: state.tone,
@@ -446,12 +588,14 @@ const createSurfaceModel = ({
     reasonKey: state.reasonKey,
     showFullCard,
     showInline,
+    showCompactChip,
     eyebrow,
     chipLabel: state.chipLabel,
-    title: state.headline,
-    detail: state.detail,
-    support: surface === SYNC_SURFACE_KEYS.settings ? state.nextStep : state.assurance,
+    title,
+    detail,
+    support,
     compactDetail,
+    compactMessage,
     nextStep: state.nextStep,
   };
 };

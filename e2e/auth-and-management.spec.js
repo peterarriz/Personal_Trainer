@@ -41,7 +41,7 @@ test.describe("auth and management hardening", () => {
     await page.setViewportSize({ width: 390, height: 844 });
   });
 
-  test("signup captures account metadata, then requires profile setup before intake", async ({ page }) => {
+  test("signup captures account metadata, then lands in the merged intake setup", async ({ page }) => {
     const session = makeSession({
       userId: "22222222-2222-4222-8222-222222222222",
       email: "new-athlete@example.com",
@@ -62,23 +62,11 @@ test.describe("auth and management hardening", () => {
     await page.getByTestId("auth-password").fill("correct horse battery");
     await page.getByTestId("auth-submit").click();
 
-    await expect(page.getByTestId("profile-setup-gate")).toBeVisible();
-    await page.getByTestId("profile-setup-name").fill("Taylor");
-    await page.getByTestId("profile-setup-timezone").fill("America/Chicago");
-    await page.getByTestId("profile-setup-units").selectOption("imperial");
-    await page.getByTestId("profile-setup-birth-year").fill("1994");
-    await page.getByTestId("profile-setup-height").fill("5'10\"");
-    await page.getByTestId("profile-setup-weight").fill("178");
-    await page.getByTestId("profile-setup-training-age").fill("2");
-    await page.getByTestId("profile-setup-environment").selectOption("Gym");
-    await page.getByTestId("profile-setup-equipment").selectOption("full_gym");
-    await page.getByTestId("profile-setup-session-length").selectOption("45");
-    await page.getByTestId("profile-setup-save").click();
-
     await expect(page.getByTestId("intake-root")).toBeVisible();
+    await expect(page.getByTestId("intake-goals-step")).toBeVisible();
   });
 
-  test("logout returns the signed-in user to the auth gate", async ({ page }) => {
+  test("logout keeps the device in local mode until the user explicitly reopens sign-in", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     await mockSupabaseRuntime(page, { session, payload });
@@ -87,8 +75,14 @@ test.describe("auth and management hardening", () => {
     await expect(page.getByTestId("app-root")).toHaveAttribute("data-onboarding-complete", "true");
     await page.getByTestId("app-tab-settings").click();
     await expect(page.getByTestId("settings-tab")).toBeVisible();
+    await page.getByTestId("settings-surface-account").click();
     await page.getByTestId("settings-logout").click();
 
+    await expect(page.getByTestId("settings-account-section")).toBeVisible();
+    await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
+    await expect(page.getByTestId("settings-sync-status")).toContainText("running locally without cloud sync");
+    await expect(page.getByTestId("auth-gate")).toHaveCount(0);
+    await page.getByTestId("settings-open-auth-gate").click();
     await expect(page.getByTestId("auth-gate")).toBeVisible();
   });
 
@@ -105,6 +99,8 @@ test.describe("auth and management hardening", () => {
     await bootAppWithSupabaseSeeds(page, { session, payload });
     await expect(page.getByTestId("app-root")).toHaveAttribute("data-onboarding-complete", "true");
     await page.getByTestId("app-tab-settings").click();
+    await page.getByTestId("settings-surface-account").click();
+    await page.getByTestId("settings-account-advanced").locator("summary").click();
     await page.getByTestId("settings-delete-account").click();
     await page.getByTestId("settings-delete-account-export").click();
     await page.getByTestId("settings-delete-account-confirm").fill("DELETE");
@@ -132,6 +128,10 @@ test.describe("auth and management hardening", () => {
     await expect(page.getByTestId("nutrition-grocery-support")).toBeVisible();
 
     await page.getByTestId("app-tab-settings").click();
+    await expect(page.getByTestId("settings-tab")).toBeVisible();
+    await page.getByTestId("settings-surface-preferences").click();
+    await expect(page.getByTestId("settings-preferences-section")).toBeVisible();
+    await expect(page.getByTestId("settings-theme-grid")).toBeVisible();
     const before = await page.locator("[data-testid='app-root']").evaluate((node) => getComputedStyle(node).getPropertyValue("--brand-accent"));
     await page.getByTestId("settings-theme-circuit").click();
     const after = await page.locator("[data-testid='app-root']").evaluate((node) => getComputedStyle(node).getPropertyValue("--brand-accent"));

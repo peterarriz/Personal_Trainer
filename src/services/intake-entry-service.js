@@ -15,42 +15,37 @@ const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [
 
 export const INTAKE_STAGE_CONTRACT = Object.freeze([
   Object.freeze({
-    key: "goal_setup",
-    label: "Goals",
-    helper: "Choose the goal path and the realities that shape week one.",
+    key: "setup",
+    label: "Setup",
+    helper: "Choose what you want and the constraints that shape week one.",
   }),
   Object.freeze({
-    key: "needed_details",
+    key: "details",
     label: "Details",
-    helper: "Add only the details that still change the first plan.",
-  }),
-  Object.freeze({
-    key: "review",
-    label: "Confirm",
-    helper: "Check the resolved priority order before build.",
+    helper: "Add only the details that still change the first plan, then continue.",
   }),
   Object.freeze({
     key: "build",
     label: "Build",
-    helper: "Create the first plan from the confirmed setup.",
+    helper: "Create the first plan from the intake you just finished.",
   }),
 ]);
 
 export const INTAKE_COPY_DECK = Object.freeze({
   shell: Object.freeze({
-    title: "Setup",
-    progressSuffix: "Draft until you confirm.",
-    helper: "Set priorities fast. Add detail only where it changes the first plan.",
+    title: "Intake",
+    progressSuffix: "Autosaves as you go.",
+    helper: "Set your priorities fast. We only ask for details that change week one.",
   }),
   summaryRail: Object.freeze({
-    eyebrow: "Current draft",
-    title: "What the plan will use",
-    helper: "Draft only until you confirm the stack.",
+    eyebrow: "Live summary",
+    title: "What week one will use",
+    helper: "This updates as you choose goals, constraints, and anchors.",
   }),
   goals: Object.freeze({
-    heroEyebrow: "DIRECT SETUP",
-    heroBody: "Choose a goal type, select the mapped path, then add only the inputs that sharpen week one.",
-    goalTypeHelper: "Start with the goal type, then pick a mapped goal instead of writing a full brief.",
+    heroEyebrow: "START HERE",
+    heroBody: "Choose the goal that fits best, set your real-world constraints, and keep moving.",
+    goalTypeHelper: "Start with what you want, then pick the path that fits best.",
   }),
   interpretation: Object.freeze({
     title: "Draft",
@@ -61,8 +56,8 @@ export const INTAKE_COPY_DECK = Object.freeze({
     emptyState: "Your resolved priorities will appear here once the draft is ready.",
   }),
   clarify: Object.freeze({
-    helper: "Add only the details that still change the first plan.",
-    stackEyebrow: "CURRENT DRAFT",
+    helper: "Answer the details that still change week one, then continue from this same screen.",
+    stackEyebrow: "CURRENT PRIORITIES",
     baselineNote: "Saved to your baselines so you can edit it later in Settings.",
     structuredToggle: "Structured",
     naturalToggle: "Free text",
@@ -70,7 +65,7 @@ export const INTAKE_COPY_DECK = Object.freeze({
     genericPlaceholder: "Add the detail.",
   }),
   confirm: Object.freeze({
-    helper: "Confirm the priority order before we build.",
+    helper: "Review the intake details and continue when the stack looks right.",
   }),
   adjust: Object.freeze({
     title: "Adjust",
@@ -78,14 +73,14 @@ export const INTAKE_COPY_DECK = Object.freeze({
     placeholder: "Describe the change.",
   }),
   build: Object.freeze({
-    helper: "Turning the confirmed priorities into the first plan.",
+    helper: "Turning your intake into the first plan.",
     status: "Building the first plan...",
   }),
   footer: Object.freeze({
-    goals: "Choose the goal path, then add only the details that shape week one.",
+    goals: "Choose what you want and the real constraints around it.",
     interpretation: "Check the draft before adding more detail.",
-    clarify: "Add only the remaining details that still change planning.",
-    confirm: "Confirm the priority order so the first plan starts from the right stack.",
+    clarify: "Add any remaining details, review the stack here, and continue when it looks right.",
+    confirm: "Review the stack and continue when it looks right.",
     building: "Building the first plan now.",
     adjust: "Describe the change, then continue.",
   }),
@@ -605,19 +600,3 @@ export const applyIntakeStarterMetrics = ({
     isValid: Object.keys(fieldErrors).length === 0 && formErrors.length === 0,
   };
 };
-
-export const buildIntakeClickCountReport = () => ([
-  { goal: "Run a 5K", path: "running", before: 9, after: 6 },
-  { goal: "Run a faster 5K", path: "running", before: 9, after: 6 },
-  { goal: "Half marathon", path: "running", before: 9, after: 6 },
-  { goal: "Bench 225", path: "strength", before: 9, after: 6 },
-  { goal: "Gain muscle", path: "strength", before: 9, after: 6 },
-  { goal: "Lose 10 lb", path: "fat_loss", before: 9, after: 6 },
-  { goal: "Look athletic again", path: "fat_loss", before: 9, after: 6 },
-  { goal: "Swim a faster mile", path: "swim", before: 9, after: 6 },
-  { goal: "Get back in shape", path: "general_fitness", before: 9, after: 6 },
-  { goal: "Custom goal", path: "custom", before: 8, after: 5 },
-]).map((entry) => ({
-  ...entry,
-  reduction: Math.max(0, entry.before - entry.after),
-}));

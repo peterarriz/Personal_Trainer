@@ -13,6 +13,55 @@ const openSettingsAccountSurface = async (page) => {
   await expect(page.getByTestId("settings-account-section")).toBeVisible();
 };
 
+const enableSyncTestHarness = async (page) => {
+  await page.addInitScript(() => {
+    window.__E2E_SYNC_TEST = true;
+  });
+};
+
+const readSyncSnapshot = async (page) => page.evaluate(() => window.__TRAINER_SYNC_TEST_HELPERS?.snapshot?.() || null);
+
+const applySyncPreset = async (page, preset, at = Date.now()) => {
+  await page.evaluate(({ nextPreset, timestamp }) => {
+    window.__TRAINER_SYNC_TEST_HELPERS?.applyPreset?.(nextPreset, timestamp);
+  }, { nextPreset: preset, timestamp: at });
+};
+
+const reconcileSyncPresentation = async (page, offsetMs = 0) => {
+  await page.evaluate((offset) => {
+    window.__TRAINER_SYNC_TEST_HELPERS?.reconcilePresentation?.(offset);
+  }, offsetMs);
+};
+
+const readCompactSurfaceMetrics = async (page, { statusTestId, anchorTestId }) => {
+  const status = await page.getByTestId(statusTestId).evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    return {
+      top: Math.round(rect.top),
+      height: Math.round(rect.height),
+      width: Math.round(rect.width),
+    };
+  });
+  const anchor = await page.getByTestId(anchorTestId).evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    return {
+      top: Math.round(rect.top),
+    };
+  });
+  return {
+    status,
+    anchor,
+  };
+};
+
+const expectStableCompactMetrics = (baseline, samples) => {
+  samples.forEach((sample) => {
+    expect(Math.abs(sample.status.top - baseline.status.top)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sample.status.height - baseline.status.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(sample.anchor.top - baseline.anchor.top)).toBeLessThanOrEqual(1);
+  });
+};
+
 test.describe("shared sync state rendering", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
@@ -49,26 +98,32 @@ test.describe("shared sync state rendering", () => {
     await page.getByRole("button", { name: "Save profile" }).click();
     await page.getByTestId("settings-surface-account").click();
 
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Retrying cloud sync");
-    await expect(page.getByTestId("settings-sync-status")).toContainText("reload cloud data");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Retrying");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Cloud sync is retrying in the background");
 
     await page.getByTestId("app-tab-today").click();
-    await expect(page.getByTestId("today-sync-status")).toContainText("Retrying cloud sync");
-    await expect(page.getByTestId("today-sync-status")).toContainText("Local changes stay saved");
+    await expect(page.getByTestId("today-sync-status")).toContainText("Retrying");
+    await expect(page.getByTestId("today-sync-status")).toContainText("Cloud sync is retrying in the background");
 
     await page.getByTestId("app-tab-program").click();
     await expect(page.getByTestId("program-tab")).toBeVisible();
-    await expect(page.getByTestId("program-sync-status")).toContainText("Retrying cloud sync");
+    await expect(page.getByTestId("program-sync-status")).toContainText("Retrying");
+    await expect(page.getByTestId("program-sync-status")).toContainText("Cloud sync is retrying in the background");
   });
 
-  test("signed-out auth gate explains the device-only state instead of pretending sync is active", async ({ page }) => {
+  test("signed-out devices resume the last usable local state before showing auth choices", async ({ page }) => {
     const payload = makeSignedInPayload();
 
     await bootAppWithSupabaseSeeds(page, { session: null, payload });
 
+    await expect(page.getByTestId("today-tab")).toBeVisible();
+    await expect(page.getByTestId("today-sync-status")).toContainText("Device-only");
+    await expect(page.getByTestId("today-sync-status")).toContainText("running locally without cloud sync");
+
+    await openSettingsAccountSurface(page);
+    await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
+    await page.getByTestId("settings-open-auth-gate").click();
     await expect(page.getByTestId("auth-gate")).toBeVisible();
-    await expect(page.getByTestId("auth-sync-status")).toContainText("Device-only");
-    await expect(page.getByTestId("auth-sync-status")).toContainText("running without active cloud sync");
     await expect(page.getByTestId("continue-local-mode")).toBeVisible();
   });
 
@@ -92,6 +147,84 @@ test.describe("shared sync state rendering", () => {
 
     await openSettingsAccountSurface(page);
     await expect(page.getByTestId("settings-sync-status")).toContainText("Cloud sync is unavailable");
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Admin action is required");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Keep using this device locally for now");
+  });
+
+  test("rapid compact-surface sync transitions keep one chip mounted with zero layout shift", async ({ page }) => {
+    await enableSyncTestHarness(page);
+    const session = makeSession();
+    const payload = makeSignedInPayload();
+
+    await mockSupabaseRuntime(page, { session, payload });
+    await bootAppWithSupabaseSeeds(page, { session, payload });
+
+    await expect.poll(async () => Boolean((await readSyncSnapshot(page))?.displayedStateId)).toBe(true);
+
+    const assertSurfaceStable = async ({
+      openSurface,
+      statusTestId,
+      anchorTestId,
+    }) => {
+      await openSurface();
+      await applySyncPreset(page, "synced", 900);
+      await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("synced");
+      await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
+      await expect(page.getByTestId(statusTestId)).toBeVisible();
+      await expect(page.getByTestId(`${statusTestId}-inline`)).toHaveCount(0);
+      const metrics = [];
+      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+
+      await applySyncPreset(page, "syncing", 1000);
+      await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("syncing");
+      await expect(page.getByTestId(statusTestId)).toBeVisible();
+      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+
+      await applySyncPreset(page, "retrying", 1100);
+      await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("retrying");
+      await expect(page.getByTestId(statusTestId)).toBeVisible();
+      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+
+      await applySyncPreset(page, "syncing", 1200);
+      await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("syncing");
+      await expect(page.getByTestId(statusTestId)).toBeVisible();
+      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+
+      await applySyncPreset(page, "stale", 1300);
+      await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("stale-cloud");
+      await expect(page.getByTestId(statusTestId)).toBeVisible();
+      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+
+      await reconcileSyncPresentation(page, 10_500);
+      await expect(page.getByTestId(statusTestId)).toBeVisible();
+      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+
+      await applySyncPreset(page, "synced", 1400);
+      await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("synced");
+      await reconcileSyncPresentation(page, 21_000);
+      await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
+      await expect(page.getByTestId(statusTestId)).toContainText("Synced");
+      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+
+      await expect(page.getByTestId(statusTestId)).toHaveCount(1);
+      expectStableCompactMetrics(metrics[0], metrics.slice(1));
+    };
+
+    await assertSurfaceStable({
+      openSurface: async () => {
+        await page.getByTestId("app-tab-today").click();
+        await expect(page.getByTestId("today-tab")).toBeVisible();
+      },
+      statusTestId: "today-sync-status",
+      anchorTestId: "today-canonical-session-label",
+    });
+
+    await assertSurfaceStable({
+      openSurface: async () => {
+        await page.getByTestId("app-tab-program").click();
+        await expect(page.getByTestId("program-tab")).toBeVisible();
+      },
+      statusTestId: "program-sync-status",
+      anchorTestId: "program-canonical-session-label",
+    });
   });
 });

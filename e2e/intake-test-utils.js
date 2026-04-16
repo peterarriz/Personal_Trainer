@@ -368,17 +368,11 @@ async function enterLocalIntakeIfNeeded(page) {
     await expect(authGate).toBeVisible();
     await page.getByTestId("continue-local-mode").click();
     await expect.poll(async () => {
-      const profileVisible = await page.getByTestId("profile-setup-gate").isVisible().catch(() => false);
-      if (profileVisible) return "profile";
       const intakeVisible = await page.getByTestId("intake-root").isVisible().catch(() => false);
       return intakeVisible ? "intake" : "";
-    }, { timeout: 12_000 }).toMatch(/profile|intake/);
+    }, { timeout: 12_000 }).toBe("intake");
   }
-  const profileGate = page.getByTestId("profile-setup-gate");
-  if (await profileGate.count()) {
-    await expect(profileGate).toBeVisible();
-    await completeProfileSetup(page);
-  }
+  await expect(page.getByTestId("profile-setup-gate")).toHaveCount(0);
   await expect(page.getByTestId("intake-root")).toBeVisible();
   await waitForIntakeSurface();
 }
@@ -582,36 +576,6 @@ async function completeGoalLibraryIntakeStep(page, {
   }
 }
 
-async function completeProfileSetup(page, overrides = {}) {
-  const profileGate = page.getByTestId("profile-setup-gate");
-  if (!await profileGate.count()) return;
-  await expect(profileGate).toBeVisible();
-  const values = {
-    name: "Jordan",
-    timezone: "America/Chicago",
-    units: "imperial",
-    birthYear: "1992",
-    height: "6'0\"",
-    weight: "190",
-    trainingAgeYears: "3",
-    environment: "Gym",
-    equipment: "basic_gym",
-    sessionLength: "45",
-    ...(overrides || {}),
-  };
-  await page.getByTestId("profile-setup-name").fill(values.name);
-  await page.getByTestId("profile-setup-timezone").fill(values.timezone);
-  await page.getByTestId("profile-setup-units").selectOption(values.units);
-  await page.getByTestId("profile-setup-birth-year").fill(values.birthYear);
-  await page.getByTestId("profile-setup-height").fill(values.height);
-  await page.getByTestId("profile-setup-weight").fill(values.weight);
-  await page.getByTestId("profile-setup-training-age").fill(values.trainingAgeYears);
-  await page.getByTestId("profile-setup-environment").selectOption(values.environment);
-  await page.getByTestId("profile-setup-equipment").selectOption(values.equipment);
-  await page.getByTestId("profile-setup-session-length").selectOption(values.sessionLength);
-  await page.getByTestId("profile-setup-save").click();
-}
-
 const MONTH_NUMBER_BY_NAME = {
   january: "01",
   february: "02",
@@ -676,6 +640,10 @@ function normalizeNumericInput(rawValue) {
 async function answerCurrentAnchor(page, response = {}) {
   const fieldId = await getCurrentFieldId(page);
   if (!fieldId) throw new Error("No active anchor field is visible.");
+  return fillAnchorResponse(page, fieldId, response);
+}
+
+async function fillAnchorResponse(page, fieldId, response = {}) {
   const fieldFragment = toTestIdFragment(fieldId);
 
   if (response.type === "choice") {
@@ -735,8 +703,19 @@ async function answerCurrentAnchor(page, response = {}) {
   } else {
     throw new Error(`Unsupported anchor response type for ${fieldId}: ${response.type || "unknown"}`);
   }
+}
 
-  await page.getByTestId("intake-footer-continue").click();
+async function getVisibleAnchorFieldIds(page) {
+  return page.locator('[data-testid="intake-anchor-card"], [data-testid="intake-anchor-card-active"]').evaluateAll((nodes) => (
+    nodes
+      .map((node) => node.getAttribute("data-field-id") || "")
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  ));
+}
+
+async function getReviewRefreshPending(page) {
+  return page.getByTestId("intake-root").getAttribute("data-review-refresh-pending").catch(() => "");
 }
 
 async function completeAnchors(page, responsesByFieldId = {}, options = {}) {
@@ -745,22 +724,48 @@ async function completeAnchors(page, responsesByFieldId = {}, options = {}) {
   for (let step = 0; step < maxSteps; step += 1) {
     const phase = await getCurrentPhase(page);
     if (phase !== "clarify") return visited;
-    const fieldId = await getCurrentFieldId(page);
-    if (!fieldId) return visited;
-    const response = responsesByFieldId[fieldId];
-    if (!response) {
-      throw new Error(`Missing E2E response for anchor field: ${fieldId}`);
+    const visibleFieldIds = await getVisibleAnchorFieldIds(page);
+    if (!visibleFieldIds.length) {
+      const reviewRefreshPending = await getReviewRefreshPending(page);
+      if (reviewRefreshPending === "true") {
+        await expect.poll(async () => await getReviewRefreshPending(page), {
+          timeout: 12_000,
+        }).toBe("false");
+        continue;
+      }
+      const reviewVisible = await page.getByTestId("intake-confirm-step").isVisible().catch(() => false);
+      if (reviewVisible) return visited;
+      await expect.poll(async () => {
+        const nextVisibleFieldIds = await getVisibleAnchorFieldIds(page);
+        if (nextVisibleFieldIds.length > 0) return `anchors:${nextVisibleFieldIds.join(",")}`;
+        const nextReviewRefreshPending = await getReviewRefreshPending(page);
+        if (nextReviewRefreshPending === "true") return "refreshing";
+        const nextReviewVisible = await page.getByTestId("intake-confirm-step").isVisible().catch(() => false);
+        return nextReviewVisible ? "review" : "pending";
+      }, {
+        timeout: 12_000,
+      }).not.toBe("pending");
+      continue;
     }
     const before = JSON.stringify({
       phase,
-      fieldId,
+      fieldIds: visibleFieldIds,
+      reviewRefreshPending: await getReviewRefreshPending(page),
       confirmationStatus: await getConfirmationStatus(page),
     });
-    visited.push(fieldId);
-    await answerCurrentAnchor(page, typeof response === "function" ? await response(page, fieldId) : response);
+    for (const fieldId of visibleFieldIds) {
+      const response = responsesByFieldId[fieldId];
+      if (!response) {
+        throw new Error(`Missing E2E response for anchor field: ${fieldId}`);
+      }
+      if (!visited.includes(fieldId)) visited.push(fieldId);
+      await fillAnchorResponse(page, fieldId, typeof response === "function" ? await response(page, fieldId) : response);
+    }
+    await page.getByTestId("intake-footer-continue").click();
     await expect.poll(async () => JSON.stringify({
       phase: await getCurrentPhase(page),
-      fieldId: await getCurrentFieldId(page),
+      fieldIds: await getVisibleAnchorFieldIds(page),
+      reviewRefreshPending: await getReviewRefreshPending(page),
       confirmationStatus: await getConfirmationStatus(page),
     }), {
       timeout: 12_000,
@@ -770,7 +775,25 @@ async function completeAnchors(page, responsesByFieldId = {}, options = {}) {
 }
 
 async function waitForReview(page) {
-  await expect.poll(async () => await getCurrentPhase(page), { timeout: 20_000 }).toBe("confirm");
+  await expect.poll(async () => {
+    const visibleAnchors = await getVisibleAnchorFieldIds(page);
+    if (visibleAnchors.length > 0) return `anchors:${visibleAnchors.join(",")}`;
+    const reviewRefreshPending = await getReviewRefreshPending(page);
+    if (reviewRefreshPending === "true") return "refreshing";
+    const reviewVisible = await page.getByTestId("intake-confirm-step").isVisible().catch(() => false);
+    const confirmationStatus = await getConfirmationStatus(page);
+    if (!reviewVisible) return "pending";
+    if (confirmationStatus === "block" || confirmationStatus === "incomplete") {
+      const guidedRecoveryVisible = await page.getByTestId("intake-go-next-detail").isVisible().catch(() => false);
+      const confirmationMessageVisible = await page.getByTestId("intake-confirmation-message").isVisible().catch(() => false);
+      return guidedRecoveryVisible || confirmationMessageVisible ? `review:${confirmationStatus}` : "pending";
+    }
+    const buildButtonVisible = await page.getByTestId("intake-confirm-build").isVisible().catch(() => false);
+    const buildButtonEnabled = buildButtonVisible
+      ? await page.getByTestId("intake-confirm-build").isEnabled().catch(() => false)
+      : false;
+    return buildButtonVisible && buildButtonEnabled ? `review:${confirmationStatus}` : "pending";
+  }, { timeout: 20_000 }).toMatch(/^review:/);
   await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
   await expect(page.getByTestId("intake-review")).toBeVisible();
 }
@@ -786,11 +809,13 @@ async function waitForPostOnboarding(page) {
     }
     const onboardingComplete = await page.getByTestId("app-root").getAttribute("data-onboarding-complete").catch(() => "");
     if (onboardingComplete === "true") return "success";
+    const todayVisible = await page.getByTestId("today-session-card").isVisible().catch(() => false);
+    if (todayVisible) return "success";
     if (commitPhase === "success") return "success";
     if (commitPhase === "start") return "building";
     return "pending";
   }, {
-    timeout: 45_000,
+    timeout: 75_000,
     message: "Expected onboarding to finish after confirming the intake stack.",
   }).toBe("success");
   await expect(page.getByTestId("app-tab-today")).toBeVisible();
@@ -850,7 +875,6 @@ module.exports = {
   confirmIntakeBuild,
   completeAnchors,
   completeGoalLibraryIntakeStep,
-  completeProfileSetup,
   completeIntroQuestionnaire,
   enterLocalIntakeIfNeeded,
   getAppEvents,

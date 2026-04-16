@@ -3,7 +3,6 @@ const assert = require("node:assert/strict");
 
 const {
   applyIntakeStarterMetrics,
-  buildIntakeClickCountReport,
   INTAKE_COPY_DECK,
   INTAKE_STAGE_CONTRACT,
   buildIntakeStarterGoalTypes,
@@ -30,13 +29,13 @@ test("starter goal types lead with common goal families and keep custom as a del
 });
 
 test("intake copy deck keeps the staged setup vocabulary concise and non-chatty", () => {
-  assert.deepEqual(INTAKE_STAGE_CONTRACT.map((stage) => stage.label), ["Goals", "Details", "Confirm", "Build"]);
-  assert.equal(INTAKE_COPY_DECK.shell.title, "Setup");
-  assert.equal(INTAKE_COPY_DECK.summaryRail.title, "What the plan will use");
+  assert.deepEqual(INTAKE_STAGE_CONTRACT.map((stage) => stage.label), ["Setup", "Details", "Build"]);
+  assert.equal(INTAKE_COPY_DECK.shell.title, "Intake");
+  assert.equal(INTAKE_COPY_DECK.summaryRail.title, "What week one will use");
   assert.equal(INTAKE_COPY_DECK.clarify.structuredToggle, "Structured");
   assert.equal(INTAKE_COPY_DECK.clarify.naturalToggle, "Free text");
-  assert.match(INTAKE_COPY_DECK.shell.helper, /changes the first plan/i);
-  assert.doesNotMatch(JSON.stringify(INTAKE_COPY_DECK), /coach note|tell me|proposal only until you confirm|guided|in your words|fallback/i);
+  assert.match(INTAKE_COPY_DECK.shell.helper, /week one/i);
+  assert.doesNotMatch(JSON.stringify(INTAKE_COPY_DECK), /coach note|tell me|guided|in your words|fallback|fewer clicks/i);
 });
 
 test("featured starter templates keep the common paths mapped to clear presets", () => {
@@ -91,11 +90,4 @@ test("starter goal type inference keeps custom text out of the preset-first lane
     selection: null,
     answers: { goal_intent: "Prepare for a firefighter physical test" },
   }), "custom");
-});
-
-test("click-count report shows reduced clicks for every representative path", () => {
-  const report = buildIntakeClickCountReport();
-  assert.equal(report.length, 10);
-  assert.ok(report.every((entry) => entry.after < entry.before));
-  assert.ok(report.every((entry) => entry.reduction >= 3));
 });

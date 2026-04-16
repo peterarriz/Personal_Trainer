@@ -70,14 +70,15 @@ test("auth entry view model exposes clear primary, secondary, and tertiary actio
   });
 
   assert.equal(model.form.primaryAction.variant, AUTH_ACTION_VARIANTS.primary);
-  assert.equal(model.localAction?.variant, AUTH_ACTION_VARIANTS.secondary);
+  assert.equal(model.localAction?.variant, AUTH_ACTION_VARIANTS.tertiary);
   assert.ok(model.form.modeOptions.every((option) => option.variant === AUTH_ACTION_VARIANTS.tertiary));
   assert.match(model.localAction?.description || "", /device|cloud/i);
   assert.equal(model.pathCards[0]?.id, "cloud");
-  assert.equal(model.pathCards[1]?.id, "local");
+  assert.equal(model.pathCards.length, 1);
+  assert.match(model.localAction?.label || "", /use local data instead/i);
 });
 
-test("provider-unavailable auth model keeps the local path explicit instead of hidden fallback copy", () => {
+test("provider-unavailable auth model keeps the local path explicit as a fallback", () => {
   const model = buildAuthEntryViewModel({
     authMode: "signin",
     startupLocalResumeAvailable: false,
@@ -88,7 +89,8 @@ test("provider-unavailable auth model keeps the local path explicit instead of h
   assert.ok(model.localAction);
   assert.match(model.localAction?.description || "", /device|offline|local/i);
   assert.match(model.pathCards[0]?.description || "", /temporarily unavailable|offline/i);
-  assert.doesNotMatch(model.localAction?.badge || "", /fallback/i);
+  assert.match(model.localAction?.badge || "", /fallback/i);
+  assert.equal(model.localAction?.variant, AUTH_ACTION_VARIANTS.tertiary);
 });
 
 test("auth entry theme keeps primary and local-secondary contrast safe across all curated themes", () => {

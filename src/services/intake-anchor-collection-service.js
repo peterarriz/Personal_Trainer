@@ -35,7 +35,7 @@ const sanitizeVisibleAnchorCard = (anchor = {}, index = 0) => ({
 const clampVisibleCount = (value = 3) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 3;
-  return Math.max(1, Math.min(3, Math.round(parsed)));
+  return Math.max(1, Math.min(8, Math.round(parsed)));
 };
 
 export const buildAnchorCollectionViewModel = ({
@@ -55,14 +55,14 @@ export const buildAnchorCollectionViewModel = ({
     isVisible,
     stage,
     heading: sanitizeDisplayLine(totalRemaining > 1
-      ? "A few quick details before I lock this in."
-      : "One quick detail before I lock this in.", 160),
+      ? "Add the details that still change week one."
+      : "Add the last detail that still changes week one.", 160),
     progressLabel: sanitizeDisplayLine(totalRemaining > 0
       ? `${totalRemaining} required ${totalRemaining === 1 ? "detail" : "details"} left`
       : "All required details are covered.", 120),
     helperText: sanitizeDisplayLine(totalRemaining > 1
-      ? "We'll handle these one at a time. Lower cards are only there so you can see what comes next."
-      : "This is the last required detail before review.", 220),
+      ? "Answer the details that are visible now. If anything new becomes necessary, it will appear here."
+      : "This is the last required detail before build.", 220),
     goalSummary: sanitizeDisplayLine(goalSummary, 160),
     activeFieldId: sanitizeText(currentAnchor?.field_id || "", 80),
     totalRemaining,
@@ -70,7 +70,7 @@ export const buildAnchorCollectionViewModel = ({
       ...anchor,
       stack_position: index + 1,
       is_active: index === 0,
-      status_label: index === 0 ? "NOW" : "NEXT",
+      status_label: index === 0 ? "REQUIRED NOW" : "ALSO REQUIRED",
     }, index)),
   };
 };

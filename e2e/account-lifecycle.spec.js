@@ -14,12 +14,16 @@ const openSettingsAccountSurface = async (page) => {
   await expect(page.getByTestId("settings-account-section")).toBeVisible();
 };
 
+const openSettingsAccountAdvanced = async (page) => {
+  await page.getByTestId("settings-account-advanced").locator("summary").click();
+};
+
 test.describe("account lifecycle settings", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
   });
 
-  test("settings keeps reload, sign-out, device reset, and permanent delete as distinct actions", async ({ page }) => {
+test("settings keeps reload and sign-out primary while recovery actions stay in the advanced panel", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     const stats = await mockSupabaseRuntime(page, { session, payload });
@@ -29,6 +33,9 @@ test.describe("account lifecycle settings", () => {
 
     await expect(page.getByRole("button", { name: "Reload cloud data" })).toBeVisible();
     await expect(page.getByTestId("settings-logout")).toBeVisible();
+    await expect(page.getByTestId("settings-reset-device")).not.toBeVisible();
+    await expect(page.getByTestId("settings-delete-account")).not.toBeVisible();
+    await openSettingsAccountAdvanced(page);
     await expect(page.getByTestId("settings-reset-device")).toBeVisible();
     await expect(page.getByTestId("settings-delete-account")).toBeVisible();
     await expect(page.getByTestId("settings-delete-account-status")).toContainText("configured");
@@ -36,7 +43,7 @@ test.describe("account lifecycle settings", () => {
     await expect.poll(() => stats.deleteGetRequests).toBeGreaterThan(0);
   });
 
-  test("sign out returns to the auth gate before a slow remote logout finishes and preserves local resume", async ({ page }) => {
+  test("sign out falls back to local mode before a slow remote logout finishes and preserves local resume", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     const stats = await mockSupabaseRuntime(page, {
@@ -51,10 +58,11 @@ test.describe("account lifecycle settings", () => {
     const startedAt = Date.now();
     await page.getByTestId("settings-logout").click();
 
-    await expect(page.getByTestId("auth-gate")).toBeVisible({ timeout: 1000 });
+    await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible({ timeout: 1000 });
     expect(Date.now() - startedAt).toBeLessThan(1200);
-    await expect(page.getByTestId("continue-local-mode")).toBeVisible();
-    await expect(page.getByTestId("auth-local-cta-description")).toContainText("training data already stored on this device");
+    await expect(page.getByTestId("auth-gate")).toHaveCount(0);
+    await expect(page.getByTestId("settings-sync-status")).toContainText("running locally without cloud sync");
+    await expect(page.getByTestId("settings-account-action-message")).toContainText("Local data stays on this device");
     await expect.poll(() => page.evaluate(() => ({
       auth: localStorage.getItem("trainer_auth_session_v1"),
       hasCache: Boolean(localStorage.getItem("trainer_local_cache_v4")),
@@ -63,6 +71,10 @@ test.describe("account lifecycle settings", () => {
       hasCache: true,
     });
     await expect.poll(() => stats.logoutRequests).toBe(1);
+    await page.getByTestId("settings-open-auth-gate").click();
+    await expect(page.getByTestId("auth-gate")).toBeVisible();
+    await expect(page.getByTestId("continue-local-mode")).toBeVisible();
+    await expect(page.getByTestId("auth-local-cta-description")).toContainText("training data already stored on this device");
     await page.waitForTimeout(1600);
   });
 
@@ -73,13 +85,15 @@ test.describe("account lifecycle settings", () => {
 
     await bootAppWithSupabaseSeeds(page, { session, payload });
     await openSettingsAccountSurface(page);
+    await openSettingsAccountAdvanced(page);
 
     await page.getByTestId("settings-reset-device").click();
     await page.getByTestId("settings-reset-device-confirm").fill("RESET");
     await page.getByTestId("settings-reset-device-submit").click();
 
     await expect(page.getByTestId("auth-gate")).toBeVisible();
-    await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
+    await expect(page.getByTestId("continue-local-mode")).toBeVisible();
+    await expect(page.getByTestId("auth-local-cta-description")).toContainText("Start in device-only storage first");
     await expect.poll(() => page.evaluate(() => ({
       auth: localStorage.getItem("trainer_auth_session_v1"),
       cache: localStorage.getItem("trainer_local_cache_v4"),
@@ -90,7 +104,7 @@ test.describe("account lifecycle settings", () => {
     await expect.poll(() => stats.logoutRequests).toBe(1);
   });
 
-  test("delete account stays blocked with admin diagnostics when the deployment is not configured", async ({ page }) => {
+  test("delete account stays blocked with clear fallback paths when the deployment is not configured", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     const stats = await mockSupabaseRuntime(page, {
@@ -121,10 +135,12 @@ test.describe("account lifecycle settings", () => {
 
     await bootAppWithSupabaseSeeds(page, { session, payload });
     await openSettingsAccountSurface(page);
+    await openSettingsAccountAdvanced(page);
 
     await expect(page.getByTestId("settings-delete-account-status")).toContainText("not configured");
-    await expect(page.getByTestId("settings-delete-account-diagnostics")).toBeVisible();
-    await expect(page.getByTestId("settings-delete-account-missing-envs")).toContainText("SUPABASE_SERVICE_ROLE_KEY");
+    await expect(page.getByTestId("settings-delete-account-help")).toContainText("sign out or reset this device");
+    await expect(page.getByTestId("settings-delete-account-diagnostics")).toHaveCount(0);
+    await expect(page.getByTestId("settings-delete-account-missing-envs")).toHaveCount(0);
     await expect(page.getByTestId("settings-delete-account")).toBeDisabled();
     await expect(page.getByTestId("settings-reset-device")).toBeVisible();
     await expect.poll(() => stats.deleteGetRequests).toBeGreaterThan(0);

@@ -100,7 +100,7 @@ test.describe("friction analytics smoke", () => {
     }).toBe(1);
   });
 
-  test("account sign out emits requested and success analytics once", async ({ page }) => {
+  test("account sign out emits requested and success analytics once while the device stays in local mode", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     const stats = await mockSupabaseRuntime(page, { session, payload, logoutDelayMs: 400 });
@@ -112,7 +112,8 @@ test.describe("friction analytics smoke", () => {
     await page.getByTestId("settings-surface-account").click();
     await expect(page.getByTestId("settings-account-section")).toBeVisible();
     await page.getByTestId("settings-logout").click();
-    await expect(page.getByTestId("auth-gate")).toBeVisible();
+    await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
+    await expect(page.getByTestId("settings-sync-status")).toContainText("running locally without cloud sync");
     await expect.poll(() => stats.logoutRequests).toBe(1);
 
     await expect.poll(async () => {
