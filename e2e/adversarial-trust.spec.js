@@ -214,7 +214,7 @@ const buildSevenGoalStackFromLibrary = async (page, { finishBuild = true } = {})
 const openDetailedWorkoutLog = async (page) => {
   await page.getByTestId("app-tab-log").click();
   await expect(page.getByTestId("log-tab")).toBeVisible();
-  await page.getByRole("button", { name: /open exercise-by-exercise entry/i }).click();
+  await page.getByRole("button", { name: /open full detail entry/i }).click();
   await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
 };
 
@@ -320,8 +320,8 @@ test.describe("skeptical user adversarial coverage", () => {
     });
 
     const metrics = await readThemeGridMetrics(page);
-    expect(metrics.cardCount).toBe(12);
-    expect(metrics.previewCount).toBe(12);
+    expect(metrics.cardCount).toBe(8);
+    expect(metrics.previewCount).toBe(8);
     expect(metrics.gridScrollWidth).toBeLessThanOrEqual(metrics.gridClientWidth + 2);
     metrics.cards.forEach((card) => {
       expect(card.width).toBeGreaterThan(220);

@@ -41,7 +41,7 @@ const startStaticServer = async () => {
     stdio: "inherit",
   });
 
-  const server = spawn("cmd", ["/c", "npx.cmd serve . -l 4173"], {
+  const server = spawn("cmd", ["/c", "npx.cmd serve dist -l 4173"], {
     cwd: ROOT,
     env: BUILD_ENV,
     stdio: "pipe",

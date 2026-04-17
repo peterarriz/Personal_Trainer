@@ -1,9 +1,6 @@
 import {
   applyIntakeCompletenessAnswer,
   buildIntakeCompletenessDraft,
-  INTAKE_COMPLETENESS_FIELDS,
-  INTAKE_COMPLETENESS_QUESTION_KEYS,
-  INTAKE_COMPLETENESS_VALUE_TYPES,
   validateIntakeCompletenessAnswer,
 } from "./intake-completeness-service.js";
 import {
@@ -14,38 +11,26 @@ const sanitizeText = (value = "", maxLength = 160) => String(value || "").replac
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
 
 export const INTAKE_STAGE_CONTRACT = Object.freeze([
-  Object.freeze({
-    key: "setup",
-    label: "Setup",
-    helper: "Choose what you want and the constraints that shape week one.",
-  }),
-  Object.freeze({
-    key: "details",
-    label: "Details",
-    helper: "Add only the details that still change the first plan, then continue.",
-  }),
-  Object.freeze({
-    key: "build",
-    label: "Build",
-    helper: "Create the first plan from the intake you just finished.",
-  }),
+  Object.freeze({ key: "setup", label: "Setup", helper: "Choose what you want and the constraints that shape week one." }),
+  Object.freeze({ key: "details", label: "Details", helper: "Add only the details that still change the first plan, then continue." }),
+  Object.freeze({ key: "build", label: "Build", helper: "Create the first plan from the intake you just finished." }),
 ]);
 
 export const INTAKE_COPY_DECK = Object.freeze({
   shell: Object.freeze({
     title: "Intake",
     progressSuffix: "Autosaves as you go.",
-    helper: "Set your priorities fast. We only ask for details that change week one.",
+    helper: "Pick a goal path, answer the few details that really change week one, and keep moving.",
   }),
   summaryRail: Object.freeze({
     eyebrow: "Live summary",
     title: "What week one will use",
-    helper: "This updates as you choose goals, constraints, and anchors.",
+    helper: "This updates as you choose goals, constraints, and key anchors.",
   }),
   goals: Object.freeze({
     heroEyebrow: "START HERE",
-    heroBody: "Choose the goal that fits best, set your real-world constraints, and keep moving.",
-    goalTypeHelper: "Start with what you want, then pick the path that fits best.",
+    heroBody: "Choose the goal family that fits, then sharpen it with a few real-world details.",
+    goalTypeHelper: "Start broad, then let the next card sharpen the plan.",
   }),
   interpretation: Object.freeze({
     title: "Draft",
@@ -86,90 +71,89 @@ export const INTAKE_COPY_DECK = Object.freeze({
   }),
 });
 
-export const INTAKE_STARTER_GOAL_TYPES = Object.freeze([
+const STARTER_TYPES = Object.freeze([
   Object.freeze({
-    id: "running",
-    label: "Running",
-    eyebrow: "Goal type",
-    helper: "5K to marathon, return-to-run, or simple cardio consistency.",
-    categoryId: "running",
-    featuredTemplateIds: ["run_first_5k", "run_faster_5k", "half_marathon", "marathon", "return_to_running"],
+    id: "endurance",
+    label: "Endurance",
+    eyebrow: "Family",
+    helper: "Race prep, aerobic base, swim, cycling, and multisport.",
+    categoryId: "endurance",
+    featuredTemplateIds: ["train_for_run_race", "build_endurance", "return_to_running", "swim_better", "ride_stronger"],
   }),
   Object.freeze({
     id: "strength",
     label: "Strength",
-    eyebrow: "Goal type",
-    helper: "Exact lift targets, muscle gain, or getting stronger overall.",
+    eyebrow: "Family",
+    helper: "Get stronger, build muscle, improve lifts, or train at home.",
     categoryId: "strength",
-    featuredTemplateIds: ["bench_225", "get_stronger", "gain_muscle", "upper_body_size", "maintain_strength"],
+    featuredTemplateIds: ["get_stronger", "build_muscle", "improve_big_lifts", "train_with_limited_equipment", "maintain_strength"],
   }),
   Object.freeze({
-    id: "fat_loss",
-    label: "Fat loss",
-    eyebrow: "Goal type",
-    helper: "Weight loss, leaning out, or looking athletic again.",
+    id: "physique",
+    label: "Physique",
+    eyebrow: "Family",
+    helper: "Lose fat, get leaner, recomp, or cut without losing muscle.",
     categoryId: "physique",
-    featuredTemplateIds: ["lose_10_lb", "get_leaner", "look_athletic_again", "recomp", "wedding_leaner"],
-  }),
-  Object.freeze({
-    id: "swim",
-    label: "Swimming",
-    eyebrow: "Goal type",
-    helper: "Pool benchmarks, open-water goals, and swim durability.",
-    categoryId: "swim",
-    featuredTemplateIds: ["swim_faster_mile", "swim_speed_standard_distance", "open_water_swim", "swim_endurance", "swim_shoulder_friendly"],
+    featuredTemplateIds: ["lose_body_fat", "get_leaner", "recomp", "cut_for_event", "keep_strength_while_cutting"],
   }),
   Object.freeze({
     id: "general_fitness",
     label: "General fitness",
-    eyebrow: "Goal type",
-    helper: "Get back in shape, move better, feel better, and stay consistent.",
-    categoryId: "health",
-    featuredTemplateIds: ["get_back_in_shape", "build_energy", "capability_longevity", "learn_safely", "low_impact_start"],
+    eyebrow: "Family",
+    helper: "Get back in shape, build consistency, and feel more athletic.",
+    categoryId: "general_fitness",
+    featuredTemplateIds: ["get_back_in_shape", "build_consistency", "feel_more_athletic", "improve_work_capacity", "healthy_routine_fitness"],
+  }),
+  Object.freeze({
+    id: "re_entry",
+    label: "Re-entry",
+    eyebrow: "Family",
+    helper: "Restart safely, rebuild capacity, or return with a protected block.",
+    categoryId: "re_entry",
+    featuredTemplateIds: ["restart_safely", "ease_back_in", "rebuild_routine", "conservative_return", "low_impact_restart"],
+  }),
+  Object.freeze({
+    id: "hybrid",
+    label: "Hybrid",
+    eyebrow: "Family",
+    helper: "Run and lift, get stronger and fitter, or support a sport.",
+    categoryId: "hybrid",
+    featuredTemplateIds: ["run_and_lift", "stronger_and_fitter", "aesthetic_plus_endurance", "sport_support", "tactical_fitness"],
   }),
   Object.freeze({
     id: "custom",
     label: "Custom",
     eyebrow: "Custom",
-    helper: "Write your own goal when the library does not fit.",
+    helper: "Use only when the structured paths truly miss the goal.",
     categoryId: "all",
     featuredTemplateIds: [],
   }),
 ]);
 
-const STARTER_TYPE_BY_ID = new Map(INTAKE_STARTER_GOAL_TYPES.map((item) => [item.id, item]));
+export const INTAKE_STARTER_GOAL_TYPES = STARTER_TYPES;
 
-const STARTER_TYPE_BY_CATEGORY_ID = Object.freeze({
-  running: "running",
-  strength: "strength",
-  physique: "fat_loss",
-  swim: "swim",
-  health: "general_fitness",
+const STARTER_TYPE_BY_ID = new Map(STARTER_TYPES.map((item) => [item.id, item]));
+
+const STARTER_TYPE_ALIASES = Object.freeze({
+  running: "endurance",
+  run: "endurance",
+  swim: "endurance",
+  swimming: "endurance",
+  cycling: "endurance",
+  cardio: "endurance",
+  fat_loss: "physique",
+  body_comp: "physique",
+  physique: "physique",
+  fitness: "general_fitness",
+  restart: "re_entry",
 });
 
-const STARTER_TYPE_BY_PLANNING_CATEGORY = Object.freeze({
-  running: "running",
-  strength: "strength",
-  body_comp: "fat_loss",
-  general_fitness: "general_fitness",
-});
+const normalizeStarterTypeId = (goalTypeId = "") => {
+  const normalized = sanitizeText(goalTypeId, 40).toLowerCase();
+  return STARTER_TYPE_ALIASES[normalized] || normalized;
+};
 
-const SWIM_REALITY_OPTIONS = Object.freeze([
-  Object.freeze({ value: "pool", label: "Pool" }),
-  Object.freeze({ value: "open_water", label: "Open water" }),
-  Object.freeze({ value: "both", label: "Both" }),
-]);
-
-const STARTING_CAPACITY_OPTIONS = Object.freeze([
-  Object.freeze({ value: "walk_only", label: "Walk only" }),
-  Object.freeze({ value: "10_easy_minutes", label: "10 easy min" }),
-  Object.freeze({ value: "20_to_30_minutes", label: "20 to 30 min" }),
-  Object.freeze({ value: "30_plus_minutes", label: "30+ min" }),
-]);
-
-const APPEARANCE_PROXY_OPTIONS = Object.freeze([
-  Object.freeze({ value: "skip_for_now", label: "Skip for now" }),
-]);
+const choice = (value, label) => Object.freeze({ value, label });
 
 const createQuestion = ({
   key = "",
@@ -177,8 +161,6 @@ const createQuestion = ({
   helper = "",
   fieldKeys = [],
   inputFields = [],
-  expectedValueType = "",
-  validation = null,
 } = {}) => ({
   key,
   source: "completeness",
@@ -188,297 +170,347 @@ const createQuestion = ({
   label: title,
   fieldKeys,
   inputFields,
-  expectedValueType,
-  validation,
 });
 
-const buildTimelineQuestion = ({
-  title = "Target date or time window",
-  helper = "Optional now, but useful when the first block needs a clearer horizon.",
-} = {}) => createQuestion({
-  key: INTAKE_COMPLETENESS_QUESTION_KEYS.runningTiming,
-  title,
-  helper,
-  fieldKeys: [INTAKE_COMPLETENESS_FIELDS.targetTimeline],
-  expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
-  validation: {
-    kind: "target_timeline",
-    message: "Enter a target date, month, season, or rough time window.",
-  },
-  inputFields: [
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.targetTimeline,
-      label: "Target date or time window",
-      inputType: "text",
-      placeholder: "October 12, late summer, or open-ended",
-      helperText: helper,
-      required: false,
-      expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
-    },
-  ],
+const choiceField = (key, label, helperText, choiceOptions = [], required = false) => ({
+  key,
+  label,
+  inputType: "choice_chips",
+  helperText,
+  required,
+  choiceOptions,
 });
 
-const buildRunningBaselineQuestion = () => createQuestion({
-  key: INTAKE_COMPLETENESS_QUESTION_KEYS.runningBaseline,
-  title: "Current running baseline",
-  helper: "If you know these, the first plan starts more precisely. If not, you can keep moving and we will ask only what is still needed.",
-  fieldKeys: [
-    INTAKE_COMPLETENESS_FIELDS.currentRunFrequency,
-    INTAKE_COMPLETENESS_FIELDS.longestRecentRun,
-    INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline,
-  ],
-  expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.runningBaseline,
-  validation: {
-    kind: "running_baseline",
-    message: "Add runs per week plus either a longest run or a recent pace/race result.",
-  },
-  inputFields: [
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.currentRunFrequency,
-      label: "Runs per week",
-      inputType: "number",
-      placeholder: "3",
-      helperText: "How many times are you running in a normal week?",
-      required: false,
-      min: 1,
-      max: 14,
-    },
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.longestRecentRun,
-      label: "Longest recent run",
-      inputType: "text",
-      placeholder: "6 miles or 75 minutes",
-      helperText: "Distance or duration is fine.",
-      required: false,
-    },
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline,
-      label: "Recent pace or race result",
-      inputType: "text",
-      placeholder: "29:30 5K or 9:15 easy pace",
-      helperText: "Optional if the longest run already tells the story.",
-      required: false,
-    },
-  ],
+const textField = (key, label, placeholder, helperText, required = false) => ({
+  key,
+  label,
+  inputType: "text",
+  placeholder,
+  helperText,
+  required,
 });
 
-const buildStrengthBaselineQuestion = ({ title = "Current strength anchor" } = {}) => createQuestion({
-  key: INTAKE_COMPLETENESS_QUESTION_KEYS.strengthBaseline,
-  title,
-  helper: "A recent top set or estimated max helps us size the first block honestly.",
-  fieldKeys: [INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline],
-  expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.strengthBaseline,
-  validation: {
-    kind: "strength_baseline",
-    message: "Add a recent weight for this lift. Reps are optional if you only know the load.",
-  },
-  inputFields: [
-    {
-      key: "current_strength_baseline_weight",
-      label: "Current weight",
-      inputType: "number",
-      placeholder: "185",
-      helperText: "Use a recent top set, best single, or estimated max.",
-      required: false,
-      min: 1,
-      max: 2000,
-      unit: "lb",
-    },
-    {
-      key: "current_strength_baseline_reps",
-      label: "Reps",
-      inputType: "number",
-      placeholder: "3",
-      helperText: "Leave blank if you only know the load.",
-      required: false,
-      min: 1,
-      max: 30,
-    },
-  ],
+const numberField = (key, label, placeholder, helperText, required = false, unit = "") => ({
+  key,
+  label,
+  inputType: "number",
+  placeholder,
+  helperText,
+  required,
+  ...(unit ? { unit } : {}),
 });
 
-const buildSwimBaselineQuestion = () => createQuestion({
-  key: INTAKE_COMPLETENESS_QUESTION_KEYS.swimBaseline,
-  title: "Recent swim anchor",
-  helper: "One recent swim plus your water reality keeps the first block honest.",
-  fieldKeys: [
-    INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor,
-    INTAKE_COMPLETENESS_FIELDS.swimAccessReality,
-  ],
-  expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.swimBaseline,
-  validation: {
-    kind: "swim_baseline",
-    message: "Add one recent swim anchor and whether it is pool, open water, or both.",
-  },
-  inputFields: [
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor,
-      label: "Recent swim anchor",
-      inputType: "text",
-      placeholder: "1000 yd in 22:30",
-      helperText: "One recent distance or benchmark is enough.",
-      required: false,
-    },
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.swimAccessReality,
-      label: "Water reality",
-      inputType: "choice_chips",
-      helperText: "Choose where you actually swim right now.",
-      required: false,
-      choiceOptions: SWIM_REALITY_OPTIONS,
-    },
-  ],
-});
+const RISK_OPTIONS = Object.freeze([
+  choice("protective", "Protective"),
+  choice("standard", "Standard"),
+  choice("progressive", "Progressive"),
+]);
 
-const buildBodyCompAnchorQuestion = ({
-  includeTargetChange = false,
-  title = "Current bodyweight",
-  helper = "Optional now. If you know it, your first plan starts from something real.",
-} = {}) => createQuestion({
-  key: INTAKE_COMPLETENESS_QUESTION_KEYS.bodyCompAnchor,
-  title,
-  helper,
-  fieldKeys: [
-    INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
-    ...(includeTargetChange ? [INTAKE_COMPLETENESS_FIELDS.targetWeightChange] : []),
-  ],
-  expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.bodyCompAnchor,
-  validation: {
-    kind: "body_comp_anchor",
-    message: "Enter your current bodyweight and, if you want, the change you are aiming for.",
-  },
-  inputFields: [
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
-      label: "Current bodyweight",
-      inputType: "number",
-      placeholder: "205",
-      helperText: helper,
-      required: false,
-      min: 1,
-      max: 1000,
-      unit: "lb",
-    },
-    ...(includeTargetChange
-      ? [{
-          key: INTAKE_COMPLETENESS_FIELDS.targetWeightChange,
-          label: "Target change",
-          inputType: "number",
-          placeholder: "12",
-          helperText: "Use pounds to lose. We will store this as a loss target.",
-          required: false,
-          min: 1,
-          max: 300,
-          unit: "lb",
-          direction: "loss",
-        }]
-      : []),
-  ],
-});
+const ENDURANCE_MODALITY_OPTIONS = Object.freeze([
+  choice("running", "Running"),
+  choice("cycling", "Cycling"),
+  choice("conditioning", "Conditioning"),
+]);
 
-const buildAppearanceProxyQuestion = ({ includeTimeline = false } = {}) => createQuestion({
-  key: INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
-  title: "Optional progress proxy",
-  helper: "Bodyweight or waist both work. If you do not want to track either yet, skip it for now.",
-  fieldKeys: [
-    INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
-    INTAKE_COMPLETENESS_FIELDS.currentWaist,
-    INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan,
-    ...(includeTimeline ? [INTAKE_COMPLETENESS_FIELDS.targetTimeline] : []),
-  ],
-  expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.appearanceProxyAnchor,
-  validation: {
-    kind: "appearance_proxy_anchor",
-    message: "Add bodyweight, waist, or skip the proxy for now.",
-  },
-  inputFields: [
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
-      label: "Current bodyweight",
-      inputType: "number",
-      placeholder: "185",
-      helperText: "Optional if waist is the cleaner proxy for you.",
-      required: false,
-      min: 1,
-      max: 1000,
-      unit: "lb",
-    },
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.currentWaist,
-      label: "Current waist",
-      inputType: "number",
-      placeholder: "34",
-      helperText: "Optional if bodyweight is the better signal.",
-      required: false,
-      min: 1,
-      max: 100,
-      unit: "in",
-    },
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan,
-      label: "Proxy choice",
-      inputType: "choice_chips",
-      helperText: "Only one of these is needed right now.",
-      required: false,
-      choiceOptions: APPEARANCE_PROXY_OPTIONS,
-    },
-    ...(includeTimeline
-      ? [{
-          key: INTAKE_COMPLETENESS_FIELDS.targetTimeline,
-          label: "Event date or time window",
-          inputType: "text",
-          placeholder: "June wedding or early July",
-          helperText: "Optional, but helpful when the goal is tied to an event.",
-          required: false,
-          expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.targetTimeline,
-        }]
-      : []),
-  ],
-});
+const EVENT_DISTANCE_OPTIONS = Object.freeze([
+  choice("5k", "5K"),
+  choice("10k", "10K"),
+  choice("half_marathon", "Half marathon"),
+  choice("marathon", "Marathon"),
+]);
 
-const buildStartingCapacityQuestion = () => createQuestion({
-  key: INTAKE_COMPLETENESS_QUESTION_KEYS.startingCapacity,
-  title: "What feels repeatable today?",
-  helper: "This keeps the first week honest without forcing a long questionnaire.",
-  fieldKeys: [INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor],
-  expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.startingCapacity,
-  validation: {
-    kind: "starting_capacity",
-    message: "Choose the starting capacity that feels most repeatable right now.",
-  },
-  inputFields: [
-    {
-      key: INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor,
-      label: "Repeatable starting capacity",
-      inputType: "choice_chips",
-      helperText: "Pick the one that feels most honest right now.",
-      required: false,
-      choiceOptions: STARTING_CAPACITY_OPTIONS,
-    },
-  ],
-});
+const SWIM_FOCUS_OPTIONS = Object.freeze([
+  choice("fitness", "Fitness"),
+  choice("endurance", "Endurance"),
+  choice("technique", "Technique"),
+  choice("open_water", "Open water"),
+]);
 
-const questionNeedsTimeline = (selection = null) => {
-  const templateId = sanitizeText(selection?.templateId || "", 80);
-  return [
-    "run_first_5k",
-    "run_faster_5k",
-    "run_10k",
-    "half_marathon",
-    "marathon",
-    "bench_225",
-    "wedding_leaner",
-  ].includes(templateId);
+const SWIM_ACCESS_OPTIONS = Object.freeze([
+  choice("pool", "Pool"),
+  choice("open_water", "Open water"),
+  choice("both", "Both"),
+]);
+
+const EQUIPMENT_OPTIONS = Object.freeze([
+  choice("full_gym", "Full gym"),
+  choice("basic_gym", "Basic gym"),
+  choice("dumbbells_only", "Dumbbells only"),
+  choice("bands_bodyweight", "Bands/bodyweight"),
+  choice("limited_home", "Limited home"),
+  choice("travel", "Travel / hotel"),
+]);
+
+const TRAINING_AGE_OPTIONS = Object.freeze([
+  choice("new_to_it", "New to it"),
+  choice("returning", "Returning"),
+  choice("intermediate", "Intermediate"),
+  choice("advanced", "Advanced"),
+]);
+
+const LIFT_FOCUS_OPTIONS = Object.freeze([
+  choice("bench", "Bench"),
+  choice("squat", "Squat"),
+  choice("deadlift", "Deadlift"),
+  choice("ohp", "Overhead press"),
+  choice("pull_up", "Pull-up"),
+]);
+
+const BODY_COMP_TEMPO_OPTIONS = Object.freeze([
+  choice("steady", "Steady"),
+  choice("event_cut", "Event cut"),
+  choice("busy_life", "Busy life"),
+  choice("recomp", "Recomp"),
+]);
+
+const MUSCLE_RETENTION_OPTIONS = Object.freeze([
+  choice("high", "High"),
+  choice("medium", "Medium"),
+  choice("low", "Low"),
+]);
+
+const CARDIO_PREFERENCE_OPTIONS = Object.freeze([
+  choice("low_impact", "Low impact"),
+  choice("moderate", "Moderate"),
+  choice("higher", "Higher"),
+  choice("walks", "Mostly walks"),
+]);
+
+const STARTING_CAPACITY_OPTIONS = Object.freeze([
+  choice("walk_only", "Walk only"),
+  choice("10_easy_minutes", "10 easy min"),
+  choice("20_to_30_minutes", "20 to 30 min"),
+  choice("30_plus_minutes", "30+ min"),
+]);
+
+const HYBRID_PRIORITY_OPTIONS = Object.freeze([
+  choice("running", "Running"),
+  choice("strength", "Strength"),
+  choice("balanced", "Balanced"),
+]);
+
+const GOAL_FOCUS_OPTIONS = Object.freeze([
+  choice("consistency", "Consistency"),
+  choice("athleticism", "Athleticism"),
+  choice("work_capacity", "Work capacity"),
+  choice("strength", "Strength"),
+  choice("endurance", "Endurance"),
+]);
+
+const buildQuestionsForIntent = (selection = null) => {
+  const intentId = sanitizeText(selection?.intentId || selection?.templateId || "", 80).toLowerCase();
+  switch (intentId) {
+    case "train_for_run_race":
+      return [
+        createQuestion({
+          key: "endurance_race_profile",
+          title: "Race setup",
+          helper: "Choose the race distance and add the time window if you have it.",
+          fieldKeys: ["event_distance", "target_timeline"],
+          inputFields: [
+            choiceField("event_distance", "Race distance", "Pick the race you want to train for.", EVENT_DISTANCE_OPTIONS, true),
+            textField("target_timeline", "Race date or target month", "October 12 or early October", "A target month is enough to keep moving."),
+          ],
+        }),
+        createQuestion({
+          key: "running_baseline_profile",
+          title: "Current running baseline",
+          helper: "A few real running details sharpen the first block.",
+          fieldKeys: ["current_run_frequency", "longest_recent_run", "recent_pace_baseline"],
+          inputFields: [
+            numberField("current_run_frequency", "Runs per week", "3", "How many times are you running in a normal week?", true),
+            textField("longest_recent_run", "Longest recent run", "6 miles or 75 minutes", "Distance or duration is enough."),
+            textField("recent_pace_baseline", "Recent pace or race result", "29:30 5K or 9:15 easy pace", "Optional if the long run already tells the story."),
+          ],
+        }),
+      ];
+    case "build_endurance":
+    case "conditioning_builder":
+      return [
+        createQuestion({
+          key: "endurance_base_profile",
+          title: "Endurance setup",
+          helper: "Pick the main mode and one recent anchor.",
+          fieldKeys: ["primary_modality", "current_endurance_anchor", "longest_recent_endurance_session"],
+          inputFields: [
+            choiceField("primary_modality", "Main mode", "Choose the mode you most want the plan to lean on.", ENDURANCE_MODALITY_OPTIONS, true),
+            textField("current_endurance_anchor", "Recent endurance anchor", "20 min ride, 2-mile run, or similar", "One recent anchor is enough."),
+            textField("longest_recent_endurance_session", "Longest recent session", "45 min ride or 3-mile run", "Optional if the recent anchor already covers it."),
+          ],
+        }),
+      ];
+    case "return_to_running":
+      return [
+        createQuestion({
+          key: "return_to_run_profile",
+          title: "Return-to-run setup",
+          helper: "Start where running is actually repeatable right now.",
+          fieldKeys: ["starting_capacity_anchor", "progression_posture"],
+          inputFields: [
+            choiceField("starting_capacity_anchor", "Current repeatable capacity", "Pick the most honest starting point.", STARTING_CAPACITY_OPTIONS, true),
+            choiceField("progression_posture", "Progression posture", "Protective keeps the first block more conservative.", RISK_OPTIONS, true),
+          ],
+        }),
+      ];
+    case "swim_better":
+      return [
+        createQuestion({
+          key: "swim_profile",
+          title: "Swim setup",
+          helper: "Capture your water reality and the type of swim progress you want.",
+          fieldKeys: ["recent_swim_anchor", "swim_access_reality", "goal_focus"],
+          inputFields: [
+            textField("recent_swim_anchor", "Recent swim anchor", "1000 yd in 22:30", "One recent distance or time is enough.", true),
+            choiceField("swim_access_reality", "Water reality", "Choose where you actually swim right now.", SWIM_ACCESS_OPTIONS, true),
+            choiceField("goal_focus", "Swim focus", "Fitness, endurance, technique, or open water.", SWIM_FOCUS_OPTIONS, false),
+          ],
+        }),
+      ];
+    case "ride_stronger":
+      return [
+        createQuestion({
+          key: "cycling_profile",
+          title: "Ride setup",
+          helper: "Add one recent ride anchor so the plan can size week one honestly.",
+          fieldKeys: ["primary_modality", "current_endurance_anchor", "longest_recent_endurance_session"],
+          inputFields: [
+            choiceField("primary_modality", "Mode", "This lane stays cycling-first.", [choice("cycling", "Cycling")], true),
+            textField("current_endurance_anchor", "Recent ride anchor", "45 min ride or 15 miles", "One recent ride is enough.", true),
+            textField("longest_recent_endurance_session", "Longest recent ride", "90 min ride", "Optional if the recent anchor already covers it."),
+          ],
+        }),
+      ];
+    case "triathlon_multisport":
+      return [
+        createQuestion({
+          key: "triathlon_profile",
+          title: "Triathlon setup",
+          helper: "Pick the event flavor and the lane that needs the cleanest recovery.",
+          fieldKeys: ["event_distance", "hybrid_priority", "recent_swim_anchor"],
+          inputFields: [
+            choiceField("event_distance", "Race format", "Sprint is the safest default if you are unsure.", [choice("sprint_triathlon", "Sprint"), choice("olympic_triathlon", "Olympic"), choice("70_3", "70.3")], true),
+            choiceField("hybrid_priority", "Priority lane", "This lane gets the cleanest recovery in the plan.", [choice("swim", "Swim"), choice("bike", "Bike"), choice("run", "Run"), choice("balanced", "Balanced")], true),
+            textField("recent_swim_anchor", "Recent swim anchor", "400 yd in 10:00", "One recent swim anchor keeps the first block honest."),
+          ],
+        }),
+      ];
+    case "get_stronger":
+    case "build_muscle":
+    case "train_with_limited_equipment":
+    case "maintain_strength":
+      return [
+        createQuestion({
+          key: "strength_setup_profile",
+          title: "Strength setup",
+          helper: "Pick the equipment, training age, and progression posture that match real life.",
+          fieldKeys: ["equipment_profile", "training_age", "progression_posture"],
+          inputFields: [
+            choiceField("equipment_profile", "Equipment reality", "Choose the setup you actually have most weeks.", EQUIPMENT_OPTIONS, true),
+            choiceField("training_age", "Training age", "How experienced are you in this lane?", TRAINING_AGE_OPTIONS, true),
+            choiceField("progression_posture", "Progression posture", "Protective starts more conservatively.", RISK_OPTIONS, true),
+          ],
+        }),
+      ];
+    case "improve_big_lifts":
+      return [
+        createQuestion({
+          key: "lift_focus_profile",
+          title: "Lift focus",
+          helper: "Choose the lift that matters and add one recent top set.",
+          fieldKeys: ["lift_focus", "current_strength_baseline", "target_timeline"],
+          inputFields: [
+            choiceField("lift_focus", "Lift focus", "Pick the lift you want the plan to emphasize.", LIFT_FOCUS_OPTIONS, true),
+            textField("current_strength_baseline", "Current top set", "185 x 5 or 225 single", "A recent top set or estimated max is enough.", true),
+            textField("target_timeline", "Target date or window", "July or in 12 weeks", "Optional, but useful if the goal has a clear horizon."),
+          ],
+        }),
+      ];
+    case "lose_body_fat":
+    case "get_leaner":
+    case "recomp":
+    case "cut_for_event":
+    case "keep_strength_while_cutting":
+    case "busy_life_body_comp":
+      return [
+        createQuestion({
+          key: "body_comp_profile",
+          title: "Body-composition setup",
+          helper: "These choices decide whether the first block should bias retention, urgency, or simplicity.",
+          fieldKeys: ["current_bodyweight", "body_comp_tempo", "muscle_retention_priority", "cardio_preference", "target_timeline"],
+          inputFields: [
+            numberField("current_bodyweight", "Current bodyweight", "185", "Closest recent scale weight is fine.", false, "lb"),
+            choiceField("body_comp_tempo", "Tempo", "Steady is the default unless there is a real event deadline.", BODY_COMP_TEMPO_OPTIONS, true),
+            choiceField("muscle_retention_priority", "Keep muscle / strength", "Higher keeps more lifting in the week.", MUSCLE_RETENTION_OPTIONS, true),
+            choiceField("cardio_preference", "Cardio preference", "Choose the cardio dose you can actually recover from.", CARDIO_PREFERENCE_OPTIONS, true),
+            textField("target_timeline", "Event date or window", "June wedding or in 10 weeks", "Only needed when this goal has a real deadline."),
+          ],
+        }),
+      ];
+    case "get_back_in_shape":
+    case "build_consistency":
+    case "feel_more_athletic":
+    case "improve_work_capacity":
+    case "healthy_routine_fitness":
+      return [
+        createQuestion({
+          key: "general_fitness_profile",
+          title: "General fitness setup",
+          helper: "Keep the first block honest by choosing current capacity and the main quality you want to feel improve.",
+          fieldKeys: ["starting_capacity_anchor", "goal_focus"],
+          inputFields: [
+            choiceField("starting_capacity_anchor", "Current repeatable capacity", "Pick the most honest starting point.", STARTING_CAPACITY_OPTIONS, true),
+            choiceField("goal_focus", "Main quality", "This helps shape whether the first block feels more athletic, more routine-driven, or more work-capacity focused.", GOAL_FOCUS_OPTIONS, true),
+          ],
+        }),
+      ];
+    case "restart_safely":
+    case "ease_back_in":
+    case "rebuild_routine":
+    case "conservative_return":
+    case "low_impact_restart":
+      return [
+        createQuestion({
+          key: "re_entry_profile",
+          title: "Restart setup",
+          helper: "Choose the current capacity and how conservative the first block should feel.",
+          fieldKeys: ["starting_capacity_anchor", "progression_posture"],
+          inputFields: [
+            choiceField("starting_capacity_anchor", "Current repeatable capacity", "Pick the most honest starting point.", STARTING_CAPACITY_OPTIONS, true),
+            choiceField("progression_posture", "Progression posture", "Protective keeps the week calmer and easier to repeat.", RISK_OPTIONS, true),
+          ],
+        }),
+      ];
+    case "run_and_lift":
+    case "stronger_and_fitter":
+    case "aesthetic_plus_endurance":
+    case "sport_support":
+    case "tactical_fitness":
+      return [
+        createQuestion({
+          key: "hybrid_profile",
+          title: "Hybrid setup",
+          helper: "Pick the lane that gets the cleanest recovery so the plan does not pretend both goals can peak at once.",
+          fieldKeys: ["hybrid_priority", "equipment_profile", "goal_focus"],
+          inputFields: [
+            choiceField("hybrid_priority", "Priority lane", "This lane gets the cleanest recovery and progression.", HYBRID_PRIORITY_OPTIONS, true),
+            choiceField("equipment_profile", "Equipment reality", "Pick the setup you can actually count on.", EQUIPMENT_OPTIONS, true),
+            choiceField("goal_focus", "Main support quality", "Use this when the hybrid goal leans athletic, tactical, or sport-support.", GOAL_FOCUS_OPTIONS, true),
+          ],
+        }),
+      ];
+    default:
+      return [];
+  }
 };
 
-export const buildIntakeStarterGoalTypes = () => INTAKE_STARTER_GOAL_TYPES.map((item) => ({ ...item }));
+export const buildIntakeStarterGoalTypes = () => STARTER_TYPES.map((item) => ({ ...item }));
 
 export const getDefaultGoalLibraryCategoryForStarterType = (goalTypeId = "") => (
-  STARTER_TYPE_BY_ID.get(sanitizeText(goalTypeId, 40))?.categoryId || "all"
+  STARTER_TYPE_BY_ID.get(normalizeStarterTypeId(goalTypeId))?.categoryId || "all"
 );
 
 export const listFeaturedIntakeGoalTemplates = ({ goalTypeId = "" } = {}) => (
-  toArray(STARTER_TYPE_BY_ID.get(sanitizeText(goalTypeId, 40))?.featuredTemplateIds)
+  toArray(STARTER_TYPE_BY_ID.get(normalizeStarterTypeId(goalTypeId))?.featuredTemplateIds)
     .map((templateId) => findGoalTemplateById(templateId))
     .filter(Boolean)
 );
@@ -488,52 +520,16 @@ export const inferIntakeStarterGoalTypeId = ({
   answers = {},
 } = {}) => {
   const cleanPrimaryGoal = sanitizeText(answers?.goal_intent || "", 220);
-  if (!selection?.templateId) {
-    return cleanPrimaryGoal ? "custom" : "running";
-  }
-  const template = findGoalTemplateById(selection.templateId) || selection;
-  const categoryId = sanitizeText(template?.categoryId || template?.templateCategoryId || "", 40).toLowerCase();
-  if (STARTER_TYPE_BY_CATEGORY_ID[categoryId]) return STARTER_TYPE_BY_CATEGORY_ID[categoryId];
-  const planningCategory = sanitizeText(template?.planningCategory || "", 40).toLowerCase();
-  if (STARTER_TYPE_BY_PLANNING_CATEGORY[planningCategory]) return STARTER_TYPE_BY_PLANNING_CATEGORY[planningCategory];
-  return "general_fitness";
+  if (!selection?.templateId) return cleanPrimaryGoal ? "custom" : "endurance";
+  return sanitizeText(selection?.familyId || selection?.templateCategoryId || "", 40).toLowerCase() || "general_fitness";
 };
 
 export const buildIntakeStarterMetricQuestions = ({
   goalTypeId = "",
   selection = null,
 } = {}) => {
-  const cleanGoalTypeId = sanitizeText(goalTypeId, 40);
-  switch (cleanGoalTypeId) {
-    case "running":
-      return [
-        ...(questionNeedsTimeline(selection) ? [buildTimelineQuestion({ title: "Race date or target month", helper: "Helpful if this goal is tied to a race or deadline." })] : []),
-        buildRunningBaselineQuestion(),
-      ];
-    case "strength":
-      return [
-        buildStrengthBaselineQuestion({
-          title: selection?.templateId === "bench_225" ? "Current bench baseline" : "Current strength anchor",
-        }),
-        ...(questionNeedsTimeline(selection) ? [buildTimelineQuestion({ title: "Target date or time window" })] : []),
-      ];
-    case "swim":
-      return [buildSwimBaselineQuestion()];
-    case "fat_loss":
-      if (selection?.goalFamily === "appearance" || ["look_athletic_again", "tone_up", "six_pack", "wedding_leaner"].includes(sanitizeText(selection?.templateId || "", 80))) {
-        return [buildAppearanceProxyQuestion({ includeTimeline: questionNeedsTimeline(selection) })];
-      }
-      return [
-        buildBodyCompAnchorQuestion({
-          includeTargetChange: !selection?.primaryMetric?.targetValue,
-        }),
-      ];
-    case "general_fitness":
-      return [buildStartingCapacityQuestion()];
-    case "custom":
-    default:
-      return [];
-  }
+  if (normalizeStarterTypeId(goalTypeId) === "custom") return [];
+  return buildQuestionsForIntent(selection);
 };
 
 export const buildIntakeStarterMetricDraft = ({

@@ -7,6 +7,12 @@ const {
   waitForReview,
   waitForPostOnboarding,
 } = require("./intake-test-utils.js");
+const {
+  bootAppWithSupabaseSeeds,
+  makeSession,
+  makeSignedInPayload,
+  mockSupabaseRuntime,
+} = require("./auth-runtime-test-helpers.js");
 
 async function completeRunningOnboarding(page) {
   await gotoIntakeInLocalMode(page);
@@ -30,7 +36,69 @@ async function completeRunningOnboarding(page) {
   await waitForPostOnboarding(page);
 }
 
+async function bootSignedInTodaySurface(page, {
+  theme = "Atlas",
+  mode = "Dark",
+} = {}) {
+  const session = makeSession();
+  const payload = makeSignedInPayload();
+  payload.personalization.settings.appearance = { theme, mode };
+  await mockSupabaseRuntime(page, { session, payload });
+  await bootAppWithSupabaseSeeds(page, { session, payload });
+  await expect(page.getByTestId("app-root")).toHaveAttribute("data-onboarding-complete", "true");
+  await expect(page.getByTestId("today-tab")).toBeVisible();
+}
+
 const normalizeSurfaceText = (value = "") => String(value || "").replace(/\s+/g, " ").trim();
+
+const readOverflowMetrics = async (locator) => locator.evaluate((node) => {
+  const rect = node.getBoundingClientRect();
+  const style = getComputedStyle(node);
+  return {
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+    left: rect.left,
+    right: rect.right,
+    top: rect.top,
+    bottom: rect.bottom,
+    transform: style.transform,
+    writingMode: style.writingMode,
+  };
+});
+
+const readVisibleChildMetrics = async (locator) => locator.evaluate((node) => {
+  const rect = node.getBoundingClientRect();
+  return {
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+    left: rect.left,
+    right: rect.right,
+    top: rect.top,
+    bottom: rect.bottom,
+    items: Array.from(node.querySelectorAll("button, input, textarea, summary, [role='alert'], [role='status']"))
+      .filter((child) => child.getClientRects().length > 0)
+      .map((child) => {
+        const childRect = child.getBoundingClientRect();
+        const childStyle = getComputedStyle(child);
+        return {
+          left: childRect.left,
+          right: childRect.right,
+          top: childRect.top,
+          bottom: childRect.bottom,
+          clientWidth: child.clientWidth,
+          scrollWidth: child.scrollWidth,
+          clientHeight: child.clientHeight,
+          scrollHeight: child.scrollHeight,
+          transform: childStyle.transform,
+          writingMode: childStyle.writingMode,
+        };
+      }),
+  };
+});
 
 test.describe("mobile surface simplification", () => {
   test.beforeEach(async ({ page }) => {
@@ -73,7 +141,7 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("program-tab")).toBeVisible();
     await expect(page.getByTestId("program-this-week")).toBeVisible();
     await expect(page.getByTestId("program-future-weeks")).toBeVisible();
-    await expect(page.getByText("Manage program + goals")).toBeVisible();
+    await expect(page.getByText("Edit goals and plan")).toBeVisible();
     await expect(page.getByText("PROGRAMS + STYLES").first()).not.toBeVisible();
     await expect(page.getByText("Refine Current Goal").first()).not.toBeVisible();
     await expect(page.getByText("Start New Goal Arc").first()).not.toBeVisible();
@@ -92,15 +160,16 @@ test.describe("mobile surface simplification", () => {
 
     await page.getByTestId("settings-surface-programs").click();
     await expect(page.getByTestId("settings-programs-section")).toBeVisible();
-    await expect(page.getByText("PROGRAMS & STYLES").first()).toBeVisible();
+    await expect(page.getByText("PLAN STYLE").first()).toBeVisible();
 
     await page.getByTestId("settings-surface-advanced").click();
     await expect(page.getByTestId("settings-advanced-section")).toBeVisible();
-    await expect(page.getByTestId("settings-advanced-section").getByText("INTEGRATIONS", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("settings-advanced-section").getByText("DEVICES", { exact: true })).toBeVisible();
     await expect(page.getByText("Experimental goal request")).toHaveCount(0);
     await expect(page.getByTestId("settings-friction-summary")).toHaveCount(0);
     await expect(page.getByText("Apple Health").first()).toBeVisible();
     await expect(page.getByText("Garmin Connect").first()).toBeVisible();
+    await expect(page.getByPlaceholder("Anthropic key (optional)")).toHaveCount(0);
   });
 
   test("today, program, and log each expose planned session blocks on mobile", async ({ page }) => {
@@ -139,12 +208,56 @@ test.describe("mobile surface simplification", () => {
 
     await page.getByTestId("app-tab-log").click();
     await expect(page.getByText("Detailed workout log")).toHaveCount(0);
-    await page.getByRole("button", { name: /open exercise-by-exercise entry/i }).click();
+    await page.getByRole("button", { name: /open full detail entry/i }).click();
     await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
     const logPlan = page.getByTestId("log-detailed-entry").getByTestId("planned-session-plan");
     await expect(logPlan).toBeVisible();
     const logPlanText = (await logPlan.innerText()).replace(/\s+/g, " ").trim();
     expect(logPlanText).toBe(todayPlanText);
+  });
+
+  test("today keeps narrow-layout text and quick-log controls unclipped on mobile", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await bootSignedInTodaySurface(page);
+
+    await page.getByTestId("app-tab-settings").click();
+    await page.getByTestId("settings-surface-preferences").click();
+    await page.getByRole("button", { name: /Aggressive/i }).first().click();
+
+    await page.getByTestId("app-tab-today").click();
+
+    const quickLog = page.getByTestId("today-quick-log");
+    await quickLog.getByRole("button", { name: /completed as planned/i }).click();
+    await quickLog.getByRole("button", { name: /about right/i }).click();
+    await quickLog.getByPlaceholder("Optional note").fill("Felt better after the warmup, but the ankle still needed extra rest between sets.");
+    await quickLog.getByPlaceholder(/Bodyweight/i).fill("182");
+    await page.getByTestId("today-save-log").click();
+    await expect(page.getByTestId("today-save-status")).toContainText(/saved/i);
+
+    const textTargets = [
+      "today-canonical-session-label",
+      "today-canonical-reason",
+      "today-change-summary",
+      "today-plan-basis",
+      "today-save-status",
+    ];
+    for (const testId of textTargets) {
+      const locator = page.getByTestId(testId);
+      if (!await locator.count()) continue;
+      const metrics = await readOverflowMetrics(locator);
+      expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 2);
+      expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.clientHeight + 2);
+      expect(metrics.writingMode).toBe("horizontal-tb");
+    }
+
+    const quickLogMetrics = await readVisibleChildMetrics(quickLog);
+    quickLogMetrics.items.forEach((item) => {
+      expect(item.left).toBeGreaterThanOrEqual(quickLogMetrics.left - 1);
+      expect(item.right).toBeLessThanOrEqual(quickLogMetrics.right + 1);
+      expect(item.scrollWidth).toBeLessThanOrEqual(item.clientWidth + 2);
+      expect(item.scrollHeight).toBeLessThanOrEqual(item.clientHeight + 2);
+      expect(item.writingMode).toBe("horizontal-tb");
+    });
   });
 
   test("canonical session label stays aligned across today, program, log, nutrition, and coach", async ({ page }) => {
@@ -158,7 +271,7 @@ test.describe("mobile surface simplification", () => {
     expect(programLabel).toBe(todayLabel);
 
     await page.getByTestId("app-tab-log").click();
-    await page.getByRole("button", { name: /open exercise-by-exercise entry/i }).click();
+    await page.getByRole("button", { name: /open full detail entry/i }).click();
     const logLabel = normalizeSurfaceText(await page.getByTestId("log-canonical-session-label").innerText());
     expect(logLabel).toBe(todayLabel);
 
@@ -218,7 +331,7 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("coach-tab")).toBeVisible();
     await expect(page.getByTestId("coach-mode-switcher")).toBeVisible();
     await expect(page.getByTestId("coach-mode-panel-today_week")).toBeVisible();
-    await expect(page.getByPlaceholder("Anthropic key (optional)").first()).not.toBeVisible();
+    await expect(page.getByPlaceholder("Anthropic key (optional)")).toHaveCount(0);
     await expect(page.getByPlaceholder("Failure patterns").first()).not.toBeVisible();
 
     const headline = page.getByTestId("coach-today-headline");
@@ -241,6 +354,6 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("settings-tab")).toBeVisible();
     await expect(page.getByTestId("settings-baselines-section")).toBeVisible();
     await expect(page.getByTestId("settings-metrics-baselines")).toBeVisible();
-    await expect(page.getByText("Opened from Program because missing or low-confidence baselines are limiting how specific adaptation can be.")).toBeVisible();
+    await expect(page.getByText("Opened from Plan because a few inputs are still needed before the next block can get more specific.")).toBeVisible();
   });
 });

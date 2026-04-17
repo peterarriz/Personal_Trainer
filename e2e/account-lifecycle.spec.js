@@ -74,7 +74,7 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
     await page.getByTestId("settings-open-auth-gate").click();
     await expect(page.getByTestId("auth-gate")).toBeVisible();
     await expect(page.getByTestId("continue-local-mode")).toBeVisible();
-    await expect(page.getByTestId("auth-local-cta-description")).toContainText("training data already stored on this device");
+    await expect(page.getByTestId("auth-local-cta-description")).toContainText(/last usable training state|keep going locally/i);
     await page.waitForTimeout(1600);
   });
 
@@ -93,7 +93,7 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
 
     await expect(page.getByTestId("auth-gate")).toBeVisible();
     await expect(page.getByTestId("continue-local-mode")).toBeVisible();
-    await expect(page.getByTestId("auth-local-cta-description")).toContainText("Start in device-only storage first");
+    await expect(page.getByTestId("auth-local-cta-description")).toContainText(/local fallback|need this device right away/i);
     await expect.poll(() => page.evaluate(() => ({
       auth: localStorage.getItem("trainer_auth_session_v1"),
       cache: localStorage.getItem("trainer_local_cache_v4"),

@@ -110,6 +110,22 @@ export const DOMAIN_ADAPTERS = {
     requiredAnchors: ["pool access", "recent swim benchmark"],
     nutritionBias: "performance_support",
   },
+  [DOMAIN_ADAPTER_IDS.cycling]: {
+    id: DOMAIN_ADAPTER_IDS.cycling,
+    label: "Cycling Endurance",
+    architecture: "race_prep_dominant",
+    supportedCapabilities: ["aerobic_base", "threshold_endurance", "endurance_event_preparation"],
+    requiredAnchors: ["bike access", "recent ride benchmark"],
+    nutritionBias: "performance_support",
+  },
+  [DOMAIN_ADAPTER_IDS.triathlon]: {
+    id: DOMAIN_ADAPTER_IDS.triathlon,
+    label: "Triathlon / Multisport",
+    architecture: "hybrid_performance",
+    supportedCapabilities: ["aerobic_base", "threshold_endurance", "skill_technique", "consistency_habit_restoration"],
+    requiredAnchors: ["race format", "modality priority", "recent endurance anchors"],
+    nutritionBias: "performance_support",
+  },
   [DOMAIN_ADAPTER_IDS.power]: {
     id: DOMAIN_ADAPTER_IDS.power,
     label: "Power / Vertical / Plyometric",
@@ -325,6 +341,81 @@ export const buildDomainSpecificDayTemplates = ({
         nutri: NUTRITION_DAY_TYPES.swimEndurance,
       }),
       0: restDay("Shoulder recovery"),
+    };
+  }
+
+  if (safeAdapter.id === DOMAIN_ADAPTER_IDS.cycling && architecture === "race_prep_dominant") {
+    return {
+      1: buildConditioningSession({
+        label: "Tempo Ride",
+        detail: "35-50 min tempo or cadence-control ride",
+      }),
+      2: {
+        type: "strength+prehab",
+        label: "Support Strength A",
+        strSess: "A",
+        nutri: NUTRITION_DAY_TYPES.strengthSupport,
+        strengthDose: "20-30 min low-fatigue strength",
+        optionalSecondary: "Optional: hip and trunk support.",
+      },
+      3: buildConditioningSession({
+        label: "Aerobic Ride",
+        detail: "30-45 min easy endurance ride",
+        lowImpact: true,
+      }),
+      4: restDay("Recovery / walk"),
+      5: {
+        type: "strength+prehab",
+        label: "Durability Strength",
+        strSess: "B",
+        nutri: NUTRITION_DAY_TYPES.strengthSupport,
+        strengthDose: "20-30 min durability strength",
+        optionalSecondary: "Optional: calf and glute support.",
+      },
+      6: buildConditioningSession({
+        label: "Long Ride",
+        detail: "60-90 min aerobic ride",
+      }),
+      0: restDay("Active Recovery"),
+    };
+  }
+
+  if (safeAdapter.id === DOMAIN_ADAPTER_IDS.triathlon && architecture === "hybrid_performance") {
+    return {
+      1: buildSwimSession({
+        type: "swim-technique",
+        label: "Technique Swim",
+        focus: "Technique",
+        duration: "30-40 min",
+        setLine: "Drills + easy aerobic repeats.",
+        nutri: NUTRITION_DAY_TYPES.swimTechnique,
+      }),
+      2: buildConditioningSession({
+        label: "Bike Aerobic",
+        detail: "35-50 min easy aerobic ride",
+        lowImpact: true,
+      }),
+      3: {
+        type: "easy-run",
+        label: "Easy Run",
+        run: { t: "Easy", d: "25-35 min" },
+        nutri: NUTRITION_DAY_TYPES.runEasy,
+        optionalSecondary: "Optional: strides only if recovery is clearly good.",
+      },
+      4: {
+        type: "strength+prehab",
+        label: "Tri Support Strength",
+        strSess: "A",
+        nutri: NUTRITION_DAY_TYPES.strengthSupport,
+        strengthDose: "20-30 min low-fatigue strength",
+        optionalSecondary: "Optional: calf / shoulder support.",
+      },
+      5: restDay("Recovery / walk"),
+      6: buildConditioningSession({
+        label: "Brick or Long Bike",
+        detail: "45-75 min bike with short transition run if ready",
+      }),
+      0: restDay("Active Recovery"),
     };
   }
 

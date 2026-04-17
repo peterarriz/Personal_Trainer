@@ -2,8 +2,14 @@ node_modules/
 .DS_Store
 .env
 *.log
+*.bak
+*.orig
+*.rej
+*.tmp
+*.patch
 artifacts/
 dist/
 playwright-report/
 test-results/
 tmp/
+coverage/

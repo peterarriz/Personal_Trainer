@@ -35,13 +35,14 @@ test.describe("program inline session detail", () => {
     await page.setViewportSize({ width: 1366, height: 960 });
   });
 
-  test("program labels the visible planning window as the next 3 months", async ({ page }) => {
+  test("program keeps near-term weeks detailed and rolls later weeks into phase summaries", async ({ page }) => {
     await completeRunningOnboarding(page);
     await page.getByTestId("app-tab-program").click();
 
     await expect(page.getByTestId("program-future-weeks")).toContainText("NEXT 3 MONTHS");
-    await expect(page.getByTestId("program-future-weeks")).toContainText("visible planning window");
-    await expect(page.getByTestId("program-future-weeks")).toContainText("not the deadline for every goal");
+    await expect(page.getByTestId("program-future-weeks")).toContainText("Next 3 weeks stay detailed");
+    await expect(page.getByTestId("program-future-weeks")).toContainText("Later weeks roll into phase summaries");
+    await expect(page.getByTestId("program-future-weeks")).toContainText("LATER PHASES");
     await expect(page.getByText(/saved week snapshot.*next 3 months stay projected/i).first()).toBeVisible();
   });
 

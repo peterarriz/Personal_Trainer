@@ -111,8 +111,8 @@ test("anchor collection view model shows a short stack of field cards after inte
   );
   assert.equal(viewModel.heading.includes("anchor"), false);
   assert.equal(viewModel.progressLabel.includes("anchor"), false);
-  assert.equal(viewModel.visibleCards[0].status_label, "NOW");
-  assert.equal(viewModel.visibleCards[1].status_label, "NEXT");
+  assert.equal(viewModel.visibleCards[0].status_label, "REQUIRED NOW");
+  assert.equal(viewModel.visibleCards[1].status_label, "ALSO REQUIRED");
   assert.ok(viewModel.visibleCards.every((card) => String(card.why_it_matters || "").trim().length > 0));
   assert.ok(viewModel.visibleCards.every((card) => String(card.coach_voice_line || "").trim().length > 0));
   assert.match(viewModel.visibleCards[1].why_it_matters, /run/i);

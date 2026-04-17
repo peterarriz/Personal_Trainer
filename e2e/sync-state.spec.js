@@ -62,6 +62,11 @@ const expectStableCompactMetrics = (baseline, samples) => {
   });
 };
 
+const expectSingleCompactStatus = async (page, statusTestId) => {
+  await expect(page.getByTestId(statusTestId)).toHaveCount(1);
+  await expect(page.getByTestId(`${statusTestId}-inline`)).toHaveCount(0);
+};
+
 test.describe("shared sync state rendering", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
@@ -131,8 +136,8 @@ test.describe("shared sync state rendering", () => {
     const payload = makeSignedInPayload();
 
     await page.addInitScript(({ payloadSeed }) => {
-      window.__SUPABASE_URL = "";
-      window.__SUPABASE_ANON_KEY = "";
+      window.__SUPABASE_URL = "malformed-supabase-url";
+      window.__SUPABASE_ANON_KEY = "test-key";
       localStorage.removeItem("trainer_auth_session_v1");
       localStorage.setItem("trainer_local_cache_v4", JSON.stringify(payloadSeed));
     }, {
@@ -170,7 +175,7 @@ test.describe("shared sync state rendering", () => {
       await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("synced");
       await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
       await expect(page.getByTestId(statusTestId)).toBeVisible();
-      await expect(page.getByTestId(`${statusTestId}-inline`)).toHaveCount(0);
+      await expectSingleCompactStatus(page, statusTestId);
       const metrics = [];
       metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
 
@@ -205,7 +210,7 @@ test.describe("shared sync state rendering", () => {
       await expect(page.getByTestId(statusTestId)).toContainText("Synced");
       metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
 
-      await expect(page.getByTestId(statusTestId)).toHaveCount(1);
+      await expectSingleCompactStatus(page, statusTestId);
       expectStableCompactMetrics(metrics[0], metrics.slice(1));
     };
 
@@ -226,5 +231,83 @@ test.describe("shared sync state rendering", () => {
       statusTestId: "program-sync-status",
       anchorTestId: "program-canonical-session-label",
     });
+  });
+
+  test("flapping retry pulses never duplicate the Today sync chip or shift the header", async ({ page }) => {
+    await enableSyncTestHarness(page);
+    const session = makeSession();
+    const payload = makeSignedInPayload();
+
+    await mockSupabaseRuntime(page, { session, payload });
+    await bootAppWithSupabaseSeeds(page, { session, payload });
+
+    await page.getByTestId("app-tab-today").click();
+    await expect(page.getByTestId("today-tab")).toBeVisible();
+
+    await applySyncPreset(page, "synced", 1000);
+    await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
+    const metrics = [
+      await readCompactSurfaceMetrics(page, {
+        statusTestId: "today-sync-status",
+        anchorTestId: "today-canonical-session-label",
+      }),
+    ];
+
+    for (const [preset, at] of [
+      ["retrying", 1100],
+      ["retrying", 1200],
+      ["syncing", 1300],
+      ["retrying", 1400],
+      ["stale", 1500],
+      ["retrying", 1600],
+    ]) {
+      await applySyncPreset(page, preset, at);
+      await expect(page.getByTestId("today-sync-status")).toBeVisible();
+      await expectSingleCompactStatus(page, "today-sync-status");
+      metrics.push(await readCompactSurfaceMetrics(page, {
+        statusTestId: "today-sync-status",
+        anchorTestId: "today-canonical-session-label",
+      }));
+    }
+
+    await applySyncPreset(page, "synced", 1700);
+    await reconcileSyncPresentation(page, 21_000);
+    await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
+    await expect(page.getByTestId("today-sync-status")).toContainText("Synced");
+    await expectSingleCompactStatus(page, "today-sync-status");
+    metrics.push(await readCompactSurfaceMetrics(page, {
+      statusTestId: "today-sync-status",
+      anchorTestId: "today-canonical-session-label",
+    }));
+
+    expectStableCompactMetrics(metrics[0], metrics.slice(1));
+  });
+
+  test("stale cloud recovery replaces provisional settings copy once reconnect succeeds", async ({ page }) => {
+    await enableSyncTestHarness(page);
+    const session = makeSession();
+    const payload = makeSignedInPayload();
+
+    await mockSupabaseRuntime(page, { session, payload });
+    await bootAppWithSupabaseSeeds(page, { session, payload });
+
+    await openSettingsAccountSurface(page);
+
+    await applySyncPreset(page, "stale", 2000);
+    await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("stale-cloud");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Cloud behind");
+
+    await applySyncPreset(page, "syncing", 2100);
+    await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("syncing");
+    await expect(page.getByTestId("settings-sync-status")).toHaveCount(1);
+
+    await applySyncPreset(page, "synced", 2200);
+    await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("synced");
+    await reconcileSyncPresentation(page, 21_000);
+    await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Cloud and device are aligned");
+
+    const statusText = await page.getByTestId("settings-sync-status").innerText();
+    expect(statusText).not.toMatch(/slightly behind|retrying/i);
   });
 });

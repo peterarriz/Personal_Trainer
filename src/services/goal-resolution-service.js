@@ -2,6 +2,7 @@ import { dedupeStrings } from "../utils/collection-utils.js";
 import { buildGoalCapabilityPacket } from "./goal-capability-resolution-service.js";
 import { isOpenEndedTimingValue } from "./goal-timing-service.js";
 import { normalizeGoalTemplateSelection } from "./goal-template-catalog-service.js";
+import { resolveStructuredGoalPath } from "./goal-resolution/structured-goal-resolution-service.js";
 
 export const GOAL_MEASURABILITY_TIERS = {
   fullyMeasurable: "fully_measurable",
@@ -220,6 +221,11 @@ const detectSignals = (text = "") => {
     `(?:${strengthTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${bodyCompTokens})|(?:${bodyCompTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${strengthTokens})`,
     "i"
   );
+  const explicitRunningBodyCompMixPattern = new RegExp(
+    `(?:${runningTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${bodyCompTokens})|(?:${bodyCompTokens}[\\s\\S]{0,80}${mixedConnector}[\\s\\S]{0,80}${runningTokens})`,
+    "i"
+  );
+  const runningMentionIndex = corpus.search(/\b(run|marathon|half marathon|10k|5k|race|pace|endurance|aerobic)\b/i);
   const strengthMentionIndex = corpus.search(/\b(bench|squat|deadlift|overhead press|ohp|strength|lift|lifting)\b/i);
   const bodyCompMentionIndex = corpus.search(/\b(lose fat|fat loss|cut|lean|leaner|get lean|get leaner|drop weight|lose weight|six pack|look athletic|physique|appearance)\b/i);
   return {
@@ -241,6 +247,8 @@ const detectSignals = (text = "") => {
     hasKeepStrength: /(keep strength|maintain strength|keep my strength|hold strength)/i.test(corpus),
     hasExplicitRunningStrengthMix: explicitRunningStrengthMixPattern.test(corpus),
     hasExplicitStrengthBodyCompMix: explicitStrengthBodyCompMixPattern.test(corpus),
+    hasExplicitRunningBodyCompMix: explicitRunningBodyCompMixPattern.test(corpus),
+    runningMentionIndex,
     strengthMentionIndex,
     bodyCompMentionIndex,
     hasMalformedBmiPercent: /(?:\bbmi\b[\s\S]{0,18}\b\d{1,2}(?:\.\d+)?\s*%)|(?:\b\d{1,2}(?:\.\d+)?\s*%\b[\s\S]{0,18}\bbmi\b)/i.test(corpus),
@@ -634,6 +642,7 @@ const inferGoalFamily = ({
     || (signals.hasFatLoss && signals.hasKeepStrength)
     || signals.hasExplicitRunningStrengthMix
     || signals.hasExplicitStrengthBodyCompMix
+    || signals.hasExplicitRunningBodyCompMix
   );
   if (confirmation?.edits?.goalFamily && Object.values(GOAL_FAMILIES).includes(confirmation.edits.goalFamily)) {
     return confirmation.edits.goalFamily;
@@ -780,7 +789,6 @@ const buildSummary = ({
   templateSelection = null,
 } = {}) => {
   if (confirmation?.edits?.summary) return confirmation.edits.summary;
-  if (templateSelection?.summary) return templateSelection.summary;
   if (variant === "hybrid_endurance") {
     return "Build running endurance while strength stays supportive";
   }
@@ -846,6 +854,7 @@ const buildSummary = ({
   if (planningCategory === "strength" && primaryMetric?.targetValue) {
     return `${primaryMetric.label} ${primaryMetric.targetValue} ${primaryMetric.unit}`.trim();
   }
+  if (templateSelection?.summary) return templateSelection.summary;
   if (goalFamily === GOAL_FAMILIES.reEntry) return "Get back into consistent training shape";
   if (goalFamily === GOAL_FAMILIES.generalFitness) return "Rebuild general fitness and consistency";
   return sanitizeText(rawText, 160) || "Resolved goal";
@@ -1105,6 +1114,23 @@ const buildGoalBlueprints = ({
           { goalFamily: GOAL_FAMILIES.strength, planningCategory: "strength", priority: 2, variant: "strength_maintenance" },
         ];
   }
+  if (signals.hasExplicitRunningBodyCompMix) {
+    const secondaryBodyCompFamily = signals.hasAppearance && !signals.hasFatLoss
+      ? GOAL_FAMILIES.appearance
+      : GOAL_FAMILIES.bodyComp;
+    const runningLeads = Number.isFinite(signals.runningMentionIndex)
+      && signals.runningMentionIndex >= 0
+      && (!Number.isFinite(signals.bodyCompMentionIndex) || signals.bodyCompMentionIndex < 0 || signals.runningMentionIndex <= signals.bodyCompMentionIndex);
+    return runningLeads
+      ? [
+          { goalFamily: GOAL_FAMILIES.performance, planningCategory: "running", priority: 1, variant: "running_primary" },
+          { goalFamily: secondaryBodyCompFamily, planningCategory: "body_comp", priority: 2, variant: "body_comp_secondary" },
+        ]
+      : [
+          { goalFamily: secondaryBodyCompFamily, planningCategory: "body_comp", priority: 1, variant: "body_comp_primary" },
+          { goalFamily: GOAL_FAMILIES.performance, planningCategory: "running", priority: 2, variant: "running_secondary" },
+        ];
+  }
   if ((signals.hasFatLoss && signals.hasKeepStrength) || (goalFamily === GOAL_FAMILIES.hybrid && signals.hasFatLoss && signals.hasStrength)) {
     return [
       { goalFamily: GOAL_FAMILIES.bodyComp, planningCategory: "body_comp", priority: 1, variant: "body_comp_primary_with_strength_retention" },
@@ -1254,6 +1280,83 @@ export const buildGoalStateFromResolvedGoals = ({
   };
 };
 
+const countCrossDomainSignals = (signals = {}) => {
+  let count = 0;
+  if (signals.hasRunning || signals.hasSwimming) count += 1;
+  if (signals.hasStrength) count += 1;
+  if (signals.hasFatLoss || signals.hasAppearance) count += 1;
+  if (signals.hasAthleticPower) count += 1;
+  return count;
+};
+
+const shouldPreferLegacyMixedGoalResolution = ({
+  rawIntentText = "",
+  signals = {},
+  structuredResolution = null,
+} = {}) => {
+  const normalizedText = sanitizeText(rawIntentText, 420).toLowerCase();
+  const canonicalRunLiftPhrase = /\b(run and lift|running and strength|keep running but get stronger|stronger first,? but i still want (?:a bit of )?running)\b/i.test(normalizedText);
+  const canonicalBalancedHybridPhrase = /\b(stronger and fitter|strength and conditioning together|aesthetic plus endurance|look athletic and keep my endurance)\b/i.test(normalizedText);
+  const canonicalStrengthCutPhrase = /\b(keep strength while cutting|maintain strength while losing fat)\b/i.test(normalizedText);
+  const canonicalStructuredHybridPhrase = canonicalRunLiftPhrase || canonicalBalancedHybridPhrase || canonicalStrengthCutPhrase;
+  const structuredDiscoveryFamily = sanitizeText(structuredResolution?.resolvedGoal?.goalDiscoveryFamilyId || "", 40).toLowerCase();
+  const structuredIntentId = sanitizeText(structuredResolution?.resolvedGoal?.structuredIntentId || "", 80).toLowerCase();
+  const hasSeparatedGoalPhrases = /[.;\n]/.test(String(rawIntentText || ""));
+  const hasMixedConnector = /\b(and|plus|while|but|also|with|maybe)\b/i.test(normalizedText);
+  const crossDomainSignalCount = countCrossDomainSignals(signals);
+  const strongReEntrySignal = Boolean(
+    signals.hasSafeRebuild
+    || (
+      signals.hasReEntry
+      && !signals.hasRunning
+      && !signals.hasSwimming
+      && !signals.hasBench
+      && !signals.hasSquat
+      && !signals.hasDeadlift
+      && !signals.hasAthleticPower
+    )
+  );
+  const structuredMixedIntent = [
+    "run_and_lift",
+    "stronger_and_fitter",
+    "aesthetic_plus_endurance",
+    "sport_support",
+    "seasonal_sport_support",
+    "tactical_fitness",
+    "triathlon_multisport",
+  ].includes(structuredIntentId);
+  const explicitMixedGoalDraft = Boolean(
+    (signals.hasExplicitRunningStrengthMix && !canonicalRunLiftPhrase)
+    || signals.hasExplicitStrengthBodyCompMix
+    || signals.hasExplicitRunningBodyCompMix
+    || (signals.hasFatLoss && signals.hasKeepStrength && !canonicalStrengthCutPhrase)
+    || /\bhybrid athlete\b/i.test(normalizedText)
+  );
+
+  if (canonicalStructuredHybridPhrase && !explicitMixedGoalDraft && !hasSeparatedGoalPhrases) {
+    return false;
+  }
+  if (
+    (structuredDiscoveryFamily === "hybrid" || structuredMixedIntent)
+    && !explicitMixedGoalDraft
+    && !strongReEntrySignal
+    && !signals.hasAthleticPower
+    && !hasSeparatedGoalPhrases
+  ) {
+    return false;
+  }
+  return Boolean(
+    signals.hasHybrid
+    || signals.hasAthleticPower
+    || strongReEntrySignal
+    || signals.hasExplicitRunningStrengthMix
+    || signals.hasExplicitStrengthBodyCompMix
+    || signals.hasExplicitRunningBodyCompMix
+    || (signals.hasFatLoss && signals.hasKeepStrength)
+    || (crossDomainSignalCount >= 2 && (hasSeparatedGoalPhrases || hasMixedConnector))
+  );
+};
+
 export const resolveGoalTranslation = ({
   rawUserGoalIntent = "",
   typedIntakePacket = {},
@@ -1268,6 +1371,53 @@ export const resolveGoalTranslation = ({
   const proposal = normalizeAiInterpretationProposal(aiInterpretationProposal);
   const confirmation = normalizeUserConfirmation(explicitUserConfirmation);
   const signals = detectSignals(analysisText);
+  const structuredResolution = resolveStructuredGoalPath({
+    rawIntentText,
+    intakeContext,
+    templateSelection,
+    now,
+  });
+  const preferLegacyMixedResolution = !templateSelection && shouldPreferLegacyMixedGoalResolution({
+    rawIntentText,
+    signals,
+    structuredResolution,
+  });
+  if (structuredResolution?.resolvedGoal && !preferLegacyMixedResolution) {
+    const resolvedGoals = [{
+      ...structuredResolution.resolvedGoal,
+      confirmedByUser: Boolean(confirmation?.confirmed),
+      confirmationSource: confirmation?.source || structuredResolution.resolvedGoal?.confirmationSource || "structured_intake",
+      summary: confirmation?.edits?.summary || structuredResolution.resolvedGoal?.summary || "",
+      planningCategory: confirmation?.edits?.planningCategory || structuredResolution.resolvedGoal?.planningCategory || "general_fitness",
+      goalFamily: confirmation?.edits?.goalFamily || structuredResolution.resolvedGoal?.goalFamily || GOAL_FAMILIES.generalFitness,
+      targetDate: confirmation?.edits?.openEnded
+        ? ""
+        : confirmation?.edits?.targetDate || structuredResolution.resolvedGoal?.targetDate || "",
+      targetHorizonWeeks: confirmation?.edits?.openEnded
+        ? null
+        : confirmation?.edits?.targetHorizonWeeks ?? structuredResolution.resolvedGoal?.targetHorizonWeeks ?? null,
+      tradeoffs: dedupeStrings([
+        ...(structuredResolution.resolvedGoal?.tradeoffs || []),
+        ...(confirmation?.edits?.tradeoffs || []),
+      ]).slice(0, 4),
+      unresolvedGaps: dedupeStrings([
+        ...(structuredResolution.resolvedGoal?.unresolvedGaps || []),
+        ...(confirmation?.edits?.unresolvedGaps || []),
+      ]).slice(0, 4),
+    }];
+    const planningGoals = buildPlanningGoalsFromResolvedGoals({ resolvedGoals });
+    const primaryConfidence = resolvedGoals[0]?.confidence || GOAL_CONFIDENCE_LEVELS.low;
+    return {
+      rawIntent: rawIntentText,
+      resolvedGoals,
+      planningGoals,
+      confidenceLevel: primaryConfidence,
+      confidenceScore: GOAL_CONFIDENCE_SCORES[primaryConfidence] || GOAL_CONFIDENCE_SCORES.low,
+      unresolvedGaps: dedupeStrings(resolvedGoals.flatMap((goal) => goal?.unresolvedGaps || [])),
+      tradeoffs: dedupeStrings(resolvedGoals.flatMap((goal) => goal?.tradeoffs || [])),
+      intakePacketVersion: sanitizeText(typedIntakePacket?.version || "", 40),
+    };
+  }
   const goalFamily = inferGoalFamily({
     proposal,
     confirmation,

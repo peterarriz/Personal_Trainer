@@ -82,10 +82,10 @@ const buildProvenanceSummary = ({
 } = {}) => {
   if (row?.provenance) return describeProvenanceRecord(row.provenance, fallback);
   const normalizedSource = normalizeSource(source);
-  if (normalizedSource === "log_inferred") return fallback || "Pulled from recent logs.";
-  if (normalizedSource === "user_override") return fallback || "Saved explicitly by you.";
-  if (normalizedSource === "intake_derived") return fallback || "Captured during intake.";
-  return fallback || "No strong provenance is attached yet.";
+  if (normalizedSource === "log_inferred") return fallback || "Built from recent logs.";
+  if (normalizedSource === "user_override") return fallback || "Saved by you.";
+  if (normalizedSource === "intake_derived") return fallback || "Brought over from setup.";
+  return fallback || "Can improve accuracy later.";
 };
 
 const detectGoalSignals = (goals = []) => {
@@ -146,10 +146,10 @@ const normalizeSource = (value = "") => {
 
 const describeSource = (value = "") => {
   const source = normalizeSource(value);
-  if (source === "user_override") return "Explicit user input";
-  if (source === "log_inferred") return "Inferred from logs";
-  if (source === "intake_derived") return "Derived from intake";
-  return "Low-confidence placeholder";
+  if (source === "user_override") return "Saved by you";
+  if (source === "log_inferred") return "From recent logs";
+  if (source === "intake_derived") return "From setup";
+  return "Can improve accuracy later";
 };
 
 const buildMetricCard = ({
@@ -452,7 +452,7 @@ export const buildMetricsBaselinesModel = ({
     missingImpact: "Without it, the plan leans on broader substitutions.",
     provenanceSummary: trainingContext?.environment?.confirmed || trainingContext?.equipmentAccess?.confirmed
       ? "Saved from your training setup."
-      : "Training environment is still low-confidence.",
+      : "Can improve accuracy later.",
   }));
 
   return {

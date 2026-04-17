@@ -1011,12 +1011,19 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     if (!authSession?.user?.id) {
       lastPersistedPayloadFingerprint = "";
       lastPersistedUserId = "";
-      const localOnlyStatus = buildStorageStatus({
-        mode: "local",
-        label: "NOT SIGNED IN",
-        reason: STORAGE_STATUS_REASONS.notSignedIn,
-        detail: "You are using local data because no signed-in cloud session is active.",
-      });
+      const localOnlyStatus = SB_CONFIG_ERROR
+        ? buildStorageStatus({
+            mode: "local",
+            label: "PROVIDER ERROR",
+            reason: STORAGE_STATUS_REASONS.providerUnavailable,
+            detail: "Cloud sync provider is unavailable or misconfigured.",
+          })
+        : buildStorageStatus({
+            mode: "local",
+            label: "NOT SIGNED IN",
+            reason: STORAGE_STATUS_REASONS.notSignedIn,
+            detail: "You are using local data because no signed-in cloud session is active.",
+          });
       applyStorageStatusUpdate(setStorageStatus, localOnlyStatus);
       trackAnalytics({
         flow: "sync",
@@ -1024,7 +1031,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         outcome: "skipped",
         props: {
           mode: "local",
-          reason: "not_signed_in",
+          reason: SB_CONFIG_ERROR ? "provider_unavailable" : "not_signed_in",
           duration_ms: Date.now() - startedAt,
         },
       });

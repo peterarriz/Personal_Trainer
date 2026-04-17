@@ -348,23 +348,34 @@ test("replay harness covers the vague health path end to end", () => {
   const scenario = runReplayScenario({
     goal_intent: "I want to be in better shape",
     steps: [
+      {
+        kind: "answer",
+        raw_text: "20 to 30 min",
+        answer_value: {
+          value: "20_to_30_minutes",
+          raw: "20 to 30 min",
+        },
+      },
       { kind: INTAKE_MACHINE_EVENTS.REALISM_RESULT },
       { kind: INTAKE_MACHINE_EVENTS.ARBITRATION_RESULT },
     ],
   });
 
   const interpretationState = scenario.states[1];
+  const anchorCollectionStates = scenario.states.filter((state) => state.stage === INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
 
   assertNoStageRegressions(scenario.states);
   assertNoDuplicateAnchorPrompts(scenario.replayedState);
   assertReplayMatchesDirectState(scenario);
 
-  assert.equal(interpretationState.stage, INTAKE_MACHINE_STATES.REALISM_GATE);
-  assert.equal(interpretationState.draft.intakeCompleteness.missingRequired.length, 0);
-  assert.equal(interpretationState.draft.confirmationState.canConfirm, true);
+  assert.equal(interpretationState.stage, INTAKE_MACHINE_STATES.ANCHOR_COLLECTION);
+  assert.equal(interpretationState.draft.intakeCompleteness.missingRequired.length, 1);
+  assert.equal(interpretationState.draft.confirmationState.canConfirm, false);
+  assert.equal(interpretationState.draft.confirmationState.next_required_field, "starting_capacity_anchor");
+  assert.ok(anchorCollectionStates.every((state) => state.draft.confirmationState.canConfirm === false));
   assert.equal(
     scenario.replayedState.outbox.filter((message) => message?.message_kind === "anchor_question").length,
-    0
+    1
   );
   assert.equal(scenario.replayedState.stage, INTAKE_MACHINE_STATES.REVIEW_CONFIRM);
   assert.equal(scenario.replayedState.draft.confirmationState.canConfirm, true);

@@ -70,6 +70,47 @@ const sanitizeMetric = (metric = null) => {
   };
 };
 
+const sanitizeStructuredStringArray = (items = [], maxItems = 8, maxLength = 180) => (
+  toArray(items).map((item) => sanitizeText(item, maxLength)).filter(Boolean).slice(0, maxItems)
+);
+
+const sanitizeWeeklyStructureTemplate = (template = null) => {
+  if (!template || typeof template !== "object") return null;
+  return {
+    ...(sanitizeText(template?.patternId || "", 80) ? { patternId: sanitizeText(template.patternId, 80).toLowerCase() } : {}),
+    ...(sanitizeText(template?.volumeProfile || "", 80) ? { volumeProfile: sanitizeText(template.volumeProfile, 80).toLowerCase() } : {}),
+    ...(sanitizeText(template?.intensityProfile || "", 80) ? { intensityProfile: sanitizeText(template.intensityProfile, 80).toLowerCase() } : {}),
+    keySessionLabels: sanitizeStructuredStringArray(template?.keySessionLabels || [], 6, 80),
+    ...(template?.longSession ? { longSession: true } : {}),
+    ...(Number.isFinite(Number(template?.supportStrengthDays)) ? { supportStrengthDays: Math.max(0, Math.min(4, Math.round(Number(template.supportStrengthDays)))) } : {}),
+    ...(Number.isFinite(Number(template?.minimumFrequency)) ? { minimumFrequency: Math.max(1, Math.min(7, Math.round(Number(template.minimumFrequency)))) } : {}),
+    notes: sanitizeStructuredStringArray(template?.notes || [], 6, 140),
+  };
+};
+
+const sanitizePlanningStrategy = (strategy = null) => {
+  if (!strategy || typeof strategy !== "object") return null;
+  return {
+    ...(sanitizeText(strategy?.id || "", 80) ? { id: sanitizeText(strategy.id, 80).toLowerCase() } : {}),
+    ...(sanitizeText(strategy?.model || strategy?.mode || "", 120) ? { model: sanitizeText(strategy?.model || strategy?.mode || "", 120).toLowerCase() } : {}),
+    ...(sanitizeText(strategy?.primaryKnob || "", 120) ? { primaryKnob: sanitizeText(strategy.primaryKnob, 120).toLowerCase() } : {}),
+    ...(sanitizeText(strategy?.qualityDose || "", 160) ? { qualityDose: sanitizeText(strategy.qualityDose, 160) } : {}),
+    ...(sanitizeText(strategy?.rationale || strategy?.summary || "", 220) ? { rationale: sanitizeText(strategy?.rationale || strategy?.summary || "", 220) } : {}),
+    ...(sanitizeText(strategy?.cadence || "", 140) ? { cadence: sanitizeText(strategy.cadence, 140) } : {}),
+    ...(sanitizeText(strategy?.summary || "", 220) ? { summary: sanitizeText(strategy.summary, 220) } : {}),
+  };
+};
+
+const sanitizeSpecificityInputs = (inputs = null) => {
+  if (!inputs || typeof inputs !== "object") return null;
+  const next = Object.fromEntries(
+    Object.entries(inputs)
+      .map(([key, value]) => [sanitizeText(key, 80), sanitizeText(value, 120)])
+      .filter(([key, value]) => key && value)
+  );
+  return Object.keys(next).length ? next : null;
+};
+
 const sanitizeResolvedGoal = (resolvedGoal = null) => {
   if (!resolvedGoal || typeof resolvedGoal !== "object") return null;
   return {
@@ -89,6 +130,26 @@ const sanitizeResolvedGoal = (resolvedGoal = null) => {
     ...(sanitizeText(resolvedGoal?.first30DaySuccessDefinition || "", 220) ? { first30DaySuccessDefinition: sanitizeText(resolvedGoal.first30DaySuccessDefinition, 220) } : {}),
     ...(sanitizeText(resolvedGoal?.reviewCadence || "", 40) ? { reviewCadence: sanitizeText(resolvedGoal.reviewCadence, 40).toLowerCase() } : {}),
     ...(sanitizeText(resolvedGoal?.refinementTrigger || "", 60) ? { refinementTrigger: sanitizeText(resolvedGoal.refinementTrigger, 60) } : {}),
+    ...(sanitizeText(resolvedGoal?.goalTemplateId || "", 80) ? { goalTemplateId: sanitizeText(resolvedGoal.goalTemplateId, 80).toLowerCase() } : {}),
+    ...(sanitizeText(resolvedGoal?.structuredIntentId || "", 80) ? { structuredIntentId: sanitizeText(resolvedGoal.structuredIntentId, 80).toLowerCase() } : {}),
+    ...(sanitizeText(resolvedGoal?.goalDiscoveryFamilyId || "", 40) ? { goalDiscoveryFamilyId: sanitizeText(resolvedGoal.goalDiscoveryFamilyId, 40).toLowerCase() } : {}),
+    ...(sanitizeText(resolvedGoal?.planArchetypeId || "", 80) ? { planArchetypeId: sanitizeText(resolvedGoal.planArchetypeId, 80).toLowerCase() } : {}),
+    ...(sanitizeText(resolvedGoal?.planArchetypeVersion || "", 24) ? { planArchetypeVersion: sanitizeText(resolvedGoal.planArchetypeVersion, 24) } : {}),
+    ...(sanitizeText(resolvedGoal?.planArchetypeLabel || "", 120) ? { planArchetypeLabel: sanitizeText(resolvedGoal.planArchetypeLabel, 120) } : {}),
+    ...(sanitizeText(resolvedGoal?.planArchetypeFamily || "", 40) ? { planArchetypeFamily: sanitizeText(resolvedGoal.planArchetypeFamily, 40).toLowerCase() } : {}),
+    resolverReasoning: sanitizeStructuredStringArray(resolvedGoal?.resolverReasoning || [], 8, 180),
+    scienceRationale: sanitizeStructuredStringArray(resolvedGoal?.scienceRationale || [], 8, 220),
+    ...(sanitizeSpecificityInputs(resolvedGoal?.specificityInputs) ? { specificityInputs: sanitizeSpecificityInputs(resolvedGoal.specificityInputs) } : {}),
+    ...(sanitizeText(resolvedGoal?.primaryDomain || "", 60) ? { primaryDomain: sanitizeText(resolvedGoal.primaryDomain, 60).toLowerCase() } : {}),
+    secondaryDomains: sanitizeStructuredStringArray(resolvedGoal?.secondaryDomains || [], 4, 60).map((item) => item.toLowerCase()),
+    candidateDomainAdapters: sanitizeStructuredStringArray(resolvedGoal?.candidateDomainAdapters || [], 6, 60).map((item) => item.toLowerCase()),
+    ...(sanitizeText(resolvedGoal?.fallbackPlanningMode || "", 80) ? { fallbackPlanningMode: sanitizeText(resolvedGoal.fallbackPlanningMode, 80).toLowerCase() } : {}),
+    missingAnchors: sanitizeStructuredStringArray(resolvedGoal?.missingAnchors || [], 8, 120),
+    ...(sanitizeText(resolvedGoal?.architectureHint || "", 80) ? { architectureHint: sanitizeText(resolvedGoal.architectureHint, 80).toLowerCase() } : {}),
+    ...(sanitizeWeeklyStructureTemplate(resolvedGoal?.weeklyStructureTemplate) ? { weeklyStructureTemplate: sanitizeWeeklyStructureTemplate(resolvedGoal.weeklyStructureTemplate) } : {}),
+    ...(sanitizePlanningStrategy(resolvedGoal?.progressionStrategy) ? { progressionStrategy: sanitizePlanningStrategy(resolvedGoal.progressionStrategy) } : {}),
+    ...(sanitizePlanningStrategy(resolvedGoal?.fatigueManagementStrategy) ? { fatigueManagementStrategy: sanitizePlanningStrategy(resolvedGoal.fatigueManagementStrategy) } : {}),
+    ...(sanitizePlanningStrategy(resolvedGoal?.deloadStrategy) ? { deloadStrategy: sanitizePlanningStrategy(resolvedGoal.deloadStrategy) } : {}),
   };
 };
 

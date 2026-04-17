@@ -355,3 +355,41 @@ test("sync presentation enforces cool-down before reviving the same transient wa
     7000 + SYNC_TRANSIENT_MIN_DWELL_MS + SYNC_TRANSIENT_COOLDOWN_MS
   );
 });
+
+test("realtime recovery returns stale-cloud surfaces to synced once cloud updates land", () => {
+  const startedAt = Date.UTC(2026, 3, 15, 14, 0, 0);
+  let runtime = createInitialSyncRuntimeState({ isOnline: true, now: startedAt });
+
+  runtime = reduceSyncRuntimeState(runtime, {
+    type: SYNC_RUNTIME_EVENT_TYPES.realtimeInterrupted,
+    at: startedAt + 100,
+  });
+  runtime = reduceSyncRuntimeState(runtime, {
+    type: SYNC_RUNTIME_EVENT_TYPES.realtimeResumed,
+    at: startedAt + 200,
+  });
+  runtime = reduceSyncRuntimeState(runtime, {
+    type: SYNC_RUNTIME_EVENT_TYPES.cloudSyncSucceeded,
+    at: startedAt + 300,
+  });
+
+  const model = buildSyncStateModel({
+    storageStatus: buildStorageStatus({
+      mode: "cloud",
+      label: "SYNCED",
+      reason: STORAGE_STATUS_REASONS.synced,
+      detail: "Cloud sync is working normally.",
+    }),
+    authSession: {
+      user: { id: "user_1" },
+    },
+    syncRuntime: runtime,
+    authInitializing: false,
+    appLoading: false,
+    now: startedAt + 400,
+  });
+
+  assert.equal(model.id, SYNC_STATE_IDS.synced);
+  assert.equal(model.chipLabel, "Synced");
+  assert.match(model.detail, /working normally|local copy/i);
+});

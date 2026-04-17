@@ -61,12 +61,64 @@ const contrastRatio = (foreground, background) => {
   return (lighter + 0.05) / (darker + 0.05);
 };
 
-test("brand theme catalog exposes 12 curated theme options with matching ids", () => {
-  assert.equal(BRAND_THEME_IDS.length, 12);
-  assert.equal(BRAND_THEME_OPTIONS.length, 12);
+const hueOfColor = (value) => {
+  const color = parseColor(value);
+  assert.ok(color, `Expected parseable color for hue extraction, received ${value}`);
+  const red = color.r / 255;
+  const green = color.g / 255;
+  const blue = color.b / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  if (!delta) return 0;
+
+  let hue;
+  if (max === red) {
+    hue = ((green - blue) / delta) % 6;
+  } else if (max === green) {
+    hue = ((blue - red) / delta) + 2;
+  } else {
+    hue = ((red - green) / delta) + 4;
+  }
+  const degrees = hue * 60;
+  return degrees < 0 ? degrees + 360 : degrees;
+};
+
+const circularHueDistance = (a, b) => {
+  const difference = Math.abs(a - b);
+  return Math.min(difference, 360 - difference);
+};
+
+test("brand theme catalog exposes 8 flagship theme options with matching ids", () => {
+  assert.equal(BRAND_THEME_IDS.length, 8);
+  assert.equal(BRAND_THEME_OPTIONS.length, 8);
   assert.deepEqual(
     [...BRAND_THEME_IDS].sort(),
     BRAND_THEME_OPTIONS.map((option) => option.id).sort()
+  );
+});
+
+test("flagship themes publish plain-language labels, fancy subtitles, and one hue family each", () => {
+  assert.deepEqual(
+    BRAND_THEME_OPTIONS.map((option) => option.label),
+    [
+      "Signal Red",
+      "Burnt Orange",
+      "Electric Yellow",
+      "Forest Green",
+      "Coastal Teal",
+      "Royal Blue",
+      "Studio Purple",
+      "Punch Pink",
+    ]
+  );
+  assert.deepEqual(
+    BRAND_THEME_OPTIONS.map((option) => option.subtitle),
+    ["Redwood", "Ember", "Voltage", "Fieldhouse", "Atlas", "Circuit", "Solstice", "Pulse"]
+  );
+  assert.deepEqual(
+    BRAND_THEME_OPTIONS.map((option) => option.hueFamily),
+    ["red", "orange", "yellow", "green", "teal", "blue", "purple", "pink"]
   );
 });
 
@@ -119,6 +171,32 @@ test("every curated theme resolves to distinct dark and light token signatures",
   assert.equal(lightSignatures.size, BRAND_THEME_IDS.length);
 });
 
+test("dark accent hues stay materially separated across the flagship families", () => {
+  const accentHues = BRAND_THEME_IDS.map((themeId) => ({
+    themeId,
+    hue: hueOfColor(
+      buildBrandThemeState({
+        appearance: { theme: themeId, mode: "Dark" },
+        systemPrefersDark: true,
+      }).cssVars["--brand-accent"]
+    ),
+  }));
+
+  const sortedHues = accentHues
+    .map(({ hue }) => hue)
+    .sort((a, b) => a - b);
+  const wrappedHues = [...sortedHues, sortedHues[0] + 360];
+  for (let index = 0; index < wrappedHues.length - 1; index += 1) {
+    const distance = wrappedHues[index + 1] - wrappedHues[index];
+    assert.ok(distance >= 18, `Expected adjacent flagship hues to stay separated, received ${distance.toFixed(2)} degrees`);
+  }
+
+  const hueById = Object.fromEntries(accentHues.map(({ themeId, hue }) => [themeId, hue]));
+  assert.ok(circularHueDistance(hueById.Redwood, hueById.Circuit) >= 120);
+  assert.ok(circularHueDistance(hueById.Circuit, hueById.Solstice) >= 45);
+  assert.ok(circularHueDistance(hueById.Solstice, hueById.Pulse) >= 45);
+});
+
 test("every curated theme keeps body surfaces and CTA gradients above readable contrast", () => {
   BRAND_THEME_IDS.forEach((themeId) => {
     ["Dark", "Light"].forEach((mode) => {
@@ -151,20 +229,39 @@ test("every curated theme keeps body surfaces and CTA gradients above readable c
   });
 });
 
-test("preview model carries mode labels and theme chrome into the appearance surface", () => {
+test("preview model carries plain labels, hue family, and theme chrome into the appearance surface", () => {
   const systemTheme = buildBrandThemeState({
-    appearance: { theme: "Canvas", mode: "System" },
+    appearance: { theme: "Solstice", mode: "System" },
     systemPrefersDark: false,
   });
   const previewModel = buildBrandThemePreviewModel({ brandThemeState: systemTheme });
 
-  assert.equal(previewModel.id, "Canvas");
-  assert.equal(previewModel.previewFamily, "editorial");
-  assert.equal(previewModel.modeLabel, "System · Light");
+  assert.equal(previewModel.id, "Solstice");
+  assert.equal(previewModel.label, "Studio Purple");
+  assert.equal(previewModel.subtitle, "Solstice");
+  assert.equal(previewModel.hueFamily, "purple");
+  assert.equal(previewModel.previewFamily, "journal");
+  assert.equal(previewModel.modeLabel, "System / Light");
   assert.equal(previewModel.swatches.length, 4);
   assert.ok(previewModel.chrome.radiusLg);
   assert.ok(previewModel.tokens.fontDisplay);
-  assert.match(previewModel.headline, /paper|magazine|editorial|desk/i);
+  assert.match(previewModel.headline, /purple|editorial|plum|studio/i);
+});
+
+test("retired theme ids normalize into the new flagship catalog for persistence safety", () => {
+  const canvasState = buildBrandThemeState({
+    appearance: { theme: "Canvas", mode: "System" },
+    systemPrefersDark: false,
+  });
+  const maisonState = buildBrandThemeState({
+    appearance: { theme: "Maison", mode: "Dark" },
+    systemPrefersDark: true,
+  });
+
+  assert.equal(canvasState.appearance.theme, "Solstice");
+  assert.equal(canvasState.theme.id, "Solstice");
+  assert.equal(maisonState.appearance.theme, "Redwood");
+  assert.equal(maisonState.theme.id, "Redwood");
 });
 
 test("System mode follows OS preference while explicit Dark and Light remain intentionally separate", () => {

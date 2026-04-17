@@ -22,6 +22,8 @@ export const DOMAIN_ADAPTER_IDS = {
   strength: "strength_hypertrophy",
   running: "running_endurance",
   swimming: "swimming_endurance_technique",
+  cycling: "cycling_endurance",
+  triathlon: "triathlon_multisport",
   power: "power_vertical_plyometric",
   bodyComp: "body_composition_recomposition",
   durability: "durability_rebuild",
@@ -46,6 +48,8 @@ const detectCapabilitySignals = (goal = {}) => {
   const text = getGoalSourceText(goal);
   return {
     text,
+    triathlon: /\b(triathlon|multisport|sprint tri|olympic tri|70\.3|ironman)\b/.test(text),
+    cycling: /\b(cycling|bike|biking|ride|riding|trainer|peloton)\b/.test(text),
     swim: /\b(swim|swimming|pool|open water|laps?|freestyle|butterfly|backstroke|breaststroke)\b/.test(text),
     run: /\b(run|running|marathon|half marathon|10k|5k|pace|long run|tempo|race)\b/.test(text),
     strength: /\b(bench|press|squat|deadlift|strength|hypertrophy|muscle|powerbuilding|lifting)\b/.test(text),
@@ -63,6 +67,7 @@ const detectCapabilitySignals = (goal = {}) => {
 
 const buildPacketFromSignals = ({ goal = {}, signals = {} } = {}) => {
   const resolvedGoal = goal?.resolvedGoal || {};
+  const structuredPrimaryDomain = sanitizeText(resolvedGoal?.primaryDomain || "", 80).toLowerCase();
   const goalFamily = String(resolvedGoal?.goalFamily || goal?.goalFamily || "").toLowerCase();
   const confidence = sanitizeText(resolvedGoal?.confidence || goal?.confidenceLevel || "low", 20).toLowerCase() || "low";
   const targetHorizonWeeks = Number(resolvedGoal?.targetHorizonWeeks || goal?.targetHorizonWeeks || 0) || null;
@@ -82,7 +87,38 @@ const buildPacketFromSignals = ({ goal = {}, signals = {} } = {}) => {
   ];
   let fallbackPlanningMode = "foundation_then_specialize";
 
-  if (signals.swim) {
+  if (structuredPrimaryDomain === DOMAIN_ADAPTER_IDS.triathlon || signals.triathlon) {
+    primaryDomain = DOMAIN_ADAPTER_IDS.triathlon;
+    secondaryDomains = dedupeStrings([
+      DOMAIN_ADAPTER_IDS.swimming,
+      DOMAIN_ADAPTER_IDS.cycling,
+      DOMAIN_ADAPTER_IDS.running,
+      signals.strength ? DOMAIN_ADAPTER_IDS.strength : "",
+    ].filter(Boolean));
+    capabilityMix = [
+      buildCapability(GOAL_CAPABILITY_FAMILIES.eventPrep, 0.3, "primary"),
+      buildCapability(GOAL_CAPABILITY_FAMILIES.aerobicBase, 0.25),
+      buildCapability(GOAL_CAPABILITY_FAMILIES.skill, 0.2),
+      buildCapability(GOAL_CAPABILITY_FAMILIES.durability, 0.15),
+      buildCapability(GOAL_CAPABILITY_FAMILIES.maximalStrength, 0.1),
+    ];
+    fallbackPlanningMode = confidence === "low" ? "multisport_consistency_first" : "multisport_specific_progression";
+    if (!/\b(sprint|olympic|70\.3|ironman)\b/.test(signals.text) && !primaryMetric) missingAnchors.push("race format or current multisport benchmark");
+  } else if (structuredPrimaryDomain === DOMAIN_ADAPTER_IDS.cycling || (signals.cycling && !signals.swim && !signals.run)) {
+    primaryDomain = DOMAIN_ADAPTER_IDS.cycling;
+    secondaryDomains = dedupeStrings([
+      signals.strength ? DOMAIN_ADAPTER_IDS.strength : "",
+      signals.hybrid ? DOMAIN_ADAPTER_IDS.hybrid : "",
+    ].filter(Boolean));
+    capabilityMix = [
+      buildCapability(GOAL_CAPABILITY_FAMILIES.aerobicBase, 0.4, "primary"),
+      buildCapability(GOAL_CAPABILITY_FAMILIES.thresholdEndurance, 0.25),
+      buildCapability(GOAL_CAPABILITY_FAMILIES.consistency, 0.2),
+      buildCapability(GOAL_CAPABILITY_FAMILIES.durability, 0.15),
+    ];
+    fallbackPlanningMode = confidence === "low" ? "cycling_base_first" : "cycling_specific_progression";
+    if (!/\b(ride|bike|cycling|trainer|peloton)\b/.test(signals.text) && !primaryMetric) missingAnchors.push("recent ride anchor or riding access");
+  } else if (structuredPrimaryDomain === DOMAIN_ADAPTER_IDS.swimming || signals.swim) {
     primaryDomain = DOMAIN_ADAPTER_IDS.swimming;
     secondaryDomains = dedupeStrings([
       signals.technique ? DOMAIN_ADAPTER_IDS.durability : "",
@@ -112,7 +148,7 @@ const buildPacketFromSignals = ({ goal = {}, signals = {} } = {}) => {
     fallbackPlanningMode = confidence === "low" ? "strength_and_tissue_foundation" : "power_progression";
     if (!primaryMetric) missingAnchors.push("jump benchmark or rim-touch anchor");
     if (!/\b(landing|tendon|achilles|knee|ankle)\b/.test(signals.text)) missingAnchors.push("tissue tolerance or landing history");
-  } else if (signals.run || goal?.category === "running" || resolvedGoal?.planningCategory === "running") {
+  } else if (structuredPrimaryDomain === DOMAIN_ADAPTER_IDS.running || signals.run || goal?.category === "running" || resolvedGoal?.planningCategory === "running") {
     primaryDomain = DOMAIN_ADAPTER_IDS.running;
     secondaryDomains = dedupeStrings([
       signals.strength || goalFamily === "hybrid" ? DOMAIN_ADAPTER_IDS.strength : "",
@@ -185,10 +221,11 @@ const buildPacketFromSignals = ({ goal = {}, signals = {} } = {}) => {
   }
 
   const candidateDomainAdapters = dedupeStrings([
+    ...(Array.isArray(resolvedGoal?.candidateDomainAdapters) ? resolvedGoal.candidateDomainAdapters : []),
     primaryDomain,
     ...secondaryDomains,
     DOMAIN_ADAPTER_IDS.foundation,
-  ]).slice(0, 4);
+  ]).slice(0, 5);
 
   return {
     goalId: goal?.id || "",
@@ -208,9 +245,10 @@ const buildPacketFromSignals = ({ goal = {}, signals = {} } = {}) => {
     scheduleAssumptions: [],
     confidence,
     missingAnchors: dedupeStrings([
+      ...(resolvedGoal?.missingAnchors || []),
       ...(resolvedGoal?.unresolvedGaps || []),
       ...missingAnchors,
-    ]).slice(0, 5),
+    ]).slice(0, 6),
     candidateDomainAdapters,
     fallbackPlanningMode,
     goalRole: sanitizeText(goal?.goalRole || resolvedGoal?.intakeConfirmedRole || "", 40).toLowerCase() || "primary",

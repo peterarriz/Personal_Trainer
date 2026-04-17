@@ -155,13 +155,13 @@ test("Settings account controls show visible feedback and sign-out result", asyn
   await expect(page.getByText(/Reloaded cloud data|Cloud data could not be reloaded right now/i)).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByText("ACCOUNT ACCESS")).toBeVisible();
+  await expect(page.getByText("Sign in to cloud account")).toBeVisible();
 });
 
 test("Nutrition hydration logging stays usable across and above target", async ({ page }) => {
   await openApp(page);
   await openTab(page, "app-tab-nutrition");
-  await expect(page.getByText("TODAY'S NUTRITION TARGET")).toBeVisible();
+  await expect(page.getByText("TODAY'S MEAL STRATEGY")).toBeVisible();
 
   const before = await readHydrationNumbers(page);
   for (let index = 0; index < 12; index += 1) {
@@ -180,7 +180,7 @@ test("Nutrition hydration logging stays usable across and above target", async (
 test("Nutrition hides supplement checklist until a stored plan exists", async ({ page }) => {
   await openApp(page);
   await openTab(page, "app-tab-nutrition");
-  await expect(page.getByText("TODAY'S NUTRITION TARGET")).toBeVisible();
+  await expect(page.getByText("TODAY'S MEAL STRATEGY")).toBeVisible();
 
   const hydrationCard = page.locator(".card").filter({ hasText: "HYDRATION / SUPPLEMENT" });
   await expect(hydrationCard.getByText("No supplement checklist is shown until a stored supplement plan is attached to today.")).toBeVisible();
@@ -195,7 +195,7 @@ test("Coach keeps only applied-action surfaces visible", async ({ page }) => {
   await expect(page.getByTestId("coach-mode-panel-today_week")).toBeVisible();
   await expect(page.getByText("Helpful?")).toHaveCount(0);
   await expect(page.getByText("MEMORY / SETTINGS")).toHaveCount(0);
-  await expect(page.getByText("Anthropic key (optional)").first()).toHaveCount(0);
+  await expect(page.getByPlaceholder("Anthropic key (optional)")).toHaveCount(0);
 
   await page.locator("[data-testid^='coach-preview-action-']").first().click();
   await expect(page.getByTestId("coach-mode-panel-change_plan")).toBeVisible();
@@ -216,7 +216,7 @@ test("Program and Log history copy stays free of internal jargon", async ({ page
 
   await openTab(page, "app-tab-log");
   const logTab = page.getByTestId("log-tab");
-  await logTab.getByTestId("log-day-review-disclosure").getByText("Day review", { exact: true }).click();
+  await logTab.getByTestId("log-day-review-disclosure").getByText("Saved day review", { exact: true }).click();
   const dayReview = logTab.locator("[data-testid='history-day-review-card']").first();
   await expect(dayReview).toBeVisible();
   const dayReviewPrimary = dayReview.getByTestId("history-day-review-primary");
@@ -245,7 +245,7 @@ test("Today keeps one workout surface and Log keeps detailed entry inside Log wo
   await expect(page.getByTestId("log-tab")).toBeVisible();
   await expect(page.getByText("Detailed workout log")).toHaveCount(0);
 
-  await page.getByRole("button", { name: /open exercise-by-exercise entry/i }).click();
+  await page.getByRole("button", { name: /open full detail entry/i }).click();
   const detailedEntry = page.getByTestId("log-detailed-entry");
   await expect(detailedEntry).toBeVisible();
   await expect(detailedEntry.getByTestId("planned-session-plan")).toBeVisible();

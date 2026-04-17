@@ -1059,6 +1059,242 @@ const normalizeStructuredAnswerValues = (answerValues = {}) => Object.fromEntrie
     .filter(([key]) => key)
 );
 
+const normalizeChoiceValue = (value = "") => sanitizeText(value, 80).toLowerCase().replace(/\s+/g, "_");
+
+const getStructuredDraftValue = ({ field = null, storedRecord = null } = {}) => {
+  if (!field || !storedRecord || typeof storedRecord !== "object") return "";
+  const inputType = sanitizeText(field?.inputType || "", 40).toLowerCase();
+  if (inputType === "number") return Number.isFinite(Number(storedRecord?.value)) ? String(storedRecord.value) : "";
+  if (inputType === "choice_chips") {
+    return sanitizeText(storedRecord?.value || storedRecord?.raw || "", 80);
+  }
+  return sanitizeText(storedRecord?.raw || storedRecord?.value || "", 160);
+};
+
+const normalizeGenericChoiceRecord = ({ field = null, rawValue = "" } = {}) => {
+  const normalizedValue = normalizeChoiceValue(rawValue);
+  if (!normalizedValue) return { record: null, error: "" };
+  const choiceOptions = toArray(field?.choiceOptions);
+  const matchedOption = choiceOptions.find((option) => (
+    normalizeChoiceValue(option?.value || option?.id || option?.label || "") === normalizedValue
+  )) || null;
+  if (choiceOptions.length > 0 && !matchedOption) {
+    return {
+      record: null,
+      error: sanitizeText(field?.requiredError || `Choose one of the available ${field?.label || "options"}.`, 160),
+    };
+  }
+  return {
+    record: {
+      raw: sanitizeText(matchedOption?.label || rawValue, 160),
+      value: normalizedValue,
+    },
+    error: "",
+  };
+};
+
+const normalizeGenericNumberRecord = ({ field = null, rawValue = "" } = {}) => {
+  const parsedValue = readFiniteNumber(rawValue);
+  if (!Number.isFinite(parsedValue)) {
+    return {
+      record: null,
+      error: sanitizeText(field?.requiredError || `Enter a real number for ${field?.label || "this field"}.`, 160),
+    };
+  }
+  const min = Number.isFinite(Number(field?.min)) ? Number(field.min) : null;
+  const max = Number.isFinite(Number(field?.max)) ? Number(field.max) : null;
+  if (Number.isFinite(min) && parsedValue < min) {
+    return {
+      record: null,
+      error: sanitizeText(field?.minError || `${field?.label || "This field"} must be at least ${min}.`, 160),
+    };
+  }
+  if (Number.isFinite(max) && parsedValue > max) {
+    return {
+      record: null,
+      error: sanitizeText(field?.maxError || `${field?.label || "This field"} must be ${max} or less.`, 160),
+    };
+  }
+  return {
+    record: {
+      raw: sanitizeText(rawValue, 80) || `${parsedValue}`,
+      value: parsedValue,
+      ...(sanitizeText(field?.unit || "", 20) ? { unit: sanitizeText(field.unit, 20) } : {}),
+    },
+    error: "",
+  };
+};
+
+const normalizeGenericTextRecord = ({ field = null, fieldKey = "", rawValue = "" } = {}) => {
+  const cleanValue = sanitizeText(rawValue, 160);
+  if (!cleanValue) {
+    return {
+      record: null,
+      error: sanitizeText(field?.requiredError || `Add ${field?.label || "this detail"} before continuing.`, 160),
+    };
+  }
+  if (fieldKey === INTAKE_COMPLETENESS_FIELDS.targetTimeline) {
+    const timelineRecord = resolveTimelineFieldRecord({
+      rawText: cleanValue,
+      candidateValue: cleanValue,
+    });
+    return timelineRecord
+      ? { record: timelineRecord, error: "" }
+      : {
+          record: null,
+          error: "Enter a date, target month, or rough time window.",
+        };
+  }
+  if (fieldKey === INTAKE_COMPLETENESS_FIELDS.currentStrengthBaseline) {
+    const strengthBaseline = parseStrengthBaseline(cleanValue);
+    return strengthBaseline?.raw
+      ? {
+          record: {
+            raw: strengthBaseline.raw,
+            value: strengthBaseline.weight ?? strengthBaseline.raw,
+            weight: strengthBaseline.weight ?? null,
+            reps: strengthBaseline.reps ?? null,
+          },
+          error: "",
+        }
+      : {
+          record: null,
+          error: "Add a recent top set or baseline for this lift.",
+        };
+  }
+  if (fieldKey === INTAKE_COMPLETENESS_FIELDS.recentSwimAnchor) {
+    const swimAnchor = parseSwimAnchor(cleanValue);
+    return (Number.isFinite(swimAnchor?.distance) || swimAnchor?.duration)
+      ? {
+          record: {
+            raw: swimAnchor.raw,
+            value: swimAnchor.raw,
+            distance: swimAnchor.distance,
+            distanceUnit: swimAnchor.distanceUnit,
+            duration: swimAnchor.duration,
+          },
+          error: "",
+        }
+      : {
+          record: null,
+          error: "Add one recent swim distance or time anchor.",
+        };
+  }
+  if (fieldKey === INTAKE_COMPLETENESS_FIELDS.longestRecentRun) {
+    const longestMiles = parseDistanceMiles(cleanValue);
+    const longestMinutes = parseDurationMinutes(cleanValue);
+    return (Number.isFinite(longestMiles) || Number.isFinite(longestMinutes))
+      ? {
+          record: {
+            raw: cleanValue,
+            value: Number.isFinite(longestMiles) ? longestMiles : longestMinutes,
+            miles: Number.isFinite(longestMiles) ? longestMiles : null,
+            minutes: Number.isFinite(longestMinutes) ? longestMinutes : null,
+          },
+          error: "",
+        }
+      : {
+          record: {
+            raw: cleanValue,
+            value: cleanValue,
+          },
+          error: "",
+        };
+  }
+  if (fieldKey === INTAKE_COMPLETENESS_FIELDS.recentPaceBaseline) {
+    const paceText = parsePaceLikeText(cleanValue) || cleanValue;
+    return {
+      record: {
+        raw: cleanValue,
+        value: paceText,
+        paceText,
+      },
+      error: "",
+    };
+  }
+  return {
+    record: {
+      raw: cleanValue,
+      value: cleanValue,
+    },
+    error: "",
+  };
+};
+
+const normalizeGenericFieldRecord = ({ field = null, rawValue = "" } = {}) => {
+  const fieldKey = sanitizeText(field?.key, 80);
+  const inputType = sanitizeText(field?.inputType || "", 40).toLowerCase();
+  if (fieldKey === INTAKE_COMPLETENESS_FIELDS.swimAccessReality) {
+    const parsedValue = parseSwimAccessReality(rawValue);
+    return parsedValue
+      ? {
+          record: {
+            raw: parsedValue === "open_water" ? "Open water" : parsedValue === "both" ? "Both" : "Pool",
+            value: parsedValue,
+          },
+          error: "",
+        }
+      : {
+          record: null,
+          error: "Choose whether this is mostly pool, open water, or both.",
+        };
+  }
+  if (fieldKey === INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor) {
+    const parsedValue = parseStartingCapacityChoice(rawValue);
+    return parsedValue
+      ? {
+          record: {
+            raw: sanitizeText(rawValue, 80),
+            value: parsedValue,
+          },
+          error: "",
+        }
+      : {
+          record: null,
+          error: "Choose what feels repeatable right now.",
+        };
+  }
+  if (fieldKey === INTAKE_COMPLETENESS_FIELDS.currentRunFrequency) {
+    const parsedValue = parseRunFrequency(rawValue);
+    return Number.isFinite(parsedValue) && parsedValue > 0
+      ? {
+          record: {
+            raw: `${Math.round(parsedValue)}`,
+            value: Math.round(parsedValue),
+          },
+          error: "",
+        }
+      : {
+          record: null,
+          error: "Enter how many runs you do in a normal week.",
+        };
+  }
+  if (fieldKey === INTAKE_COMPLETENESS_FIELDS.currentBodyweight) {
+    return normalizeGenericNumberRecord({
+      field: {
+        ...field,
+        unit: sanitizeText(field?.unit || "lb", 20) || "lb",
+      },
+      rawValue,
+    });
+  }
+  if (inputType === "choice_chips") return normalizeGenericChoiceRecord({ field, rawValue });
+  if (inputType === "number") return normalizeGenericNumberRecord({ field, rawValue });
+  return normalizeGenericTextRecord({ field, fieldKey, rawValue });
+};
+
+const buildGenericStructuredSummary = ({ question = null, normalizedValues = {} } = {}) => {
+  const summary = toArray(question?.inputFields)
+    .map((field) => {
+      const fieldKey = sanitizeText(field?.key, 80);
+      const record = normalizedValues?.[fieldKey];
+      return sanitizeText(record?.raw || record?.value || "", 80);
+    })
+    .filter(Boolean)
+    .join(", ");
+  return sanitizeText(summary, 220);
+};
+
 export function validateTimelineValue(value = "") {
   const clean = sanitizeText(value, 120);
   if (!clean) return "";
@@ -1134,6 +1370,14 @@ export const buildIntakeCompletenessDraft = ({
       values[INTAKE_COMPLETENESS_FIELDS.startingCapacityAnchor] = sanitizeText(storedStartingCapacity?.value || storedStartingCapacity?.raw || "", 80);
       break;
     default:
+      toArray(question?.inputFields).forEach((field) => {
+        const fieldKey = sanitizeText(field?.key, 80);
+        if (!fieldKey || values[fieldKey] != null) return;
+        values[fieldKey] = getStructuredDraftValue({
+          field,
+          storedRecord: readStoredField(answers, fieldKey),
+        });
+      });
       break;
   }
 
@@ -1422,7 +1666,29 @@ export const validateIntakeCompletenessAnswer = ({
       break;
     }
     default:
-      formError = sanitizeText(question?.validation?.message || "", 220) || "Add the detail I asked for before continuing.";
+      toArray(question?.inputFields).forEach((field) => {
+        const fieldKey = sanitizeText(field?.key, 80);
+        const rawValue = sanitizeText(values[fieldKey] || "", 160);
+        const isRequired = Boolean(field?.required);
+        if (!rawValue) {
+          if (isRequired) {
+            setFieldError(fieldKey, sanitizeText(field?.requiredError || `Add ${field?.label || "this detail"} before continuing.`, 160));
+          }
+          return;
+        }
+        const normalized = normalizeGenericFieldRecord({ field, rawValue });
+        if (normalized?.error) {
+          setFieldError(fieldKey, normalized.error);
+          return;
+        }
+        if (normalized?.record) {
+          normalizedValues[fieldKey] = normalized.record;
+        }
+      });
+      summaryText = buildGenericStructuredSummary({ question, normalizedValues });
+      if (!summaryText && Object.keys(fieldErrors).length === 0) {
+        formError = sanitizeText(question?.validation?.message || "", 220) || "Add the detail I asked for before continuing.";
+      }
       break;
   }
 

@@ -14,50 +14,83 @@ const {
   buildGoalTemplateSelection,
 } = require("../src/services/goal-template-catalog-service.js");
 
-test("starter goal types lead with common goal families and keep custom as a deliberate final path", () => {
+test("starter goal types expose broad families first and keep custom as the final fallback", () => {
   const starterTypes = buildIntakeStarterGoalTypes();
   assert.deepEqual(starterTypes.map((item) => item.id), [
-    "running",
+    "endurance",
     "strength",
-    "fat_loss",
-    "swim",
+    "physique",
     "general_fitness",
+    "re_entry",
+    "hybrid",
     "custom",
   ]);
   assert.equal(starterTypes.at(-1)?.label, "Custom");
   assert.equal(starterTypes.at(-1)?.eyebrow, "Custom");
+  starterTypes.forEach((goalType) => {
+    assert.ok(goalType.helper.length <= 72, `Goal type helper is too long: ${goalType.id}`);
+  });
 });
 
-test("intake copy deck keeps the staged setup vocabulary concise and non-chatty", () => {
+test("intake copy deck stays concise and week-one oriented", () => {
   assert.deepEqual(INTAKE_STAGE_CONTRACT.map((stage) => stage.label), ["Setup", "Details", "Build"]);
   assert.equal(INTAKE_COPY_DECK.shell.title, "Intake");
   assert.equal(INTAKE_COPY_DECK.summaryRail.title, "What week one will use");
   assert.equal(INTAKE_COPY_DECK.clarify.structuredToggle, "Structured");
   assert.equal(INTAKE_COPY_DECK.clarify.naturalToggle, "Free text");
   assert.match(INTAKE_COPY_DECK.shell.helper, /week one/i);
-  assert.doesNotMatch(JSON.stringify(INTAKE_COPY_DECK), /coach note|tell me|guided|in your words|fallback|fewer clicks/i);
+  assert.doesNotMatch(JSON.stringify(INTAKE_COPY_DECK), /coach note|guided|fallback|deterministic/i);
 });
 
-test("featured starter templates keep the common paths mapped to clear presets", () => {
-  const running = listFeaturedIntakeGoalTemplates({ goalTypeId: "running" });
+test("featured starter templates map each flagship family to canonical structured intents", () => {
+  const endurance = listFeaturedIntakeGoalTemplates({ goalTypeId: "endurance" });
   const strength = listFeaturedIntakeGoalTemplates({ goalTypeId: "strength" });
+  const physique = listFeaturedIntakeGoalTemplates({ goalTypeId: "physique" });
+
+  assert.ok(endurance.some((template) => template.id === "train_for_run_race"));
+  assert.ok(endurance.some((template) => template.id === "swim_better"));
+  assert.ok(endurance.some((template) => template.id === "ride_stronger"));
+  assert.ok(strength.some((template) => template.id === "improve_big_lifts"));
+  assert.ok(strength.some((template) => template.id === "train_with_limited_equipment"));
+  assert.ok(physique.some((template) => template.id === "lose_body_fat"));
+  assert.ok(physique.some((template) => template.id === "keep_strength_while_cutting"));
+});
+
+test("legacy starter type aliases still resolve to the new family lanes", () => {
+  const running = listFeaturedIntakeGoalTemplates({ goalTypeId: "running" });
+  const swim = listFeaturedIntakeGoalTemplates({ goalTypeId: "swim" });
   const fatLoss = listFeaturedIntakeGoalTemplates({ goalTypeId: "fat_loss" });
 
-  assert.ok(running.some((template) => template.id === "run_first_5k"));
-  assert.ok(running.some((template) => template.id === "half_marathon"));
-  assert.ok(strength.some((template) => template.id === "bench_225"));
-  assert.ok(fatLoss.some((template) => template.id === "lose_10_lb"));
-  assert.ok(fatLoss.some((template) => template.id === "look_athletic_again"));
+  assert.ok(running.some((template) => template.id === "train_for_run_race"));
+  assert.ok(swim.some((template) => template.id === "swim_better"));
+  assert.ok(fatLoss.some((template) => template.id === "lose_body_fat"));
 });
 
-test("running starter metrics combine timeline and baseline in one adaptive step", () => {
+test("featured starter templates stay balanced and free of awkward spotlight goals", () => {
+  const bannedFeaturedIds = new Set(["bench_225", "marathon", "wedding_leaner"]);
+
+  buildIntakeStarterGoalTypes()
+    .filter((goalType) => goalType.id !== "custom")
+    .forEach((goalType) => {
+      const featured = listFeaturedIntakeGoalTemplates({ goalTypeId: goalType.id });
+
+      assert.equal(featured.length, 5, `Expected five featured templates for ${goalType.id}`);
+      featured.forEach((template) => {
+        assert.ok(!bannedFeaturedIds.has(template.id), `Banned featured template surfaced: ${template.id}`);
+        assert.ok(template.title.length <= 32, `Featured title is too long: ${template.id}`);
+        assert.ok(template.helper.length <= 90, `Featured helper is too long: ${template.id}`);
+      });
+    });
+});
+
+test("run-race starter metrics combine race setup and baseline in one adaptive step", () => {
   const questions = buildIntakeStarterMetricQuestions({
-    goalTypeId: "running",
+    goalTypeId: "endurance",
     selection: buildGoalTemplateSelection({ templateId: "half_marathon" }),
   });
 
   assert.equal(questions.length, 2);
-  assert.deepEqual(questions[0].fieldKeys, ["target_timeline"]);
+  assert.deepEqual(questions[0].fieldKeys, ["event_distance", "target_timeline"]);
   assert.deepEqual(questions[1].fieldKeys, [
     "current_run_frequency",
     "longest_recent_run",
@@ -68,7 +101,7 @@ test("running starter metrics combine timeline and baseline in one adaptive step
 test("applying starter metrics stores reusable completeness fields for the first draft", () => {
   const outcome = applyIntakeStarterMetrics({
     answers: {},
-    goalTypeId: "swim",
+    goalTypeId: "endurance",
     selection: buildGoalTemplateSelection({ templateId: "open_water_swim" }),
     values: {
       recent_swim_anchor: "1000 yd in 22:30",

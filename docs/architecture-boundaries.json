@@ -1,0 +1,72 @@
+[
+  {
+    "id": "intake",
+    "label": "Intake",
+    "publicBoundary": "src/domains/intake/index.js",
+    "stateOwner": {
+      "file": "src/trainer-dashboard.jsx",
+      "symbol": "TrainerDashboard"
+    },
+    "primaryTest": "tests/intake-entry-service.test.js"
+  },
+  {
+    "id": "program",
+    "label": "Program",
+    "publicBoundary": "src/domains/program/index.js",
+    "stateOwner": {
+      "file": "src/trainer-dashboard.jsx",
+      "symbol": "PlanTab"
+    },
+    "primaryTest": "tests/program-live-planning-service.test.js"
+  },
+  {
+    "id": "today",
+    "label": "Today",
+    "publicBoundary": "src/domains/today/index.js",
+    "stateOwner": {
+      "file": "src/trainer-dashboard.jsx",
+      "symbol": "TodayTab"
+    },
+    "primaryTest": "tests/plan-day-surface-service.test.js"
+  },
+  {
+    "id": "log",
+    "label": "Log",
+    "publicBoundary": "src/domains/log/index.js",
+    "stateOwner": {
+      "file": "src/trainer-dashboard.jsx",
+      "symbol": "LogTab"
+    },
+    "primaryTest": "tests/workout-log-form-service.test.js"
+  },
+  {
+    "id": "nutrition",
+    "label": "Nutrition",
+    "publicBoundary": "src/domains/nutrition/index.js",
+    "stateOwner": {
+      "file": "src/trainer-dashboard.jsx",
+      "symbol": "NutritionTab"
+    },
+    "primaryTest": "tests/weekly-nutrition-review.test.js"
+  },
+  {
+    "id": "coach",
+    "label": "Coach",
+    "publicBoundary": "src/domains/coach/index.js",
+    "stateOwner": {
+      "file": "src/trainer-dashboard.jsx",
+      "symbol": "CoachTab"
+    },
+    "primaryTest": "tests/coach-surface-service.test.js"
+  },
+  {
+    "id": "settings",
+    "label": "Settings",
+    "publicBoundary": "src/domains/settings/index.js",
+    "stateOwner": {
+      "file": "src/trainer-dashboard.jsx",
+      "symbol": "SettingsTab"
+    },
+    "primaryTest": "tests/settings-domain-boundary.test.js"
+  }
+]

@@ -1,3 +1,4 @@
+const { createHash } = require("node:crypto");
 const { test, expect } = require("@playwright/test");
 const {
   bootAppWithSupabaseSeeds,
@@ -5,6 +6,19 @@ const {
   makeSignedInPayload,
   mockSupabaseRuntime,
 } = require("./auth-runtime-test-helpers.js");
+
+const FLAGSHIP_THEME_TEST_IDS = Object.freeze([
+  "redwood",
+  "ember",
+  "voltage",
+  "fieldhouse",
+  "atlas",
+  "circuit",
+  "solstice",
+  "pulse",
+]);
+
+const hashScreenshot = (buffer) => createHash("sha256").update(buffer).digest("hex");
 
 const enterAppShell = async (page) => {
   const authGate = page.getByTestId("auth-gate");
@@ -68,6 +82,33 @@ const readThemeGridMetrics = async (page) => page.getByTestId("settings-theme-gr
   };
 });
 
+const readStackMetrics = async (locator) => locator.evaluate((node) => {
+  const rect = node.getBoundingClientRect();
+  return {
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+    clientHeight: node.clientHeight,
+    scrollHeight: node.scrollHeight,
+    left: rect.left,
+    right: rect.right,
+    top: rect.top,
+    bottom: rect.bottom,
+    children: Array.from(node.children).map((child) => {
+      const childRect = child.getBoundingClientRect();
+      return {
+        left: childRect.left,
+        right: childRect.right,
+        top: childRect.top,
+        bottom: childRect.bottom,
+        scrollWidth: child.scrollWidth,
+        clientWidth: child.clientWidth,
+        scrollHeight: child.scrollHeight,
+        clientHeight: child.clientHeight,
+      };
+    }),
+  };
+});
+
 test.describe("theme preferences surface", () => {
   test("appearance previews stay readable and unclipped at laptop width", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1180 });
@@ -75,12 +116,12 @@ test.describe("theme preferences surface", () => {
 
     const metrics = await readThemeGridMetrics(page);
 
-    expect(metrics.cardCount).toBe(12);
-    expect(metrics.previewCount).toBe(12);
+    expect(metrics.cardCount).toBe(8);
+    expect(metrics.previewCount).toBe(8);
     expect(metrics.gridScrollWidth).toBeLessThanOrEqual(metrics.gridClientWidth + 2);
     metrics.cards.forEach((card) => {
       expect(card.width).toBeGreaterThan(220);
-      expect(card.height).toBeGreaterThan(250);
+      expect(card.height).toBeGreaterThan(240);
       expect(card.scrollWidth).toBeLessThanOrEqual(card.clientWidth + 2);
       expect(card.right).toBeLessThanOrEqual(metrics.gridRight + 2);
       expect(card.bottom).toBeLessThanOrEqual(metrics.gridBottom + 240);
@@ -96,8 +137,8 @@ test.describe("theme preferences surface", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openAppearancePreferences(page, { theme: "Atlas", mode: "Dark", colorScheme: "dark" });
 
-    await page.getByTestId("settings-theme-canvas").click();
-    await expect(page.getByTestId("settings-theme-canvas")).toHaveAttribute("data-selected", "true");
+    await page.getByTestId("settings-theme-solstice").click();
+    await expect(page.getByTestId("settings-theme-solstice")).toHaveAttribute("data-selected", "true");
 
     const beforeNav = await page.locator("[data-testid='app-root']").evaluate((node) => ({
       fontDisplay: getComputedStyle(node).getPropertyValue("--font-display").trim(),
@@ -108,7 +149,7 @@ test.describe("theme preferences surface", () => {
     await page.getByTestId("app-tab-settings").click();
     await page.getByTestId("settings-surface-preferences").click();
 
-    await expect(page.getByTestId("settings-theme-canvas")).toHaveAttribute("data-selected", "true");
+    await expect(page.getByTestId("settings-theme-solstice")).toHaveAttribute("data-selected", "true");
     const afterNav = await page.locator("[data-testid='app-root']").evaluate((node) => ({
       fontDisplay: getComputedStyle(node).getPropertyValue("--font-display").trim(),
       radiusLg: getComputedStyle(node).getPropertyValue("--radius-lg").trim(),
@@ -129,7 +170,7 @@ test.describe("theme preferences surface", () => {
     await page.setViewportSize({ width: 1280, height: 1040 });
     await openAppearancePreferences(page, { theme: "Voltage", mode: "System", colorScheme: "light" });
 
-    await expect(page.getByTestId("settings-theme-preview-voltage")).toContainText("System · Light");
+    await expect(page.getByTestId("settings-theme-preview-voltage")).toContainText("System / Light");
 
     await page.emulateMedia({ colorScheme: "dark" });
     await page.reload();
@@ -137,6 +178,63 @@ test.describe("theme preferences surface", () => {
     await page.getByTestId("app-tab-settings").click();
     await page.getByTestId("settings-surface-preferences").click();
 
-    await expect(page.getByTestId("settings-theme-preview-voltage")).toContainText("System · Dark");
+    await expect(page.getByTestId("settings-theme-preview-voltage")).toContainText("System / Dark");
+  });
+
+  test("flagship previews stay screenshot-distinct and the lower preferences stack stays unclipped", async ({ page }) => {
+    await page.setViewportSize({ width: 1120, height: 980 });
+    await openAppearancePreferences(page, { theme: "Atlas", mode: "Dark", colorScheme: "dark" });
+
+    const previewHashes = [];
+    for (const themeId of FLAGSHIP_THEME_TEST_IDS) {
+      const previewBuffer = await page.getByTestId(`settings-theme-preview-${themeId}`).screenshot({
+        animations: "disabled",
+        caret: "hide",
+      });
+      previewHashes.push(hashScreenshot(previewBuffer));
+    }
+    expect(new Set(previewHashes).size).toBe(FLAGSHIP_THEME_TEST_IDS.length);
+
+    const lowerHashes = [];
+    for (const themeId of FLAGSHIP_THEME_TEST_IDS) {
+      await page.getByTestId(`settings-theme-${themeId}`).click();
+      await expect(page.getByTestId(`settings-theme-${themeId}`)).toHaveAttribute("data-selected", "true");
+
+      const lowerSection = page.getByTestId("settings-preferences-lower");
+      const notificationsSection = page.getByTestId("settings-notifications-section");
+      await lowerSection.scrollIntoViewIfNeeded();
+
+      const lowerMetrics = await readStackMetrics(lowerSection);
+      const notificationMetrics = await readStackMetrics(notificationsSection);
+
+      expect(lowerMetrics.scrollWidth).toBeLessThanOrEqual(lowerMetrics.clientWidth + 2);
+      expect(lowerMetrics.scrollHeight).toBeLessThanOrEqual(lowerMetrics.clientHeight + 2);
+      lowerMetrics.children.forEach((child, index) => {
+        expect(child.left).toBeGreaterThanOrEqual(lowerMetrics.left - 1);
+        expect(child.right).toBeLessThanOrEqual(lowerMetrics.right + 1);
+        expect(child.scrollWidth).toBeLessThanOrEqual(child.clientWidth + 2);
+        if (index > 0) {
+          expect(child.top).toBeGreaterThanOrEqual(lowerMetrics.children[index - 1].bottom - 1);
+        }
+      });
+
+      expect(notificationMetrics.scrollWidth).toBeLessThanOrEqual(notificationMetrics.clientWidth + 2);
+      expect(notificationMetrics.scrollHeight).toBeLessThanOrEqual(notificationMetrics.clientHeight + 2);
+      notificationMetrics.children.forEach((child, index) => {
+        expect(child.left).toBeGreaterThanOrEqual(notificationMetrics.left - 1);
+        expect(child.right).toBeLessThanOrEqual(notificationMetrics.right + 1);
+        expect(child.scrollWidth).toBeLessThanOrEqual(child.clientWidth + 2);
+        if (index > 0) {
+          expect(child.top).toBeGreaterThanOrEqual(notificationMetrics.children[index - 1].bottom - 1);
+        }
+      });
+
+      const lowerBuffer = await lowerSection.screenshot({
+        animations: "disabled",
+        caret: "hide",
+      });
+      lowerHashes.push(hashScreenshot(lowerBuffer));
+    }
+    expect(new Set(lowerHashes).size).toBe(FLAGSHIP_THEME_TEST_IDS.length);
   });
 });

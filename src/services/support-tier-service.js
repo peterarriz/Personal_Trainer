@@ -53,6 +53,8 @@ const collectGoalSignals = (goals = []) => {
     hasStrength: activeGoals.some((goal) => goal?.category === "strength") || /\b(bench|deadlift|squat|stronger|strength)\b/.test(text),
     hasBodyComp: activeGoals.some((goal) => goal?.category === "body_comp") || /\b(fat loss|lean|recomp|body comp|physique|look athletic)\b/.test(text),
     hasSwim: /\b(swim|swimming|pool|open water)\b/.test(text),
+    hasCycling: /\b(cycling|bike|biking|ride|riding|trainer|peloton)\b/.test(text),
+    hasTriathlon: /\b(triathlon|multisport|sprint tri|olympic tri|70\.3|ironman)\b/.test(text),
     hasPower: activeGoals.some((goal) => goal?.resolvedGoal?.goalFamily === "athletic_power") || /\b(vertical|jump|dunk|explosive|power)\b/.test(text),
     hasDurability: activeGoals.some((goal) => goal?.category === "injury_prevention" || goal?.resolvedGoal?.goalFamily === "re_entry") || /\b(rehab|durability|prehab|return to training|rebuild|postpartum|recover)\b/.test(text),
     hasHybrid: /\b(hybrid|multi-domain|split focus)\b/.test(text),
@@ -89,6 +91,7 @@ export const resolveSupportTier = ({
       DOMAIN_ADAPTER_IDS.strength,
       DOMAIN_ADAPTER_IDS.running,
       DOMAIN_ADAPTER_IDS.bodyComp,
+      DOMAIN_ADAPTER_IDS.cycling,
     ].includes(adapterId)
   ) {
     return SUPPORT_TIER_LEVELS.tier1;
@@ -97,6 +100,7 @@ export const resolveSupportTier = ({
   if (
     [
       DOMAIN_ADAPTER_IDS.swimming,
+      DOMAIN_ADAPTER_IDS.triathlon,
       DOMAIN_ADAPTER_IDS.power,
       DOMAIN_ADAPTER_IDS.durability,
       DOMAIN_ADAPTER_IDS.hybrid,
@@ -113,7 +117,7 @@ export const resolveSupportTier = ({
     return SUPPORT_TIER_LEVELS.tier1;
   }
 
-  if (signals.hasSwim || signals.hasPower || signals.hasHybrid) {
+  if (signals.hasSwim || signals.hasCycling || signals.hasTriathlon || signals.hasPower || signals.hasHybrid) {
     return SUPPORT_TIER_LEVELS.tier2;
   }
 
@@ -139,6 +143,10 @@ export const buildSupportTierModel = ({
     : "The planner will stay useful by falling back to safer shared rules and by surfacing uncertainty instead of bluffing.";
   const basisLine = signals.activeGoals.length === 0
     ? "No explicit goal is required. Foundation mode is still a supported Tier 1 entry path."
+    : signals.hasTriathlon
+    ? "Triathlon is handled through a bounded multisport adapter that keeps interference and missing anchors explicit."
+    : signals.hasCycling
+    ? "Cycling now has a dedicated endurance lane instead of being folded into generic cardio."
     : signals.hasSwim
     ? "Swimming is handled through the shared planner with a narrower adapter and more explicit metric honesty."
     : signals.hasPower

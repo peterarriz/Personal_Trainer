@@ -550,6 +550,48 @@ async function fillStarterMetricInputs(page, quickMetrics = {}) {
   }
 }
 
+const GOAL_TYPE_ALIASES = Object.freeze({
+  running: "endurance",
+  swim: "endurance",
+  fat_loss: "physique",
+});
+
+const TEMPLATE_ID_ALIASES = Object.freeze({
+  run_first_5k: { templateId: "train_for_run_race", metricDefaults: { event_distance: "5k" } },
+  run_faster_5k: { templateId: "train_for_run_race", metricDefaults: { event_distance: "5k" } },
+  run_10k: { templateId: "train_for_run_race", metricDefaults: { event_distance: "10k" } },
+  half_marathon: { templateId: "train_for_run_race", metricDefaults: { event_distance: "half_marathon" } },
+  marathon: { templateId: "train_for_run_race", metricDefaults: { event_distance: "marathon" } },
+  bench_225: { templateId: "improve_big_lifts", metricDefaults: { lift_focus: "bench" } },
+  open_water_swim: { templateId: "swim_better", metricDefaults: { goal_focus: "open_water" } },
+  swim_faster_mile: { templateId: "swim_better", metricDefaults: { goal_focus: "endurance" } },
+  lose_10_lb: { templateId: "lose_body_fat" },
+  lose_20_lb: { templateId: "lose_body_fat" },
+  tone_up: { templateId: "get_leaner" },
+  look_athletic_again: { templateId: "get_leaner" },
+});
+
+function normalizeLegacyQuickMetrics(templateId, quickMetrics = {}) {
+  const next = { ...(quickMetrics || {}) };
+  if (!next.current_strength_baseline && next.current_strength_baseline_weight) {
+    const reps = next.current_strength_baseline_reps ? ` x ${next.current_strength_baseline_reps}` : "";
+    next.current_strength_baseline = `${next.current_strength_baseline_weight}${reps}`;
+  }
+  if (
+    ["lose_body_fat", "get_leaner", "recomp", "cut_for_event", "keep_strength_while_cutting"].includes(templateId)
+  ) {
+    next.body_comp_tempo = next.body_comp_tempo || "steady";
+    next.muscle_retention_priority = next.muscle_retention_priority || "high";
+    next.cardio_preference = next.cardio_preference || "walks";
+  }
+  if (
+    ["get_back_in_shape", "build_consistency", "feel_more_athletic", "improve_work_capacity", "healthy_routine_fitness"].includes(templateId)
+  ) {
+    next.goal_focus = next.goal_focus || "consistency";
+  }
+  return next;
+}
+
 async function completeGoalLibraryIntakeStep(page, {
   goalType = "running",
   templateId = "",
@@ -557,12 +599,19 @@ async function completeGoalLibraryIntakeStep(page, {
   stopAtReview = false,
   ...planningOverrides
 } = {}) {
+  const normalizedGoalType = GOAL_TYPE_ALIASES[goalType] || goalType;
+  const templateAlias = TEMPLATE_ID_ALIASES[templateId] || null;
+  const normalizedTemplateId = templateAlias?.templateId || templateId;
+  const normalizedQuickMetrics = normalizeLegacyQuickMetrics(normalizedTemplateId, {
+    ...(templateAlias?.metricDefaults || {}),
+    ...(quickMetrics || {}),
+  });
   await expect(page.getByTestId("intake-goals-step")).toBeVisible();
-  await page.getByTestId(`intake-goal-type-${goalType}`).click();
-  if (templateId) {
-    await page.getByTestId(`intake-featured-goal-${templateId}`).click();
+  await page.getByTestId(`intake-goal-type-${normalizedGoalType}`).click();
+  if (normalizedTemplateId) {
+    await page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`).click();
   }
-  await fillStarterMetricInputs(page, quickMetrics);
+  await fillStarterMetricInputs(page, normalizedQuickMetrics);
   await fillPlanningRealityInputs(page, planningOverrides);
   await page.getByTestId("intake-footer-continue").click();
   await expect.poll(async () => await getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm/);

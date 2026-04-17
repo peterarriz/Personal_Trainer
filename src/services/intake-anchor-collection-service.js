@@ -35,7 +35,7 @@ const sanitizeVisibleAnchorCard = (anchor = {}, index = 0) => ({
 const clampVisibleCount = (value = 3) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 3;
-  return Math.max(1, Math.min(8, Math.round(parsed)));
+  return Math.max(1, Math.min(3, Math.round(parsed)));
 };
 
 export const buildAnchorCollectionViewModel = ({

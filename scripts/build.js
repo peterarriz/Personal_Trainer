@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * build.js - bundles src/trainer-dashboard.jsx into index.html
+ * build.js - bundles src/trainer-dashboard.jsx into dist/index.html
  * Run: node scripts/build.js
  * Requires: npm install sucrase
  */
@@ -11,7 +11,8 @@ const { transform } = require("sucrase");
 
 const ROOT = path.join(__dirname, "..");
 const SRC = path.join(ROOT, "src", "trainer-dashboard.jsx");
-const OUT = path.join(ROOT, "index.html");
+const DIST = path.join(ROOT, "dist");
+const OUT = path.join(DIST, "index.html");
 const REACT = fs.readFileSync(path.join(__dirname, "react.min.js"), "utf8");
 const REACT_DOM = fs.readFileSync(path.join(__dirname, "react-dom.min.js"), "utf8");
 const SUPABASE_UMD = fs.readFileSync(
@@ -20,10 +21,35 @@ const SUPABASE_UMD = fs.readFileSync(
 );
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || "";
-// Support both single-line and multiline ES import declarations when walking local deps.
-const LOCAL_IMPORT_RE = /import\s+[\s\S]*?\s+from\s+['"](.+?)['"];?/gm;
+// Support import, re-export, and static local require declarations when walking local deps.
+const LOCAL_DEPENDENCY_RE = /(?:import|export)\s+[\s\S]*?\s+from\s+['"](.+?)['"];?|require\(\s*['"](.+?)['"]\s*\)/gm;
+const STATIC_COPY_ENTRIES = [
+  "manifest.json",
+  "service-worker.js",
+  "fonts",
+  "icons",
+  "splash",
+];
 
 console.log("Building...");
+
+const ensureCleanDist = () => {
+  fs.rmSync(DIST, { recursive: true, force: true });
+  fs.mkdirSync(DIST, { recursive: true });
+};
+
+const copyRecursive = (fromPath, toPath) => {
+  const stats = fs.statSync(fromPath);
+  if (stats.isDirectory()) {
+    fs.mkdirSync(toPath, { recursive: true });
+    for (const entry of fs.readdirSync(fromPath)) {
+      copyRecursive(path.join(fromPath, entry), path.join(toPath, entry));
+    }
+    return;
+  }
+  fs.mkdirSync(path.dirname(toPath), { recursive: true });
+  fs.copyFileSync(fromPath, toPath);
+};
 
 const toModuleId = (filePath) => path.relative(ROOT, filePath).replace(/\\/g, "/");
 
@@ -37,8 +63,8 @@ const resolveLocalModule = (fromFile, request) => {
 };
 
 const getLocalImportRequests = (source = "") => (
-  Array.from(source.matchAll(LOCAL_IMPORT_RE))
-    .map((match) => match[1])
+  Array.from(source.matchAll(LOCAL_DEPENDENCY_RE))
+    .map((match) => match[1] || match[2])
     .filter((request) => request && request.startsWith("."))
 );
 
@@ -163,5 +189,13 @@ try {
 </body>
 </html>`;
 
+ensureCleanDist();
 fs.writeFileSync(OUT, html);
-console.log(`Built index.html - ${(html.length / 1024).toFixed(1)} KB`);
+
+for (const entry of STATIC_COPY_ENTRIES) {
+  const sourcePath = path.join(ROOT, entry);
+  if (!fs.existsSync(sourcePath)) continue;
+  copyRecursive(sourcePath, path.join(DIST, entry));
+}
+
+console.log(`Built dist/index.html - ${(html.length / 1024).toFixed(1)} KB`);
