@@ -52,14 +52,14 @@ const buildHistoryEntry = (config = {}) => createPrescribedDayHistoryEntry({
 
 test("weekly nutrition review keeps planned vs actual separate and surfaces recurring weekly signals", () => {
   const plannedDayRecords = {
-    "2026-04-05": buildHistoryEntry({ dateKey: "2026-04-05", dayType: "easyRun", supplementPlan: ["Creatine", "Electrolytes"] }),
-    "2026-04-06": buildHistoryEntry({ dateKey: "2026-04-06", dayType: "hardRun", supplementPlan: ["Creatine", "Electrolytes"] }),
-    "2026-04-07": buildHistoryEntry({ dateKey: "2026-04-07", dayType: "easyRun", supplementPlan: ["Creatine", "Electrolytes"] }),
-    "2026-04-08": buildHistoryEntry({ dateKey: "2026-04-08", dayType: "hardRun", supplementPlan: ["Creatine", "Electrolytes"] }),
+    "2026-04-05": buildHistoryEntry({ dateKey: "2026-04-05", dayType: "run_easy", supplementPlan: ["Creatine", "Electrolytes"] }),
+    "2026-04-06": buildHistoryEntry({ dateKey: "2026-04-06", dayType: "run_quality", supplementPlan: ["Creatine", "Electrolytes"] }),
+    "2026-04-07": buildHistoryEntry({ dateKey: "2026-04-07", dayType: "run_easy", supplementPlan: ["Creatine", "Electrolytes"] }),
+    "2026-04-08": buildHistoryEntry({ dateKey: "2026-04-08", dayType: "run_long", supplementPlan: ["Creatine", "Electrolytes"] }),
   };
   const livePlanDay = buildNutritionPlanDay({
     dateKey: "2026-04-09",
-    dayType: "easyRun",
+    dayType: "run_easy",
     supplementPlan: ["Creatine", "Electrolytes"],
   });
   const nutritionActualLogs = {
@@ -122,9 +122,11 @@ test("weekly nutrition review keeps planned vs actual separate and surfaces recu
 
   assert.equal(review.model, "weekly_nutrition_review");
   assert.equal(review.prescribed.daysWithPrescription, 5);
+  assert.equal(review.prescribed.hardTrainingDays, 2);
   assert.equal(review.actual.loggedDays, 4);
   assert.equal(review.adherence.onPlanDays, 2);
   assert.equal(review.deviationPattern.dominant, "under_fueled");
+  assert.equal(review.friction.dominantCause, "hunger");
   assert.equal(review.friction.topCauses[0].key, "hunger");
   assert.equal(review.supplements.expectedDays, 5);
   assert.equal(review.adaptation.mode, "protect_key_session_fueling");

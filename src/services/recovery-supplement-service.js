@@ -1,4 +1,12 @@
 import { normalizeActualNutritionLog } from "../modules-nutrition.js";
+import {
+  isConditioningNutritionDayType,
+  isHardNutritionDayType,
+  isRecoveryNutritionDayType,
+  isStrengthNutritionDayType,
+  isTravelNutritionDayType,
+  normalizeNutritionDayType,
+} from "./nutrition-day-taxonomy-service.js";
 
 export const RECOVERY_PRESCRIPTION_MODEL = "recovery_prescription_v1";
 export const SUPPLEMENT_PLAN_MODEL = "supplement_plan_v1";
@@ -31,21 +39,23 @@ const normalizeDayType = (value = "") => String(value || "").toLowerCase().repla
 
 const isHardSessionDay = (training = null, nutritionPrescription = null) => {
   const trainingType = normalizeDayType(training?.type || training?.run?.t || "");
-  const nutritionDayType = normalizeDayType(nutritionPrescription?.dayType || training?.nutri || "");
+  const nutritionDayType = normalizeNutritionDayType(nutritionPrescription?.dayType || training?.nutri || "");
   return ["hard", "hardrun", "tempo", "intervals", "long", "longrun", "travelrun", "otf", "conditioning"].includes(trainingType)
-    || ["hardrun", "longrun", "travelrun", "otf"].includes(nutritionDayType);
+    || isHardNutritionDayType(nutritionDayType)
+    || isConditioningNutritionDayType(nutritionDayType);
 };
 
 const isStrengthSessionDay = (training = null, nutritionPrescription = null) => {
   const trainingType = normalizeDayType(training?.type || "");
-  const nutritionDayType = normalizeDayType(nutritionPrescription?.dayType || training?.nutri || "");
-  return trainingType.includes("strength") || ["strength"].includes(nutritionDayType);
+  const nutritionDayType = normalizeNutritionDayType(nutritionPrescription?.dayType || training?.nutri || "");
+  return trainingType.includes("strength") || isStrengthNutritionDayType(nutritionDayType);
 };
 
-const isRecoveryDay = (training = null, readinessState = null) => {
+const isRecoveryDay = (training = null, readinessState = null, nutritionPrescription = null) => {
   const trainingType = normalizeDayType(training?.type || "");
+  const nutritionDayType = normalizeNutritionDayType(nutritionPrescription?.dayType || training?.nutri || "");
   const readiness = String(readinessState?.state || "").toLowerCase();
-  return ["rest", "recovery"].includes(trainingType) || readiness === "recovery";
+  return ["rest", "recovery"].includes(trainingType) || isRecoveryNutritionDayType(nutritionDayType) || readiness === "recovery";
 };
 
 const buildPainManagementProtocol = ({ injuryState = null, readinessState = null } = {}) => {
@@ -132,6 +142,44 @@ const resolveSupplementDescriptor = (rawName = "") => {
     || (normalized.includes("vitamin d") ? SUPPLEMENT_LIBRARY["vitamin d3"] : null);
 };
 
+const inferDefaultSupplementContexts = ({ name = "", descriptor = {} } = {}) => {
+  const normalized = sanitizeRecoveryText(name).toLowerCase();
+  if (!normalized) return ["daily"];
+  if (descriptor.category === "hydration" || normalized.includes("electrolyte")) return ["hard_day", "travel_day"];
+  if (descriptor.category === "recovery" || normalized.includes("protein")) return ["hard_day", "strength_day", "if_needed"];
+  if (descriptor.category === "sleep" || normalized.includes("magnesium")) return ["daily", "recovery_day"];
+  return ["daily"];
+};
+
+const normalizeSupplementContexts = (rawContexts = null, fallbackContexts = []) => {
+  const source = Array.isArray(rawContexts)
+    ? rawContexts
+    : typeof rawContexts === "string" && rawContexts.trim()
+    ? [rawContexts]
+    : fallbackContexts;
+  return [...new Set(
+    source
+      .map((context) => String(context || "").trim().toLowerCase())
+      .filter(Boolean)
+  )];
+};
+
+const isSupplementActiveOnDay = ({
+  contexts = [],
+  hardDay = false,
+  strengthDay = false,
+  recoveryDay = false,
+  travelDay = false,
+} = {}) => {
+  if (!contexts.length || contexts.includes("daily")) return true;
+  if (hardDay && contexts.includes("hard_day")) return true;
+  if (strengthDay && contexts.includes("strength_day")) return true;
+  if (recoveryDay && contexts.includes("recovery_day")) return true;
+  if (travelDay && contexts.includes("travel_day")) return true;
+  if ((hardDay || strengthDay || travelDay) && contexts.includes("if_needed")) return true;
+  return false;
+};
+
 export const buildCanonicalSupplementPlan = ({
   dateKey = "",
   supplementPlan = [],
@@ -139,7 +187,13 @@ export const buildCanonicalSupplementPlan = ({
   nutritionPrescription = null,
 } = {}) => {
   const hardDay = isHardSessionDay(training, nutritionPrescription);
-  const recoveryDay = isRecoveryDay(training, null);
+  const strengthDay = isStrengthSessionDay(training, nutritionPrescription);
+  const recoveryDay = isRecoveryDay(training, null, nutritionPrescription);
+  const travelDay = Boolean(
+    nutritionPrescription?.travelMode
+    || isTravelNutritionDayType(nutritionPrescription?.dayType || training?.nutri || "")
+    || normalizeDayType(training?.type || "").includes("travel")
+  );
   const items = (Array.isArray(supplementPlan) ? supplementPlan : [])
     .map((raw, index) => {
       const name = typeof raw === "string"
@@ -150,6 +204,10 @@ export const buildCanonicalSupplementPlan = ({
       const defaultTiming = descriptor.defaultTiming || "with a meal";
       const defaultDose = descriptor.defaultDose || "1 serving";
       const category = descriptor.category || "general_support";
+      const contexts = normalizeSupplementContexts(
+        raw?.contexts,
+        inferDefaultSupplementContexts({ name, descriptor })
+      );
       const timing = sanitizeRecoveryText(
         raw?.timing,
         category === "hydration" && hardDay
@@ -168,8 +226,17 @@ export const buildCanonicalSupplementPlan = ({
         purpose: sanitizeRecoveryText(raw?.purpose || raw?.reason, descriptor.purpose || "supports daily consistency"),
         withHydration: Boolean(raw?.withHydration || category === "hydration"),
         conditional: Boolean(raw?.conditional || (recoveryDay && category === "hydration")),
+        contexts,
+        activeOnDay: isSupplementActiveOnDay({
+          contexts,
+          hardDay,
+          strengthDay,
+          recoveryDay,
+          travelDay,
+        }),
       };
     })
+    .filter((item) => item?.activeOnDay)
     .filter(Boolean);
   return {
     model: SUPPLEMENT_PLAN_MODEL,
@@ -242,7 +309,7 @@ export const buildRecoveryPrescription = ({
 } = {}) => {
   const hardDay = isHardSessionDay(training, nutritionPrescription);
   const strengthDay = isStrengthSessionDay(training, nutritionPrescription);
-  const recoveryDay = isRecoveryDay(training, readinessState);
+  const recoveryDay = isRecoveryDay(training, readinessState, nutritionPrescription);
   const cautiousDay = ["recovery", "reduced_load"].includes(String(readinessState?.state || "").toLowerCase());
   const injuryLevel = String(injuryState?.level || "").toLowerCase();
   const hydrationTargetOz = Number(

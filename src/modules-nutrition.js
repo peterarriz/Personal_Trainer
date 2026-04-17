@@ -70,6 +70,7 @@ export const getGoalContext = (goals) => {
 export const applyGoalNutritionTargets = (targets, dayType, goalContext) => {
   if (!targets) return null;
   const primary = goalContext.primary;
+  const activeCategories = new Set((goalContext?.active || []).map((goal) => String(goal?.category || "").trim().toLowerCase()).filter(Boolean));
   const normalizedDayType = normalizeNutritionDayType(dayType);
   let out = { ...targets };
   if (!primary) return out;
@@ -91,7 +92,237 @@ export const applyGoalNutritionTargets = (targets, dayType, goalContext) => {
       out.c += 10;
     }
   }
+  if (activeCategories.has("running") && primary.category !== "running" && isHardNutritionDayType(normalizedDayType)) {
+    out.c += 15;
+  }
+  if (
+    activeCategories.has("strength")
+    && primary.category !== "strength"
+    && (
+      isStrengthNutritionDayType(normalizedDayType)
+      || isConditioningNutritionDayType(normalizedDayType)
+      || isHybridNutritionDayType(normalizedDayType)
+    )
+  ) {
+    out.p += 8;
+    out.c += 5;
+  }
   return out;
+};
+
+const sanitizeNutritionText = (value = "", fallback = "") => String(value || "").replace(/\s+/g, " ").trim() || fallback;
+
+const normalizeMealAnchors = (anchors = {}) => ({
+  breakfast: sanitizeNutritionText(anchors?.breakfast || ""),
+  lunch: sanitizeNutritionText(anchors?.lunch || ""),
+  travelFallback: sanitizeNutritionText(anchors?.travelFallback || ""),
+  emergencyOrder: sanitizeNutritionText(anchors?.emergencyOrder || ""),
+});
+
+const resolveNutritionGoalBias = (goalContext = {}) => {
+  const activeCategories = new Set((goalContext?.active || []).map((goal) => String(goal?.category || "").trim().toLowerCase()).filter(Boolean));
+  const primaryCategory = String(goalContext?.primary?.category || "").trim().toLowerCase();
+  if (activeCategories.has("body_comp") && activeCategories.has("strength")) return "body_comp_strength";
+  if (activeCategories.has("running") && activeCategories.has("strength")) return "hybrid_performance";
+  if (primaryCategory === "body_comp") return "body_comp";
+  if (primaryCategory === "strength") return "strength";
+  if (primaryCategory === "running") return "running";
+  return "general";
+};
+
+const resolveNutritionMealFamily = (dayType = "") => {
+  const normalizedDayType = normalizeNutritionDayType(dayType);
+  if (isLongEnduranceNutritionDayType(normalizedDayType)) return "long_endurance";
+  if (isHardNutritionDayType(normalizedDayType)) return "quality_endurance";
+  if (isStrengthNutritionDayType(normalizedDayType)) return "strength_support";
+  if (isHybridNutritionDayType(normalizedDayType) || isConditioningNutritionDayType(normalizedDayType)) return "hybrid_support";
+  if (isRecoveryNutritionDayType(normalizedDayType)) return "recovery";
+  return "balanced";
+};
+
+const MEAL_SLOT_LIBRARY = Object.freeze({
+  long_endurance: {
+    breakfast: {
+      primary: "Pre-session oats + banana + honey + whey or Greek yogurt",
+      fast: "Bagel + banana + ready-to-drink protein shake",
+      travel: "Hotel oatmeal + eggs + fruit",
+    },
+    lunch: {
+      primary: "Recovery rice bowl with lean protein + fruit",
+      fast: "Rotisserie chicken + microwave rice + fruit cup",
+      travel: "Chipotle bowl or airport rice bowl with double protein",
+    },
+    dinner: {
+      primary: "Lean protein + rice or potatoes + vegetables",
+      fast: "Pre-cooked protein + potato + bagged salad",
+      travel: "Grilled protein + plain rice + vegetables",
+    },
+    snack: {
+      primary: "Greek yogurt + granola + berries",
+      fast: "Protein shake + banana",
+      travel: "Protein bar + fruit + water",
+    },
+  },
+  quality_endurance: {
+    breakfast: {
+      primary: "Oats + banana + whey or Greek yogurt",
+      fast: "Toast or bagel + banana + shake",
+      travel: "Egg bites + oatmeal + fruit",
+    },
+    lunch: {
+      primary: "Rice bowl with lean protein + extra carbs + produce",
+      fast: "Wrap + fruit + shake",
+      travel: "Double-protein grain bowl",
+    },
+    dinner: {
+      primary: "Recovery dinner with lean protein + rice/potatoes + vegetables",
+      fast: "Pre-cooked chicken + rice cup + salad kit",
+      travel: "Salmon or chicken + rice + vegetables",
+    },
+    snack: {
+      primary: "Banana + yogurt or protein shake",
+      fast: "Ready-to-drink shake + pretzels",
+      travel: "Greek yogurt + banana",
+    },
+  },
+  strength_support: {
+    breakfast: {
+      primary: "Eggs or Greek yogurt + oats or toast",
+      fast: "Breakfast sandwich + fruit",
+      travel: "Hotel eggs + toast + fruit",
+    },
+    lunch: {
+      primary: "Protein bowl with rice or potatoes + vegetables",
+      fast: "Rotisserie chicken wrap + fruit",
+      travel: "Double-protein salad or grain bowl",
+    },
+    dinner: {
+      primary: "Lift-day dinner with protein + carbs + produce",
+      fast: "Pre-cooked protein + potato + bagged veg",
+      travel: "Steak or chicken + potato + vegetables",
+    },
+    snack: {
+      primary: "Protein shake or Greek yogurt + fruit",
+      fast: "Shake + granola bar",
+      travel: "Protein shake + banana",
+    },
+  },
+  hybrid_support: {
+    breakfast: {
+      primary: "Protein breakfast + fruit + steady carbs",
+      fast: "Greek yogurt cup + granola + banana",
+      travel: "Egg bites + fruit + oatmeal",
+    },
+    lunch: {
+      primary: "Balanced bowl with protein, carbs, and produce",
+      fast: "Chicken wrap + fruit + electrolyte water",
+      travel: "Grain bowl with double protein",
+    },
+    dinner: {
+      primary: "Protein-forward dinner + carbs + vegetables",
+      fast: "Pre-cooked protein + rice cup + salad",
+      travel: "Grilled protein plate + rice + vegetables",
+    },
+    snack: {
+      primary: "Fruit + protein snack",
+      fast: "Protein bar + fruit",
+      travel: "Greek yogurt + fruit",
+    },
+  },
+  recovery: {
+    breakfast: {
+      primary: "Eggs or yogurt + fruit + lighter starch",
+      fast: "Greek yogurt + berries + toast",
+      travel: "Eggs + fruit + yogurt",
+    },
+    lunch: {
+      primary: "Protein-heavy plate + vegetables + moderate carbs",
+      fast: "Rotisserie chicken + salad kit + potato",
+      travel: "Salad + grilled protein + soup or rice side",
+    },
+    dinner: {
+      primary: "Lean protein + vegetables + controlled carbs",
+      fast: "Pre-cooked protein + frozen veg + rice cup",
+      travel: "Fish or chicken + vegetables + rice",
+    },
+    snack: {
+      primary: "Fruit + protein snack",
+      fast: "String cheese + apple",
+      travel: "Greek yogurt cup + fruit",
+    },
+  },
+  balanced: {
+    breakfast: {
+      primary: "Protein breakfast + fruit + steady carbs",
+      fast: "Greek yogurt + fruit + granola",
+      travel: "Eggs + oatmeal + fruit",
+    },
+    lunch: {
+      primary: "Balanced bowl with protein, carbs, and produce",
+      fast: "Wrap + fruit + yogurt",
+      travel: "Protein bowl + carb side + vegetables",
+    },
+    dinner: {
+      primary: "Protein-forward dinner + produce",
+      fast: "Pre-cooked protein + potato + salad",
+      travel: "Grilled protein + rice + vegetables",
+    },
+    snack: {
+      primary: "Protein snack + fruit",
+      fast: "Shake + fruit",
+      travel: "Protein bar + water",
+    },
+  },
+});
+
+const GOAL_BIAS_NOTES = Object.freeze({
+  body_comp: {
+    breakfast: "Keep fats controlled and protein high.",
+    lunch: "Make vegetables obvious so fullness stays easier to manage.",
+    dinner: "Plate vegetables first and keep extras intentional.",
+    snack: "Use this to solve hunger or protein, not to graze.",
+  },
+  strength: {
+    breakfast: "Do not miss the carb serving if training quality matters.",
+    lunch: "Keep an extra carb serving ready if output is lagging.",
+    dinner: "Make this your biggest recovery meal.",
+    snack: "Add this when protein is behind.",
+  },
+  running: {
+    breakfast: "Do not miss carbs before quality work.",
+    lunch: "Keep carbs near the session instead of scattering them randomly.",
+    dinner: "Close the day with glycogen restoration.",
+    snack: "Use fruit + protein to protect the next run.",
+  },
+  body_comp_strength: {
+    breakfast: "Keep protein high without stripping lift-support carbs.",
+    lunch: "Stay precise, but still protect lift-day performance.",
+    dinner: "Use this as the muscle-retention meal.",
+    snack: "Treat this as a protein catch-up tool.",
+  },
+  hybrid_performance: {
+    breakfast: "Fuel the mixed demand instead of picking only run or lift bias.",
+    lunch: "Cover both aerobic and strength demand.",
+    dinner: "Recover both systems before tomorrow.",
+    snack: "Use this when either carbs or protein are lagging.",
+  },
+  general: {},
+});
+
+const buildNutritionTargetChangeSummary = ({ dayTypeLabel = "", baseTargets = {}, targets = {}, reasons = [] } = {}) => {
+  const deltas = [
+    { key: "cal", label: "kcal", value: Math.round(Number(targets?.cal || 0) - Number(baseTargets?.cal || 0)) },
+    { key: "p", label: "g protein", value: Math.round(Number(targets?.p || 0) - Number(baseTargets?.p || 0)) },
+    { key: "c", label: "g carbs", value: Math.round(Number(targets?.c || 0) - Number(baseTargets?.c || 0)) },
+  ].filter((item) => item.value !== 0);
+  if (!deltas.length) return `Today's targets match the standard ${dayTypeLabel || "training-day"} profile.`;
+  const deltaLine = deltas
+    .map((item) => `${item.value > 0 ? "+" : ""}${item.value} ${item.label}`)
+    .join(", ");
+  const whyLine = reasons.length
+    ? reasons.slice(0, 2).join(" and ")
+    : "today's goal and training context";
+  return `Compared with a standard ${dayTypeLabel || "training-day"} profile, today shifts ${deltaLine} because ${whyLine}.`;
 };
 
 export const mapWorkoutToNutritionDayType = (todayWorkout, environmentMode) => (
@@ -418,13 +649,19 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
   }
   const goalContext = getGoalContext(goals);
   const baseTargets = NUTRITION[dayType] || NUTRITION[NUTRITION_DAY_TYPES.runEasy];
+  const goalBias = resolveNutritionGoalBias(goalContext);
   let targets = applyGoalNutritionTargets(baseTargets, dayType, goalContext);
   let phaseAwareAdjustment = null;
+  const adjustmentReasons = [];
   const currentPhase = todayWorkout?.week?.phase || "BASE";
 
   const activeGoals = goalContext.active || [];
   const hasBodyCompGoal = activeGoals.some(g => g.category === "body_comp");
   const hasStrengthGoal = activeGoals.some(g => g.category === "strength");
+  if (goalContext.primary?.category === "body_comp") adjustmentReasons.push("fat-loss bias keeps protein high");
+  if (goalContext.primary?.category === "running" && isHardNutritionDayType(dayType)) adjustmentReasons.push("running priority protects carbs on harder sessions");
+  if (goalContext.primary?.category === "strength" && (isStrengthNutritionDayType(dayType) || isConditioningNutritionDayType(dayType) || isHybridNutritionDayType(dayType))) adjustmentReasons.push("strength priority protects protein and carbs on support days");
+  if (goalBias === "hybrid_performance") adjustmentReasons.push("secondary goals keep mixed-demand days from collapsing into one bias");
   if (hasBodyCompGoal && hasStrengthGoal) {
     const heavyLiftDay = (
       isStrengthNutritionDayType(dayType)
@@ -445,6 +682,7 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
         why: `Strength day detected (${todayWorkout?.label || dayType}), so calories/carbs were protected from deficit.`,
         delta: { cal: targets.cal - prev.cal, c: targets.c - prev.c, p: targets.p - prev.p },
       };
+      adjustmentReasons.push("heavy lift work kept calories closer to maintenance");
     } else if (easyRunWeek) {
       const prev = { ...targets };
       targets.cal = Math.max(2200, targets.cal - 140);
@@ -456,6 +694,7 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
         why: "Easy-load context detected, so a modest deficit was applied while protein stays high.",
         delta: { cal: targets.cal - prev.cal, c: targets.c - prev.c, p: targets.p - prev.p },
       };
+      adjustmentReasons.push("easier training load allowed a modest deficit");
     }
   }
 
@@ -476,10 +715,12 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
     if (bwTrend < -2.2 || hungerHits >= 2 || momentum.inconsistencyRisk === "high") {
       targets.cal += 120;
       targets.c += 20;
+      adjustmentReasons.push("recent hunger or fast weight drop softened the deficit");
     }
     if (offTrackHits >= 3) {
       targets.cal += 90;
       targets.f += 5;
+      adjustmentReasons.push("recent off-track days reduced restriction to improve adherence");
     }
   }
 
@@ -487,6 +728,7 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
     if (learningLayer?.stats?.harder >= 2) {
       targets.c += 20;
       targets.cal += 70;
+      adjustmentReasons.push("recent hard sessions looked harder than expected");
     }
   }
 
@@ -496,6 +738,7 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
       cal: Math.max(targets.cal, NUTRITION[NUTRITION_DAY_TYPES.runEasy].cal),
       p: Math.max(targets.p, 190),
     };
+    adjustmentReasons.push("hardening mode prevented aggressive restriction");
   }
 
   let phaseMode = "maintain";
@@ -525,10 +768,26 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
   const explanation = goalContext.primary
     ? `Nutrition adapts to primary goal (${goalContext.primary.name}) and today (${dayTypeLabel}).`
     : `Nutrition follows training demand for today (${dayTypeLabel}).`;
+  const deltaFromBaseline = {
+    cal: Math.round(Number(targets?.cal || 0) - Number(baseTargets?.cal || 0)),
+    p: Math.round(Number(targets?.p || 0) - Number(baseTargets?.p || 0)),
+    c: Math.round(Number(targets?.c || 0) - Number(baseTargets?.c || 0)),
+    f: Math.round(Number(targets?.f || 0) - Number(baseTargets?.f || 0)),
+  };
+  const targetChangeSummary = buildNutritionTargetChangeSummary({
+    dayTypeLabel,
+    baseTargets,
+    targets,
+    reasons: [...new Set(adjustmentReasons)],
+  });
 
   return {
     dayType,
     dayTypeLabel,
+    baselineTargets: baseTargets,
+    deltaFromBaseline,
+    targetChangeSummary,
+    adjustmentReasons: [...new Set(adjustmentReasons)],
     targets,
     mealPlan,
     strategy,
@@ -536,6 +795,7 @@ export const deriveAdaptiveNutrition = ({ todayWorkout, goals, momentum, persona
     explanation,
     phaseAwareAdjustment,
     phaseMode,
+    goalBias,
     goalContext,
     travelMode,
     workoutType: todayWorkout?.type || "",
@@ -551,9 +811,15 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
   const favoriteRestaurants = favorites?.restaurants || [];
   const favoriteSafeMeals = favorites?.safeMeals || [];
   const groceryPrefs = favorites?.groceries || [];
+  const savedMealAnchors = normalizeMealAnchors(favorites?.mealAnchors || {});
+  const mealAnchors = savedMealAnchors;
   const workoutType = String(nutritionLayer?.workoutType || "").toLowerCase();
   const workoutLabel = String(nutritionLayer?.workoutLabel || dayTypeLabel || normalizedDayType || "session");
   const primaryCategory = goalContext?.primary?.category || "general_fitness";
+  const goalBias = resolveNutritionGoalBias(goalContext);
+  const mealFamily = resolveNutritionMealFamily(normalizedDayType);
+  const slotTemplates = MEAL_SLOT_LIBRARY[mealFamily] || MEAL_SLOT_LIBRARY.balanced;
+  const goalBiasNotes = GOAL_BIAS_NOTES[goalBias] || GOAL_BIAS_NOTES.general;
   const timeBucket = String(timeOfDay || "").toLowerCase() || "afternoon";
   const intakeStatus = String(loggedIntake?.status || "").toLowerCase();
   const intakeIssue = String(loggedIntake?.issue || "").toLowerCase();
@@ -567,12 +833,13 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
   const recoverySession = isRecoveryNutritionDayType(normalizedDayType) || /rest|recovery/.test(workoutType);
 
   const quickOptions = [
+    mealAnchors.emergencyOrder ? { name: "Emergency fallback", meal: mealAnchors.emergencyOrder, type: "anchor", macroFit: "fallback" } : null,
     { name: `Chipotle (${city})`, meal: "Double chicken rice bowl + fajita veg + pico", type: "restaurant", macroFit: "high_protein_high_carb" },
     { name: `CAVA (${city})`, meal: "Greens + grains bowl, double chicken, hummus on side", type: "restaurant", macroFit: "balanced" },
     { name: `Panera (${city})`, meal: "Teriyaki bowl + Greek yogurt", type: "restaurant", macroFit: "moderate" },
     { name: `Whole Foods (${city})`, meal: "Hot bar: lean protein + rice + veg", type: "grocery", macroFit: "custom" },
     { name: `Trader Joe's (${city})`, meal: "Pre-cooked chicken + microwave rice + salad kit", type: "grocery", macroFit: "budget" },
-  ];
+  ].filter(Boolean);
 
   const travelBreakfast = [
     "Hotel buffet: eggs + oatmeal + fruit",
@@ -591,75 +858,57 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
 
   const recommendations = [...favoriteSafeMeals.map(m => ({ name: m.name || "Saved safe meal", meal: m.meal || m.name, type: "saved", macroFit: "known" })), ...quickOptions]
     .slice(0, 8);
-
-  const mealStructure = (() => {
-    const breakfastBase = hardSession
-      ? "Oats + banana + whey or Greek yogurt"
-      : strengthSession
-      ? "Eggs or Greek yogurt + oats or toast"
-      : recoverySession
-      ? "Eggs or yogurt + fruit + lighter starch"
-      : "Protein breakfast + fruit + steady carbs";
-    const lunchBase = hardSession
-      ? "Rice bowl with lean protein + extra carbs + produce"
-      : strengthSession
-      ? "Protein bowl with rice/potatoes + vegetables"
-      : recoverySession
-      ? "Protein-heavy plate + vegetables + moderate carbs"
-      : "Balanced bowl with protein, carbs, and produce";
-    const dinnerBase = hardSession
-      ? "Recovery dinner: lean protein + rice/potatoes + vegetables"
-      : strengthSession
-      ? "Lift-day dinner: protein + carbs + produce"
-      : recoverySession
-      ? "Lean protein + vegetables + controlled carbs"
-      : "Protein-forward dinner + produce";
-    const snackBase = hardSession
-      ? "Banana + shake or yogurt"
-      : strengthSession
-      ? "Protein shake or Greek yogurt + fruit"
-      : "Fruit + protein snack";
-
-    const mealByTime = timeBucket === "morning"
-      ? {
-          breakfast: hardSession ? `Pre-session breakfast: ${breakfastBase}` : `Start with ${breakfastBase}`,
-          lunch: hardSession ? "Recovery lunch: lean protein + rice + produce" : lunchBase,
-          dinner: dinnerBase,
-          snack: snackBase,
-        }
-      : timeBucket === "evening"
-      ? {
-          breakfast: recoverySession ? breakfastBase : "Protein breakfast + fruit; save bigger carbs for later",
-          lunch: hardSession || strengthSession ? `Pre-session lunch: ${lunchBase}` : lunchBase,
-          dinner: hardSession || strengthSession ? `Post-session dinner: ${dinnerBase}` : dinnerBase,
-          snack: snackBase,
-        }
-      : {
-          breakfast: breakfastBase,
-          lunch: hardSession || strengthSession ? `Pre-session lunch: ${lunchBase}` : lunchBase,
-          dinner: dinnerBase,
-          snack: snackBase,
-        };
-
-    if (primaryCategory === "body_comp") {
-      mealByTime.breakfast = `${mealByTime.breakfast}; keep fats controlled and protein high`;
-      mealByTime.dinner = `${mealByTime.dinner}; plate vegetables first`;
-    } else if (primaryCategory === "strength") {
-      mealByTime.lunch = `${mealByTime.lunch}; keep an extra carb serving ready`;
-      mealByTime.snack = "Add a shake or yogurt if protein is lagging";
-    } else if (primaryCategory === "running") {
-      mealByTime.breakfast = `${mealByTime.breakfast}; do not miss carbs before quality work`;
-    }
-
-    if (missedProteinSignal || offTrackSignal) {
-      mealByTime.snack = "Reset snack: protein shake + fruit within the next hour";
-      mealByTime.dinner = `${mealByTime.dinner}; make this your protein catch-up meal`;
-    } else if (hungerSignal) {
-      mealByTime.snack = "Add a higher-volume snack: Greek yogurt, fruit, and granola";
-    }
-
-    return mealByTime;
-  })();
+  const slotLabels = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", snack: "Optional snack" };
+  const addTimingContext = (slotKey = "", text = "") => {
+    const safeText = sanitizeNutritionText(text);
+    if (!safeText) return "";
+    if (slotKey === "breakfast" && timeBucket === "morning" && hardSession) return `Pre-session: ${safeText}`;
+    if (slotKey === "breakfast" && timeBucket === "evening" && !recoverySession) return `Earlier anchor: ${safeText}`;
+    if (slotKey === "lunch" && timeBucket === "evening" && (hardSession || strengthSession)) return `Pre-session: ${safeText}`;
+    if (slotKey === "dinner" && timeBucket === "evening" && (hardSession || strengthSession)) return `Post-session: ${safeText}`;
+    if (slotKey === "lunch" && timeBucket === "morning" && hardSession) return `Recovery lunch: ${safeText}`;
+    return safeText;
+  };
+  const mealSlots = Object.keys(slotTemplates).map((slotKey) => {
+    const template = slotTemplates[slotKey] || {};
+    const anchorValue = slotKey === "breakfast"
+      ? mealAnchors.breakfast
+      : slotKey === "lunch"
+      ? mealAnchors.lunch
+      : "";
+    const resetFastSwap = slotKey === "snack"
+      ? "Reset snack: protein shake + fruit within the next hour"
+      : slotKey === "dinner"
+      ? "Catch-up dinner: lean protein + rice or potatoes + vegetables"
+      : slotKey === "lunch"
+      ? "Reset lunch: rice bowl or wrap + fruit + water"
+      : "Reset meal: protein + carb + fruit";
+    const hungerFastSwap = slotKey === "snack"
+      ? "Higher-volume snack: Greek yogurt, fruit, and granola"
+      : template.fast;
+    const fastSwapBase = missedProteinSignal || offTrackSignal
+      ? resetFastSwap
+      : hungerSignal
+      ? hungerFastSwap
+      : template.fast;
+    const travelSwapBase = slotKey === "breakfast"
+      ? template.travel
+      : mealAnchors.travelFallback || template.travel;
+    const primary = addTimingContext(slotKey, anchorValue || template.primary);
+    const fastSwap = addTimingContext(slotKey, fastSwapBase);
+    const travelSwap = addTimingContext(slotKey, travelSwapBase);
+    return {
+      key: slotKey,
+      label: slotLabels[slotKey] || slotKey,
+      primary,
+      fastSwap,
+      travelSwap,
+      note: sanitizeNutritionText(goalBiasNotes?.[slotKey] || ""),
+      savedAnchor: Boolean(anchorValue),
+      anchorSource: anchorValue ? slotKey : "",
+    };
+  });
+  const mealStructure = Object.fromEntries(mealSlots.map((slot) => [slot.key, slot.primary]));
 
   const dailyRecommendations = (() => {
     const lines = [];
@@ -696,6 +945,9 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
       : "No major intake issue is logged, so recommendations stay aligned with training demand.";
     return `${workoutLabel} sets the training demand, ${goalLine} sets the bias, ${timeBucket} shapes meal timing, and ${intakeLine}`;
   })();
+  const emergencyOrder = mealAnchors.emergencyOrder
+    || recommendations.find((option) => option?.type === "anchor" || option?.type === "restaurant")?.meal
+    || "";
 
   const groceryHooks = {
     active: true,
@@ -712,9 +964,14 @@ export const deriveRealWorldNutritionEngine = ({ location, dayType, goalContext,
     key,
     city,
     recommendations,
+    mealFamily,
+    goalBias,
+    mealAnchors,
+    mealSlots,
     mealStructure,
     dailyRecommendations,
     whyToday,
+    emergencyOrder,
     groceryHooks,
     travelBreakfast,
     defaultMealStructure,
@@ -805,11 +1062,12 @@ export const deriveGroceryExecutionSupport = ({
   const city = String(localFoodContext?.city || localFoodContext?.locationLabel || "your area").trim() || "your area";
   const preferredStore = String(localFoodContext?.groceryOptions?.[0] || favorites?.groceries?.[0]?.name || favorites?.groceries?.[0] || "your usual grocery stop").trim() || "your usual grocery stop";
   const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
+  const savedMealAnchors = normalizeMealAnchors(favorites?.mealAnchors || {});
   const savedSafeMeals = (favorites?.safeMeals || []).map(buildAnchorMealLabel).filter(Boolean);
   const savedDefaultMeals = (favorites?.defaultMeals || []).map(buildAnchorMealLabel).filter(Boolean);
   const savedTravelMeals = (favorites?.travelMeals || []).map(buildAnchorMealLabel).filter(Boolean);
   const groceryHooks = realWorldNutrition?.groceryHooks || {};
-  const weeklyFriction = String(weeklyNutritionReview?.friction?.dominantCause || "").toLowerCase();
+  const weeklyFriction = String(weeklyNutritionReview?.friction?.dominantCause || weeklyNutritionReview?.friction?.topCauses?.[0]?.key || "").toLowerCase();
   const adaptationMode = String(weeklyNutritionReview?.adaptation?.mode || "").toLowerCase();
   const travelConstraint = travelMode || weeklyFriction === "travel";
   const convenienceConstraint = ["convenience", "time_pressure", "late_day"].includes(weeklyFriction) || adaptationMode === "simplify_defaults";
@@ -854,6 +1112,9 @@ export const deriveGroceryExecutionSupport = ({
     ...modeSpecificItems,
   ]).slice(0, 8);
   const mealAnchors = dedupeBasketItems([
+    savedMealAnchors.breakfast,
+    savedMealAnchors.lunch,
+    travelConstraint ? savedMealAnchors.travelFallback : "",
     ...(travelConstraint ? savedTravelMeals : []),
     ...savedDefaultMeals,
     ...savedSafeMeals,

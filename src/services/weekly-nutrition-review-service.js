@@ -1,5 +1,6 @@
 import { normalizeActualNutritionLog, compareNutritionPrescriptionToActual } from "../modules-nutrition.js";
 import { getCurrentPrescribedDayRecord } from "./prescribed-day-history-service.js";
+import { isHardNutritionDayType, normalizeNutritionDayType } from "./nutrition-day-taxonomy-service.js";
 
 export const WEEKLY_NUTRITION_REVIEW_MODEL = "weekly_nutrition_review";
 export const WEEKLY_NUTRITION_REVIEW_VERSION = 1;
@@ -323,8 +324,9 @@ export const buildWeeklyNutritionReview = ({
   }));
   const dominantDeviation = pickDominantDeviation(deviationCounts);
   const prescribedHardTrainingDays = prescribedDays.filter((day) => (
-    ["hardrun", "longrun", "travelrun", "otf"].includes(String(day?.prescription?.dayType || "").toLowerCase())
+    isHardNutritionDayType(normalizeNutritionDayType(day?.prescription?.dayType || ""))
   ));
+  const dominantFrictionCause = topFrictionCauses[0]?.key || "";
 
   const summary = {
     model: WEEKLY_NUTRITION_REVIEW_MODEL,
@@ -399,6 +401,7 @@ export const buildWeeklyNutritionReview = ({
     },
     friction: {
       counts: frictionCounts,
+      dominantCause: dominantFrictionCause,
       topCauses: topFrictionCauses,
       summary: topFrictionCauses.length
         ? `Most common friction: ${topFrictionCauses.map((cause) => `${cause.label} (${cause.count})`).join(", ")}.`

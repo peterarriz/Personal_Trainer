@@ -96,3 +96,45 @@ test("style layering is blocked when a program is already being used as the styl
   assert.equal(assessment.outcome, COMPATIBILITY_OUTCOMES.incompatible);
   assert.ok(assessment.blockedConstraints[0].includes("style layer"));
 });
+
+test("shoulder pain does not make a running plan incompatible by default", () => {
+  const program = getProgramDefinitionById("program_half_marathon_base");
+  const athleteProfile = buildAthleteProfile({
+    goals: [{ id: "g1", active: true, category: "running", name: "Half marathon base" }],
+    daysPerWeek: 4,
+    experienceLevel: "beginner",
+    equipmentItems: ["treadmill"],
+  });
+
+  const assessment = assessProgramCompatibility({
+    programDefinition: program,
+    athleteProfile,
+    personalization: { injuryPainState: { level: "moderate_pain", area: "Shoulder" } },
+    goals: athleteProfile.goals,
+    fidelityMode: PROGRAM_FIDELITY_MODES.adaptToMe,
+  });
+
+  assert.notEqual(assessment.outcome, COMPATIBILITY_OUTCOMES.incompatible);
+  assert.equal(assessment.blockedConstraints.length, 0);
+});
+
+test("ankle pain blocks running plans that depend on impact tolerance", () => {
+  const program = getProgramDefinitionById("program_half_marathon_base");
+  const athleteProfile = buildAthleteProfile({
+    goals: [{ id: "g1", active: true, category: "running", name: "Half marathon base" }],
+    daysPerWeek: 4,
+    experienceLevel: "beginner",
+    equipmentItems: ["treadmill"],
+  });
+
+  const assessment = assessProgramCompatibility({
+    programDefinition: program,
+    athleteProfile,
+    personalization: { injuryPainState: { level: "moderate_pain", area: "Ankle" } },
+    goals: athleteProfile.goals,
+    fidelityMode: PROGRAM_FIDELITY_MODES.adaptToMe,
+  });
+
+  assert.equal(assessment.outcome, COMPATIBILITY_OUTCOMES.incompatible);
+  assert.ok(assessment.blockedConstraints.some((line) => /ankle|running|impact/i.test(line)));
+});

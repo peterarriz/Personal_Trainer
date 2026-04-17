@@ -10,7 +10,10 @@ const {
   getCurrentPrescribedDayRecord,
   getCurrentPrescribedDayRevision,
 } = require("../src/services/prescribed-day-history-service.js");
-const { buildRecoveryPrescription } = require("../src/services/recovery-supplement-service.js");
+const {
+  buildCanonicalSupplementPlan,
+  buildRecoveryPrescription,
+} = require("../src/services/recovery-supplement-service.js");
 
 const buildProgramBlock = () => ({
   id: "program_block_1",
@@ -210,4 +213,30 @@ test("recovery prescription calls out when hydration targets are not explicitly 
 
   assert.equal(recovery.hydrationSupport.targetOz, null);
   assert.match(recovery.hydrationSupport.summary, /no explicit hydration target is stored/i);
+});
+
+test("canonical supplement plan only activates supplements that match today's context", () => {
+  const supplementPlan = [
+    { name: "Creatine", contexts: ["daily"] },
+    { name: "Electrolytes", contexts: ["hard_day", "travel_day"] },
+    { name: "Magnesium", contexts: ["recovery_day"] },
+    { name: "Protein", contexts: ["if_needed"] },
+  ];
+
+  const hardDayPlan = buildCanonicalSupplementPlan({
+    dateKey: "2026-04-11",
+    training: { type: "run", nutri: "run_quality", label: "Track intervals" },
+    nutritionPrescription: { dayType: "run_quality" },
+    supplementPlan,
+  });
+  const recoveryDayPlan = buildCanonicalSupplementPlan({
+    dateKey: "2026-04-12",
+    training: { type: "rest", nutri: "recovery", label: "Rest day" },
+    nutritionPrescription: { dayType: "recovery" },
+    supplementPlan,
+  });
+
+  assert.deepEqual(hardDayPlan.items.map((item) => item.name), ["Creatine", "Electrolytes", "Protein"]);
+  assert.deepEqual(recoveryDayPlan.items.map((item) => item.name), ["Creatine", "Magnesium"]);
+  assert.equal(recoveryDayPlan.strategy, "recovery_support");
 });

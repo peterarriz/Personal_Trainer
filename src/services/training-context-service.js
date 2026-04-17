@@ -1,4 +1,8 @@
 import { dedupeStrings } from "../utils/collection-utils.js";
+import {
+  buildInjuryCapabilityProfile,
+  buildInjuryConstraintLines,
+} from "./injury-planning-service.js";
 
 export const TRAINING_ENVIRONMENT_VALUES = Object.freeze({
   home: "home",
@@ -321,25 +325,36 @@ export const deriveTrainingContextFromPersonalization = ({ personalization = {} 
 
 export const deriveActiveIssueContextFromPersonalization = ({ personalization = {} } = {}) => {
   const injuryState = personalization?.injuryPainState || {};
-  const level = sanitizeText(injuryState?.level || "none", 40).toLowerCase() || "none";
-  const area = sanitizeText(injuryState?.area || "", 80);
   const notes = sanitizeText(injuryState?.notes || "", 220);
   const explicitlyPreserved = Boolean(injuryState?.preserveForPlanning);
-  const active = level !== "none" || explicitlyPreserved;
+  const capabilityProfile = buildInjuryCapabilityProfile({
+    ...injuryState,
+    preserveForPlanning: explicitlyPreserved,
+  });
+  const active = capabilityProfile.active;
+  const structuredConstraints = active ? buildInjuryConstraintLines({
+    ...injuryState,
+    preserveForPlanning: explicitlyPreserved,
+  }) : [];
+  const activeConstraints = dedupeStrings([
+    ...(active && notes ? [notes] : []),
+    ...structuredConstraints,
+  ]);
   return {
     active,
-    level: active ? level : "none",
-    area: active ? (area || "Current issue") : "",
+    level: active ? capabilityProfile.level : "none",
+    area: active ? (capabilityProfile.area || "Current issue") : "",
     notes: active ? notes : "",
     preserved: explicitlyPreserved,
+    capabilityProfile,
     source: active
-      ? level !== "none"
+      ? capabilityProfile.level !== "none"
         ? "active_issue"
         : "preserved_issue"
       : notes
       ? TRAINING_CONTEXT_SOURCES.staleCarryover
       : TRAINING_CONTEXT_SOURCES.unknown,
-    activeConstraints: active && notes ? [notes] : [],
+    activeConstraints,
     historicalNotes: !active && notes ? notes : "",
   };
 };

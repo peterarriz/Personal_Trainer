@@ -96,6 +96,52 @@ test("grocery execution support switches to travel basket without claiming live 
   assert.match(support.locationContextLine, /examples only/i);
 });
 
+test("grocery execution support falls back to weekly top friction cause when dominantCause is not stored", () => {
+  const support = deriveGroceryExecutionSupport({
+    nutritionLayer: {
+      dayType: "run_quality",
+      travelMode: false,
+    },
+    realWorldNutrition: {
+      mealStructure: {
+        breakfast: "Overnight oats + whey",
+        lunch: "Chicken rice bowl",
+      },
+    },
+    weeklyNutritionReview: {
+      friction: {
+        topCauses: [{ key: "travel", label: "Travel", count: 2 }],
+        summary: "Travel keeps showing up as the main source of drift.",
+      },
+      adaptation: {
+        mode: "simplify_defaults",
+      },
+    },
+    favorites: {
+      mealAnchors: {
+        breakfast: "Overnight oats + whey",
+        lunch: "Chicken rice bowl",
+        travelFallback: "Airport eggs + fruit + protein shake",
+      },
+    },
+    localFoodContext: {
+      city: "Denver",
+      groceryOptions: ["Hotel market"],
+      locationPermissionGranted: true,
+    },
+    savedLocation: { status: "granted" },
+    dayType: "run_quality",
+    travelMode: false,
+    recoveryDay: false,
+    hardDay: true,
+    strengthDay: false,
+  });
+
+  assert.equal(support.basketType, "travel_hotel_mini_fridge_basket");
+  assert.ok(support.mealAnchors.includes("Airport eggs + fruit + protein shake"));
+  assert.match(support.weeklyExecutionLine, /travel/i);
+});
+
 test("grocery execution support ties recovery baskets to weekly simplification needs", () => {
   const support = deriveGroceryExecutionSupport({
     nutritionLayer: {

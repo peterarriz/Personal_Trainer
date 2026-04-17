@@ -1,4 +1,5 @@
 import { appendProvenanceSidecar, buildProvenanceEvent, PROVENANCE_ACTORS } from "./services/provenance-service.js";
+import { AFFECTED_AREAS, normalizeInjuryArea } from "./services/injury-planning-service.js";
 import {
   isHardNutritionDayType,
   isLongEnduranceNutritionDayType,
@@ -30,7 +31,6 @@ export const COACH_TOOL_ACTIONS = {
 };
 
 const PAIN_LEVELS = ["none", "mild_tightness", "moderate_pain", "sharp_pain_stop"];
-export const AFFECTED_AREAS = ["Achilles", "calf", "knee", "shin", "hip", "general fatigue"];
 
 const sanitizeText = (value = "", maxLength = 120) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 const clampNumberCoachEngine = (value, min, max, fallback = min) => {
@@ -50,7 +50,7 @@ const inferPainLevel = (msg) => {
 export const detectCoachSignals = (input) => {
   const msg = String(input || "").toLowerCase();
   return {
-    pain: /(pain|hurt|achilles|knee|shin|calf|injury|flare)/.test(msg),
+    pain: /(pain|hurt|achilles|ankle|foot|knee|shin|calf|hamstring|hip|back|shoulder|elbow|wrist|neck|injury|flare)/.test(msg),
     travel: /(travel|hotel|airport|trip|road)/.test(msg),
     missed: /(missed|skip|couldn't|didn't)/.test(msg),
     fatigue: /(fatigue|tired|exhausted|sleep|burned)/.test(msg),
@@ -224,7 +224,7 @@ export const deterministicCoachPacket = ({ input, todayWorkout, currentWeek, log
   const promptKind = inferCoachPromptKind(input, s);
   const voiceMode = inferCoachVoiceMode(momentum);
   const painLevel = inferPainLevel(input);
-  const area = AFFECTED_AREAS.find(a => input.toLowerCase().includes(a.toLowerCase())) || "Achilles";
+  const area = normalizeInjuryArea(input) || "Achilles";
   const planningBasis = planComposer?.planningBasis || null;
 
   const notices = [];

@@ -1,5 +1,6 @@
 import { PROGRAM_FIDELITY_MODES } from "./program-catalog-service.ts";
 import { isStyleCompatibleWithProgram } from "./style-overlay-service.ts";
+import { buildInjuryCapabilityProfile } from "./injury-planning-service.js";
 
 export const COMPATIBILITY_OUTCOMES = Object.freeze({
   compatible: "compatible",
@@ -57,10 +58,12 @@ const resolveActiveGoalTypes = (goals = []) => uniqueStrings(
     .map((goal) => normalizeGoalType(goal?.resolvedGoal?.planningCategory || goal?.category || goal?.resolvedGoal?.goalFamily || ""))
 );
 
+const resolveInjuryProfile = (personalization = {}) => buildInjuryCapabilityProfile(personalization?.injuryPainState || {});
+
 const hasRunningImpactConcern = (personalization = {}, goals = []) => {
-  const injuryLevel = String(personalization?.injuryPainState?.level || "none").trim().toLowerCase();
+  const injuryProfile = resolveInjuryProfile(personalization);
   const runningGoalActive = resolveActiveGoalTypes(goals).includes("running");
-  return injuryLevel !== "none" && runningGoalActive;
+  return Boolean(runningGoalActive && injuryProfile.active && (injuryProfile.runningRestricted || injuryProfile.impactRestricted || injuryProfile.conditioningRestricted));
 };
 
 const evaluateSchedule = ({
@@ -204,22 +207,31 @@ const evaluateInjury = ({
   personalization = {},
   goals = [],
 } = {}) => {
-  const injuryLevel = String(personalization?.injuryPainState?.level || "none").trim().toLowerCase();
-  if (injuryLevel === "none") return { mismatch: null, blocked: false, scorePenalty: 0, changes: [] };
+  const injuryProfile = resolveInjuryProfile(personalization);
+  if (!injuryProfile.active) return { mismatch: null, blocked: false, scorePenalty: 0, changes: [] };
   const enduranceHeavy = String(programDefinition?.category || "") === "endurance";
-  if (enduranceHeavy || hasRunningImpactConcern(personalization, goals)) {
+  const strengthHeavy = String(programDefinition?.category || "") === "strength";
+  if ((enduranceHeavy || hasRunningImpactConcern(personalization, goals)) && (injuryProfile.runningRestricted || injuryProfile.impactRestricted || injuryProfile.conditioningRestricted)) {
     return {
-      mismatch: "Your current injury context makes a literal version of this plan hard to trust right now.",
+      mismatch: `${injuryProfile.area} symptoms currently limit the running or impact demands this plan depends on.`,
       blocked: true,
       scorePenalty: 30,
-      changes: ["Wait for symptoms to settle or use a more protective option."],
+      changes: ["Use a lower-impact option or wait until running tolerance settles."],
+    };
+  }
+  if (strengthHeavy && injuryProfile.lowerBodyLoadingRestricted && injuryProfile.upperBodyPushRestricted && injuryProfile.upperBodyPullRestricted) {
+    return {
+      mismatch: `${injuryProfile.area} symptoms currently limit both the lower-body and upper-body lifting lanes this plan needs.`,
+      blocked: true,
+      scorePenalty: 28,
+      changes: ["Use a more protective block until one training lane is clearly available again."],
     };
   }
   return {
-    mismatch: "This plan needs some protective adjustments around your current injury context.",
+    mismatch: `${injuryProfile.area} symptoms call for movement-specific substitutions, not a literal copy of the template.`,
     blocked: false,
     scorePenalty: 12,
-    changes: ["Use Adapt to me mode and keep exercise substitutions conservative."],
+    changes: ["Use Adapt to me mode and keep substitutions focused on the unaffected movement lanes."],
   };
 };
 

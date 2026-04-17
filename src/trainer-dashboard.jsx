@@ -3,7 +3,7 @@ import { DEFAULT_PLANNING_HORIZON_WEEKS, composeGoalNativePlan, normalizeGoals, 
 import { createAuthStorageModule, buildStorageStatus, classifyStorageError, STORAGE_STATUS_REASONS } from "./modules-auth-storage.js";
 import { getGoalContext, normalizeActualNutritionLog, resolveNutritionActualLogStoreCompat, compareNutritionPrescriptionToActual, getPlaceRecommendations, buildGroceryBasket, deriveGroceryExecutionSupport, mergeActualNutritionLogUpdate, applyHydrationQuickAdd } from "./modules-nutrition.js";
 import { DEFAULT_DAILY_CHECKIN, CHECKIN_STATUS_OPTIONS, CHECKIN_FEEL_OPTIONS, parseMicroCheckin, deriveClosedLoopValidationLayer, resolveEffectiveStatus, buildPlannedDayRecord, comparePlannedDayToActual } from "./modules-checkins.js";
-import { COACH_TOOL_ACTIONS, AFFECTED_AREAS, deterministicCoachPacket } from "./modules-coach-engine.js";
+import { COACH_TOOL_ACTIONS, deterministicCoachPacket } from "./modules-coach-engine.js";
 import { buildCheckinReadSummary, buildWeeklyPlanningCoachBrief, buildTodayWhyNowSentence, buildMacroShiftLine, buildEasierSessionsObservation, buildSkippedQualityDecision, buildWeeklyConsistencyAnchor, buildBadWeekTriageResponse } from "./prompts/coach-text.js";
 import { SettingsIcon } from "./icons.js";
 import { assembleCanonicalPlanDay, resolvePlanDayStateInputs, resolvePlanDayTimeOfDay } from "./services/plan-day-service.js";
@@ -127,6 +127,13 @@ import {
   trainingEnvironmentToDisplayMode,
   trainingEquipmentToEnvironmentCode,
 } from "./services/training-context-service.js";
+import {
+  AFFECTED_AREAS,
+  buildInjuryCapabilityProfile,
+  buildInjuryRuleResult as buildSharedInjuryRuleResult,
+  INJURY_LIMITATION_OPTIONS,
+  INJURY_SIDE_OPTIONS,
+} from "./services/injury-planning-service.js";
 import {
   applyIntakeSecondaryGoalResponse,
   applyIntakeCompletenessAnswer,
@@ -2710,6 +2717,9 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
   const injuryConstraintContext = buildIntakeInjuryConstraintContext({
     injuryText: answers.injury_text,
     injuryImpact: answers.injury_impact,
+    injuryArea: answers.injury_area,
+    injurySide: answers.injury_side,
+    injuryLimitations: answers.injury_limitations,
   });
   const timingConstraints = [
     answers.timeline_adjustment,
@@ -2771,6 +2781,9 @@ const buildIntakePacketArgsFromAnswers = ({ answers = {}, existingMemory = [] } 
       injuryConstraintContext: {
         injuryText: injuryConstraintContext.injuryText,
         injuryImpact: injuryConstraintContext.injuryImpact,
+        injuryArea: injuryConstraintContext.injuryArea,
+        injurySide: injuryConstraintContext.injurySide,
+        injuryLimitations: injuryConstraintContext.injuryLimitations,
         constraints: injuryConstraintContext.constraints,
       },
       userProvidedConstraints: {
@@ -3480,8 +3493,12 @@ const DEFAULT_PERSONALIZATION = {
   injuryPainState: {
     level: "none",
     area: "Achilles",
+    side: "unspecified",
+    impact: "",
+    limitations: [],
     achilles: { status: "managed", painScore: 1, trend: "stable" },
     notes: "",
+    capabilities: buildInjuryCapabilityProfile({ level: "none", area: "Achilles" }).capabilities,
     preserveForPlanning: false,
     activeModifications: [],
   },
@@ -3629,7 +3646,18 @@ const mergePersonalization = (base, patch) => ({
   ...patch,
   userGoalProfile: { ...(base.userGoalProfile || DEFAULT_PERSONALIZATION.userGoalProfile), ...(patch?.userGoalProfile || {}) },
   goalState: { ...(base.goalState || DEFAULT_PERSONALIZATION.goalState), ...(patch?.goalState || {}) },
-  injuryPainState: { ...base.injuryPainState, ...(patch?.injuryPainState || {}), achilles: { ...base.injuryPainState.achilles, ...(patch?.injuryPainState?.achilles || {}) } },
+  injuryPainState: {
+    ...(base.injuryPainState || DEFAULT_PERSONALIZATION.injuryPainState),
+    ...(patch?.injuryPainState || {}),
+    achilles: {
+      ...((base.injuryPainState || DEFAULT_PERSONALIZATION.injuryPainState).achilles || {}),
+      ...(patch?.injuryPainState?.achilles || {}),
+    },
+    capabilities: {
+      ...((base.injuryPainState || DEFAULT_PERSONALIZATION.injuryPainState).capabilities || {}),
+      ...(patch?.injuryPainState?.capabilities || {}),
+    },
+  },
   travelState: { ...base.travelState, ...(patch?.travelState || {}) },
   trainingContext: {
     ...(base.trainingContext || createEmptyTrainingContext()),
@@ -3699,6 +3727,7 @@ const derivePersonalization = (logs, bodyweights, previous) => {
   const latestBW = (bodyweights || []).length ? bodyweights[bodyweights.length - 1].w : PROFILE.weight;
   const startBW = (bodyweights || []).length ? bodyweights[0].w : PROFILE.weight;
   const weightDelta = (latestBW - startBW).toFixed(1);
+  const injuryProfile = buildInjuryCapabilityProfile(base.injuryPainState || {});
   return mergePersonalization(base, {
     goalState: {
       ...base.goalState,
@@ -3712,6 +3741,9 @@ const derivePersonalization = (logs, bodyweights, previous) => {
     },
     injuryPainState: {
       ...base.injuryPainState,
+      area: injuryProfile.area || base.injuryPainState.area,
+      impact: base.injuryPainState?.impact || "",
+      capabilities: injuryProfile.capabilities,
       achilles: {
         status: achillesSignals > 2 ? "flared" : achillesSignals > 0 ? "watch" : "managed",
         painScore: Math.min(5, Math.max(1, 2 + achillesSignals)),
@@ -3736,6 +3768,7 @@ const derivePersonalization = (logs, bodyweights, previous) => {
 };
 
 const buildInjuryRuleResult = (todayWorkout, injuryState) => {
+  return buildSharedInjuryRuleResult(todayWorkout, injuryState);
   const level = injuryState?.level || "none";
   const area = injuryState?.area || "Achilles";
   if (level === "none") return { workout: todayWorkout, mods: [], why: "No active injury modifiers.", caution: null };
@@ -5819,8 +5852,35 @@ export default function TrainerDashboard() {
     persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
   }, [compoundingCoachMemory?.summaryLine, compoundingCoachMemory?.preferredMotivationStyle, compoundingCoachMemory?.injuryHistory?.join("|"), compoundingCoachMemory?.recurringBreakdowns?.map(r => `${r.week}:${r.why}`).join("|")]);
 
-  const setInjuryState = async (level, area = personalization.injuryPainState.area) => {
+  const setInjuryState = async (level, nextIssueState = {}) => {
+    const resolvedArea = typeof nextIssueState === "string"
+      ? nextIssueState
+      : nextIssueState?.area || personalization.injuryPainState.area;
+    const resolvedSide = typeof nextIssueState === "string"
+      ? personalization.injuryPainState?.side || "unspecified"
+      : nextIssueState?.side || personalization.injuryPainState?.side || "unspecified";
+    const resolvedLimitations = Array.isArray(nextIssueState?.limitations)
+      ? nextIssueState.limitations
+      : Array.isArray(personalization.injuryPainState?.limitations)
+      ? personalization.injuryPainState.limitations
+      : [];
+    const resolvedNotes = typeof nextIssueState === "string"
+      ? (personalization.injuryPainState?.notes || "")
+      : (nextIssueState?.notes ?? personalization.injuryPainState?.notes ?? "");
+    const resolvedImpact = typeof nextIssueState === "string"
+      ? (personalization.injuryPainState?.impact || "")
+      : (nextIssueState?.impact ?? personalization.injuryPainState?.impact ?? "");
     const painScore = level === "none" ? 1 : level === "mild_tightness" ? 2 : level === "moderate_pain" ? 4 : 5;
+    const injuryProfile = buildInjuryCapabilityProfile({
+      ...personalization.injuryPainState,
+      level,
+      area: resolvedArea,
+      side: resolvedSide,
+      notes: resolvedNotes,
+      impact: resolvedImpact,
+      limitations: resolvedLimitations,
+      preserveForPlanning: level !== "none",
+    });
     const updated = mergePersonalization(personalization, {
       profile: {
         ...personalization.profile,
@@ -5831,11 +5891,15 @@ export default function TrainerDashboard() {
       injuryPainState: {
         ...personalization.injuryPainState,
         level,
-        area,
+        area: injuryProfile.area || resolvedArea,
+        impact: resolvedImpact,
+        side: resolvedSide,
+        limitations: resolvedLimitations,
         preserveForPlanning: level !== "none",
-        notes: level === "none" ? "" : personalization.injuryPainState?.notes || "",
+        notes: level === "none" ? "" : resolvedNotes,
+        capabilities: injuryProfile.capabilities,
         achilles: { ...personalization.injuryPainState.achilles, status: level === "none" ? "managed" : level === "mild_tightness" ? "watch" : "flared", painScore },
-        activeModifications: level === "none" ? [] : buildInjuryRuleResult(todayWorkoutBase, { level, area }).mods,
+        activeModifications: level === "none" ? [] : buildInjuryRuleResult(todayWorkoutBase, { ...injuryProfile, level, area: injuryProfile.area || resolvedArea, side: resolvedSide, notes: resolvedNotes, impact: resolvedImpact, limitations: resolvedLimitations }).mods,
       }
     });
     setPersonalization(updated);
@@ -8291,6 +8355,9 @@ Keep it plain and specific.`;
     const injuryConstraintContext = buildIntakeInjuryConstraintContext({
       injuryText: answers.injury_text,
       injuryImpact: answers.injury_impact,
+      injuryArea: answers.injury_area,
+      injurySide: answers.injury_side,
+      injuryLimitations: answers.injury_limitations,
     });
     const sessionLength = trainingContext?.sessionDuration?.confirmed ? trainingContext.sessionDuration.value : (answers.session_length || "30");
     const coachingStyle = String(answers.coaching_style || "Balanced coaching").trim();
@@ -8507,6 +8574,11 @@ Keep it plain and specific.`;
       injuryPainState: {
         ...personalization.injuryPainState,
         level: constraints.length === 0 ? "none" : "mild_tightness",
+        area: injuryConstraintContext?.injuryArea || personalization.injuryPainState.area,
+        side: injuryConstraintContext?.injurySide || personalization.injuryPainState?.side || "unspecified",
+        impact: injuryConstraintContext?.injuryImpact || "",
+        limitations: injuryConstraintContext?.injuryLimitations || [],
+        capabilities: injuryConstraintContext?.capabilityProfile?.capabilities || personalization.injuryPainState?.capabilities || DEFAULT_PERSONALIZATION.injuryPainState.capabilities,
         notes: constraints.length === 0 ? "" : `Onboarding note: ${constraints.join("; ")}`,
       },
       environmentConfig: {
@@ -9499,6 +9571,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     const injuryQuestionContext = buildIntakeInjuryConstraintContext({
       injuryText: currentAnswers.injury_text,
       injuryImpact: currentAnswers.injury_impact,
+      injuryArea: currentAnswers.injury_area,
+      injurySide: currentAnswers.injury_side,
+      injuryLimitations: currentAnswers.injury_limitations,
     });
     return [
       {
@@ -9527,7 +9602,15 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       { key: "coaching_style", type: "buttons", message: "Last one â€” how do you want to be coached?", options: ["Keep me consistent", "Balanced coaching", "Push me (with guardrails)"] },
     ];
   };
-  const flow = useMemo(() => buildFlow(answers), [answers.training_location, answers.injury_text, initialPrompt]);
+  const flow = useMemo(() => buildFlow(answers), [
+    answers.training_location,
+    answers.injury_text,
+    answers.injury_impact,
+    answers.injury_area,
+    answers.injury_side,
+    Array.isArray(answers.injury_limitations) ? answers.injury_limitations.join("|") : "",
+    initialPrompt,
+  ]);
   const currentPrompt = flow[stepIndex] || null;
   const isCoachStreaming = Boolean(streamTargetId);
 
@@ -11547,7 +11630,10 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
   const intakeInjuryContext = useMemo(() => buildIntakeInjuryConstraintContext({
     injuryText: answers?.injury_text,
     injuryImpact: answers?.injury_impact,
-  }), [answers?.injury_text, answers?.injury_impact]);
+    injuryArea: answers?.injury_area,
+    injurySide: answers?.injury_side,
+    injuryLimitations: answers?.injury_limitations,
+  }), [answers?.injury_text, answers?.injury_impact, answers?.injury_area, answers?.injury_side, Array.isArray(answers?.injury_limitations) ? answers.injury_limitations.join("|") : ""]);
   const trainingLocationValue = String(answers?.training_location || "").trim();
   const homeEquipmentSelection = Array.isArray(answers?.home_equipment) ? answers.home_equipment : [];
   const needsHomeEquipment = trainingLocationValue === "Home" || trainingLocationValue === "Both";
@@ -11563,7 +11649,9 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
     needsHomeEquipment && homeEquipmentSelection.length === 0 && !String(answers?.home_equipment_other || "").trim()
       ? "Choose your home setup."
       : "",
-    intakeInjuryContext.hasCurrentIssue && !answers?.injury_impact ? "Pick how the current issue affects training." : "",
+    intakeInjuryContext.hasCurrentIssue && !answers?.injury_impact && !(Array.isArray(answers?.injury_limitations) && answers.injury_limitations.length > 0)
+      ? "Mark what training is limited right now."
+      : "",
   ].filter(Boolean);
   const goalsStageCanContinue = goalsStageNeeds.length === 0;
   const goalsStageCanStartFoundation = goalsStageNeeds.filter((item) => !/at least one goal/i.test(item)).length === 0;
@@ -11629,6 +11717,18 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         ...(option === "Other" || nextSelection.includes("Other")
           ? {}
           : { home_equipment_other: "" }),
+      };
+    });
+  };
+  const toggleIntakeInjuryLimitationOption = (option) => {
+    setAnswers((prev) => {
+      const currentSelection = Array.isArray(prev?.injury_limitations) ? prev.injury_limitations : [];
+      const nextSelection = currentSelection.includes(option)
+        ? currentSelection.filter((item) => item !== option)
+        : [...currentSelection, option];
+      return {
+        ...prev,
+        injury_limitations: nextSelection,
       };
     });
   };
@@ -11806,6 +11906,46 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           </button>
         );
       })}
+    </div>
+  );
+  const renderStructuredInjuryFields = ({ testIdPrefix = "injury-structure" } = {}) => (
+    <div style={{ display:"grid", gap:"0.42rem", padding:"0.65rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, background:"rgba(4,10,18,0.5)" }}>
+      <div style={{ display:"grid", gap:"0.14rem" }}>
+        <div style={{ fontSize:"0.48rem", color:"#dbe7f6", lineHeight:1.45 }}>Structured logging is preferred here.</div>
+        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>Pick the area and the movement lanes that are limited. Free text is just extra context.</div>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:"0.45rem" }}>
+        <label style={{ display:"grid", gap:"0.18rem" }}>
+          <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>AREA</span>
+          <select
+            data-testid={`${testIdPrefix}-area`}
+            value={answers?.injury_area || ""}
+            onChange={(e) => updateSimpleAnswer("injury_area", e.target.value)}
+          >
+            <option value="">No current issue</option>
+            {AFFECTED_AREAS.map((area) => <option key={`${testIdPrefix}-area-${area}`} value={area}>{area}</option>)}
+          </select>
+        </label>
+        <div style={{ display:"grid", gap:"0.18rem" }}>
+          <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>SIDE</span>
+          {renderChoiceChips({
+            items: INJURY_SIDE_OPTIONS,
+            selectedValue: answers?.injury_side || "unspecified",
+            onSelect: (value) => updateSimpleAnswer("injury_side", value),
+            testIdPrefix: `${testIdPrefix}-side`,
+          })}
+        </div>
+      </div>
+      <div style={{ display:"grid", gap:"0.18rem" }}>
+        <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>LIMITED RIGHT NOW</span>
+        {renderChoiceChips({
+          items: INJURY_LIMITATION_OPTIONS,
+          selectedValues: Array.isArray(answers?.injury_limitations) ? answers.injury_limitations : [],
+          onSelect: (value) => toggleIntakeInjuryLimitationOption(value),
+          testIdPrefix: `${testIdPrefix}-limits`,
+          multi: true,
+        })}
+      </div>
     </div>
   );
   const renderSectionLabel = (eyebrow = "", title = "", supporting = "") => (
@@ -12314,15 +12454,16 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
           ) : null}
           <div style={{ display:"grid", gap:"0.35rem" }}>
             <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT ISSUES</div>
+            {renderStructuredInjuryFields({ testIdPrefix: "intake-goals-injury-structured" })}
             <textarea
               data-testid="intake-goals-input-injury-text"
               value={answers?.injury_text || ""}
               onChange={(e) => updateSimpleAnswer("injury_text", e.target.value)}
-              placeholder="Optional. Leave blank if nothing needs protection."
+              placeholder="Optional extra context. Example: sharpest with downhill running or benching."
               rows={2}
               style={{ minHeight:82, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
             />
-            {intakeInjuryContext.hasCurrentIssue ? renderChoiceChips({
+            {(intakeInjuryContext.hasCurrentIssue || (Array.isArray(answers?.injury_limitations) && answers.injury_limitations.length > 0) || String(answers?.injury_area || "").trim()) ? renderChoiceChips({
               items: INTAKE_INJURY_IMPACT_OPTIONS,
               selectedValue: answers?.injury_impact || "",
               onSelect: (value) => updateSimpleAnswer("injury_impact", value),
@@ -12733,15 +12874,16 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         ) : null}
         <div style={{ display:"grid", gap:"0.35rem" }}>
           <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT ISSUES</div>
+          {renderStructuredInjuryFields({ testIdPrefix: "intake-goals-compact-injury-structured" })}
           <textarea
             data-testid="intake-goals-input-injury-text"
             value={answers?.injury_text || ""}
             onChange={(e) => updateSimpleAnswer("injury_text", e.target.value)}
-            placeholder="Optional. Leave blank if nothing needs protection."
+            placeholder="Optional extra context. Example: sharpest with downhill running or benching."
             rows={2}
             style={{ minHeight:82, resize:"vertical", fontSize:"0.86rem", lineHeight:1.5 }}
           />
-          {intakeInjuryContext.hasCurrentIssue ? renderChoiceChips({
+          {(intakeInjuryContext.hasCurrentIssue || (Array.isArray(answers?.injury_limitations) && answers.injury_limitations.length > 0) || String(answers?.injury_area || "").trim()) ? renderChoiceChips({
             items: INTAKE_INJURY_IMPACT_OPTIONS,
             selectedValue: answers?.injury_impact || "",
             onSelect: (value) => updateSimpleAnswer("injury_impact", value),
@@ -17085,6 +17227,9 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
   const todayLog = logs[todayKey];
   const savedPlanDayCheckin = planDayLogging?.dailyCheckin || dailyCheckins?.[todayKey] || todayLog?.checkin || {};
   const [injuryArea, setInjuryArea] = useState(personalization.injuryPainState.area || "Achilles");
+  const [injurySide, setInjurySide] = useState(personalization?.injuryPainState?.side || "unspecified");
+  const [injuryLimitations, setInjuryLimitations] = useState(Array.isArray(personalization?.injuryPainState?.limitations) ? personalization.injuryPainState.limitations : []);
+  const [injuryNotesDraft, setInjuryNotesDraft] = useState(personalization?.injuryPainState?.notes || "");
   const defaultCheckin = {
     ...DEFAULT_DAILY_CHECKIN,
     ...(savedPlanDayCheckin || {}),
@@ -17114,6 +17259,24 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
     scope: "today",
   });
   const [showInjuryPanel, setShowInjuryPanel] = useState(false);
+  useEffect(() => {
+    setInjuryArea(personalization?.injuryPainState?.area || "Achilles");
+    setInjurySide(personalization?.injuryPainState?.side || "unspecified");
+    setInjuryLimitations(Array.isArray(personalization?.injuryPainState?.limitations) ? personalization.injuryPainState.limitations : []);
+    setInjuryNotesDraft(personalization?.injuryPainState?.notes || "");
+  }, [
+    personalization?.injuryPainState?.area,
+    personalization?.injuryPainState?.side,
+    personalization?.injuryPainState?.notes,
+    Array.isArray(personalization?.injuryPainState?.limitations) ? personalization.injuryPainState.limitations.join("|") : "",
+  ]);
+  const toggleInjuryLimitation = (value) => {
+    setInjuryLimitations((current) => (
+      current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value]
+    ));
+  };
   const [strengthInputs, setStrengthInputs] = useState({});
   const [showMoreAdjustments, setShowMoreAdjustments] = useState(false);
   const [dismissedAdjustmentIds, setDismissedAdjustmentIds] = useState([]);
@@ -17277,6 +17440,7 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
     ? "Time not confirmed"
     : `${environmentSelection?.time || "30"} min`;
   const injuryLevel = personalization.injuryPainState.level;
+  const injuryCapabilityProfile = injuryRule?.profile || activeIssueContext?.capabilityProfile || buildInjuryCapabilityProfile(personalization?.injuryPainState || {});
   const injuryBadge = injuryLevel === "none" ? null : injuryLevel === "mild_tightness" ? { label: "Mild", color: C.blue } : injuryLevel === "moderate_pain" ? { label: "Moderate", color: C.amber } : { label: "Pain/Stop", color: C.red };
   const contextStatusTone = !activeTrainingContext?.environment?.confirmed || !activeTrainingContext?.equipmentAccess?.confirmed
     ? C.amber
@@ -18046,16 +18210,84 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
             <div className="sect-title" style={{ color:C.amber }}>INJURY STATUS</div>
             <button onClick={()=>setShowInjuryPanel(false)} style={{ background:"none", border:"none", color:"#64748b", cursor:"pointer", fontSize:"0.7rem" }}>Ã—</button>
           </div>
-          <select value={injuryArea} onChange={e=>setInjuryArea(e.target.value)} style={{ fontSize:"0.56rem", marginBottom:"0.35rem" }}>
-            {AFFECTED_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
-          </select>
+          <div style={{ display:"grid", gap:"0.35rem", marginBottom:"0.38rem" }}>
+            <label style={{ display:"grid", gap:"0.16rem" }}>
+              <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>AREA</span>
+              <select value={injuryArea} onChange={e=>setInjuryArea(e.target.value)} style={{ fontSize:"0.56rem" }}>
+                {AFFECTED_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </label>
+            <div style={{ display:"grid", gap:"0.16rem" }}>
+              <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>SIDE</span>
+              <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
+                {INJURY_SIDE_OPTIONS.map((option) => {
+                  const selected = injurySide === option.value;
+                  return (
+                    <button
+                      key={`today-injury-side-${option.value}`}
+                      className={selected ? "btn btn-primary" : "btn"}
+                      onClick={() => setInjurySide(option.value)}
+                      style={{ fontSize:"0.5rem", color:selected ? "#08111d" : "#dbe7f6", borderColor:selected ? "#dbe7f6" : "#324961", background:selected ? "#dbe7f6" : "transparent" }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ display:"grid", gap:"0.16rem" }}>
+              <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>LIMITED TODAY</span>
+              <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
+                {INJURY_LIMITATION_OPTIONS.map((option) => {
+                  const selected = injuryLimitations.includes(option.value);
+                  return (
+                    <button
+                      key={`today-injury-limit-${option.value}`}
+                      className={selected ? "btn btn-primary" : "btn"}
+                      onClick={() => toggleInjuryLimitation(option.value)}
+                      style={{ fontSize:"0.48rem", color:selected ? "#08111d" : "#dbe7f6", borderColor:selected ? "#dbe7f6" : "#324961", background:selected ? "#dbe7f6" : "transparent" }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <label style={{ display:"grid", gap:"0.16rem" }}>
+              <span style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>NOTES</span>
+              <textarea
+                value={injuryNotesDraft}
+                onChange={(e)=>setInjuryNotesDraft(e.target.value)}
+                placeholder="Optional context. Example: no running, bench is still fine."
+                rows={2}
+                style={{ minHeight:60, resize:"vertical", fontSize:"0.56rem", lineHeight:1.45 }}
+              />
+            </label>
+          </div>
           <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
-            <button className="btn" onClick={()=>setInjuryState("none", injuryArea)} style={{ color:C.green, borderColor:C.green+"35" }}>Clear</button>
-            <button className="btn" onClick={()=>setInjuryState("mild_tightness", injuryArea)} style={{ color:C.blue, borderColor:C.blue+"35" }}>Mild</button>
-            <button className="btn" onClick={()=>setInjuryState("moderate_pain", injuryArea)} style={{ color:C.amber, borderColor:C.amber+"35" }}>Moderate</button>
-            <button className="btn" onClick={()=>setInjuryState("sharp_pain_stop", injuryArea)} style={{ color:C.red, borderColor:C.red+"35" }}>Sharp/Stop</button>
+            <button
+              className="btn"
+              onClick={() => {
+                setInjuryLimitations([]);
+                setInjuryNotesDraft("");
+                setInjurySide("unspecified");
+                setInjuryState("none", { area: injuryArea, side: "unspecified", limitations: [], notes: "", impact: "" });
+              }}
+              style={{ color:C.green, borderColor:C.green+"35" }}
+            >
+              Clear
+            </button>
+            <button className="btn" onClick={()=>setInjuryState("mild_tightness", { area: injuryArea, side: injurySide, limitations: injuryLimitations, notes: injuryNotesDraft, impact: injuryLimitations.length ? "Structured limits selected" : "" })} style={{ color:C.blue, borderColor:C.blue+"35" }}>Mild</button>
+            <button className="btn" onClick={()=>setInjuryState("moderate_pain", { area: injuryArea, side: injurySide, limitations: injuryLimitations, notes: injuryNotesDraft, impact: injuryLimitations.length ? "Structured limits selected" : "" })} style={{ color:C.amber, borderColor:C.amber+"35" }}>Moderate</button>
+            <button className="btn" onClick={()=>setInjuryState("sharp_pain_stop", { area: injuryArea, side: injurySide, limitations: injuryLimitations, notes: injuryNotesDraft, impact: injuryLimitations.length ? "Structured limits selected" : "" })} style={{ color:C.red, borderColor:C.red+"35" }}>Sharp/Stop</button>
           </div>
           <div style={{ marginTop:"0.35rem", fontSize:"0.54rem", color:"#64748b" }}>{injuryLevel.replaceAll("_"," ")} Â· {injuryRule.why}</div>
+          {injuryCapabilityProfile?.active && (
+            <div style={{ marginTop:"0.35rem", display:"grid", gap:"0.18rem", fontSize:"0.53rem", color:"#9fb4d3", lineHeight:1.45 }}>
+              <div>Protect today: {injuryCapabilityProfile.protectedLine}</div>
+              <div>Still available: {injuryCapabilityProfile.preservedLine}</div>
+            </div>
+          )}
         </div>
       )}
 
@@ -22377,7 +22609,15 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
   const planDayWeek = planDay?.week || null;
   const localFoodContext = personalization?.localFoodContext || {};
   const savedLocation = personalization?.connectedDevices?.location || {};
-  const favorites = nutritionFavorites || DEFAULT_NUTRITION_FAVORITES;
+  const favorites = {
+    ...DEFAULT_NUTRITION_FAVORITES,
+    ...(nutritionFavorites || {}),
+    mealAnchors: {
+      ...(DEFAULT_NUTRITION_FAVORITES?.mealAnchors || {}),
+      ...(nutritionFavorites?.mealAnchors || {}),
+    },
+    supplementStack: Array.isArray(nutritionFavorites?.supplementStack) ? nutritionFavorites.supplementStack : [],
+  };
   const locationPermissionGranted = Boolean(localFoodContext?.locationPermissionGranted || savedLocation?.status === "granted");
   const locationUnavailable = !locationPermissionGranted && ["denied", "unavailable"].includes(String(localFoodContext?.locationStatus || savedLocation?.status || "").toLowerCase());
   const showNearbySection = locationPermissionGranted;
@@ -22403,6 +22643,12 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
   const [openSupplementInfo, setOpenSupplementInfo] = useState("");
   const [newSupplementName, setNewSupplementName] = useState("");
   const [newSupplementTiming, setNewSupplementTiming] = useState("");
+  const [mealAnchorDrafts, setMealAnchorDrafts] = useState({
+    breakfast: "",
+    lunch: "",
+    travelFallback: "",
+    emergencyOrder: "",
+  });
   const goalContext = getGoalContext(goals) || { primary: null, secondary: [] };
   const dayType = normalizeNutritionDayType(nutritionLayer?.dayType || todayWorkout?.nutri || NUTRITION_DAY_TYPES.runEasy);
   const city = showNearbySection ? resolvedLocationLabel : "";
@@ -22454,16 +22700,25 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
   const hydrationTargetOz = storedHydrationTargetOz || inferredHydrationTargetOz;
   const hydrationTargetLabel = storedHydrationTargetOz ? `Target ${hydrationTargetOz} oz` : `Suggested ${hydrationTargetOz} oz`;
   const hydrationPct = Math.max(0, Math.min(100, Math.round(((hydrationOz || 0) / hydrationTargetOz) * 100)));
+  const savedMealAnchors = {
+    breakfast: String(favorites?.mealAnchors?.breakfast || "").trim(),
+    lunch: String(favorites?.mealAnchors?.lunch || "").trim(),
+    travelFallback: String(favorites?.mealAnchors?.travelFallback || "").trim(),
+    emergencyOrder: String(favorites?.mealAnchors?.emergencyOrder || "").trim(),
+  };
 
   const proteinLevel = `${Math.round(resolvedTargets.p)}g`;
   const carbLevel = `${Math.round(resolvedTargets.c)}g`;
   const calorieLevel = `${Math.round(resolvedTargets.cal)} kcal`;
+  const targetChangeSummary = sanitizeDisplayText(nutritionLayer?.targetChangeSummary || macroShiftLine);
   const breakfast = realWorldNutrition?.mealStructure?.breakfast || "Greek yogurt + fruit + granola";
   const lunch = realWorldNutrition?.mealStructure?.lunch || "Protein bowl with rice/potatoes + veggies";
   const dinner = realWorldNutrition?.mealStructure?.dinner || "Lean protein + carb + vegetable";
   const snack = realWorldNutrition?.mealStructure?.snack || (hardDay ? "Banana + protein shake" : "Apple + string cheese");
+  const mealSlots = Array.isArray(realWorldNutrition?.mealSlots) ? realWorldNutrition.mealSlots : [];
   const dailyRecommendations = Array.isArray(realWorldNutrition?.dailyRecommendations) ? realWorldNutrition.dailyRecommendations : [];
   const whyThisToday = realWorldNutrition?.whyToday || macroShiftLine;
+  const emergencyOrder = sanitizeDisplayText(realWorldNutrition?.emergencyOrder || savedMealAnchors.emergencyOrder || "");
   const groceryHooks = realWorldNutrition?.groceryHooks || null;
   const customSupplementStack = Array.isArray(favorites?.supplementStack) ? favorites.supplementStack : [];
   const phaseModeLower = String(nutritionLayer?.phaseMode || "maintain").toLowerCase();
@@ -22484,65 +22739,66 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
   const shoppingDay = Number(favorites?.shoppingDay ?? 0);
   const todayDow = new Date().getDay();
   const showSundayGrocerySection = todayDow === shoppingDay || todayDow === ((shoppingDay + 6) % 7);
+  const describeSupplementPlainText = (name = "") => {
+    const lower = String(name || "").toLowerCase();
+    if (lower.includes("creatine")) return "Creatine helps your muscles produce quick energy and recover between hard efforts.";
+    if (lower.includes("protein")) return "Protein powder is a convenient way to close protein gaps when meals fall short.";
+    if (lower.includes("electrolyte")) return "Electrolytes replace sodium and minerals lost in sweat so pacing and energy stay steadier.";
+    if (lower.includes("omega")) return "Omega-3s support general recovery and joint comfort when training load builds.";
+    if (lower.includes("magnesium")) return "Magnesium supports relaxation and sleep quality, which improves recovery.";
+    if (lower.includes("vitamin d")) return "Vitamin D3 supports immune and bone function, especially if sun exposure is inconsistent.";
+    return `${name || "This supplement"} supports consistency when food or training constraints are high.`;
+  };
   const defaultSupplements = [
-    { key: "Creatine", name: "Creatine", defaultTiming: "with breakfast", defaultDose: "5g", product: "Thorne Creatine Monohydrate" },
-    { key: "Protein", name: "Protein", defaultTiming: "post-workout", defaultDose: "1 scoop", product: "Transparent Labs 100% Grass-Fed Whey" },
-    { key: "Electrolytes", name: "Electrolytes", defaultTiming: "30 min pre-run", defaultDose: "1 serving", product: "LMNT Electrolyte Drink Mix" },
-    { key: "Omega-3", name: "Omega-3", defaultTiming: "with lunch", defaultDose: "2 caps", product: "Nordic Naturals Ultimate Omega" },
-    { key: "Magnesium", name: "Magnesium", defaultTiming: "before bed", defaultDose: "400mg", product: "Doctorâ€™s Best High Absorption Magnesium" },
-    { key: "Vitamin D3", name: "Vitamin D3", defaultTiming: "with first meal", defaultDose: "1 cap", product: "NOW Vitamin D3 2000 IU" },
+    { key: "Creatine", name: "Creatine", defaultTiming: "with breakfast", defaultDose: "5g", product: "Thorne Creatine Monohydrate", contexts: ["daily"] },
+    { key: "Protein", name: "Protein", defaultTiming: "post-workout if food protein is low", defaultDose: "1 scoop", product: "Transparent Labs 100% Grass-Fed Whey", contexts: ["hard_day", "strength_day", "if_needed"] },
+    { key: "Electrolytes", name: "Electrolytes", defaultTiming: "30 min pre-run", defaultDose: "1 serving", product: "LMNT Electrolyte Drink Mix", contexts: ["hard_day", "travel_day"] },
+    { key: "Omega-3", name: "Omega-3", defaultTiming: "with lunch", defaultDose: "2 caps", product: "Nordic Naturals Ultimate Omega", contexts: ["daily"] },
+    { key: "Magnesium", name: "Magnesium", defaultTiming: "before bed", defaultDose: "400mg", product: "Doctor's Best High Absorption Magnesium", contexts: ["daily", "recovery_day"] },
+    { key: "Vitamin D3", name: "Vitamin D3", defaultTiming: "with first meal", defaultDose: "1 cap", product: "NOW Vitamin D3 2000 IU", contexts: ["daily"] },
   ];
-  const allSupplements = [
+  const approvedSupplementStack = customSupplementStack
+    .map((supplement, idx) => ({
+      key: `custom_${idx}_${String(supplement?.name || "supplement").toLowerCase().replace(/\s+/g, "_")}`,
+      name: supplement?.name || "Custom Supplement",
+      defaultTiming: supplement?.timing || "with a meal",
+      defaultDose: supplement?.dose || "1 serving",
+      product: supplement?.product || `${supplement?.name || "Brand"} (user-selected brand)`,
+      contexts: Array.isArray(supplement?.contexts) ? supplement.contexts : ["daily"],
+    }))
+    .filter((supplement, idx, arr) => idx === arr.findIndex((candidate) => String(candidate?.name || "").toLowerCase() === String(supplement?.name || "").toLowerCase()));
+  const supplementCatalog = [
     ...defaultSupplements,
-    ...customSupplementStack.map((s, idx) => ({
-      key: `custom_${idx}_${String(s?.name || "supplement").toLowerCase().replace(/\s+/g, "_")}`,
-      name: s?.name || "Custom Supplement",
-      defaultTiming: s?.timing || "with a meal",
-      defaultDose: "1 serving",
-      product: s?.product || `${s?.name || "Brand"} (user-selected brand)`,
-    })),
-  ];
-  const dedupSupplements = allSupplements.filter((supp, idx, arr) => idx === arr.findIndex(x => String(x.name).toLowerCase() === String(supp.name).toLowerCase()));
-  const supplementRows = dedupSupplements
-    .map((supp) => {
-      const lower = String(supp.name).toLowerCase();
-      if (isTravelNoSession && !["creatine", "magnesium"].some(k => lower.includes(k))) return null;
-      if (lower.includes("protein")) {
-        if (recoveryDay) return { ...supp, instruction: "1 scoop with dinner only if you're under on food today" };
-        if (sessionIntensity === "hard" || strengthDay) return { ...supp, instruction: "2 scoops post-workout if food protein is low" };
-        return { ...supp, instruction: "1 scoop post-workout (if needed)" };
-      }
-      if (lower.includes("electrolyte")) {
-        if (sessionIntensity === "hard") return { ...supp, instruction: "1 serving 30 min pre-run and 1 serving post" };
-        if (recoveryDay || isTravelNoSession) return null;
-        return { ...supp, instruction: "1 serving 30 min pre-run" };
-      }
-      if (lower.includes("creatine")) return { ...supp, instruction: `5g ${phaseModeLower === "cut" ? "with breakfast to support muscle retention" : "with breakfast"}` };
-      if (lower.includes("omega")) return { ...supp, instruction: "2 caps with lunch" };
-      if (lower.includes("magnesium")) return { ...supp, instruction: "400mg before bed" };
-      if (lower.includes("vitamin d")) return { ...supp, instruction: "1 cap with first meal" };
-      return { ...supp, instruction: `${supp.defaultDose} ${supp.defaultTiming}`.trim() };
-    })
-    .filter(Boolean);
-  const supplementInfoByName = Object.fromEntries(supplementRows.map((supp) => [
-    supp.name,
+    ...approvedSupplementStack,
+  ].filter((supplement, idx, arr) => idx === arr.findIndex((candidate) => String(candidate?.name || "").toLowerCase() === String(supplement?.name || "").toLowerCase()));
+  const supplementCatalogByName = Object.fromEntries(supplementCatalog.map((supplement) => [
+    String(supplement?.name || "").toLowerCase(),
+    supplement,
+  ]));
+  const activeSupplementItems = Array.isArray(planDay?.resolved?.supplements?.plan?.items)
+    ? planDay.resolved.supplements.plan.items
+    : [];
+  const supplementRows = activeSupplementItems.map((item, index) => {
+    const catalog = supplementCatalogByName[String(item?.name || "").toLowerCase()] || {};
+    return {
+      key: item?.id || `active_supplement_${index}`,
+      name: item?.name || catalog.name || "Supplement",
+      instruction: [item?.dose || catalog.defaultDose || "", item?.timing || catalog.defaultTiming || ""].filter(Boolean).join(" ").trim(),
+      purpose: item?.purpose || catalog.purpose || "",
+      product: item?.product || catalog.product || "",
+      plain: describeSupplementPlainText(item?.name || catalog.name || "Supplement"),
+    };
+  });
+  const supplementInfoByName = Object.fromEntries([
+    ...supplementCatalog,
+    ...supplementRows,
+  ].map((supplement) => [
+    supplement.name,
     {
-      plain: supp.name.toLowerCase().includes("creatine")
-        ? "Creatine helps your muscles produce quick energy and recover between hard efforts."
-        : supp.name.toLowerCase().includes("protein")
-        ? "Protein powder is a convenient way to close protein gaps when meals fall short."
-        : supp.name.toLowerCase().includes("electrolyte")
-        ? "Electrolytes replace sodium and minerals lost in sweat so pacing and energy stay steadier."
-        : supp.name.toLowerCase().includes("omega")
-        ? "Omega-3s support general recovery and joint comfort when training load builds."
-        : supp.name.toLowerCase().includes("magnesium")
-        ? "Magnesium supports relaxation and sleep quality, which improves recovery."
-        : supp.name.toLowerCase().includes("vitamin d")
-        ? "Vitamin D3 supports immune and bone function, especially if sun exposure is inconsistent."
-        : `${supp.name} supports consistency when food/training constraints are high.`,
-      why: `Included for your active goals: ${(goals || []).filter(g => g.active).map(g => g.name).slice(0, 2).join(" + ") || "performance consistency"}.`,
+      plain: describeSupplementPlainText(supplement.name),
+      why: `Included for your active goals: ${(goals || []).filter((goal) => goal.active).map((goal) => goal.name).slice(0, 2).join(" + ") || "performance consistency"}.`,
       stop: "Reduce or pause if your clinician advises, if labs indicate no need, or if GI side effects persist for more than a week.",
-      product: `${supp.product} â€” Amazon or brand direct.`,
+      product: supplement.product ? `${supplement.product} - Amazon or brand direct.` : "Use the brand and dose you already tolerate well.",
     },
   ]));
   const mealMacroPlan = [
@@ -22562,6 +22818,7 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
     }), { p: 0, c: 0, f: 0 });
     return { ...m, p, c, f, running };
   });
+  const mealSlotByKey = Object.fromEntries(mealSlots.map((slot) => [slot.key, slot]));
 
   const todayKey = new Date().toISOString().split("T")[0];
   const actualNutritionToday = nutritionActualLogs?.[todayKey] || planDay?.resolved?.nutrition?.actual || normalizeActualNutritionLog({ dateKey: todayKey, feedback: {} });
@@ -22595,13 +22852,16 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
     || surfaceModel?.preferenceAndAdaptationLine
     || nutritionProvenance
   );
-  const hasStoredSupplementPlan = Array.isArray(supplementPlan?.items) && supplementPlan.items.length > 0;
-  const showSupplementChecklist = hasStoredSupplementPlan && supplementRows.length > 0;
+  const hasStoredSupplementPlan = activeSupplementItems.length > 0;
+  const showSupplementChecklist = supplementRows.length > 0;
   const supplementPrescriptionLine = hasStoredSupplementPlan
-    ? `Stored plan: ${supplementPlan.items.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" â€¢ ")}`
-    : supplementRows.length
-    ? "No explicit supplement plan is stored for today. The checklist below is suggested support only."
-    : "No explicit supplement plan is stored for today.";
+    ? `Active today: ${activeSupplementItems.slice(0, 3).map((item) => `${item.name} (${item.timing})`).join(" • ")}`
+    : approvedSupplementStack.length
+    ? "You have an approved supplement stack, but nothing is active for today's training and recovery context."
+    : "No supplement stack is approved yet. Add only the supplements you actually use.";
+  const approvedSupplementLine = approvedSupplementStack.length
+    ? `${approvedSupplementStack.length} approved item${approvedSupplementStack.length === 1 ? "" : "s"} stored for contextual use.`
+    : "Approved supplements are opt-in. Nothing becomes a checklist until you add it here.";
   const hydrationSupportLine = storedHydrationTargetOz
     ? recoveryPrescription?.hydrationSupport?.summary || `Stored hydration target: ${Math.round(storedHydrationTargetOz)} oz.`
     : "No explicit hydration target is stored for today. The tracker below uses a suggested baseline from bodyweight and session load.";
@@ -22628,6 +22888,14 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
     hardDay,
     strengthDay,
   });
+  useEffect(() => {
+    setMealAnchorDrafts({
+      breakfast: savedMealAnchors.breakfast,
+      lunch: savedMealAnchors.lunch,
+      travelFallback: savedMealAnchors.travelFallback,
+      emergencyOrder: savedMealAnchors.emergencyOrder,
+    });
+  }, [savedMealAnchors.breakfast, savedMealAnchors.lunch, savedMealAnchors.travelFallback, savedMealAnchors.emergencyOrder]);
   useEffect(() => {
     if (!actualNutritionToday?.loggedAt) {
       setNutritionCheck(EMPTY_NUTRITION_CHECK);
@@ -22695,11 +22963,40 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
     setSupplementTaken(nextTaken);
     await persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken: nextTaken }, "Supplement update saved.");
   };
+  const saveMealAnchors = async () => {
+    const nextAnchors = {
+      breakfast: String(mealAnchorDrafts?.breakfast || "").trim(),
+      lunch: String(mealAnchorDrafts?.lunch || "").trim(),
+      travelFallback: String(mealAnchorDrafts?.travelFallback || "").trim(),
+      emergencyOrder: String(mealAnchorDrafts?.emergencyOrder || "").trim(),
+    };
+    await saveNutritionFavorites({ ...favorites, mealAnchors: nextAnchors });
+    announceNutritionSave("Meal anchors saved.");
+  };
+  const toggleApprovedSupplement = async (supplement) => {
+    const nextName = String(supplement?.name || "").trim();
+    if (!nextName) return;
+    const exists = approvedSupplementStack.some((item) => String(item?.name || "").toLowerCase() === nextName.toLowerCase());
+    const nextStack = exists
+      ? approvedSupplementStack.filter((item) => String(item?.name || "").toLowerCase() !== nextName.toLowerCase())
+      : [
+          ...approvedSupplementStack,
+          {
+            name: supplement.name,
+            timing: supplement.defaultTiming,
+            dose: supplement.defaultDose,
+            product: supplement.product,
+            contexts: supplement.contexts || ["daily"],
+          },
+        ];
+    await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
+    announceNutritionSave(exists ? "Supplement removed from approved stack." : "Supplement added to approved stack.");
+  };
   const addCustomSupplement = async () => {
     if (!newSupplementName.trim() || !newSupplementTiming.trim()) return;
     const nextStack = [
-      ...(favorites?.supplementStack || []),
-      { name: newSupplementName.trim(), timing: newSupplementTiming.trim() },
+      ...approvedSupplementStack,
+      { name: newSupplementName.trim(), timing: newSupplementTiming.trim(), contexts: ["daily"] },
     ];
     await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
     setNewSupplementName("");
@@ -22707,7 +23004,7 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
     announceNutritionSave("Supplement defaults saved.");
   };
   const removeCustomSupplement = async (name) => {
-    const nextStack = (favorites?.supplementStack || []).filter((x) => String(x?.name || "").toLowerCase() !== String(name || "").toLowerCase());
+    const nextStack = approvedSupplementStack.filter((x) => String(x?.name || "").toLowerCase() !== String(name || "").toLowerCase());
     await saveNutritionFavorites({ ...favorites, supplementStack: nextStack });
     announceNutritionSave("Supplement defaults saved.");
   };
@@ -22721,7 +23018,9 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
     ? sanitizeDisplayText(nutritionComparison?.summary || "Nutrition logged.")
     : "Log a quick outcome once the day settles so today's prescription and actual intake stay separated.";
   const savedFallbackMeal = sanitizeDisplayText(
-    favorites?.safeMeals?.[0]?.meal
+    savedMealAnchors.lunch
+    || savedMealAnchors.breakfast
+    || favorites?.safeMeals?.[0]?.meal
     || favorites?.safeMeals?.[0]?.name
     || favorites?.defaultMeals?.[0]?.meal
     || favorites?.defaultMeals?.[0]?.name
@@ -22730,7 +23029,9 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
   const fastFallback = locationAwareOrder || (showNearbySection
     ? `${fastest.name}: ${fastest.meal}`
     : nutritionLayer?.travelMode
-    ? travelBreakfast[0]
+    ? savedMealAnchors.travelFallback || travelBreakfast[0]
+    : emergencyOrder
+    ? `Emergency order: ${emergencyOrder}`
     : savedFallbackMeal
     ? `Saved default: ${savedFallbackMeal}`
     : "Use your default: protein + carb + fruit + water.");
@@ -22741,6 +23042,27 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
     : hasSavedStorePreference
     ? `${store}: ${(groceryHooks?.priorityItems || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`
     : `Suggested staples: ${(groceryHooks?.priorityItems || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`;
+  const approvedSupplementNames = new Set(
+    approvedSupplementStack.map((supplement) => String(supplement?.name || "").toLowerCase())
+  );
+  const approvedCustomSupplements = approvedSupplementStack.filter((supplement) => (
+    !defaultSupplements.some((preset) => String(preset?.name || "").toLowerCase() === String(supplement?.name || "").toLowerCase())
+  ));
+  const breakfastAnchorSuggestion = sanitizeDisplayText(mealSlotByKey.breakfast?.primary || breakfast);
+  const lunchAnchorSuggestion = sanitizeDisplayText(mealSlotByKey.lunch?.primary || lunch);
+  const travelAnchorSuggestion = sanitizeDisplayText(
+    savedMealAnchors.travelFallback
+    || mealSlotByKey.breakfast?.travelSwap
+    || mealSlotByKey.lunch?.travelSwap
+    || travelBreakfast[0]
+  );
+  const emergencyOrderLine = emergencyOrder || "No emergency takeout order is saved yet.";
+  const travelOrGroceryTitle = nutritionLayer?.travelMode ? "TRAVEL OPTION" : "GROCERY HOOK";
+  const travelOrGroceryLine = nutritionLayer?.travelMode
+    ? travelAnchorSuggestion
+    : hasSavedStorePreference
+    ? `${store}: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`
+    : `Suggested staples: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`;
 
   return (
     <div className="fi" data-testid="nutrition-tab" style={{ display:"grid", gap:"0.75rem" }}>
@@ -22751,6 +23073,11 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
           <div data-testid="nutrition-canonical-session-label" style={{ fontSize:"0.54rem", color:"#f8fafc", lineHeight:1.45 }}>{canonicalNutritionLabel}</div>
           {!!canonicalNutritionReason && (
             <div data-testid="nutrition-canonical-reason" style={{ fontSize:"0.49rem", color:"#9fb2d2", lineHeight:1.45 }}>{canonicalNutritionReason}</div>
+          )}
+          {!!targetChangeSummary && (
+            <div data-testid="nutrition-target-change-summary" style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {targetChangeSummary}
+            </div>
           )}
           {nutritionSaveAck && <div data-testid="nutrition-save-status" role="status" style={{ fontSize:"0.5rem", color:C.green, lineHeight:1.45 }}>{nutritionSaveAck}</div>}
         </div>
@@ -22785,6 +23112,25 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
                 <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{meal.p}g protein â€¢ {meal.c}g carbs â€¢ {meal.f}g fat</div>
               </div>
               <div style={{ fontSize:"0.5rem", color:"#c7d5ea", lineHeight:1.45 }}>{meal.text}</div>
+              {(() => {
+                const slot = mealSlotByKey[meal.key] || {};
+                return (
+                  <div style={{ display:"grid", gap:"0.14rem", marginTop:"0.1rem" }}>
+                    <div style={{ fontSize:"0.44rem", color:"#64748b", letterSpacing:"0.08em" }}>PRIMARY</div>
+                    <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{slot.primary || meal.text}</div>
+                    <div style={{ fontSize:"0.44rem", color:"#64748b", letterSpacing:"0.08em", marginTop:"0.08rem" }}>FAST SWAP</div>
+                    <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{slot.fastSwap || fastFallback}</div>
+                    <div style={{ fontSize:"0.44rem", color:"#64748b", letterSpacing:"0.08em", marginTop:"0.08rem" }}>TRAVEL SWAP</div>
+                    <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{slot.travelSwap || travelAnchorSuggestion}</div>
+                    {!!slot.note && (
+                      <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45, marginTop:"0.08rem" }}>{slot.note}</div>
+                    )}
+                    {slot.savedAnchor && (
+                      <div style={{ fontSize:"0.46rem", color:C.green, lineHeight:1.45 }}>Saved anchor is driving this slot.</div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           ))}
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.35rem" }}>
@@ -22793,16 +23139,57 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
               <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{fastFallback}</div>
             </div>
             <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
-              <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{nutritionLayer?.travelMode ? "TRAVEL OPTION" : "GROCERY HOOK"}</div>
-              <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>
-                {nutritionLayer?.travelMode
-                  ? travelBreakfast[0]
-                  : hasSavedStorePreference
-                  ? `${store}: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`
-                  : `Suggested staples: ${(groceryHooks?.priorityItems || basket?.items || []).slice(0, 4).join(", ") || "lean protein, fruit, easy carbs, hydration"}`}
-              </div>
+              <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{travelOrGroceryTitle}</div>
+              <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{travelOrGroceryLine}</div>
+            </div>
+            <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.5rem 0.55rem", display:"grid", gap:"0.14rem" }}>
+              <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>EMERGENCY ORDER</div>
+              <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{emergencyOrderLine}</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div data-testid="nutrition-meal-anchors" className="card card-subtle" style={{ borderColor:C.blue+"24" }}>
+        <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
+          <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>SAVED MEAL ANCHORS</div>
+          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
+            Save the meals you actually repeat so this section stays practical and can adapt without becoming generic.
+          </div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.35rem" }}>
+          <label style={{ display:"grid", gap:"0.16rem" }}>
+            <span style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>DEFAULT BREAKFAST</span>
+            <input value={mealAnchorDrafts.breakfast} onChange={(e)=>setMealAnchorDrafts((current)=>({ ...current, breakfast:e.target.value }))} placeholder="Greek yogurt + berries + granola" />
+          </label>
+          <label style={{ display:"grid", gap:"0.16rem" }}>
+            <span style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>DEFAULT LUNCH</span>
+            <input value={mealAnchorDrafts.lunch} onChange={(e)=>setMealAnchorDrafts((current)=>({ ...current, lunch:e.target.value }))} placeholder="Chicken rice bowl + fruit" />
+          </label>
+          <label style={{ display:"grid", gap:"0.16rem" }}>
+            <span style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>TRAVEL FALLBACK</span>
+            <input value={mealAnchorDrafts.travelFallback} onChange={(e)=>setMealAnchorDrafts((current)=>({ ...current, travelFallback:e.target.value }))} placeholder="Egg bites + oatmeal + banana" />
+          </label>
+          <label style={{ display:"grid", gap:"0.16rem" }}>
+            <span style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>EMERGENCY TAKEOUT</span>
+            <input value={mealAnchorDrafts.emergencyOrder} onChange={(e)=>setMealAnchorDrafts((current)=>({ ...current, emergencyOrder:e.target.value }))} placeholder="Chipotle double chicken bowl" />
+          </label>
+        </div>
+        <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap", marginTop:"0.45rem" }}>
+          <button className="btn" onClick={()=>setMealAnchorDrafts((current)=>({ ...current, breakfast: breakfastAnchorSuggestion }))} style={{ fontSize:"0.5rem", borderColor:"#2a3b56", color:"#dbe7f6" }}>
+            Use today's breakfast
+          </button>
+          <button className="btn" onClick={()=>setMealAnchorDrafts((current)=>({ ...current, lunch: lunchAnchorSuggestion }))} style={{ fontSize:"0.5rem", borderColor:"#2a3b56", color:"#dbe7f6" }}>
+            Use today's lunch
+          </button>
+          <button className="btn btn-primary" onClick={saveMealAnchors} style={{ fontSize:"0.5rem" }}>
+            Save anchors
+          </button>
+        </div>
+        <div style={{ display:"grid", gap:"0.14rem", marginTop:"0.42rem" }}>
+          <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>Breakfast suggestion: {breakfastAnchorSuggestion}</div>
+          <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>Lunch suggestion: {lunchAnchorSuggestion}</div>
+          <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>Travel fallback: {travelAnchorSuggestion}</div>
         </div>
       </div>
 
@@ -22887,6 +23274,11 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
       <div className="card card-subtle">
         <div className="sect-title" style={{ color:C.blue, marginBottom:"0.35rem" }}>HYDRATION / SUPPLEMENTS</div>
         <div style={{ display:"grid", gap:"0.42rem" }}>
+          <div style={{ display:"grid", gap:"0.14rem" }}>
+            <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{hydrationSupportLine}</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>{supplementPrescriptionLine}</div>
+            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{approvedSupplementLine}</div>
+          </div>
           <button className="btn" onClick={()=>logHydration(12)} style={{ width:"100%", display:"block", textAlign:"left", borderColor:"#2a3b56", padding:"0.42rem 0.46rem" }}>
             <div style={{ display:"flex", justifyContent:"space-between", fontSize:"0.56rem", color:"#dbe7f6", marginBottom:"0.22rem" }}>
               <span>{Math.round(hydrationOz)} oz logged</span>
@@ -22899,7 +23291,9 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
           </button>
           {!showSupplementChecklist && (
             <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
-              No supplement checklist is shown until a stored supplement plan is attached to today.
+              {approvedSupplementStack.length
+                ? "Approved stack saved. Nothing in it is active for today's training and recovery context."
+                : "No approved supplement stack yet. Add only the supplements you actually use."}
             </div>
           )}
           {showSupplementChecklist && (
@@ -22908,7 +23302,7 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
                 <div key={`${supp.name}_${i}`} style={{ background:"#0f172a", border:"1px solid #1e293b", borderRadius:10, padding:"0.42rem 0.48rem" }}>
                   <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto", gap:"0.35rem", alignItems:"center" }}>
                     <button className="btn" onClick={()=>toggleSupplementTaken(supp.name)} style={{ width:24, minWidth:24, height:24, padding:0, borderColor:"#2d435f", color:supplementTaken?.[supp.name] ? C.green : "#64748b", background:"transparent", fontSize:"0.62rem" }}>
-                      {supplementTaken?.[supp.name] ? "?" : ""}
+                      {supplementTaken?.[supp.name] ? "x" : ""}
                     </button>
                     <div>
                       <div style={{ fontSize:"0.56rem", color:"#dbe7f6" }}>{supp.name}</div>
@@ -22925,6 +23319,53 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
               ))}
             </div>
           )}
+          <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.52rem 0.56rem", display:"grid", gap:"0.28rem" }}>
+            <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>APPROVED STACK</div>
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              Turn on only the supplements you actually use. The checklist above then appears only when they are relevant today.
+            </div>
+            <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
+              {defaultSupplements.map((supplement) => {
+                const isApproved = approvedSupplementNames.has(String(supplement?.name || "").toLowerCase());
+                return (
+                  <button
+                    key={supplement.key}
+                    className="btn"
+                    onClick={()=>toggleApprovedSupplement(supplement)}
+                    style={{
+                      fontSize:"0.48rem",
+                      borderColor:isApproved ? C.green : "#2a3b56",
+                      color:isApproved ? C.green : "#dbe7f6",
+                      background:isApproved ? `${C.green}12` : "transparent",
+                    }}
+                  >
+                    {isApproved ? `Remove ${supplement.name}` : `Add ${supplement.name}`}
+                  </button>
+                );
+              })}
+            </div>
+            {approvedCustomSupplements.length > 0 && (
+              <div style={{ display:"grid", gap:"0.18rem" }}>
+                {approvedCustomSupplements.map((supplement) => (
+                  <div key={`approved_custom_${supplement.key}`} style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
+                    <div style={{ fontSize:"0.48rem", color:"#dbe7f6", lineHeight:1.45 }}>
+                      {supplement.name} / {supplement.defaultTiming}
+                    </div>
+                    <button className="btn" onClick={()=>removeCustomSupplement(supplement.name)} style={{ fontSize:"0.46rem", borderColor:"#2a3b56", color:"#8fa5c8" }}>
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr) auto", gap:"0.3rem", alignItems:"start" }}>
+              <input value={newSupplementName} onChange={(e)=>setNewSupplementName(e.target.value)} placeholder="Custom supplement" />
+              <input value={newSupplementTiming} onChange={(e)=>setNewSupplementTiming(e.target.value)} placeholder="Timing" />
+              <button className="btn btn-primary" onClick={addCustomSupplement} disabled={!newSupplementName.trim() || !newSupplementTiming.trim()} style={{ fontSize:"0.48rem", opacity:newSupplementName.trim() && newSupplementTiming.trim() ? 1 : 0.5 }}>
+                Add
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -22932,9 +23373,16 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
         <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Meal guide and why</summary>
         <div style={{ display:"grid", gap:"0.3rem", marginTop:"0.45rem" }}>
           <div style={{ fontSize:"0.53rem", color:"#dbe7f6", lineHeight:1.5 }}>{whyThisToday}</div>
-          {[breakfast, lunch, dinner, snack].filter(Boolean).map((meal, index) => (
-            <div key={`${meal}_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
-              {["Breakfast", "Lunch", "Dinner", "Snack"][index]}: {meal}
+          {(mealSlots.length ? mealSlots : [
+            { key: "breakfast", label: "Breakfast", primary: breakfast, fastSwap: "", travelSwap: "" },
+            { key: "lunch", label: "Lunch", primary: lunch, fastSwap: "", travelSwap: "" },
+            { key: "dinner", label: "Dinner", primary: dinner, fastSwap: "", travelSwap: "" },
+            { key: "snack", label: "Optional snack", primary: snack, fastSwap: "", travelSwap: "" },
+          ]).map((slot, index) => (
+            <div key={`${slot.key}_${index}`} style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.45 }}>
+              {slot.label}: {slot.primary}
+              {slot.fastSwap ? ` | Fast swap: ${slot.fastSwap}` : ""}
+              {slot.travelSwap ? ` | Travel swap: ${slot.travelSwap}` : ""}
             </div>
           ))}
         </div>

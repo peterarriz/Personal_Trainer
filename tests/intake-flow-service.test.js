@@ -53,33 +53,50 @@ test("injury follow-up options stay plain-English and deterministic", () => {
 });
 
 test("injury constraint context folds the follow-up chip into the plain-English intake note", () => {
-  assert.deepEqual(
-    buildIntakeInjuryConstraintContext({
-      injuryText: "Right Achilles gets cranky with speed work.",
-      injuryImpact: "Limits running",
-    }),
-    {
-      hasCurrentIssue: true,
-      injuryText: "Right Achilles gets cranky with speed work. (Limits running)",
-      rawInjuryText: "Right Achilles gets cranky with speed work.",
-      injuryImpact: "Limits running",
-      constraints: ["Right Achilles gets cranky with speed work. (Limits running)"],
-    }
-  );
+  const context = buildIntakeInjuryConstraintContext({
+    injuryText: "Right Achilles gets cranky with speed work.",
+    injuryImpact: "Limits running",
+  });
+
+  assert.equal(context.hasCurrentIssue, true);
+  assert.equal(context.injuryText, "Right Achilles gets cranky with speed work. (Limits running)");
+  assert.equal(context.rawInjuryText, "Right Achilles gets cranky with speed work.");
+  assert.equal(context.injuryImpact, "Limits running");
+  assert.equal(context.injuryArea, "Achilles");
+  assert.deepEqual(context.constraints, ["Right Achilles gets cranky with speed work. (Limits running)"]);
+  assert.match(context.movementSummary || "", /Achilles mild tightness/i);
+  assert.equal(context.capabilityProfile?.runningRestricted, true);
 });
 
 test("injury constraint context stays empty when the user says nothing is current", () => {
-  assert.deepEqual(
-    buildIntakeInjuryConstraintContext({
-      injuryText: "Nothing current",
-      injuryImpact: "Not sure",
-    }),
-    {
-      hasCurrentIssue: false,
-      injuryText: "Nothing current",
-      rawInjuryText: "Nothing current",
-      injuryImpact: "Not sure",
-      constraints: [],
-    }
-  );
+  const context = buildIntakeInjuryConstraintContext({
+    injuryText: "Nothing current",
+    injuryImpact: "Not sure",
+  });
+
+  assert.equal(context.hasCurrentIssue, false);
+  assert.equal(context.injuryText, "Nothing current");
+  assert.equal(context.rawInjuryText, "Nothing current");
+  assert.equal(context.injuryImpact, "Not sure");
+  assert.equal(context.injuryArea, "");
+  assert.equal(context.capabilityProfile, null);
+  assert.equal(context.movementSummary, "");
+  assert.deepEqual(context.constraints, []);
+});
+
+test("structured injury input works even when no free-text note is provided", () => {
+  const context = buildIntakeInjuryConstraintContext({
+    injuryArea: "Shoulder",
+    injurySide: "right",
+    injuryLimitations: ["upper_body_push", "overhead"],
+    injuryImpact: "Limits lifting",
+  });
+
+  assert.equal(context.hasCurrentIssue, true);
+  assert.equal(context.injuryArea, "Shoulder");
+  assert.equal(context.injurySide, "right");
+  assert.deepEqual(context.injuryLimitations, ["upper_body_push", "overhead"]);
+  assert.match(context.injuryText, /Shoulder/i);
+  assert.equal(context.capabilityProfile?.upperBodyPushRestricted, true);
+  assert.equal(context.capabilityProfile?.runningRestricted, false);
 });
