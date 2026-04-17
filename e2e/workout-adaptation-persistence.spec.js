@@ -137,7 +137,6 @@ async function expectQuickLogNote(page, note) {
 async function openDetailedWorkoutLog(page) {
   await page.getByTestId("app-tab-log").click();
   await expect(page.getByTestId("log-tab")).toBeVisible();
-  await page.getByRole("button", { name: /open full detail entry/i }).click();
   await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
 }
 

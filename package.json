@@ -4,6 +4,8 @@
   "description": "FORMA fitness operating system for planning, logging, nutrition, recovery, and coaching",
   "scripts": {
     "build": "node scripts/build.js",
+    "build:inline": "node scripts/build.js --mode=inline",
+    "build:split": "node scripts/build.js --mode=split",
     "dev": "npm run build && npx serve dist -p 3000",
     "lab:synthetic": "node -r sucrase/register scripts/run-synthetic-athlete-lab.js --catalog expanded --count 101 --weeks 26",
     "lab:synthetic:quick": "node -r sucrase/register scripts/run-synthetic-athlete-lab.js --catalog focus --weeks 4",
@@ -20,11 +22,13 @@
     "test:ux:e2e": "playwright test e2e/ux-quality-gates.spec.js",
     "test:quality:e2e": "playwright test e2e/ux-quality-gates.spec.js e2e/sync-state.spec.js e2e/intake-goal-library.spec.js",
     "e2e": "playwright test",
+    "e2e:sync:staging": "playwright test e2e/real-sync-staging.spec.js --reporter=line",
     "e2e:adversarial": "playwright test e2e/adversarial-trust.spec.js",
     "e2e:adversarial:ci": "playwright test e2e/adversarial-trust.spec.js --reporter=line,html",
     "e2e:headed": "playwright test --headed",
     "e2e:debug": "playwright test --debug",
-    "e2e:install": "playwright install chromium"
+    "e2e:install": "playwright install chromium",
+    "perf:mobile": "node scripts/profile-mobile-performance.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",

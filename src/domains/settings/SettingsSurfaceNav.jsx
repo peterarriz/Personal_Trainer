@@ -5,7 +5,7 @@ import { SETTINGS_SURFACES } from "./settings-surface-model.js";
 export function SettingsSurfaceNav({ activeSurface = "account", onSelectSurface = () => {} }) {
   return (
     <div data-testid="settings-surface-nav" style={{ display:"grid", gap:"0.35rem" }}>
-      <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+      <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", lineHeight:1.45 }}>
         Pick the job you want to do.
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:"0.35rem" }}>
@@ -22,13 +22,13 @@ export function SettingsSurfaceNav({ activeSurface = "account", onSelectSurface 
                 textAlign:"left",
                 display:"grid",
                 gap:"0.12rem",
-                color:selected ? "#0f172a" : "#dbe7f6",
-                background:selected ? "#dbe7f6" : "#0f172a",
-                borderColor:selected ? "#dbe7f6" : "#243752",
+                color:selected ? "var(--accent-contrast)" : "var(--text-strong)",
+                background:selected ? "var(--cta-bg)" : "var(--surface-1)",
+                borderColor:selected ? "var(--cta-border)" : "var(--border)",
               }}
             >
               <span style={{ fontSize:"0.52rem" }}>{surface.label}</span>
-              <span style={{ fontSize:"0.44rem", color:selected ? "#334155" : "#8fa5c8", lineHeight:1.4 }}>{surface.helper}</span>
+              <span style={{ fontSize:"0.44rem", color:selected ? "var(--accent-contrast)" : "var(--text-soft)", lineHeight:1.4 }}>{surface.helper}</span>
             </button>
           );
         })}

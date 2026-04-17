@@ -50,6 +50,18 @@ const blockedTrackedPatterns = [
   /(^|\/)[^/]+\.(bak|orig|rej|tmp)$/i,
 ];
 
+const textGuardRoots = [/^src\//, /^api\//, /^tests\//];
+const textGuardExtensions = /\.(js|jsx|ts|tsx|md)$/i;
+const textGuardExclusions = new Set([
+  "src/services/text-format-service.js",
+]);
+const bannedTextSequences = [
+  { label: "em dash", value: "\u2014" },
+  { label: "mojibake bullet", value: "\u00c2\u00b7" },
+  { label: "mojibake multiply", value: "\u00c3\u00d7" },
+  { label: "mojibake euro-cluster", value: "\u00e2\u20ac" },
+];
+
 const unexpectedRootEntries = [...new Set(
   trackedFiles
     .map((filePath) => filePath.split("/")[0])
@@ -60,7 +72,43 @@ const blockedTrackedFiles = trackedFiles.filter((filePath) => (
   blockedTrackedPatterns.some((pattern) => pattern.test(filePath))
 ));
 
-if (unexpectedRootEntries.length || blockedTrackedFiles.length) {
+const computeLineAndColumn = (source = "", offset = 0) => {
+  const slice = source.slice(0, offset);
+  const lines = slice.split("\n");
+  return {
+    line: lines.length,
+    column: (lines.at(-1)?.length || 0) + 1,
+  };
+};
+
+const textGuardFiles = trackedFiles.filter((filePath) => (
+  !textGuardExclusions.has(filePath)
+  && textGuardExtensions.test(filePath)
+  && textGuardRoots.some((pattern) => pattern.test(filePath))
+));
+
+const bannedTextHits = [];
+for (const filePath of textGuardFiles) {
+  const absolutePath = path.join(ROOT, filePath);
+  const source = fs.readFileSync(absolutePath, "utf8");
+  bannedTextSequences.forEach(({ label, value }) => {
+    let offset = source.indexOf(value);
+    while (offset !== -1) {
+      const { line, column } = computeLineAndColumn(source, offset);
+      const lineText = source.split("\n")[line - 1] || "";
+      bannedTextHits.push({
+        filePath,
+        label,
+        line,
+        column,
+        excerpt: lineText.trim(),
+      });
+      offset = source.indexOf(value, offset + value.length);
+    }
+  });
+}
+
+if (unexpectedRootEntries.length || blockedTrackedFiles.length || bannedTextHits.length) {
   console.error("Repo hygiene check failed.");
   if (unexpectedRootEntries.length) {
     console.error("\nUnexpected tracked repo-root entries:");
@@ -69,6 +117,12 @@ if (unexpectedRootEntries.length || blockedTrackedFiles.length) {
   if (blockedTrackedFiles.length) {
     console.error("\nBlocked tracked generated/debris files:");
     blockedTrackedFiles.forEach((filePath) => console.error(`- ${filePath}`));
+  }
+  if (bannedTextHits.length) {
+    console.error("\nBanned text encoding or punctuation hits:");
+    bannedTextHits.forEach(({ filePath, label, line, column, excerpt }) => {
+      console.error(`- ${filePath}:${line}:${column} [${label}] ${excerpt}`);
+    });
   }
   process.exit(1);
 }

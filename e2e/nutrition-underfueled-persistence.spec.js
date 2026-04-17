@@ -150,7 +150,6 @@ test.describe("nutrition persistence and fuel protection", () => {
 
     await page.getByTestId("app-tab-log").click();
     await expect(page.getByTestId("log-tab")).toBeVisible();
-    await page.getByRole("button", { name: /open full detail entry/i }).click();
     await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
     const logReason = normalizeSurfaceText(await page.getByTestId("log-canonical-reason").innerText());
     expect(logReason).toBe(todayReason);

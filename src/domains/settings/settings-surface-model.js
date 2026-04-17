@@ -1,10 +1,14 @@
+import {
+  canExposeProtectedDiagnostics,
+} from "../../services/internal-access-policy-service.js";
+
 const SETTINGS_SURFACES = Object.freeze([
   { key: "account", label: "Account", helper: "Sign-in, backup, and reset" },
   { key: "profile", label: "Profile", helper: "Body, units, and athlete basics" },
   { key: "goals", label: "Goals", helper: "Edit priorities and timelines" },
   { key: "baselines", label: "Plan inputs", helper: "Needed now, nice to add, accuracy later" },
   { key: "programs", label: "Plan style", helper: "Adaptive, structured, and training bias" },
-  { key: "preferences", label: "Notifications", helper: "Reminders, defaults, and appearance" },
+  { key: "preferences", label: "Preferences", helper: "Defaults, appearance, and reminder status" },
   { key: "advanced", label: "Devices", helper: "Apple Health, Garmin, and location" },
 ]);
 
@@ -41,18 +45,15 @@ export const resolveSettingsSurfaceFromFocus = (focus = "") => {
 
 export const readSettingsDiagnosticsVisibility = ({
   debugMode = false,
+  hostname = "",
   locationSearch = "",
   storedDiagnosticsFlag = "0",
-} = {}) => {
-  if (!debugMode) return false;
-  const storedFlagEnabled = String(storedDiagnosticsFlag || "0") === "1";
-  try {
-    const params = new URLSearchParams(String(locationSearch || ""));
-    return params.get("diagnostics") === "1" || storedFlagEnabled;
-  } catch {
-    return storedFlagEnabled;
-  }
-};
+} = {}) => canExposeProtectedDiagnostics({
+  debugMode,
+  hostname,
+  locationSearch,
+  storedDiagnosticsFlag,
+});
 
 const buildSettingsAccountIdentityState = (authEmail = "") => (
   authEmail

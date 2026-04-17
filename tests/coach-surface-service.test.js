@@ -84,9 +84,11 @@ test("buildCoachAskAnythingStateModel stays advisory-only with or without AI ava
   const unavailable = buildCoachAskAnythingStateModel({ apiKey: "" });
   const available = buildCoachAskAnythingStateModel({ apiKey: "test-key" });
 
-  assert.equal(unavailable.aiAvailable, false);
+  assert.equal(unavailable.aiAvailable, true);
   assert.equal(unavailable.canMutatePlan, false);
   assert.equal(available.aiAvailable, true);
   assert.equal(available.advisoryOnly, true);
   assert.equal(available.canMutatePlan, false);
+  assert.equal(available.headline, "Answers only");
+  assert.match(available.detail, /preview a change before you accept it/i);
 });

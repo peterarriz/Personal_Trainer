@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  deriveCanonicalAthleteState,
   inferNormalizedGoalPriority,
   normalizeGoals,
 } = require("../src/services/canonical-athlete-service.js");
@@ -35,4 +36,22 @@ test("explicit numeric priority still wins over legacy role fallback", () => {
     }, 0),
     7
   );
+});
+
+test("canonical athlete state carries nutrition style and preferred cuisines from settings", () => {
+  const canonical = deriveCanonicalAthleteState({
+    goals: [{ name: "Half marathon PR", category: "running", active: true, priority: 1 }],
+    personalization: {
+      nutritionPreferenceState: {
+        style: "high carb performance",
+        preferredMeals: ["overnight oats"],
+        preferredCuisines: ["mexican", "mediterranean", "mexican"],
+      },
+      profile: { name: "Peter" },
+    },
+  });
+
+  assert.equal(canonical.userProfile.preferences.nutritionStyle, "high carb performance");
+  assert.deepEqual(canonical.userProfile.preferences.preferredMeals, ["overnight oats"]);
+  assert.deepEqual(canonical.userProfile.preferences.preferredCuisines, ["mexican", "mediterranean"]);
 });

@@ -175,6 +175,7 @@ export const assemblePlanWeekRuntime = ({
 
 export const buildFallbackProgramPreviewWeeks = ({
   currentWeek = 1,
+  startWeek = currentWeek,
   currentPlanWeek = null,
   weekTemplates = [],
   goals = [],
@@ -195,7 +196,7 @@ export const buildFallbackProgramPreviewWeeks = ({
     || {};
 
   return Array.from({ length: previewLength }).map((_, idx) => {
-    const absoluteWeek = currentWeek + idx;
+    const absoluteWeek = startWeek + idx;
     const template = weekTemplates[Math.max(0, Math.min(absoluteWeek - 1, weekTemplates.length - 1))] || weekTemplates[0] || {};
     const planWeek = buildPlanWeek({
       weekNumber: absoluteWeek,
@@ -253,10 +254,30 @@ export const resolveProgramDisplayHorizon = ({
   previewLength = 4,
 } = {}) => {
   const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon : [];
-  if (safeRollingHorizon.length > 0) return safeRollingHorizon;
+  if (safeRollingHorizon.length >= previewLength) return safeRollingHorizon.slice(0, previewLength);
+  if (safeRollingHorizon.length > 0) {
+    const seenWeeks = new Set(safeRollingHorizon.map((row) => Number(row?.absoluteWeek || 0)).filter((week) => week > 0));
+    const maxWeek = Math.max(...seenWeeks, Number(currentWeek || 1));
+    const extension = buildFallbackProgramPreviewWeeks({
+      currentWeek,
+      startWeek: maxWeek + 1,
+      currentPlanWeek,
+      weekTemplates,
+      goals,
+      planComposer,
+      momentum,
+      learningLayer,
+      weeklyCheckins,
+      failureMode,
+      environmentSelection,
+      previewLength: Math.max(0, previewLength - safeRollingHorizon.length),
+    }).filter((row) => !seenWeeks.has(Number(row?.absoluteWeek || 0)));
+    return [...safeRollingHorizon, ...extension].slice(0, previewLength);
+  }
 
   return buildFallbackProgramPreviewWeeks({
     currentWeek,
+    startWeek: currentWeek,
     currentPlanWeek,
     weekTemplates,
     goals,

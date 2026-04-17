@@ -44,9 +44,9 @@ test.describe("synthetic athlete browser probe", () => {
     await expect(page.getByTestId("metrics-baselines-section")).toContainText(/why it matters|provenance|captured/i);
 
     await page.getByTestId("app-tab-coach").click();
-    await page.getByTestId("coach-mode-button-ask_anything").click();
-    await expect(page.getByTestId("coach-mode-panel-ask_anything")).toBeVisible();
-    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Advisory|AI advisory is off/i);
+    await page.getByTestId("coach-mode-button-ask_coach").click();
+    await expect(page.getByTestId("coach-mode-panel-ask_coach")).toBeVisible();
+    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Answers only/i);
   });
 
   test("exact strength plus aesthetics flow keeps both goals visible and coach ask-anything stays non-mutating", async ({ page }) => {
@@ -76,9 +76,9 @@ test.describe("synthetic athlete browser probe", () => {
 
     await page.getByTestId("app-tab-coach").click();
     const beforeCache = await readLocalCache(page);
-    await page.getByTestId("coach-mode-button-ask_anything").click();
-    await expect(page.getByTestId("coach-mode-panel-ask_anything")).toBeVisible();
-    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Advisory|AI advisory is off/i);
+    await page.getByTestId("coach-mode-button-ask_coach").click();
+    await expect(page.getByTestId("coach-mode-panel-ask_coach")).toBeVisible();
+    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Answers only/i);
     await expect(page.getByTestId("coach-preview-accept")).toHaveCount(0);
 
     const afterCache = await readLocalCache(page);

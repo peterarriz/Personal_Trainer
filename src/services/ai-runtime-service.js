@@ -11,6 +11,7 @@ import {
 } from "../modules-ai-state.js";
 import { acceptCoachActionProposal, applyCoachActionMutation } from "../modules-coach-engine.js";
 import { buildCoachVoicePrompt, sanitizeCoachVoiceVariant } from "./intake-coach-voice-service.js";
+import { canUseClientSuppliedAiKey } from "./internal-access-policy-service.js";
 import { buildProvenanceEvent, PROVENANCE_ACTORS } from "./provenance-service.js";
 
 const DEFAULT_MODEL = "claude-3-5-haiku-latest";
@@ -35,8 +36,14 @@ export const AI_RUNTIME_TODO_PATHS = [
   },
 ];
 
-export const resolveStoredAiApiKey = ({ safeStorageGet, storageLike } = {}) => {
+export const resolveStoredAiApiKey = ({
+  safeStorageGet,
+  storageLike,
+  debugMode = false,
+  hostname = typeof window !== "undefined" ? window.location?.hostname || "" : "",
+} = {}) => {
   if (!safeStorageGet || !storageLike) return "";
+  if (!canUseClientSuppliedAiKey({ debugMode, hostname })) return "";
   return safeStorageGet(storageLike, "coach_api_key", "") || safeStorageGet(storageLike, "anthropic_api_key", "");
 };
 

@@ -31,4 +31,7 @@ test("settings domain public boundary exposes the owned settings surfaces and ho
     settingsDomain.SETTINGS_SURFACES.map((surface) => surface.key),
     ["account", "profile", "goals", "baselines", "programs", "preferences", "advanced"]
   );
+  const preferenceSurface = settingsDomain.SETTINGS_SURFACES.find((surface) => surface.key === "preferences");
+  assert.equal(preferenceSurface?.label, "Preferences");
+  assert.match(preferenceSurface?.helper || "", /appearance|reminder/i);
 });

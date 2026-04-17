@@ -208,7 +208,6 @@ test.describe("mobile surface simplification", () => {
 
     await page.getByTestId("app-tab-log").click();
     await expect(page.getByText("Detailed workout log")).toHaveCount(0);
-    await page.getByRole("button", { name: /open full detail entry/i }).click();
     await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
     const logPlan = page.getByTestId("log-detailed-entry").getByTestId("planned-session-plan");
     await expect(logPlan).toBeVisible();
@@ -271,7 +270,6 @@ test.describe("mobile surface simplification", () => {
     expect(programLabel).toBe(todayLabel);
 
     await page.getByTestId("app-tab-log").click();
-    await page.getByRole("button", { name: /open full detail entry/i }).click();
     const logLabel = normalizeSurfaceText(await page.getByTestId("log-canonical-session-label").innerText());
     expect(logLabel).toBe(todayLabel);
 
@@ -330,7 +328,7 @@ test.describe("mobile surface simplification", () => {
     await page.getByTestId("app-tab-coach").click();
     await expect(page.getByTestId("coach-tab")).toBeVisible();
     await expect(page.getByTestId("coach-mode-switcher")).toBeVisible();
-    await expect(page.getByTestId("coach-mode-panel-today_week")).toBeVisible();
+    await expect(page.getByTestId("coach-mode-panel-adjust_today")).toBeVisible();
     await expect(page.getByPlaceholder("Anthropic key (optional)")).toHaveCount(0);
     await expect(page.getByPlaceholder("Failure patterns").first()).not.toBeVisible();
 

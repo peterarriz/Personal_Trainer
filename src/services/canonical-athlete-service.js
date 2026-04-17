@@ -49,6 +49,7 @@ const DEFAULT_CANONICAL_USER_PROFILE = {
     intensityPreference: "Standard",
     nutritionStyle: "",
     preferredMeals: [],
+    preferredCuisines: [],
   },
 };
 
@@ -240,6 +241,7 @@ const buildCanonicalUserProfile = ({
         DEFAULT_CANONICAL_USER_PROFILE.preferences.nutritionStyle
       ),
       preferredMeals: dedupeStrings(nutritionPreferenceState?.preferredMeals || []),
+      preferredCuisines: dedupeStrings(nutritionPreferenceState?.preferredCuisines || []),
     },
   };
 };

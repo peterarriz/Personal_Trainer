@@ -1,27 +1,41 @@
-const MOJIBAKE_PATTERN = /(?:Ãƒ.|Ã‚|Ã¢â‚¬|Ã¢â‚¬â„¢|Ã¢â‚¬Å“|Ã¢â‚¬Â¢|Ã¢â‚¬â€œ|Ã¢â‚¬â€|Ã¢â‚¬Â¦|ï¿½)/;
+const MOJIBAKE_PATTERN = /(?:ÃƒÆ’.|Ãƒâ€š|ÃƒÂ¢Ã¢â€šÂ¬|ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢|ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ|ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢|ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“|ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â|ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦|Ã¯Â¿Â½)/;
+
 const COMMON_MOJIBAKE_REPLACEMENTS = [
-  ["Ãƒ¢Ã¢â€š¬”", "â€”"],
-  ["Ãƒ¢Ã¢â€š¬Ã‚¦", "â€¦"],
+  ["ÃƒÆ’Â¢ÃƒÂ¢Ã¢â‚¬Å¡Â¬â€", "Ã¢â‚¬â€"],
+  ["ÃƒÆ’Â¢ÃƒÂ¢Ã¢â‚¬Å¡Â¬Ãƒâ€šÂ¦", "Ã¢â‚¬Â¦"],
+  ["ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·", "\u00b7"],
+  ["ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢", "\u2022"],
+  ["ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â", "\u2014"],
+  ["ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ", "\u2013"],
+  ["ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦", "\u2026"],
+  ["ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢", "\u2019"],
+  ["ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“", "\u201c"],
+  ["ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â", "\u201d"],
+  ["ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢", "\u2192"],
+  ["ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“", "\u2191"],
+  ["ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ", "\u2193"],
+  ["ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â", "\u00d7"],
+  ["ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°", "\u00b0"],
   ["ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â·", "\u00b7"],
-  ["ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢", "\u2022"],
-  ["ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â", "\u2014"],
-  ["ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“", "\u2013"],
-  ["ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦", "\u2026"],
-  ["ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢", "\u2019"],
-  ["ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ", "\u201c"],
-  ["ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â", "\u201d"],
-  ["ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢", "\u2192"],
-  ["ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Ëœ", "\u2191"],
-  ["ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬Å“", "\u2193"],
-  ["ÃƒÆ’Ã¢â‚¬â€", "\u00d7"],
-  ["Ãƒâ€šÃ‚Â°", "\u00b0"],
   ["Ãƒâ€šÃ‚Â·", "\u00b7"],
-  ["Ã‚Â·", "\u00b7"],
-  ["Ã‚", ""],
+  ["Ãƒâ€š", ""],
 ];
 
+const SIMPLE_MOJIBAKE_NORMALIZATIONS = Object.freeze([
+  ["\u00c2\u00b7", " - "],
+  ["\u00e2\u20ac\u00a2", " - "],
+  ["\u00e2\u20ac\u201c", " - "],
+  ["\u00e2\u20ac\u201d", " - "],
+  ["\u00e2\u20ac\u00a6", "..."],
+  ["\u00e2\u20ac\u0153", "\""],
+  ["\u00e2\u20ac\u009d", "\""],
+  ["\u00e2\u20ac\u2122", "'"],
+  ["\u00c3\u00d7", "x"],
+  ["\u00c2\u00b0", " deg"],
+]);
+
 const suspiciousScore = (value = "") => {
-  const matches = String(value || "").match(/(?:Ãƒ.|Ã‚|Ã¢.|ï¿½)/g);
+  const matches = String(value || "").match(/(?:ÃƒÆ’.|Ãƒâ€š|ÃƒÂ¢.|Ã¯Â¿Â½)/g);
   return matches ? matches.length : 0;
 };
 
@@ -39,15 +53,28 @@ const decodeLatin1AsUtf8 = (value = "") => {
   }
 };
 
+const normalizeSimpleMojibake = (value = "") => {
+  let current = String(value || "");
+  SIMPLE_MOJIBAKE_NORMALIZATIONS.forEach(([broken, fixed]) => {
+    current = current.replaceAll(broken, fixed);
+  });
+  return current;
+};
+
+const normalizeSpacing = (value = "") => String(value || "")
+  .replace(/\s+-\s+-\s+/g, " - ")
+  .replace(/\s{2,}/g, " ")
+  .trim();
+
 export const repairMojibakeText = (value = "") => {
   let current = String(value || "");
-  if (!current || !MOJIBAKE_PATTERN.test(current)) return current;
+  if (!current || !MOJIBAKE_PATTERN.test(current)) return normalizeSpacing(normalizeSimpleMojibake(current));
 
   for (const [broken, fixed] of COMMON_MOJIBAKE_REPLACEMENTS) {
     current = current.replaceAll(broken, fixed);
   }
 
-  if (!MOJIBAKE_PATTERN.test(current)) return current;
+  if (!MOJIBAKE_PATTERN.test(current)) return normalizeSpacing(normalizeSimpleMojibake(current));
 
   for (let i = 0; i < 2; i += 1) {
     const decoded = decodeLatin1AsUtf8(current);
@@ -61,14 +88,25 @@ export const repairMojibakeText = (value = "") => {
     current = current.replaceAll(broken, fixed);
   }
 
-  return current;
+  return normalizeSpacing(normalizeSimpleMojibake(current));
 };
 
 export const DISPLAY_SEPARATORS = {
-  middot: " \u00b7 ",
-  bullet: " \u2022 ",
-  emDash: " \u2014 ",
+  middot: " - ",
+  bullet: " - ",
+  emDash: " - ",
 };
+
+const normalizePlainTextPunctuation = (value = "") => normalizeSimpleMojibake(String(value || ""))
+  .replace(/[\u2013\u2014]/g, " - ")
+  .replace(/\u2026/g, "...")
+  .replace(/[\u201c\u201d]/g, "\"")
+  .replace(/\u2019/g, "'")
+  .replace(/\u00d7/g, "x")
+  .replace(/\u00b0/g, " deg")
+  .replace(/\s+-\s+-\s+/g, " - ")
+  .replace(/\s{2,}/g, " ")
+  .trim();
 
 const DISPLAY_COPY_TOKEN_REPLACEMENTS = Object.freeze({
   anchor_id: "question",
@@ -137,7 +175,7 @@ const humanizeTechnicalToken = (token = "") => {
 };
 
 export const joinDisplayParts = (parts = [], separator = DISPLAY_SEPARATORS.middot) => (
-  repairMojibakeText((parts || []).filter(Boolean).join(separator))
+  normalizePlainTextPunctuation(repairMojibakeText((parts || []).filter(Boolean).join(separator)))
 );
 
 export const sanitizeDisplayCopy = (value = "") => {
@@ -154,8 +192,16 @@ export const sanitizeDisplayCopy = (value = "") => {
     return replacement ? preserveReplacementCase(token, replacement) : token;
   });
 
+  current = normalizeSimpleMojibake(current);
   return current
+    .replace(/[\u2013\u2014]/g, " - ")
+    .replace(/\u2026/g, "...")
+    .replace(/[\u201c\u201d]/g, "\"")
+    .replace(/\u2019/g, "'")
+    .replace(/\u00d7/g, "x")
+    .replace(/\u00b0/g, " deg")
     .replace(/\s+/g, " ")
     .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/\s+-\s+-\s+/g, " - ")
     .trim();
 };

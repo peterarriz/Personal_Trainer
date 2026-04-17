@@ -50,6 +50,19 @@ Scope: independent trust-path proof for persistence, adaptation, sync, and cross
   - the auth-storage layer knows how to prefer newer pending local workout and nutrition data over stale cloud copies
   - the pending marker clears after a successful replay
 
+### Signed-in degraded sync now preserves user-visible detail on the same device
+
+- Proven by `e2e/signed-in-adaptation-trust.spec.js`
+  - `retrying workout logs survive explicit recovery once cloud sync returns`
+  - `retrying nutrition logs survive explicit recovery once cloud sync returns`
+  - `signed-in degraded-sync workout reopen keeps pending local workout detail visible`
+  - `signed-in degraded-sync nutrition reopen keeps pending local nutrition detail visible`
+- Proven by `e2e/local-sync-trust.spec.js`
+  - `reload during retry keeps the pending marker and preserves the unsynced nutrition detail`
+- What this proves:
+  - during signed-in retry/outage, reload and reopen keep the pending marker and the unsynced workout or nutrition detail on the same device
+  - the explicit `Reload cloud data` recovery action can now preserve those pending mutations and reconcile them into cloud once the path recovers
+
 ## Explicitly Not Proven
 
 ### Cloud-only restore after blank-cloud sign-in
@@ -66,29 +79,15 @@ Scope: independent trust-path proof for persistence, adaptation, sync, and cross
 - Current result:
   - there is no deterministic local-vs-cloud merge proof for this path
 
-### Signed-in degraded sync preserves unsynced detail across reload or reopen
-
-- Characterized by `e2e/local-sync-trust.spec.js`
-  - `reload during retry currently keeps the pending marker but drops the unsynced nutrition detail`
-- Characterized by `e2e/signed-in-adaptation-trust.spec.js`
-  - `signed-in degraded-sync workout reopen currently keeps the pending marker but drops the unsynced workout note`
-- Characterized by `e2e/signed-in-adaptation-trust.spec.js`
-  - `retrying workout logs still have ambiguous explicit recovery semantics after sync returns`
-  - `retrying nutrition logs still have ambiguous explicit recovery semantics after sync returns`
-- Current result:
-  - the pending marker survives
-  - the user-visible unsynced detail does not
-  - even the explicit `Reload cloud data` recovery path currently clears the pending marker while dropping the unsynced workout or nutrition detail
-  - this is a real trust gap, not a missing test
-
 ### Retry recovery without duplicate adaptation
 
 - Not proven end-to-end in the browser
 - Service seam proven by `tests/auth-storage-local-authority.test.js`
   - `pending local replay after a transient failure reconciles once and does not replay again on the next identical load`
+- Browser recovery detail is now proven, but duplicate-adaptation avoidance after that recovery still is not.
 - Why browser proof is still missing:
-  - the degraded signed-in browser path drops the unsynced workout or nutrition detail before a recovery proof can be completed
   - the one-time replay contract is proven only at the storage seam today
+  - there is not yet a browser assertion that a recovered retry path changes the future plan exactly once and no more
 
 ## Current Independent Verdict
 
@@ -100,8 +99,9 @@ Scope: independent trust-path proof for persistence, adaptation, sync, and cross
   - cross-surface consistency after those local mutations
   - blank-cloud sign-in promotion
   - same-device signed-in reopen after blank-cloud sign-in
+  - same-device degraded-sync reload/reopen preserves unsynced workout and nutrition detail
+  - explicit `Reload cloud data` recovery preserves and reconciles those pending same-device mutations
 - Not proven:
   - cloud-only restore after sign-in
   - populated-cloud merge
-  - degraded signed-in reload without data loss
   - duplicate-adaptation avoidance after degraded recovery

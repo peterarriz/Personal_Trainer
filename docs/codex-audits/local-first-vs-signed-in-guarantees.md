@@ -32,9 +32,8 @@ Scope: workout and nutrition logging trust paths across signed-out local use, la
 
 - Cloud-only restore after sign-in, without the original device-local cache
 - Safe merge when the user signs into an already-populated cloud account
-- Signed-in degraded-sync reload or reopen without losing unsynced workout or nutrition detail
-- Signed-in explicit recovery via `Reload cloud data` after retry/outage without losing unsynced workout or nutrition detail
 - End-to-end retry recovery proof showing no duplicate adaptation after a degraded signed-in sync path
+- Safe conflict handling if another device changed the cloud row while this device still had pending local writes
 
 ## Practical Trust Boundary
 
@@ -42,5 +41,6 @@ Scope: workout and nutrition logging trust paths across signed-out local use, la
   - local-first logging is trustworthy on the same device
   - later blank-cloud sign-in on that same device preserves those mutations exactly
   - same-device signed-in reopen after that transition is trustworthy
+  - same-device signed-in degraded-sync reload, reopen, and explicit recovery now preserve pending workout and nutrition detail
 - Not honest current claim:
   - that all signed-in restores are equally proven across devices or after degraded sync

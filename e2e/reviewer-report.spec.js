@@ -70,7 +70,7 @@ test.describe("reviewer report export", () => {
     await page.setViewportSize({ width: 1366, height: 960 });
   });
 
-  test("settings generates a user-facing reviewer report with week summaries and plan evolution fields", async ({ page }) => {
+  test("consumer settings do not expose reviewer report tooling", async ({ page }) => {
     await freezeBrowserDate(page, "2026-04-17T12:00:00.000Z");
     await completeRunningOnboarding(page);
     await saveTodayQuickLog(page, {
@@ -83,19 +83,6 @@ test.describe("reviewer report export", () => {
     await page.getByTestId("settings-surface-account").click();
     await expect(page.getByTestId("settings-account-section")).toBeVisible();
     await page.getByTestId("settings-account-advanced").locator("summary").click();
-
-    await expect(page.getByTestId("settings-reviewer-report-card")).toBeVisible();
-    await page.getByTestId("settings-reviewer-report-generate").click();
-    await expect(page.getByTestId("settings-reviewer-report-status")).toContainText(/Generated/i);
-
-    const markdown = await page.getByTestId("settings-reviewer-report-textarea").inputValue();
-    expect(markdown).toContain("# Plan History Reviewer Report");
-    expect(markdown).toContain("## Week Summaries");
-    expect(markdown).toContain("Planned summary:");
-    expect(markdown).toContain("## Day-Level Plan Evolution");
-    expect(markdown).toContain("Original prescription:");
-    expect(markdown).toContain("Latest prescription:");
-    expect(markdown).toContain("Actual log:");
-    expect(markdown).toContain("Revision count:");
+    await expect(page.getByTestId("settings-reviewer-report-card")).toHaveCount(0);
   });
 });

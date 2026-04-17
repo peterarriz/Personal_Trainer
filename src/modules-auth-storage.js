@@ -11,6 +11,7 @@ import {
   sanitizeTrainerDataPayloadForRest,
 } from "./services/persistence-contract-service.js";
 import { buildLegacyStrengthPerformanceFromRecords, getExercisePerformanceRecordsForLog } from "./services/performance-record-service.js";
+import { SYNC_DIAGNOSTIC_EVENT_TYPES } from "./services/sync-diagnostics-service.js";
 
 export const SB_ROW = "trainer_v1";
 export const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
@@ -20,12 +21,14 @@ export const AUTH_TRANSIENT = "AUTH_TRANSIENT";
 export const AUTH_PROVIDER_UNAVAILABLE = "AUTH_PROVIDER_UNAVAILABLE";
 export const AUTH_DATA_INCOMPATIBLE = "AUTH_DATA_INCOMPATIBLE";
 export const AUTH_DELETE_NOT_CONFIGURED = "AUTH_DELETE_NOT_CONFIGURED";
+export const TRANSIENT_PERSIST_RETRY_COOLDOWN_MS = 15000;
 
 export const STORAGE_STATUS_REASONS = {
   notSignedIn: "not_signed_in",
   signedOut: "signed_out",
   accountDeleted: "account_deleted",
   deviceReset: "device_reset",
+  setupDeferred: "setup_deferred",
   authRequired: "auth_required",
   transient: "sync_temporarily_failed",
   providerUnavailable: "provider_unavailable",
@@ -144,9 +147,18 @@ const stripSyncMeta = (payload = {}) => {
   return rest;
 };
 
+const stripFingerprintNoise = (payload = {}) => {
+  const normalized = stripSyncMeta(payload || {});
+  if (!normalized || typeof normalized !== "object") return {};
+  const { ts, ...rest } = normalized;
+  return rest;
+};
+
 const createPersistedPayloadFingerprint = (payload = {}) => createStableFingerprint(
-  stripSyncMeta(payload || {})
+  stripFingerprintNoise(payload || {})
 );
+
+const shouldDeferCloudWrite = (payload = {}) => !Boolean(payload?.personalization?.profile?.onboardingComplete);
 
 const buildLocalCachePayload = ({
   payload = {},
@@ -177,7 +189,11 @@ const shouldPreferPendingLocalCache = ({
 } = {}) => {
   const localTs = normalizeSyncMetaNumber(localPayload?.ts);
   const cloudTs = normalizeSyncMetaNumber(cloudPayload?.ts);
-  return Boolean(localPayload?.syncMeta?.pendingCloudWrite) && Boolean(localTs) && (!cloudTs || localTs > cloudTs);
+  if (!Boolean(localPayload?.syncMeta?.pendingCloudWrite)) return false;
+  const localFingerprint = createPersistedPayloadFingerprint(localPayload || {});
+  const cloudFingerprint = createPersistedPayloadFingerprint(cloudPayload || {});
+  if (localFingerprint !== cloudFingerprint) return true;
+  return Boolean(localTs) && (!cloudTs || localTs > cloudTs);
 };
 
 export const decodeJwtPayload = (token) => {
@@ -210,7 +226,7 @@ export const normalizeSession = (session, fallback = null) => {
   };
 };
 
-export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePersonalization, normalizeGoals, DEFAULT_PERSONALIZATION, DEFAULT_MULTI_GOALS, analytics = null }) {
+export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePersonalization, normalizeGoals, DEFAULT_PERSONALIZATION, DEFAULT_MULTI_GOALS, analytics = null, reportSyncDiagnostic = null }) {
   const rawSupabaseUrl = (typeof window !== "undefined" ? (window.__SUPABASE_URL || "") : "").trim();
   const SB_URL = rawSupabaseUrl.replace(/\/+$/, "");
   const SB_KEY = (typeof window !== "undefined" ? (window.__SUPABASE_ANON_KEY || "") : "").trim();
@@ -224,10 +240,19 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   const persistenceWarningSink = (message, details = {}) => {
     try { logDiag?.(message, JSON.stringify(details || {})); } catch {}
   };
+  const pushSyncDiagnostic = (event = {}) => {
+    try {
+      reportSyncDiagnostic?.(event);
+    } catch {}
+  };
   let lastSyncedGoalsFingerprint = "";
   let lastSyncedCoachMemoryFingerprint = "";
   let lastPersistedPayloadFingerprint = "";
   let lastPersistedUserId = "";
+  let lastTransientPersistFailureAt = 0;
+  let lastTransientPersistFailureUserId = "";
+  let activePersistPromise = null;
+  let activePersistUserId = "";
   const trackAnalytics = ({ flow = "sync", action = "storage", outcome = "observed", props = {} } = {}) => {
     try {
       analytics?.track?.({ flow, action, outcome, props });
@@ -245,6 +270,19 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     if (message === AUTH_DELETE_NOT_CONFIGURED) return "delete_account_not_configured";
     return message.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "unknown";
   };
+  const resetTransientPersistCooldown = () => {
+    lastTransientPersistFailureAt = 0;
+    lastTransientPersistFailureUserId = "";
+  };
+  const markTransientPersistFailure = (userId = "") => {
+    lastTransientPersistFailureAt = Date.now();
+    lastTransientPersistFailureUserId = String(userId || "");
+  };
+  const isWithinTransientPersistCooldown = (userId = "") => {
+    if (!lastTransientPersistFailureAt) return false;
+    if (String(userId || "") !== lastTransientPersistFailureUserId) return false;
+    return (Date.now() - lastTransientPersistFailureAt) < TRANSIENT_PERSIST_RETRY_COOLDOWN_MS;
+  };
   const SB_CONFIG_ERROR = !SB_URL
     ? "Missing Supabase URL. Set VITE_SUPABASE_URL."
     : !hasValidSupabaseUrl
@@ -256,6 +294,57 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   const sbH = { "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + SB_KEY };
   const sbUserHeaders = (token) => ({ "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + token });
 
+  const emitLocalCacheDiagnostics = (payload = null, at = Date.now()) => {
+    pushSyncDiagnostic({
+      type: SYNC_DIAGNOSTIC_EVENT_TYPES.localCacheState,
+      at,
+      hasPendingWrites: Boolean(payload?.syncMeta?.pendingCloudWrite),
+      lastLocalMutationTs: normalizeSyncMetaNumber(payload?.syncMeta?.lastLocalMutationTs),
+      lastCloudSyncTs: normalizeSyncMetaNumber(payload?.syncMeta?.lastCloudSyncTs),
+    });
+  };
+
+  const decorateFetchError = (error, {
+    endpoint = "",
+    method = "GET",
+  } = {}) => {
+    if (!error || typeof error !== "object") return error;
+    if (!error.endpoint) error.endpoint = endpoint;
+    if (!error.method) error.method = method;
+    if (!error.supabaseErrorCode && error.code) error.supabaseErrorCode = String(error.code || "");
+    return error;
+  };
+
+  const buildResponseError = async ({
+    res,
+    endpoint = "",
+    method = "GET",
+    fallbackMessage = "Cloud request failed.",
+  } = {}) => {
+    const text = await res.text().catch(() => "");
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+    const message = String(
+      json?.message
+      || json?.error_description
+      || json?.error
+      || text
+      || fallbackMessage
+    ).trim() || fallbackMessage;
+    return buildStructuredError(message, {
+      endpoint,
+      method,
+      httpStatus: Number(res?.status || 0) || null,
+      supabaseErrorCode: String(json?.code || json?.error_code || json?.error || "").trim(),
+      responseText: String(text || "").slice(0, 400),
+      code: String(json?.code || json?.error_code || "").trim(),
+    });
+  };
+
   const localLoad = () => {
     try {
       const raw = localStorage.getItem(LOCAL_CACHE_KEY);
@@ -264,7 +353,10 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   };
 
   const localSave = (payload) => {
-    try { localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(payload)); } catch {}
+    try {
+      localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(payload));
+      emitLocalCacheDiagnostics(payload, Date.now());
+    } catch {}
   };
 
   const clearLocalCache = () => {
@@ -274,6 +366,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       } else {
         localStorage.setItem(LOCAL_CACHE_KEY, "null");
       }
+      emitLocalCacheDiagnostics(null, Date.now());
     } catch {}
   };
 
@@ -299,20 +392,28 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   };
   const authRequest = async (path, options = {}) => {
     if (SB_CONFIG_ERROR) throw new Error(AUTH_PROVIDER_UNAVAILABLE);
-    const res = await safeFetchWithTimeout(`${SB_URL}/auth/v1/${path}`, {
-      ...options,
-      headers: { "Content-Type": "application/json", "apikey": SB_KEY, ...(options.headers || {}) }
-    });
-    if (!res.ok) throw new Error(await res.text());
+    const method = String(options?.method || "GET").toUpperCase();
+    const endpoint = `auth/v1/${path}`;
+    let res = null;
+    try {
+      res = await safeFetchWithTimeout(`${SB_URL}/${endpoint}`, {
+        ...options,
+        headers: { "Content-Type": "application/json", "apikey": SB_KEY, ...(options.headers || {}) }
+      });
+    } catch (error) {
+      throw decorateFetchError(error, { endpoint, method });
+    }
+    if (!res.ok) throw await buildResponseError({ res, endpoint, method, fallbackMessage: "Auth request failed." });
     return res.status === 204 ? {} : res.json();
   };
 
-  const checkDeleteAccountAvailability = async () => {
+  const checkDeleteAccountAvailability = async (authToken = "") => {
     const startedAt = Date.now();
     const res = await safeFetchWithTimeout("/api/auth/delete-account", {
       method: "GET",
       headers: {
         "Accept": "application/json",
+        ...(authToken ? { "Authorization": `Bearer ${authToken}` } : {}),
       },
     });
     const data = await res.json().catch(() => null);
@@ -352,13 +453,41 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
 
   const refreshSession = async (refreshToken, fallbackSession = null) => {
     if (!refreshToken) return null;
+    const endpoint = "auth/v1/token?grant_type=refresh_token";
+    pushSyncDiagnostic({
+      type: SYNC_DIAGNOSTIC_EVENT_TYPES.authRefreshAttempt,
+      endpoint,
+      method: "POST",
+      source: "refresh_session",
+      at: Date.now(),
+    });
     try {
       const data = await authRequest("token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: refreshToken }) });
       const normalized = normalizeSession({ ...data, refresh_token: data?.refresh_token || refreshToken }, fallbackSession);
       if (!normalized?.access_token || !normalized?.user?.id) return null;
+      pushSyncDiagnostic({
+        type: SYNC_DIAGNOSTIC_EVENT_TYPES.authRefreshResult,
+        ok: true,
+        endpoint,
+        method: "POST",
+        source: "refresh_session",
+        httpStatus: 200,
+        at: Date.now(),
+      });
       return normalized;
     } catch (e) {
       logDiag("auth.refresh.failed", e?.message || "unknown");
+      pushSyncDiagnostic({
+        type: SYNC_DIAGNOSTIC_EVENT_TYPES.authRefreshResult,
+        ok: false,
+        endpoint,
+        method: "POST",
+        source: "refresh_session",
+        httpStatus: e?.httpStatus,
+        supabaseErrorCode: e?.supabaseErrorCode || e?.code || "",
+        errorMessage: e?.message || "",
+        at: Date.now(),
+      });
       return null;
     }
   };
@@ -498,6 +627,79 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     }
   };
 
+  const handleForgotPassword = async ({
+    authEmail,
+    setAuthError,
+    setAuthNotice,
+    redirectTo = "",
+  }) => {
+    const email = String(authEmail || "").trim();
+    setAuthError("");
+    if (typeof setAuthNotice === "function") setAuthNotice("");
+    if (!email) {
+      setAuthError("Enter your email first to receive a password reset link.");
+      return { ok: false, error: "missing_email" };
+    }
+    const startedAt = Date.now();
+    try {
+      const body = {
+        email,
+      };
+      if (String(redirectTo || "").trim()) body.redirect_to = String(redirectTo).trim();
+      const res = await safeFetchWithTimeout("/api/auth/forgot-password", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw buildStructuredError(
+          String(data?.message || "Password reset request failed."),
+          {
+            code: String(data?.code || "forgot_password_failed"),
+            detail: String(data?.detail || ""),
+            fix: String(data?.fix || ""),
+          }
+        );
+      }
+      if (typeof setAuthNotice === "function") {
+        setAuthNotice(String(data?.message || "If that email can receive recovery mail, a reset link will arrive shortly."));
+      }
+      trackAnalytics({
+        flow: "auth",
+        action: "forgot_password",
+        outcome: "success",
+        props: {
+          duration_ms: Date.now() - startedAt,
+        },
+      });
+      return { ok: true };
+    } catch (e) {
+      trackAnalytics({
+        flow: "auth",
+        action: "forgot_password",
+        outcome: "error",
+        props: {
+          duration_ms: Date.now() - startedAt,
+          error_code: classifyAnalyticsErrorCode(e),
+        },
+      });
+      if (e?.message === AUTH_PROVIDER_UNAVAILABLE) {
+        setAuthError("Cloud auth provider is unavailable or misconfigured.");
+        return { ok: false, error: AUTH_PROVIDER_UNAVAILABLE };
+      }
+      if (e?.code === "rate_limited") {
+        setAuthError("Password reset is temporarily rate limited. Try again in a few minutes.");
+        return { ok: false, error: "rate_limited" };
+      }
+      setAuthError("Password reset request failed. Try again in a moment.");
+      return { ok: false, error: e?.message || "forgot_password_failed" };
+    }
+  };
+
   const handleSignOut = async ({ authSession, setAuthSession, setStorageStatus }) => {
     const startedAt = Date.now();
     setAuthSession(null);
@@ -548,7 +750,16 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   }) => {
     setAuthError("");
     const startedAt = Date.now();
-    const diagnostics = await checkDeleteAccountAvailability();
+    const { ensured, validSession } = await withFreshSession({
+      authSession,
+      setAuthSession,
+      reason: "delete_account",
+    });
+    if (!validSession?.access_token) {
+      if (ensured?.status === "transient") throw new Error(AUTH_TRANSIENT);
+      throw new Error(AUTH_REQUIRED);
+    }
+    const diagnostics = await checkDeleteAccountAvailability(validSession.access_token);
     if (!diagnostics?.configured) {
       trackAnalytics({
         flow: "auth",
@@ -571,16 +782,6 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           configured: diagnostics?.configured,
         }
       );
-    }
-
-    const { ensured, validSession } = await withFreshSession({
-      authSession,
-      setAuthSession,
-      reason: "delete_account",
-    });
-    if (!validSession?.access_token) {
-      if (ensured?.status === "transient") throw new Error(AUTH_TRANSIENT);
-      throw new Error(AUTH_REQUIRED);
     }
 
     const res = await safeFetchWithTimeout("/api/auth/delete-account", {
@@ -660,11 +861,22 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       if (ensured?.status === "transient") throw new Error(AUTH_TRANSIENT);
       throw new Error(AUTH_REQUIRED);
     }
-    const request = async (sessionToUse) => safeFetchWithTimeout(`${SB_URL}/rest/v1/${path}`, {
-      method,
-      headers: { ...sbUserHeaders(sessionToUse.access_token), ...(method !== "GET" ? { "Prefer": "resolution=merge-duplicates" } : {}) },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
+    const normalizedMethod = String(method || "GET").toUpperCase();
+    const endpoint = `rest/v1/${path}`;
+    const request = async (sessionToUse) => {
+      try {
+        return await safeFetchWithTimeout(`${SB_URL}/${endpoint}`, {
+          method: normalizedMethod,
+          headers: { ...sbUserHeaders(sessionToUse.access_token), ...(normalizedMethod !== "GET" ? { "Prefer": "resolution=merge-duplicates" } : {}) },
+          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        });
+      } catch (error) {
+        throw decorateFetchError(error, {
+          endpoint,
+          method: normalizedMethod,
+        });
+      }
+    };
     let res = await request(validSession);
     if (res.status !== 401) return { res, sessionUsed: validSession };
     logDiag("auth.rest.401", reason);
@@ -961,41 +1173,128 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       warningSink: persistenceWarningSink,
     });
     const body = { id: `${SB_ROW}_${userId}`, user_id: userId, data: safePayload, updated_at: new Date().toISOString() };
-    const { res } = await authFetchWithRetry({
-      path: "trainer_data",
+    const endpoint = "rest/v1/trainer_data";
+    pushSyncDiagnostic({
+      type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataSaveAttempt,
+      endpoint,
       method: "POST",
-      body,
-      authSession,
-      setAuthSession,
-      reason: "sb_save",
+      source: "sb_save",
+      pendingLocalWrites: true,
+      at: Date.now(),
     });
-    if (!res.ok) throw new Error("Save failed " + res.status + ": " + await res.text());
+    try {
+      const { res } = await authFetchWithRetry({
+        path: "trainer_data",
+        method: "POST",
+        body,
+        authSession,
+        setAuthSession,
+        reason: "sb_save",
+      });
+      if (!res.ok) throw await buildResponseError({
+        res,
+        endpoint,
+        method: "POST",
+        fallbackMessage: `Save failed ${res.status}.`,
+      });
+      pushSyncDiagnostic({
+        type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataSaveResult,
+        ok: true,
+        endpoint,
+        method: "POST",
+        source: "sb_save",
+        httpStatus: res.status,
+        pendingLocalWrites: false,
+        at: Date.now(),
+      });
+    } catch (error) {
+      pushSyncDiagnostic({
+        type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataSaveResult,
+        ok: false,
+        endpoint,
+        method: "POST",
+        source: "sb_save",
+        httpStatus: error?.httpStatus,
+        supabaseErrorCode: error?.supabaseErrorCode || error?.code || "",
+        errorMessage: error?.message || "",
+        retryEligible: classifyStorageError(error)?.reason === STORAGE_STATUS_REASONS.transient,
+        pendingLocalWrites: true,
+        at: Date.now(),
+      });
+      throw error;
+    }
   };
 
   const sbLoad = async ({ authSession, setters, persistAll, setAuthSession }) => {
     const normalized = normalizeSession(authSession);
     const userId = normalized?.user?.id || authSession?.user?.id;
     if (!userId) throw new Error(AUTH_REQUIRED);
-    const { res, sessionUsed } = await authFetchWithRetry({
-      path: "trainer_data?user_id=eq." + userId,
+    const endpoint = `rest/v1/trainer_data?user_id=eq.${userId}`;
+    pushSyncDiagnostic({
+      type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataLoadAttempt,
+      endpoint,
       method: "GET",
-      authSession,
-      setAuthSession,
-      reason: "sb_load",
+      source: "sb_load",
+      at: Date.now(),
     });
-    if (!res.ok) throw new Error("Load failed " + res.status + ": " + await res.text());
+    let res = null;
+    let sessionUsed = normalized;
+    try {
+      const loadResponse = await authFetchWithRetry({
+        path: "trainer_data?user_id=eq." + userId,
+        method: "GET",
+        authSession,
+        setAuthSession,
+        reason: "sb_load",
+      });
+      res = loadResponse.res;
+      sessionUsed = loadResponse.sessionUsed;
+      if (!res.ok) throw await buildResponseError({
+        res,
+        endpoint,
+        method: "GET",
+        fallbackMessage: `Load failed ${res.status}.`,
+      });
+    } catch (error) {
+      pushSyncDiagnostic({
+        type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataLoadResult,
+        ok: false,
+        endpoint,
+        method: "GET",
+        source: "sb_load",
+        httpStatus: error?.httpStatus,
+        supabaseErrorCode: error?.supabaseErrorCode || error?.code || "",
+        errorMessage: error?.message || "",
+        retryEligible: classifyStorageError(error)?.reason === STORAGE_STATUS_REASONS.transient,
+        pendingLocalWrites: Boolean(localLoad()?.syncMeta?.pendingCloudWrite),
+        at: Date.now(),
+      });
+      throw error;
+    }
     const rows = await res.json();
     const cache = localLoad();
+    emitLocalCacheDiagnostics(cache, Date.now());
     if (rows && rows.length > 0 && rows[0].data) {
       const cloudPayload = rows[0].data;
       const preferPendingLocalCache = shouldPreferPendingLocalCache({
         localPayload: cache,
         cloudPayload,
       });
+      pushSyncDiagnostic({
+        type: SYNC_DIAGNOSTIC_EVENT_TYPES.localCacheDecision,
+        decision: preferPendingLocalCache ? "prefer_pending_local" : "cloud_authoritative",
+        reason: preferPendingLocalCache
+          ? "pending local cache is newer than the cloud copy"
+          : "cloud copy accepted as current authority",
+        localTs: normalizeSyncMetaNumber(cache?.ts),
+        cloudTs: normalizeSyncMetaNumber(cloudPayload?.ts),
+        at: Date.now(),
+      });
       const effectivePayload = preferPendingLocalCache ? cache : cloudPayload;
       try {
         lastSyncedGoalsFingerprint = createStableFingerprint(effectivePayload?.goals || []);
         lastSyncedCoachMemoryFingerprint = createStableFingerprint(effectivePayload?.personalization?.coachMemory || {});
+        resetTransientPersistCooldown();
         const runtimeState = buildCanonicalRuntimeStateFromStorage({
           storedPayload: effectivePayload,
           mergePersonalization,
@@ -1020,45 +1319,81 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         throw new Error(AUTH_DATA_INCOMPATIBLE);
       }
       if (preferPendingLocalCache) {
-        try {
-          await sbSave({
-            payload: stripSyncMeta(effectivePayload),
-            authSession: sessionUsed || normalized,
-            setAuthSession,
-          });
-          lastPersistedPayloadFingerprint = createPersistedPayloadFingerprint(effectivePayload);
-          lastPersistedUserId = String(userId || "");
-          localSave(buildLocalCachePayload({
-            payload: effectivePayload,
-            pendingCloudWrite: false,
-            syncedAt: Date.now(),
-            previousSyncMeta: effectivePayload?.syncMeta || null,
-          }));
-        } catch (e) {
+        if (shouldDeferCloudWrite(effectivePayload)) {
           localSave(buildLocalCachePayload({
             payload: effectivePayload,
             pendingCloudWrite: true,
             previousSyncMeta: effectivePayload?.syncMeta || null,
           }));
-          throw e;
+        } else {
+          try {
+          await sbSave({
+            payload: stripSyncMeta(effectivePayload),
+            authSession: sessionUsed || normalized,
+            setAuthSession,
+          });
+          resetTransientPersistCooldown();
+          lastPersistedPayloadFingerprint = createPersistedPayloadFingerprint(effectivePayload);
+          lastPersistedUserId = String(userId || "");
+          localSave(buildLocalCachePayload({
+            payload: effectivePayload,
+            pendingCloudWrite: false,
+              syncedAt: Date.now(),
+              previousSyncMeta: effectivePayload?.syncMeta || null,
+            }));
+          } catch (e) {
+            localSave(buildLocalCachePayload({
+              payload: effectivePayload,
+              pendingCloudWrite: true,
+            previousSyncMeta: effectivePayload?.syncMeta || null,
+          }));
+            throw e;
+          }
         }
       }
+      pushSyncDiagnostic({
+        type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataLoadResult,
+        ok: true,
+        endpoint,
+        method: "GET",
+        source: "sb_load",
+        httpStatus: res.status,
+        pendingLocalWrites: Boolean(localLoad()?.syncMeta?.pendingCloudWrite),
+        at: Date.now(),
+      });
     } else {
       if (cache && typeof cache === "object") {
+          pushSyncDiagnostic({
+            type: SYNC_DIAGNOSTIC_EVENT_TYPES.localCacheDecision,
+            decision: "seed_cloud_from_local_cache",
+            reason: "cloud row missing, so local cache is being promoted",
+            localTs: normalizeSyncMetaNumber(cache?.ts),
+            cloudTs: 0,
+            at: Date.now(),
+          });
           lastSyncedGoalsFingerprint = createStableFingerprint(cache?.goals || []);
           lastSyncedCoachMemoryFingerprint = createStableFingerprint(cache?.personalization?.coachMemory || {});
           const cachedRuntimeState = buildCanonicalRuntimeStateFromStorage({
             storedPayload: cache,
-            mergePersonalization,
+          mergePersonalization,
           DEFAULT_PERSONALIZATION,
           normalizeGoals,
           DEFAULT_MULTI_GOALS,
         });
-        await sbSave({
-          payload: buildPersistedTrainerPayload({ runtimeState: cachedRuntimeState }),
-          authSession: sessionUsed || normalized,
-          setAuthSession,
-        });
+        if (shouldDeferCloudWrite(cache)) {
+          localSave(buildLocalCachePayload({
+            payload: cache,
+            pendingCloudWrite: true,
+            previousSyncMeta: cache?.syncMeta || null,
+          }));
+        } else {
+          await sbSave({
+            payload: buildPersistedTrainerPayload({ runtimeState: cachedRuntimeState }),
+            authSession: sessionUsed || normalized,
+            setAuthSession,
+          });
+          resetTransientPersistCooldown();
+        }
       } else {
         await persistAll(
           {},
@@ -1077,6 +1412,16 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           {}
         );
       }
+      pushSyncDiagnostic({
+        type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataLoadResult,
+        ok: true,
+        endpoint,
+        method: "GET",
+        source: "sb_load",
+        httpStatus: res.status,
+        pendingLocalWrites: Boolean(localLoad()?.syncMeta?.pendingCloudWrite),
+        at: Date.now(),
+      });
     }
     return {
       ok: true,
@@ -1102,6 +1447,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     if (!authSession?.user?.id) {
       lastPersistedPayloadFingerprint = "";
       lastPersistedUserId = "";
+      resetTransientPersistCooldown();
       const localOnlyStatus = SB_CONFIG_ERROR
         ? buildStorageStatus({
             mode: "local",
@@ -1133,90 +1479,167 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         status: localOnlyStatus,
       };
     }
+    if (shouldDeferCloudWrite(payload)) {
+      lastPersistedPayloadFingerprint = "";
+      lastPersistedUserId = "";
+      resetTransientPersistCooldown();
+      const deferredStatus = buildStorageStatus({
+        mode: "local",
+        label: "SETUP LOCAL",
+        reason: STORAGE_STATUS_REASONS.setupDeferred,
+        detail: "Setup is still in progress. Changes stay on this device until onboarding finishes.",
+      });
+      applyStorageStatusUpdate(setStorageStatus, deferredStatus);
+      trackAnalytics({
+        flow: "sync",
+        action: "persist_all",
+        outcome: "skipped",
+        props: {
+          mode: "local_setup",
+          reason: "setup_deferred",
+          duration_ms: Date.now() - startedAt,
+        },
+      });
+      return {
+        ok: true,
+        synced: false,
+        skipped: true,
+        deferred: true,
+        status: deferredStatus,
+        reason: "setup_deferred",
+      };
+    }
     try {
       const payloadFingerprint = createPersistedPayloadFingerprint(payload || {});
       const currentUserId = String(authSession?.user?.id || "");
-      if (payloadFingerprint === lastPersistedPayloadFingerprint && currentUserId === lastPersistedUserId) {
-        const alreadyCurrentStatus = buildStorageStatus({
-          mode: "cloud",
-          label: "SYNCED",
-          reason: STORAGE_STATUS_REASONS.synced,
-          detail: "Cloud state is already current.",
-        });
+      while (activePersistPromise && currentUserId === activePersistUserId) {
+        try {
+          await activePersistPromise;
+        } catch {}
+      }
+      let persistOperation = null;
+      activePersistUserId = currentUserId;
+      persistOperation = (async () => {
+        if (isWithinTransientPersistCooldown(currentUserId)) {
+          const cooldownStatus = buildStorageStatus({
+            mode: "local",
+            label: "SYNC RETRYING",
+            reason: STORAGE_STATUS_REASONS.transient,
+            detail: "Cloud sync is still retrying in the background. Local changes remain saved on this device.",
+          });
+          applyStorageStatusUpdate(setStorageStatus, cooldownStatus);
+          trackAnalytics({
+            flow: "sync",
+            action: "persist_all",
+            outcome: "skipped",
+            props: {
+              mode: "local_retry_cooldown",
+              reason: "retry_cooldown",
+              duration_ms: Date.now() - startedAt,
+            },
+          });
+          return {
+            ok: false,
+            synced: false,
+            skipped: true,
+            cooldown: true,
+            status: cooldownStatus,
+            error: new Error(AUTH_TRANSIENT),
+          };
+        }
+        if (payloadFingerprint === lastPersistedPayloadFingerprint && currentUserId === lastPersistedUserId) {
+          resetTransientPersistCooldown();
+          const alreadyCurrentStatus = buildStorageStatus({
+            mode: "cloud",
+            label: "SYNCED",
+            reason: STORAGE_STATUS_REASONS.synced,
+            detail: "Cloud state is already current.",
+          });
+          localSave(buildLocalCachePayload({
+            payload,
+            pendingCloudWrite: false,
+            syncedAt: Date.now(),
+            previousSyncMeta: localPayload?.syncMeta || null,
+          }));
+          applyStorageStatusUpdate(setStorageStatus, alreadyCurrentStatus);
+          trackAnalytics({
+            flow: "sync",
+            action: "persist_all",
+            outcome: "success",
+            props: {
+              mode: "cloud",
+              reason: "already_current",
+              duration_ms: Date.now() - startedAt,
+            },
+          });
+          return {
+            ok: true,
+            synced: true,
+            status: alreadyCurrentStatus,
+            reason: "already_current",
+          };
+        }
+        await sbSave({ payload, authSession, setAuthSession });
+        lastPersistedPayloadFingerprint = payloadFingerprint;
+        lastPersistedUserId = currentUserId;
+        resetTransientPersistCooldown();
         localSave(buildLocalCachePayload({
           payload,
           pendingCloudWrite: false,
           syncedAt: Date.now(),
           previousSyncMeta: localPayload?.syncMeta || null,
         }));
-        applyStorageStatusUpdate(setStorageStatus, alreadyCurrentStatus);
+        const nextGoalsFingerprint = createStableFingerprint(payload?.goals || []);
+        const nextCoachMemoryFingerprint = createStableFingerprint((payload?.personalization || DEFAULT_PERSONALIZATION)?.coachMemory || {});
+        try {
+          if (nextGoalsFingerprint !== lastSyncedGoalsFingerprint) {
+            await syncGoals({ goals: payload?.goals || [], authSession, setAuthSession });
+            lastSyncedGoalsFingerprint = nextGoalsFingerprint;
+          }
+        } catch (e) {
+          logDiag("goals sync failed", e?.message || "unknown");
+        }
+        try {
+          if (nextCoachMemoryFingerprint !== lastSyncedCoachMemoryFingerprint) {
+            await syncCoachMemory({ personalization: payload?.personalization || DEFAULT_PERSONALIZATION, authSession, setAuthSession });
+            lastSyncedCoachMemoryFingerprint = nextCoachMemoryFingerprint;
+          }
+        } catch (e) {
+          logDiag("coach memory sync failed", e?.message || "unknown");
+        }
+        const syncedStatus = buildStorageStatus({
+          mode: "cloud",
+          label: "SYNCED",
+          reason: STORAGE_STATUS_REASONS.synced,
+          detail: "Cloud sync is working normally.",
+        });
+        applyStorageStatusUpdate(setStorageStatus, syncedStatus);
         trackAnalytics({
           flow: "sync",
           action: "persist_all",
           outcome: "success",
           props: {
             mode: "cloud",
-            reason: "already_current",
+            reason: "synced",
             duration_ms: Date.now() - startedAt,
           },
         });
         return {
           ok: true,
           synced: true,
-          status: alreadyCurrentStatus,
-          reason: "already_current",
-        };
-      }
-      await sbSave({ payload, authSession, setAuthSession });
-      lastPersistedPayloadFingerprint = payloadFingerprint;
-      lastPersistedUserId = currentUserId;
-      localSave(buildLocalCachePayload({
-        payload,
-        pendingCloudWrite: false,
-        syncedAt: Date.now(),
-        previousSyncMeta: localPayload?.syncMeta || null,
-      }));
-      const nextGoalsFingerprint = createStableFingerprint(payload?.goals || []);
-      const nextCoachMemoryFingerprint = createStableFingerprint((payload?.personalization || DEFAULT_PERSONALIZATION)?.coachMemory || {});
-      try {
-        if (nextGoalsFingerprint !== lastSyncedGoalsFingerprint) {
-          await syncGoals({ goals: payload?.goals || [], authSession, setAuthSession });
-          lastSyncedGoalsFingerprint = nextGoalsFingerprint;
-        }
-      } catch (e) {
-        logDiag("goals sync failed", e?.message || "unknown");
-      }
-      try {
-        if (nextCoachMemoryFingerprint !== lastSyncedCoachMemoryFingerprint) {
-          await syncCoachMemory({ personalization: payload?.personalization || DEFAULT_PERSONALIZATION, authSession, setAuthSession });
-          lastSyncedCoachMemoryFingerprint = nextCoachMemoryFingerprint;
-        }
-      } catch (e) {
-        logDiag("coach memory sync failed", e?.message || "unknown");
-      }
-      const syncedStatus = buildStorageStatus({
-        mode: "cloud",
-        label: "SYNCED",
-        reason: STORAGE_STATUS_REASONS.synced,
-        detail: "Cloud sync is working normally.",
-      });
-      applyStorageStatusUpdate(setStorageStatus, syncedStatus);
-      trackAnalytics({
-        flow: "sync",
-        action: "persist_all",
-        outcome: "success",
-        props: {
-          mode: "cloud",
+          status: syncedStatus,
           reason: "synced",
-          duration_ms: Date.now() - startedAt,
-        },
+        };
+      })();
+      let guardedPersistPromise = null;
+      guardedPersistPromise = persistOperation.finally(() => {
+        if (activePersistPromise === guardedPersistPromise) {
+          activePersistPromise = null;
+          activePersistUserId = "";
+        }
       });
-      return {
-        ok: true,
-        synced: true,
-        status: syncedStatus,
-        reason: "synced",
-      };
+      activePersistPromise = guardedPersistPromise;
+      return await guardedPersistPromise;
     } catch (e) {
       if (e?.message === AUTH_TRANSIENT) {
         logDiag("cloud.save.transient", "falling back to local while preserving session");
@@ -1224,6 +1647,12 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       lastPersistedPayloadFingerprint = "";
       logDiag("Cloud save failed, local fallback active:", e.message);
       const fallbackStatus = classifyStorageError(e);
+      const currentUserId = String(authSession?.user?.id || "");
+      if (fallbackStatus?.reason === STORAGE_STATUS_REASONS.transient) {
+        markTransientPersistFailure(currentUserId);
+      } else {
+        resetTransientPersistCooldown();
+      }
       applyStorageStatusUpdate(setStorageStatus, fallbackStatus);
       trackAnalytics({
         flow: "sync",
@@ -1259,6 +1688,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     ensureValidSession,
       handleSignIn,
     handleSignUp,
+    handleForgotPassword,
     handleSignOut,
     handleDeleteAccount,
     checkDeleteAccountAvailability,

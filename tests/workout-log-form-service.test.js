@@ -10,6 +10,7 @@ const {
   buildWorkoutQuickCaptureModel,
   hasWorkoutQuickCaptureValues,
 } = require("../src/services/workout-log-form-service.js");
+const { adaptStrengthWorkoutForState } = require("../src/services/strength-readiness-adaptation-service.js");
 
 const buildPlannedDayRecord = (training) => ({
   dateKey: "2026-04-11",
@@ -99,10 +100,74 @@ test("strength day prefills prescribed exercise logging path", () => {
   assert.equal(draft.strength.rows[0].exercise, "Barbell Bench Press");
   assert.equal(draft.strength.rows[0].prescribedSets, 4);
   assert.equal(draft.strength.rows[0].prescribedReps, 6);
+  assert.equal(draft.strength.rows[0].actualSets, "4");
+  assert.equal(draft.strength.rows[0].actualReps, "6");
   assert.equal(draft.strength.rows[0].substitutionAllowed, true);
   assert.equal(draft.strength.rows[0].substitutionState, "prescribed");
   assert.equal(draft.strength.rows[0].canResetToPrescribed, false);
+  assert.equal(hasWorkoutQuickCaptureValues({ draft }), true);
   assert.equal(draft.substitutionSupport.allowed, true);
+});
+
+test("untouched strength draft saves the prescribed sets and reps as default actuals", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "strength+prehab",
+      label: "Strength B",
+    }),
+    prescribedExercises: [
+      { ex: "Barbell Bench Press", sets: "4x6", weight: 185 },
+    ],
+    logEntry: {},
+  });
+
+  const entry = buildWorkoutLogEntryFromDraft({
+    draft,
+    baseEntry: {},
+    todayKey: "2026-04-11",
+  });
+
+  assert.equal(entry.strengthPerformance.length, 1);
+  assert.equal(entry.strengthPerformance[0].actualSets, 4);
+  assert.equal(entry.strengthPerformance[0].actualReps, 6);
+  assert.equal(entry.strengthPerformance[0].actualWeight, 185);
+});
+
+test("strength day logs the adjusted reduced-load prescription by default", () => {
+  const adaptedTraining = adaptStrengthWorkoutForState({
+    workout: {
+      type: "strength+prehab",
+      label: "Strength B",
+      strSess: "B",
+      strengthDuration: "45-60 min heavy upper-body work",
+      prescribedExercises: [
+        { ex: "Bench press top set", sets: "1 top set + 3 backoff sets", reps: "4-6 reps" },
+        { ex: "Weighted pull-up or pull-down", sets: "4 sets", reps: "6-8 reps" },
+        { ex: "Incline press", sets: "3 sets", reps: "8-10 reps" },
+        { ex: "Arms or rear delts", sets: "2-3 sets", reps: "10-15 reps" },
+      ],
+    },
+    state: "reduced_load",
+  });
+
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord(adaptedTraining),
+    logEntry: {},
+  });
+
+  assert.equal(draft.family, WORKOUT_LOG_FAMILIES.strength);
+  assert.match(draft.plannedSummary.sessionLabel || "", /strength b/i);
+  assert.equal(draft.strength.rows.length, 3);
+  assert.equal(draft.strength.rows[0].exercise, "Bench press top set");
+  assert.equal(draft.strength.rows[0].prescribedSets, 3);
+  assert.equal(draft.strength.rows[0].prescribedReps, 10);
+  assert.equal(draft.strength.rows[1].prescribedSets, 2);
+  assert.match(draft.strength.rows[0].prescribedRepsText, /8-10 reps/i);
+  assert.equal(draft.plannedSummary.sessionPlan.rows[0].title, "Bench press top set");
+  assert.equal(draft.plannedSummary.sessionPlan.rows[2].title, "Incline press");
+  assert.match(draft.plannedSummary.sessionPlan.rows[3].detail || "", /skip the optional finisher/i);
 });
 
 test("quick capture model limits strength rows while keeping prescribed context visible", () => {
@@ -314,6 +379,8 @@ test("mixed session builds split run and strength logging paths", () => {
   assert.equal(draft.run.enabled, true);
   assert.equal(draft.strength.enabled, true);
   assert.equal(draft.strength.rows.length, 1);
+  assert.equal(draft.strength.rows[0].actualSets, "3");
+  assert.equal(draft.strength.rows[0].actualReps, "10");
   assert.equal(draft.generic.visible, false);
   assert.equal(draft.sections.run.enabled, true);
   assert.equal(draft.sections.strength.enabled, true);
@@ -322,6 +389,21 @@ test("mixed session builds split run and strength logging paths", () => {
     draft.recommendedFields.map((field) => field.section),
     ["run", "run", "run", "run", "run", "strength", "strength", "strength", "strength", "strength", "strength"]
   );
+});
+
+test("run-only draft stays empty until the user adds an actual run value", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "hard-run",
+      label: "Tempo Run",
+      run: { t: "Tempo", d: "10 min easy + 20 min tempo + 10 min easy" },
+    }),
+    logEntry: {},
+  });
+
+  assert.equal(draft.family, WORKOUT_LOG_FAMILIES.run);
+  assert.equal(hasWorkoutQuickCaptureValues({ draft }), false);
 });
 
 test("strength session without prescribed structure degrades to generic fallback", () => {

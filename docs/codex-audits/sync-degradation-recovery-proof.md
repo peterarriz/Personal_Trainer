@@ -1,24 +1,27 @@
 # Sync Degradation Recovery Proof
 
 Date: 2026-04-17
-Scope: signed-in retry/outage behavior for workout and nutrition logs, explicit recovery, and duplicate-replay risk
+Scope: signed-in retry/outage behavior for workout and nutrition logs, explicit recovery, reopen behavior, and duplicate-replay risk
 
 ## Browser-Proven
 
-### The retry state is not just a banner
+### The retry state keeps real user detail, not just a banner
 
 - `e2e/signed-in-adaptation-trust.spec.js`
-  - `retrying workout logs still have ambiguous explicit recovery semantics after sync returns`
-  - `retrying nutrition logs still have ambiguous explicit recovery semantics after sync returns`
+  - `retrying workout logs survive explicit recovery once cloud sync returns`
+  - `retrying nutrition logs survive explicit recovery once cloud sync returns`
+  - `signed-in degraded-sync workout reopen keeps pending local workout detail visible`
+  - `signed-in degraded-sync nutrition reopen keeps pending local nutrition detail visible`
+- `e2e/local-sync-trust.spec.js`
+  - `reload during retry keeps the pending marker and preserves the unsynced nutrition detail`
 
 What these tests prove:
 
 - signed-in workout and nutrition logs can be created while cloud writes are failing
 - the local cache records those mutations during the retry state
-- using the current explicit recovery action, `Reload cloud data`, clears the pending marker
-- in the current browser/runtime path, that same recovery action also drops the unsynced workout or nutrition detail instead of preserving it
-
-This is a real trust gap, not a missing assertion.
+- a reload during retry keeps the pending marker and preserves the unsynced nutrition detail
+- a signed-in reopen during retry keeps the pending local workout and nutrition detail visible
+- once the cloud path recovers, the explicit `Reload cloud data` action preserves the pending workout and nutrition detail, replays it into cloud, and clears the pending marker
 
 ## Service-Seam Proven
 
@@ -26,35 +29,24 @@ This is a real trust gap, not a missing assertion.
 
 - `tests/auth-storage-local-authority.test.js`
   - `pending local replay after a transient failure reconciles once and does not replay again on the next identical load`
+  - `sbLoad prefers pending local writes when payloads differ even if local and cloud timestamps tie`
 
 What this proves:
 
-- if a newer pending local cache exists, `sbLoad()` can keep it after a failed replay attempt
+- if a pending local cache differs from the cloud row, `sbLoad()` will keep local authority during recovery
 - once the cloud path recovers, the next `sbLoad()` can replay that local payload into cloud storage
 - a second identical `sbLoad()` does not replay the same payload again
 
 This is the deterministic storage-seam reconciliation contract currently proven in-repo.
 
-## Recovery Rule Ambiguity
+## What Is Still Not Proven
 
-- The browser product copy says cloud sync is retrying in the background.
-- The repo does not currently provide independent browser proof that an autonomous background retry finishes reconciliation without user action.
-- The only explicit recovery control proven in-browser is `Reload cloud data` from Settings.
-- In the current browser/runtime path, that explicit recovery control is not trustworthy for pending workout or nutrition logs captured during outage:
-  - the pending marker clears
-  - the unsynced detail disappears
-
-So the current product-level recovery rule is ambiguous:
-
-- storage seam: replay-on-recovery is proven and idempotent
-- browser/runtime path: explicit recovery still loses user-visible detail
-
-## Duplicate Future Adaptation Status
-
-- Browser level: not proven after degraded signed-in recovery, because the user-visible log detail is lost before the future plan state can be trusted
-- Storage seam: duplicate replay is not happening on repeated identical recovery loads
+- The browser product copy says cloud sync is retrying in the background, but the repo still does not independently prove an autonomous background retry finishes reconciliation without user action.
+- End-to-end browser proof that degraded-sync recovery cannot trigger duplicate future adaptations is still missing.
+- Safe merge when another device changed the cloud row during the same unsynced window is still not proven.
 
 ## Honest Current Claim
 
+- It is honest to say the signed-in browser product now preserves workout and nutrition detail through retry/outage reload, reopen, and explicit recovery on the same device.
 - It is honest to say the storage layer has a deterministic one-time replay contract after transient failure.
-- It is not honest to say the signed-in browser product already preserves workout and nutrition logs cleanly through retry/outage recovery.
+- It is not yet honest to say populated-cloud conflict resolution or duplicate-adaptation avoidance after degraded recovery are fully proven end-to-end.

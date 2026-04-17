@@ -10,6 +10,7 @@ export function useSettingsScreenState({
   focusSection = "",
   authEmail = "",
   debugMode = false,
+  diagnosticsHostname = "",
   storageReason = "",
   syncStateModel = null,
   diagnosticsLocationSearch = "",
@@ -37,9 +38,10 @@ export function useSettingsScreenState({
 
   const showProtectedDiagnostics = useMemo(() => readSettingsDiagnosticsVisibility({
     debugMode,
+    hostname: diagnosticsHostname,
     locationSearch: diagnosticsLocationSearch,
     storedDiagnosticsFlag,
-  }), [debugMode, diagnosticsLocationSearch, storedDiagnosticsFlag]);
+  }), [debugMode, diagnosticsHostname, diagnosticsLocationSearch, storedDiagnosticsFlag]);
 
   const accountStateModel = useMemo(() => buildSettingsAccountStateModel({
     authEmail,

@@ -100,6 +100,7 @@ const deriveOfflineReasonKey = ({
   if (storageReason === STORAGE_STATUS_REASONS.authRequired) return "session_expired";
   if (storageReason === STORAGE_STATUS_REASONS.deviceReset) return "device_reset";
   if (storageReason === STORAGE_STATUS_REASONS.accountDeleted) return "account_deleted";
+  if (storageReason === STORAGE_STATUS_REASONS.setupDeferred) return "setup_incomplete_local";
   if (storageReason === STORAGE_STATUS_REASONS.notSignedIn || !hasAuthSession) {
     return hasLocalCache ? "local_only_with_cache" : "local_only_blank";
   }
@@ -369,6 +370,7 @@ export const buildSyncStateModel = ({
     || storageReason === STORAGE_STATUS_REASONS.authRequired
     || storageReason === STORAGE_STATUS_REASONS.deviceReset
     || storageReason === STORAGE_STATUS_REASONS.accountDeleted
+    || storageReason === STORAGE_STATUS_REASONS.setupDeferred
     || unknownWhileSignedOut
     || unknownInitialLocalState
   ) {
@@ -385,6 +387,7 @@ export const buildSyncStateModel = ({
       session_expired: "Your cloud session ended, so FORMA stayed on local data instead of discarding work.",
       device_reset: "This device was cleared locally. Sign in to reload cloud data or keep going with a blank local start.",
       account_deleted: "The cloud account was removed from this device. Local storage is now in a device-only state.",
+      setup_incomplete_local: "Setup is still in progress, so FORMA is keeping intake changes on this device until onboarding finishes.",
       local_only_with_cache: "This device has a local training copy available even without cloud sign-in.",
       local_only_blank: "This device is ready to start locally even before cloud sign-in is active.",
       offline_local: "FORMA is staying local on this device until cloud access returns.",
@@ -396,6 +399,7 @@ export const buildSyncStateModel = ({
       session_expired: "Sign in again when you want cloud sync back.",
       device_reset: "Choose sign-in if you want the cloud copy, or continue locally to start fresh.",
       account_deleted: "Create a new account if you want cloud sync again.",
+      setup_incomplete_local: "Finish onboarding when you want this device to start syncing to cloud.",
       local_only_with_cache: "Sign in when you want sync, backup, and account recovery back.",
       local_only_blank: "Create or sign in to a cloud account when you want sync and recovery.",
       offline_local: "Sign in when cloud sync should resume.",

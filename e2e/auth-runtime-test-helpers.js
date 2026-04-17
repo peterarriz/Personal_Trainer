@@ -113,6 +113,8 @@ const mockSupabaseRuntime = async (page, {
     deleteGetRequests: 0,
     deletePostRequests: 0,
     logoutRequests: 0,
+    recoverRequests: 0,
+    lastRecoverBody: null,
   };
 
   const resolvedDeleteDiagnostics = deleteDiagnosticsBody || defaultDeleteDiagnostics();
@@ -137,6 +139,34 @@ const mockSupabaseRuntime = async (page, {
       status: signInStatus,
       contentType: "application/json",
       body: JSON.stringify(signInStatus >= 400 ? body : session),
+    });
+  });
+
+  await page.route("**/auth/v1/recover**", async (route) => {
+    stats.recoverRequests += 1;
+    try {
+      stats.lastRecoverBody = JSON.parse(route.request().postData() || "{}");
+    } catch {
+      stats.lastRecoverBody = null;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });
+  });
+
+  await page.route("**/api/auth/forgot-password", async (route) => {
+    stats.recoverRequests += 1;
+    try {
+      stats.lastRecoverBody = JSON.parse(route.request().postData() || "{}");
+    } catch {
+      stats.lastRecoverBody = null;
+    }
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        code: "password_reset_requested",
+        message: "If that email can receive recovery mail, a reset link will arrive shortly.",
+      }),
     });
   });
 

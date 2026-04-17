@@ -102,6 +102,7 @@ const normalizeRepresentativeDay = ({
   dayType = "",
   targets = {},
   phaseMode = "",
+  energyModel = null,
   adjustmentReasons = [],
   bodyweightLb = 0,
 } = {}) => {
@@ -121,6 +122,13 @@ const normalizeRepresentativeDay = ({
     dayType: normalizedDayType,
     dayTypeLabel: getNutritionDayTypeLabel(normalizedDayType),
     phaseMode: sanitizeText(phaseMode, 40),
+    energyModel: energyModel && typeof energyModel === "object"
+      ? {
+        explicitModelActive: Boolean(energyModel?.explicitModelActive),
+        maintenanceEstimateCalories: toFiniteNumber(energyModel?.maintenanceEstimateCalories, null),
+        weeklyDeficitTargetCalories: toFiniteNumber(energyModel?.weeklyDeficitTargetCalories, null),
+      }
+      : null,
     targets: normalizedTargets,
     explicitHydrationTarget: Number.isFinite(normalizedTargets.hydrationTargetOz),
     suggestedHydrationTargetOz: buildSuggestedHydrationTargetOz({
@@ -415,7 +423,10 @@ export const buildNutritionCompatibilityAudit = ({
       name: sanitizeText(auditContext?.name || "", 120),
       referenceDate: toDateKey(auditContext?.referenceDate || ""),
       hasBodyCompGoal: Boolean(auditContext?.hasBodyCompGoal),
-      explicitMaintenanceModel: Boolean(auditContext?.explicitMaintenanceModel),
+      explicitMaintenanceModel: Boolean(
+        auditContext?.explicitMaintenanceModel
+        || normalizedDays.some((day) => day?.energyModel?.explicitModelActive)
+      ),
       planCoverage: auditContext?.planCoverage || null,
     },
     thresholds: MODERATE_CUT_COMPATIBILITY_THRESHOLDS,
@@ -496,6 +507,7 @@ const buildRepresentativeDaysFromPeterPlan = () => {
           sessionLabel: session?.label || "",
           dayType: nutritionLayer?.dayType || session?.nutri || "",
           targets: nutritionLayer?.targets || {},
+          energyModel: nutritionLayer?.energyModel || null,
           phaseMode: nutritionLayer?.phaseMode || "",
           adjustmentReasons: nutritionLayer?.adjustmentReasons || [],
         };
@@ -521,7 +533,7 @@ export const buildPeterNutritionCompatibilityAudit = () => {
       name: "Peter nutrition target audit",
       referenceDate: PETER_AUDIT_REFERENCE_DATE,
       hasBodyCompGoal: true,
-      explicitMaintenanceModel: false,
+      explicitMaintenanceModel: representativeDays.some((day) => day?.energyModel?.explicitModelActive),
       planCoverage,
     },
   });

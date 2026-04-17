@@ -35,28 +35,29 @@ test.describe("coach surface", () => {
   test("mode switcher cleanly separates deterministic and advisory surfaces", async ({ page }) => {
     await completeRunningOnboarding(page);
 
-    await page.getByTestId("app-tab-coach").click();
+    await page.getByTestId("app-tab-coach").click({ force: true });
     await expect(page.getByTestId("coach-tab")).toBeVisible();
-    await expect(page.getByTestId("coach-mode-panel-today_week")).toBeVisible();
+    await expect(page.getByTestId("coach-mode-panel-adjust_today")).toBeVisible();
 
-    await page.getByTestId("coach-mode-button-change_plan").click();
-    await expect(page.getByTestId("coach-mode-panel-change_plan")).toBeVisible();
-    await expect(page.getByTestId("coach-action-preview")).toContainText("Pick a change");
+    await page.getByTestId("coach-mode-button-adjust_week").click();
+    await expect(page.getByTestId("coach-mode-panel-adjust_week")).toBeVisible();
+    await expect(page.getByTestId("coach-job-card-adjust-week")).toContainText(/Recommendation|Why|Consequence/i);
 
-    await page.getByTestId("coach-mode-button-ask_anything").click();
-    await expect(page.getByTestId("coach-mode-panel-ask_anything")).toBeVisible();
-    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Advisory|off/i);
+    await page.getByTestId("coach-mode-button-ask_coach").click();
+    await expect(page.getByTestId("coach-mode-panel-ask_coach")).toBeVisible();
+    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Answers only/i);
+    await expect(page.getByText(/AI advisory is off/i)).toHaveCount(0);
   });
 
   test("deterministic change preview does not mutate until acceptance", async ({ page }) => {
     await completeRunningOnboarding(page);
 
-    await page.getByTestId("app-tab-coach").click();
+    await page.getByTestId("app-tab-coach").click({ force: true });
     const beforeCache = await readLocalCache(page);
     const beforeActionCount = Array.isArray(beforeCache?.coachActions) ? beforeCache.coachActions.length : 0;
 
-    await page.getByTestId("coach-mode-button-change_plan").click();
-    await page.getByTestId("coach-change-action-reduce_week_volume").click();
+    await page.getByTestId("coach-mode-button-adjust_week").click();
+    await page.getByTestId("coach-preview-adjust-week").click();
 
     await expect(page.getByTestId("coach-action-preview")).toContainText(/Week \d+ volume target becomes|Take pressure off this week/i);
     await expect(page.getByTestId("coach-preview-accept")).toBeVisible();
@@ -75,9 +76,9 @@ test.describe("coach surface", () => {
   });
 
   test("ask anything stays advisory-only and does not mutate plan state", async ({ page }) => {
-    await page.addInitScript(() => {
-      window.localStorage.setItem("coach_api_key", "test-key");
-    });
+    const dismissAppleHealthPrompt = async () => {
+      await page.getByRole("button", { name: "Skip for now" }).click({ force: true, timeout: 1000 }).catch(() => {});
+    };
     await page.route("https://api.anthropic.com/v1/messages", async (route) => {
       await route.fulfill({
         status: 200,
@@ -90,16 +91,26 @@ test.describe("coach surface", () => {
     });
 
     await completeRunningOnboarding(page);
+    await dismissAppleHealthPrompt();
+    await page.evaluate(() => {
+      window.localStorage.setItem("trainer_debug", "1");
+      window.localStorage.setItem("coach_api_key", "test-key");
+    });
+    await dismissAppleHealthPrompt();
 
-    await page.getByTestId("app-tab-coach").click();
+    await page.getByTestId("app-tab-coach").evaluate((node) => node.click());
+    await dismissAppleHealthPrompt();
+    await expect(page.getByTestId("coach-tab")).toBeVisible();
     const beforeCache = await readLocalCache(page);
 
-    await page.getByTestId("coach-mode-button-ask_anything").click();
-    await expect(page.getByTestId("coach-mode-panel-ask_anything")).toBeVisible();
+    await page.getByTestId("coach-mode-button-ask_coach").click();
+    await expect(page.getByTestId("coach-mode-panel-ask_coach")).toBeVisible();
     await page.getByTestId("coach-ask-input").fill("Should I push this week?");
     await page.getByTestId("coach-ask-send").click();
 
-    await expect(page.getByTestId("coach-ask-message").last()).toContainText("Advisory only answer. Keep the plan boundary intact.");
+    await expect(page.getByTestId("coach-ask-answer-card")).toContainText(/Why:/i);
+    await expect(page.getByTestId("coach-ask-answer-card")).toContainText(/Consequence:/i);
+    await expect(page.getByText(/AI advisory is off/i)).toHaveCount(0);
     await expect(page.getByTestId("coach-preview-accept")).toHaveCount(0);
 
     const afterCache = await readLocalCache(page);

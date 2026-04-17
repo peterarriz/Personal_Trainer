@@ -5,6 +5,7 @@ const {
   getSupabaseUser,
   sendJson,
 } = require("../_lib/garmin");
+const { applyRateLimitHeaders, consumeRateLimit, getClientIp } = require("../_lib/security");
 
 const DELETE_ACCOUNT_ENV_REQUIREMENTS = [
   "SUPABASE_URL",
@@ -55,32 +56,73 @@ function buildDeleteUnavailablePayload(diagnostics) {
     ok: false,
     code: "delete_account_not_configured",
     configured: false,
-    message: diagnostics?.message || "Account deletion is not configured on this deployment yet.",
-    detail: diagnostics?.detail || "Permanent account deletion needs server-side Supabase configuration.",
-    fix: diagnostics?.fix || "Set SUPABASE_SERVICE_ROLE_KEY on the server deployment and redeploy.",
-    missing: Array.isArray(diagnostics?.missing) ? diagnostics.missing : [],
-    required: Array.isArray(diagnostics?.required) ? diagnostics.required : DELETE_ACCOUNT_ENV_REQUIREMENTS,
+    message: diagnostics?.message || "Permanent account delete is not available on this deployment.",
+    detail: diagnostics?.detail || "Permanent account delete needs additional server-side configuration.",
+    fix: "",
+    missing: [],
+    required: [],
   };
 }
 
 module.exports = async (req, res) => {
+  const clientIp = getClientIp(req);
   if (req.method === "GET") {
-    const diagnostics = getDeleteAccountConfigDiagnostics();
-    return sendJson(res, 200, {
-      ok: true,
-      code: diagnostics.configured ? "delete_account_configured" : "delete_account_not_configured",
-      configured: diagnostics.configured,
-      required: diagnostics.required,
-      missing: diagnostics.missing,
-      message: diagnostics.message,
-      detail: diagnostics.detail,
-      fix: diagnostics.fix,
-    });
+    try {
+      const authToken = getBearerToken(req);
+      if (!authToken) {
+        return sendJson(res, 401, {
+          ok: false,
+          code: "auth_required",
+          message: "You must be signed in before checking permanent delete availability.",
+        });
+      }
+      const user = await getSupabaseUser(authToken);
+      const rateLimit = consumeRateLimit({
+        bucket: "delete_account_diagnostics",
+        key: `${clientIp}:${user.id}`,
+        limit: 20,
+        windowMs: 15 * 60 * 1000,
+      });
+      applyRateLimitHeaders(res, rateLimit);
+      if (!rateLimit.allowed) {
+        return sendJson(res, 429, {
+          ok: false,
+          code: "rate_limited",
+          message: "Delete-account diagnostics are temporarily rate limited.",
+        });
+      }
+      const diagnostics = getDeleteAccountConfigDiagnostics();
+      return sendJson(res, 200, {
+        ok: true,
+        code: diagnostics.configured ? "delete_account_configured" : "delete_account_not_configured",
+        configured: diagnostics.configured,
+        required: [],
+        missing: [],
+        message: diagnostics.configured
+          ? "Permanent account delete is available for this signed-in account on this deployment."
+          : "Permanent account delete is not available on this deployment.",
+        detail: diagnostics.configured
+          ? "The deployment can verify the signed-in account and perform the delete."
+          : "This deployment does not currently support permanent account delete.",
+        fix: "",
+      });
+    } catch {
+      return sendJson(res, 503, {
+        ok: false,
+        code: "delete_account_diagnostics_failed",
+        configured: false,
+        message: "Permanent account delete could not be verified.",
+        detail: "The deployment did not confirm delete support for this signed-in session.",
+        fix: "",
+        missing: [],
+        required: [],
+      });
+    }
   }
 
   if (req.method !== "POST") {
     return sendJson(res, 405, {
-      message: "Use GET to inspect delete-account support or POST to delete the signed-in account.",
+      message: "Method not allowed.",
     });
   }
 
@@ -92,12 +134,26 @@ module.exports = async (req, res) => {
         message: "You must be signed in before deleting your account.",
       });
     }
+    const user = await getSupabaseUser(authToken);
+    const rateLimit = consumeRateLimit({
+      bucket: "delete_account_submit",
+      key: `${clientIp}:${user.id}`,
+      limit: 3,
+      windowMs: 60 * 60 * 1000,
+    });
+    applyRateLimitHeaders(res, rateLimit);
+    if (!rateLimit.allowed) {
+      return sendJson(res, 429, {
+        ok: false,
+        code: "rate_limited",
+        message: "Delete-account requests are temporarily rate limited.",
+      });
+    }
 
     if (!diagnostics.configured) {
       return sendJson(res, 503, buildDeleteUnavailablePayload(diagnostics));
     }
 
-    const user = await getSupabaseUser(authToken);
     const { res: deleteRes, data, text } = await fetchJson(`${diagnostics.url}/auth/v1/admin/users/${encodeURIComponent(user.id)}`, {
       method: "DELETE",
       headers: {
@@ -126,8 +182,8 @@ module.exports = async (req, res) => {
       ok: false,
       code: "delete_account_failed",
       message: error?.message || "Account deletion failed.",
-      detail: error?.detail || "",
-      fix: error?.fix || "",
+      detail: "",
+      fix: "",
     });
   }
 };

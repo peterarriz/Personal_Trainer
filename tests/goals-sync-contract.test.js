@@ -7,6 +7,7 @@ import {
   AUTH_CACHE_KEY,
   LOCAL_CACHE_KEY,
   STORAGE_STATUS_REASONS,
+  TRANSIENT_PERSIST_RETRY_COOLDOWN_MS,
 } from "../src/modules-auth-storage.js";
 
 const noop = () => {};
@@ -294,7 +295,89 @@ test("persistAll keeps local cache active when no signed-in session exists", asy
   });
 
   assert.equal(nextStorageStatus?.reason, "not_signed_in");
-  assert.deepEqual(JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY)), payload);
+  const cachedPayload = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY));
+  assert.deepEqual({ ...cachedPayload, syncMeta: undefined }, { ...payload, syncMeta: undefined });
+  assert.equal(cachedPayload?.syncMeta?.pendingCloudWrite, false);
+});
+
+test("persistAll keeps signed-in onboarding setup local until onboarding completes", async () => {
+  const requests = [];
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+  global.localStorage = {
+    getItem: () => null,
+    setItem: noop,
+    removeItem: noop,
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+        body: options.body ? JSON.parse(options.body) : null,
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  const authSession = {
+    access_token: "header.payload.signature",
+    refresh_token: "refresh-token",
+    user: { id: "00000000-0000-0000-0000-000000000001" },
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+  };
+  const payload = {
+    version: "runtime_storage_v1",
+    logs: {},
+    bodyweights: [],
+    paceOverrides: {},
+    weekNotes: {},
+    planAlerts: [],
+    personalization: {
+      profile: {
+        onboardingComplete: false,
+        profileSetupComplete: true,
+      },
+    },
+    goals: [],
+    coachActions: [],
+    coachPlanAdjustments: {},
+    dailyCheckins: {},
+    weeklyCheckins: {},
+    nutritionFavorites: {},
+    nutritionActualLogs: {},
+    plannedDayRecords: {},
+    planWeekRecords: {},
+    v: 6,
+    contractVersion: "runtime_storage_v1",
+    ts: 1713330000000,
+  };
+
+  let nextStorageStatus = null;
+  const result = await module.persistAll({
+    payload,
+    authSession,
+    setStorageStatus: (value) => { nextStorageStatus = value; },
+    setAuthSession: noop,
+  });
+
+  assert.equal(result?.skipped, true);
+  assert.equal(result?.deferred, true);
+  assert.equal(nextStorageStatus?.reason, STORAGE_STATUS_REASONS.setupDeferred);
+  assert.equal(requests.length, 0);
 });
 
 test("persistAll skips unchanged goal and coach-memory shadow syncs on repeated saves", async () => {
@@ -344,6 +427,9 @@ test("persistAll skips unchanged goal and coach-memory shadow syncs on repeated 
     weekNotes: {},
     planAlerts: [],
     personalization: {
+      profile: {
+        onboardingComplete: true,
+      },
       coachMemory: {
         wins: ["Stays consistent"],
         constraints: ["Busy mornings"],
@@ -390,6 +476,295 @@ test("persistAll skips unchanged goal and coach-memory shadow syncs on repeated 
   assert.equal(trainerDataPosts.length, 1);
 });
 
+test("persistAll ignores timestamp-only payload churn when deciding whether cloud state changed", async () => {
+  const requests = [];
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+  global.localStorage = {
+    getItem: () => null,
+    setItem: noop,
+    removeItem: noop,
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+        body: options.body ? JSON.parse(options.body) : null,
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  const authSession = {
+    access_token: "header.payload.signature",
+    refresh_token: "refresh-token",
+    user: { id: "00000000-0000-0000-0000-000000000001" },
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+  };
+  const basePayload = {
+    version: "runtime_storage_v1",
+    logs: {},
+    bodyweights: [],
+    paceOverrides: {},
+    weekNotes: {},
+    planAlerts: [],
+    personalization: {
+      profile: {
+        onboardingComplete: true,
+        profileSetupComplete: true,
+      },
+      coachMemory: {
+        wins: ["Stayed consistent"],
+      },
+    },
+    goals: [],
+    coachActions: [],
+    coachPlanAdjustments: {},
+    dailyCheckins: {},
+    weeklyCheckins: {},
+    nutritionFavorites: {},
+    nutritionActualLogs: {},
+    plannedDayRecords: {},
+    planWeekRecords: {},
+    v: 6,
+    contractVersion: "runtime_storage_v1",
+  };
+
+  await module.persistAll({
+    payload: { ...basePayload, ts: 1713330000000 },
+    authSession,
+    setStorageStatus: noop,
+    setAuthSession: noop,
+  });
+  await module.persistAll({
+    payload: { ...basePayload, ts: 1713330001000 },
+    authSession,
+    setStorageStatus: noop,
+    setAuthSession: noop,
+  });
+
+  const trainerDataPosts = requests.filter((request) => /\/rest\/v1\/trainer_data$/.test(request.url) && request.method === "POST");
+  assert.equal(trainerDataPosts.length, 1);
+});
+
+test("persistAll backs off repeated transient cloud-save attempts instead of hammering trainer_data", async () => {
+  const requests = [];
+  const localStore = new Map();
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+  global.localStorage = {
+    getItem: (key) => (localStore.has(key) ? localStore.get(key) : null),
+    setItem: (key, value) => { localStore.set(key, String(value)); },
+    removeItem: (key) => { localStore.delete(key); },
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+        body: options.body ? JSON.parse(options.body) : null,
+      });
+      return {
+        ok: false,
+        status: 504,
+        json: async () => ([]),
+        text: async () => "gateway timeout",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  const authSession = {
+    access_token: "header.payload.signature",
+    refresh_token: "refresh-token",
+    user: { id: "00000000-0000-0000-0000-000000000001" },
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+  };
+  const basePayload = {
+    version: "runtime_storage_v1",
+    logs: {},
+    bodyweights: [],
+    paceOverrides: {},
+    weekNotes: {},
+    planAlerts: [],
+    personalization: {
+      profile: {
+        onboardingComplete: true,
+        profileSetupComplete: true,
+      },
+    },
+    goals: [],
+    coachActions: [],
+    coachPlanAdjustments: {},
+    dailyCheckins: {},
+    weeklyCheckins: {},
+    nutritionFavorites: {},
+    nutritionActualLogs: {},
+    plannedDayRecords: {},
+    planWeekRecords: {},
+    v: 6,
+    contractVersion: "runtime_storage_v1",
+  };
+
+  const firstResult = await module.persistAll({
+    payload: { ...basePayload, ts: 1713330000000 },
+    authSession,
+    setStorageStatus: noop,
+    setAuthSession: noop,
+  });
+  const secondResult = await module.persistAll({
+    payload: {
+      ...basePayload,
+      ts: 1713330001000,
+      dailyCheckins: {
+        "2026-04-17": {
+          status: "skipped",
+          note: "second local mutation",
+          ts: 1713330001000,
+        },
+      },
+    },
+    authSession,
+    setStorageStatus: noop,
+    setAuthSession: noop,
+  });
+
+  const trainerDataPosts = requests.filter((request) => /\/rest\/v1\/trainer_data$/.test(request.url) && request.method === "POST");
+  assert.equal(firstResult?.status?.reason, STORAGE_STATUS_REASONS.transient);
+  assert.equal(secondResult?.status?.reason, STORAGE_STATUS_REASONS.transient);
+  assert.equal(secondResult?.cooldown, true);
+  assert.equal(trainerDataPosts.length, 1);
+
+  const cachedPayload = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY) || "{}");
+  assert.equal(cachedPayload?.syncMeta?.pendingCloudWrite, true);
+  assert.equal(cachedPayload?.dailyCheckins?.["2026-04-17"]?.note, "second local mutation");
+});
+
+test("persistAll retries cloud save again after the transient cooldown window expires", async () => {
+  const realDateNow = Date.now;
+  let now = 1713330000000;
+  Date.now = () => now;
+  const requests = [];
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+  global.localStorage = {
+    getItem: () => null,
+    setItem: noop,
+    removeItem: noop,
+  };
+
+  let shouldFail = true;
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+      });
+      return {
+        ok: !shouldFail,
+        status: shouldFail ? 504 : 200,
+        json: async () => ([]),
+        text: async () => shouldFail ? "gateway timeout" : "",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  const authSession = {
+    access_token: "header.payload.signature",
+    refresh_token: "refresh-token",
+    user: { id: "00000000-0000-0000-0000-000000000001" },
+    expires_at: Math.floor(now / 1000) + 3600,
+  };
+  const payload = {
+    version: "runtime_storage_v1",
+    logs: {},
+    bodyweights: [],
+    paceOverrides: {},
+    weekNotes: {},
+    planAlerts: [],
+    personalization: {
+      profile: {
+        onboardingComplete: true,
+        profileSetupComplete: true,
+      },
+    },
+    goals: [],
+    coachActions: [],
+    coachPlanAdjustments: {},
+    dailyCheckins: {},
+    weeklyCheckins: {},
+    nutritionFavorites: {},
+    nutritionActualLogs: {},
+    plannedDayRecords: {},
+    planWeekRecords: {},
+    v: 6,
+    contractVersion: "runtime_storage_v1",
+    ts: now,
+  };
+
+  try {
+    const firstResult = await module.persistAll({
+      payload,
+      authSession,
+      setStorageStatus: noop,
+      setAuthSession: noop,
+    });
+    assert.equal(firstResult?.status?.reason, STORAGE_STATUS_REASONS.transient);
+
+    now += 1000;
+    const secondResult = await module.persistAll({
+      payload: { ...payload, ts: now },
+      authSession,
+      setStorageStatus: noop,
+      setAuthSession: noop,
+    });
+    assert.equal(secondResult?.cooldown, true);
+
+    shouldFail = false;
+    now += TRANSIENT_PERSIST_RETRY_COOLDOWN_MS + 1;
+    const thirdResult = await module.persistAll({
+      payload: { ...payload, ts: now, weekNotes: { "4": "retry after cooldown" } },
+      authSession,
+      setStorageStatus: noop,
+      setAuthSession: noop,
+    });
+    assert.equal(thirdResult?.synced, true);
+
+    const trainerDataPosts = requests.filter((request) => /\/rest\/v1\/trainer_data$/.test(request.url) && request.method === "POST");
+    assert.equal(trainerDataPosts.length, 2);
+  } finally {
+    Date.now = realDateNow;
+  }
+});
+
 test("transient network storage failures are labeled as retrying instead of permanent fallback", () => {
   const status = classifyStorageError(new Error("FETCH_NETWORK: load failed"));
 
@@ -427,10 +802,10 @@ test("handleDeleteAccount calls the server delete path and clears local caches",
             ok: true,
             code: "delete_account_configured",
             configured: true,
-            required: ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"],
+            required: [],
             missing: [],
-            message: "Account deletion is configured for this deployment.",
-            detail: "The server can resolve the signed-in user and issue an admin delete.",
+            message: "Permanent account delete is available for this signed-in account on this deployment.",
+            detail: "The deployment can verify the signed-in account and perform the delete.",
             fix: "",
           }),
           text: async () => "",
@@ -484,6 +859,8 @@ test("handleDeleteAccount calls the server delete path and clears local caches",
   assert.equal(localStorage.getItem(LOCAL_CACHE_KEY), null);
   assert.equal(nextStorageStatus?.reason, STORAGE_STATUS_REASONS.accountDeleted);
   assert.ok(requests.some((request) => request.url === "/api/auth/delete-account" && request.method === "GET"));
+  const diagnosticsRequest = requests.find((request) => request.url === "/api/auth/delete-account" && request.method === "GET");
+  assert.match(String(diagnosticsRequest?.headers?.Authorization || ""), /^Bearer /);
   assert.ok(requests.some((request) => request.url === "/api/auth/delete-account" && request.method === "POST"));
 });
 
@@ -497,7 +874,7 @@ test("handleDeleteAccount stops before POST when delete-account diagnostics repo
   const module = createAuthStorageModule({
     safeFetchWithTimeout: async (url, options = {}) => {
       const method = options.method || "GET";
-      requests.push({ url, method });
+      requests.push({ url, method, headers: options.headers || {} });
       if (url === "/api/auth/delete-account" && method === "GET") {
         return {
           ok: true,
@@ -506,11 +883,11 @@ test("handleDeleteAccount stops before POST when delete-account diagnostics repo
             ok: true,
             code: "delete_account_not_configured",
             configured: false,
-            required: ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"],
-            missing: ["SUPABASE_SERVICE_ROLE_KEY"],
-            message: "Account deletion is not configured on this deployment yet.",
-            detail: "The deployment is missing one or more server-side Supabase settings required for auth-user deletion.",
-            fix: "Set SUPABASE_SERVICE_ROLE_KEY on the server deployment and redeploy before enabling permanent account deletion.",
+            required: [],
+            missing: [],
+            message: "Permanent account delete is not available on this deployment.",
+            detail: "This deployment does not currently support permanent account delete.",
+            fix: "",
           }),
           text: async () => "",
         };
@@ -545,12 +922,14 @@ test("handleDeleteAccount stops before POST when delete-account diagnostics repo
     }),
     (error) => {
       assert.equal(error?.code, "delete_account_not_configured");
-      assert.deepEqual(error?.missing, ["SUPABASE_SERVICE_ROLE_KEY"]);
-      assert.match(String(error?.fix || ""), /SUPABASE_SERVICE_ROLE_KEY/i);
+      assert.deepEqual(error?.missing, []);
+      assert.equal(String(error?.fix || ""), "");
       return true;
     }
   );
 
   assert.ok(requests.some((request) => request.url === "/api/auth/delete-account" && request.method === "GET"));
+  const diagnosticsRequest = requests.find((request) => request.url === "/api/auth/delete-account" && request.method === "GET");
+  assert.match(String(diagnosticsRequest?.headers?.Authorization || ""), /^Bearer /);
   assert.equal(requests.some((request) => request.url === "/api/auth/delete-account" && request.method === "POST"), false);
 });

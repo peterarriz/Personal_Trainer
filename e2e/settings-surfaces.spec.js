@@ -69,12 +69,15 @@ test.describe("settings surface integration", () => {
     await expect(page.getByTestId("settings-programs-section")).toHaveCount(0);
     await expect(page.getByTestId("settings-theme-grid")).toBeVisible();
     await expect(page.getByTestId("settings-notifications-section")).toBeVisible();
+    await expect(page.getByTestId("settings-reminders-status")).toContainText(/planned, not live/i);
+    await expect(page.getByTestId("settings-reviewer-report-card")).toHaveCount(0);
 
     await openSettingsSurface(page, "advanced", "settings-advanced-section");
     await expect(page.getByTestId("settings-preferences-section")).toHaveCount(0);
     await expect(page.getByText("Apple Health").first()).toBeVisible();
     await expect(page.getByText("Garmin Connect").first()).toBeVisible();
     await expect(page.getByTestId("settings-friction-summary")).toHaveCount(0);
+    await expect(page.getByText(/Staff diagnostics/i)).toHaveCount(0);
     await expect(page.getByPlaceholder("Anthropic key (optional)")).toHaveCount(0);
   });
 

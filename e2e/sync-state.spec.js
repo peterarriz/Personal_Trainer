@@ -6,16 +6,27 @@ const {
   mockSupabaseRuntime,
 } = require("./auth-runtime-test-helpers.js");
 
+const domClick = async (locator) => {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node) => node.click());
+};
+
 const openSettingsAccountSurface = async (page) => {
-  await page.getByTestId("app-tab-settings").click();
+  await domClick(page.getByTestId("app-tab-settings"));
   await expect(page.getByTestId("settings-tab")).toBeVisible();
-  await page.getByTestId("settings-surface-account").click();
+  await domClick(page.getByTestId("settings-surface-account"));
   await expect(page.getByTestId("settings-account-section")).toBeVisible();
 };
 
 const enableSyncTestHarness = async (page) => {
   await page.addInitScript(() => {
     window.__E2E_SYNC_TEST = true;
+  });
+};
+
+const enableDeveloperDiagnostics = async (page) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("trainer_debug", "1");
   });
 };
 
@@ -97,23 +108,71 @@ test.describe("shared sync state rendering", () => {
       });
     });
 
-    await page.getByTestId("app-tab-settings").click();
+    await domClick(page.getByTestId("app-tab-settings"));
     await expect(page.getByTestId("settings-tab")).toBeVisible();
-    await page.getByTestId("settings-surface-profile").click();
-    await page.getByRole("button", { name: "Save profile" }).click();
-    await page.getByTestId("settings-surface-account").click();
+    await domClick(page.getByTestId("settings-surface-profile"));
+    await domClick(page.getByRole("button", { name: "Save profile" }));
+    await domClick(page.getByTestId("settings-surface-account"));
 
     await expect(page.getByTestId("settings-sync-status")).toContainText("Retrying");
     await expect(page.getByTestId("settings-sync-status")).toContainText("Cloud sync is retrying in the background");
 
-    await page.getByTestId("app-tab-today").click();
+    await domClick(page.getByTestId("app-tab-today"));
     await expect(page.getByTestId("today-sync-status")).toContainText("Retrying");
     await expect(page.getByTestId("today-sync-status")).toContainText("Cloud sync is retrying in the background");
 
-    await page.getByTestId("app-tab-program").click();
+    await domClick(page.getByTestId("app-tab-program"));
     await expect(page.getByTestId("program-tab")).toBeVisible();
     await expect(page.getByTestId("program-sync-status")).toContainText("Retrying");
     await expect(page.getByTestId("program-sync-status")).toContainText("Cloud sync is retrying in the background");
+  });
+
+  test("developer diagnostics expose the exact trainer_data retry failure behind the generic sync state", async ({ page }) => {
+    await enableDeveloperDiagnostics(page);
+    const session = makeSession();
+    const payload = makeSignedInPayload();
+
+    await mockSupabaseRuntime(page, { session, payload });
+    await bootAppWithSupabaseSeeds(page, { session, payload });
+
+    await expect(page.getByTestId("today-tab")).toBeVisible();
+
+    await page.route("**/rest/v1/trainer_data", async (route) => {
+      if (route.request().method() === "POST") {
+        await route.fulfill({
+          status: 504,
+          contentType: "text/plain",
+          body: "gateway timeout",
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([{ id: "trainer_v1_user", user_id: session.user.id, data: payload }]),
+      });
+    });
+
+    await domClick(page.getByTestId("app-tab-settings"));
+    await expect(page.getByTestId("settings-tab")).toBeVisible();
+    await domClick(page.getByTestId("settings-surface-profile"));
+    await domClick(page.getByRole("button", { name: "Save profile" }));
+    await domClick(page.getByTestId("settings-surface-account"));
+
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Retrying");
+    await page.getByTestId("settings-account-advanced").evaluate((node) => {
+      node.open = true;
+    });
+    await page.getByTestId("settings-sync-diagnostics").evaluate((node) => {
+      node.open = true;
+    });
+
+    await expect(page.getByTestId("settings-sync-diagnostics-last-attempt")).toContainText("rest/v1/trainer_data");
+    await expect(page.getByTestId("settings-sync-diagnostics-last-attempt")).toContainText("POST");
+    await expect(page.getByTestId("settings-sync-diagnostics-last-failure")).toContainText("HTTP 504");
+    await expect(page.getByTestId("settings-sync-diagnostics-last-failure")).toContainText("retry eligible Yes");
+    await expect(page.getByTestId("settings-sync-diagnostics-last-failure")).toContainText("pending local writes Yes");
+    await expect(page.getByTestId("settings-sync-diagnostics-local-cache")).toContainText("pending writes Yes");
   });
 
   test("signed-out devices resume the last usable local state before showing auth choices", async ({ page }) => {
@@ -216,7 +275,7 @@ test.describe("shared sync state rendering", () => {
 
     await assertSurfaceStable({
       openSurface: async () => {
-        await page.getByTestId("app-tab-today").click();
+        await domClick(page.getByTestId("app-tab-today"));
         await expect(page.getByTestId("today-tab")).toBeVisible();
       },
       statusTestId: "today-sync-status",
@@ -225,7 +284,7 @@ test.describe("shared sync state rendering", () => {
 
     await assertSurfaceStable({
       openSurface: async () => {
-        await page.getByTestId("app-tab-program").click();
+        await domClick(page.getByTestId("app-tab-program"));
         await expect(page.getByTestId("program-tab")).toBeVisible();
       },
       statusTestId: "program-sync-status",
@@ -241,7 +300,7 @@ test.describe("shared sync state rendering", () => {
     await mockSupabaseRuntime(page, { session, payload });
     await bootAppWithSupabaseSeeds(page, { session, payload });
 
-    await page.getByTestId("app-tab-today").click();
+    await domClick(page.getByTestId("app-tab-today"));
     await expect(page.getByTestId("today-tab")).toBeVisible();
 
     await applySyncPreset(page, "synced", 1000);

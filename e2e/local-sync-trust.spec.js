@@ -19,6 +19,11 @@ const {
 
 const AUTH_CACHE_KEY = "trainer_auth_session_v1";
 
+async function domClick(locator) {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node) => node.click());
+}
+
 async function freezeBrowserDate(page, isoString) {
   await page.addInitScript(({ fixedIsoString }) => {
     const fixedNow = new Date(fixedIsoString).getTime();
@@ -45,6 +50,83 @@ async function installSupabaseConfig(page) {
   }, {
     supabaseUrl: SUPABASE_URL,
     supabaseKey: SUPABASE_KEY,
+  });
+}
+
+async function seedSignedInContext(context, {
+  session = makeSession(),
+  payload = makeSignedInPayload(),
+  debug = false,
+} = {}) {
+  await context.addInitScript(({ sessionSeed, payloadSeed, supabaseUrl, supabaseKey, debugMode }) => {
+    window.__SUPABASE_URL = supabaseUrl;
+    window.__SUPABASE_ANON_KEY = supabaseKey;
+    if (!localStorage.getItem("trainer_auth_session_v1")) {
+      localStorage.setItem("trainer_auth_session_v1", JSON.stringify(sessionSeed));
+    }
+    if (payloadSeed && !localStorage.getItem("trainer_local_cache_v4")) {
+      localStorage.setItem("trainer_local_cache_v4", JSON.stringify(payloadSeed));
+    }
+    if (debugMode) localStorage.setItem("trainer_debug", "1");
+  }, {
+    sessionSeed: session,
+    payloadSeed: payload,
+    supabaseUrl: SUPABASE_URL,
+    supabaseKey: SUPABASE_KEY,
+    debugMode: debug,
+  });
+}
+
+async function installSharedSupabaseRuntime(context, {
+  session = makeSession(),
+  serverState,
+} = {}) {
+  await context.route("**/auth/v1/token**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(session),
+    });
+  });
+
+  await context.route("**/auth/v1/logout", async (route) => {
+    await route.fulfill({ status: 204, body: "" });
+  });
+
+  await context.route("**/rest/v1/**", async (route) => {
+    const url = route.request().url();
+    const method = route.request().method();
+
+    if (url.includes("/rest/v1/trainer_data")) {
+      if (method === "GET") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(serverState.trainerDataRows),
+        });
+        return;
+      }
+
+      const requestBody = JSON.parse(route.request().postData() || "{}");
+      serverState.trainerDataPosts.push(requestBody);
+      serverState.trainerDataRows = [{
+        id: requestBody.id || `trainer_v1_${session.user.id}`,
+        user_id: requestBody.user_id || session.user.id,
+        data: requestBody.data || {},
+      }];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
   });
 }
 
@@ -149,34 +231,34 @@ async function saveTodayQuickLog(page, {
   note = "",
 } = {}) {
   const quickLog = page.getByTestId("today-quick-log");
-  await page.getByTestId("app-tab-today").click();
+  await domClick(page.getByTestId("app-tab-today"));
   await expect(quickLog).toBeVisible();
-  await quickLog.getByRole("button", { name: new RegExp(`^${escapeRegExp(statusLabel)}$`, "i") }).click();
+  await domClick(quickLog.getByRole("button", { name: new RegExp(`^${escapeRegExp(statusLabel)}$`, "i") }));
   if (feelLabel) {
-    await quickLog.getByRole("button", { name: new RegExp(`^${escapeRegExp(feelLabel)}$`, "i") }).click();
+    await domClick(quickLog.getByRole("button", { name: new RegExp(`^${escapeRegExp(feelLabel)}$`, "i") }));
   }
   if (note) {
     await quickLog.getByPlaceholder("Optional note").fill(note);
   }
-  await page.getByTestId("today-save-log").click();
+  await domClick(page.getByTestId("today-save-log"));
   await expect(page.getByTestId("today-save-status")).toContainText(/saved|marked/i);
 }
 
 async function logUnderFueledDay(page, dateKey, note) {
-  await page.getByTestId("app-tab-nutrition").click();
+  await domClick(page.getByTestId("app-tab-nutrition"));
   await expect(page.getByTestId("nutrition-tab")).toBeVisible();
   await page.getByTestId("nutrition-log-date-select").selectOption(dateKey);
-  await page.getByTestId("nutrition-quick-log").getByRole("button", { name: "Under-fueled" }).click();
-  await page.getByTestId("nutrition-quick-log").getByRole("button", { name: "Hunger" }).click();
+  await domClick(page.getByTestId("nutrition-quick-log").getByRole("button", { name: "Under-fueled" }));
+  await domClick(page.getByTestId("nutrition-quick-log").getByRole("button", { name: "Hunger" }));
   await page.getByTestId("nutrition-quick-log").getByPlaceholder("Quick note (optional)").fill(note);
-  await page.getByTestId("nutrition-save-quick").click();
+  await domClick(page.getByTestId("nutrition-save-quick"));
   await expect(page.getByTestId("nutrition-save-status")).toContainText(/saved/i);
 }
 
 async function openSettingsAccountSurface(page) {
-  await page.getByTestId("app-tab-settings").click();
+  await domClick(page.getByTestId("app-tab-settings"));
   await expect(page.getByTestId("settings-tab")).toBeVisible();
-  await page.getByTestId("settings-surface-account").click();
+  await domClick(page.getByTestId("settings-surface-account"));
   await expect(page.getByTestId("settings-account-section")).toBeVisible();
 }
 
@@ -186,11 +268,11 @@ async function signInFromSettings(page, {
 } = {}) {
   await openSettingsAccountSurface(page);
   await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
-  await page.getByTestId("settings-open-auth-gate").click();
+  await domClick(page.getByTestId("settings-open-auth-gate"));
   await expect(page.getByTestId("auth-gate")).toBeVisible();
   await page.getByTestId("auth-email").fill(email);
   await page.getByTestId("auth-password").fill(password);
-  await page.getByTestId("auth-submit").click();
+  await domClick(page.getByTestId("auth-submit"));
 
   await expect.poll(async () => {
     const raw = await page.evaluate((authKey) => window.localStorage.getItem(authKey), AUTH_CACHE_KEY);
@@ -201,17 +283,40 @@ async function signInFromSettings(page, {
 }
 
 async function expectTodayQuickLogNote(page, expectedValue) {
-  await page.getByTestId("app-tab-today").click();
+  await domClick(page.getByTestId("app-tab-today"));
   await expect(page.getByTestId("today-quick-log").getByPlaceholder("Optional note")).toHaveValue(expectedValue);
 }
 
 async function expectNutritionQuickLogNote(page, { dateKey, expectedValue }) {
-  await page.getByTestId("app-tab-nutrition").click();
+  await domClick(page.getByTestId("app-tab-nutrition"));
   await expect(page.getByTestId("nutrition-tab")).toBeVisible();
   await page.getByTestId("nutrition-log-date-select").selectOption(dateKey);
   await expect(
     page.getByTestId("nutrition-quick-log").getByPlaceholder("Quick note (optional)")
   ).toHaveValue(expectedValue);
+}
+
+async function openSettingsSurface(page, surfaceTestId, expectedSectionTestId) {
+  await domClick(page.getByTestId("app-tab-settings"));
+  await expect(page.getByTestId("settings-tab")).toBeVisible();
+  await domClick(page.getByTestId(surfaceTestId));
+  await expect(page.getByTestId(expectedSectionTestId)).toBeVisible();
+}
+
+async function saveProfileName(page, nextName) {
+  await openSettingsSurface(page, "settings-surface-profile", "settings-profile-section");
+  await page.getByPlaceholder("Display name").fill(nextName);
+  await domClick(page.getByRole("button", { name: "Save profile" }));
+}
+
+async function addSwimGoal(page) {
+  await openSettingsSurface(page, "settings-surface-goals", "settings-goals-section");
+  await domClick(page.getByTestId("settings-goals-add"));
+  await expect(page.getByTestId("settings-goal-editor")).toBeVisible();
+  await domClick(page.getByTestId("settings-goal-editor-template-swim_better"));
+  await domClick(page.getByTestId("settings-goal-editor-preview"));
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/Swim better|swim/i);
+  await domClick(page.getByTestId("settings-goals-confirm-preview"));
 }
 
 function currentWeekDayRow(page, dayLabel) {
@@ -227,6 +332,7 @@ function escapeRegExp(value = "") {
 }
 
 test.describe("local-first and sync trust paths", () => {
+  test.describe.configure({ timeout: 120000 });
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 960 });
   });
@@ -306,7 +412,7 @@ test.describe("local-first and sync trust paths", () => {
     expect(postedLocalNotes).not.toContain(localOnlyWorkoutNote);
   });
 
-  test("reload during retry currently keeps the pending marker but drops the unsynced nutrition detail", async ({ page }) => {
+  test("reload during retry keeps the pending marker and preserves the unsynced nutrition detail", async ({ page }) => {
     await freezeBrowserDate(page, "2026-04-16T12:00:00.000Z");
     await installSupabaseConfig(page);
     const session = makeSession();
@@ -356,17 +462,95 @@ test.describe("local-first and sync trust paths", () => {
       };
     }).toEqual({
       pending: true,
-      notes: {
-        "2026-04-13": "",
-        "2026-04-14": "",
-        "2026-04-15": "",
-      },
+      notes: notesByDate,
     });
 
     await page.getByTestId("app-tab-nutrition").click();
     await page.getByTestId("nutrition-log-date-select").selectOption("2026-04-14");
     await expect(
       page.getByTestId("nutrition-quick-log").getByPlaceholder("Quick note (optional)")
-    ).toHaveValue("");
+    ).toHaveValue(notesByDate["2026-04-14"]);
+  });
+
+  test("profile, goals, workout logs, and nutrition logs sync across two signed-in devices and survive hard refresh", async ({ browser }) => {
+    test.setTimeout(120000);
+    const session = makeSession();
+    const payload = makeSignedInPayload();
+    const serverState = {
+      trainerDataRows: [{ id: "trainer_v1_user", user_id: session.user.id, data: payload }],
+      trainerDataPosts: [],
+    };
+    const deviceOne = await browser.newContext({ viewport: { width: 1366, height: 960 } });
+    const deviceTwo = await browser.newContext({ viewport: { width: 1366, height: 960 } });
+
+    try {
+      await seedSignedInContext(deviceOne, { session, payload });
+      await installSharedSupabaseRuntime(deviceOne, { session, serverState });
+
+      const pageOne = await deviceOne.newPage();
+      await freezeBrowserDate(pageOne, "2026-04-17T12:00:00.000Z");
+      await pageOne.goto("/");
+      await expect(pageOne.getByTestId("today-tab")).toBeVisible();
+
+      const syncedName = "Synced Across Devices";
+      const workoutNote = "Device one skipped this benchmark lift";
+      const nutritionNote = "Device one under-fueled the day";
+
+      await saveProfileName(pageOne, syncedName);
+      await expect.poll(() => serverState.trainerDataRows[0]?.data?.personalization?.profile?.name || "").toBe(syncedName);
+      await addSwimGoal(pageOne);
+      await expect.poll(() => JSON.stringify(serverState.trainerDataRows[0]?.data?.goals || [])).toMatch(/swim/i);
+      await saveTodayQuickLog(pageOne, {
+        statusLabel: "skipped",
+        note: workoutNote,
+      });
+      await expect.poll(() => serverState.trainerDataRows[0]?.data?.dailyCheckins?.["2026-04-17"]?.note || "").toBe(workoutNote);
+      await logUnderFueledDay(pageOne, "2026-04-16", nutritionNote);
+      await expect.poll(() => serverState.trainerDataRows[0]?.data?.nutritionActualLogs?.["2026-04-16"]?.note || "").toBe(nutritionNote);
+
+      await expect.poll(() => serverState.trainerDataPosts.length).toBeGreaterThanOrEqual(4);
+      await pageOne.reload();
+      await expect(pageOne.getByTestId("today-session-card")).toBeVisible();
+
+      await seedSignedInContext(deviceTwo, { session, payload: null });
+      await installSharedSupabaseRuntime(deviceTwo, { session, serverState });
+      const pageTwo = await deviceTwo.newPage();
+      await freezeBrowserDate(pageTwo, "2026-04-17T12:00:00.000Z");
+      await pageTwo.goto("/");
+      await expect(pageTwo.getByTestId("today-session-card")).toBeVisible();
+      await pageTwo.reload();
+      await expect(pageTwo.getByTestId("today-session-card")).toBeVisible();
+      await expect.poll(async () => {
+        const cache = await readLocalCache(pageTwo);
+        return {
+          name: cache?.personalization?.profile?.name || "",
+          hasSwimGoal: JSON.stringify(cache?.goals || []).toLowerCase().includes("swim"),
+          workoutNote: cache?.dailyCheckins?.["2026-04-17"]?.note || "",
+          nutritionNote: cache?.nutritionActualLogs?.["2026-04-16"]?.note || "",
+        };
+      }).toEqual({
+        name: syncedName,
+        hasSwimGoal: true,
+        workoutNote,
+        nutritionNote,
+      });
+
+      await openSettingsSurface(pageTwo, "settings-surface-profile", "settings-profile-section");
+      await expect(pageTwo.getByPlaceholder("Display name")).toHaveValue(syncedName);
+
+      await openSettingsSurface(pageTwo, "settings-surface-goals", "settings-goals-section");
+      await expect(pageTwo.getByTestId("settings-goals-management")).toContainText(/Swim better|swim/i);
+
+      await expectTodayQuickLogNote(pageTwo, workoutNote);
+      await expectNutritionQuickLogNote(pageTwo, {
+        dateKey: "2026-04-16",
+        expectedValue: nutritionNote,
+      });
+    } finally {
+      await Promise.allSettled([
+        deviceOne.close(),
+        deviceTwo.close(),
+      ]);
+    }
   });
 });

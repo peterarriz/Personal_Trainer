@@ -634,7 +634,7 @@ export const inferStructuredGoalIntentFromText = (text = "") => {
   if (/\b(ease back into training safely)\b/i.test(corpus)) {
     return findStructuredGoalIntentById("restart_safely");
   }
-  if (/\b(start training again without pretending i(?:['’]|â€™)?m where i used to be)\b/i.test(corpus)) {
+  if (/\b(start training again without pretending i(?:['\u2019])?m where i used to be)\b/i.test(corpus)) {
     return findStructuredGoalIntentById("rebuild_routine");
   }
   if (/\b(low-impact restart|start back with lower-impact training|joint-friendly sessions)\b/i.test(corpus)) {

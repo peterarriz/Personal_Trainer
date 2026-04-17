@@ -26,7 +26,7 @@ const buildRepresentativeDay = ({
   adjustmentReasons,
 });
 
-test("Peter nutrition audit exposes the current plan's representative target pattern and hydration proof gap", () => {
+test("Peter nutrition audit exposes the current plan's representative target pattern and keeps hydration explicit", () => {
   const audit = buildPeterNutritionCompatibilityAudit();
   const riskKeys = audit.riskFlags.map((flag) => flag.key);
   const hardRun = audit.representativeDays.find((day) => day.laneKey === NUTRITION_AUDIT_LANES.hardRun);
@@ -36,23 +36,29 @@ test("Peter nutrition audit exposes the current plan's representative target pat
 
   assert.equal(audit.model, "nutrition_compatibility_audit");
   assert.equal(audit.version, 1);
-  assert.equal(audit.verdict, "compatible_with_gaps");
+  assert.equal(audit.verdict, "compatible");
   assert.equal(audit.representativeDays.length, 4);
   assert.equal(audit.auditContext.planCoverage.hardRunDays, 12);
   assert.equal(audit.auditContext.planCoverage.longRunDays, 12);
   assert.equal(audit.auditContext.planCoverage.strengthDays, 12);
   assert.equal(audit.auditContext.planCoverage.recoveryDays, 36);
+  assert.equal(audit.auditContext.explicitMaintenanceModel, true);
 
   assert.equal(hardRun.targets.cal, 2700);
   assert.equal(hardRun.targets.c, 305);
+  assert.equal(hardRun.targets.hydrationTargetOz, 117);
   assert.equal(longRun.targets.cal, 2900);
   assert.equal(longRun.targets.c, 345);
+  assert.equal(longRun.targets.hydrationTargetOz, 125);
+  assert.equal(strength.targets.cal, 2513);
   assert.equal(strength.targets.p, 200);
-  assert.equal(recovery.targets.cal, 2210);
+  assert.equal(recovery.targets.cal, 2319);
+  assert.equal(recovery.targets.c, 190);
   assert.equal(recovery.targets.p, 185);
 
-  assert.ok(riskKeys.includes("high_demand_hydration_targets_not_explicit"));
-  assert.ok(riskKeys.includes("moderate_cut_is_relative_not_first_class"));
+  assert.ok(!riskKeys.includes("high_demand_hydration_targets_not_explicit"));
+  assert.ok(!riskKeys.includes("moderate_cut_is_relative_not_first_class"));
+  assert.equal(audit.riskFlags.length, 0);
 });
 
 test("nutrition compatibility audit flags common target failures like flat carbs before quality work and low retention protein", () => {
@@ -171,7 +177,10 @@ test("nutrition compatibility markdown renders a reviewer-friendly risk table", 
   assert.match(markdown, /^# Nutrition Compatibility Audit/m);
   assert.match(markdown, /\| Lane \| Day type \| Calories \| Carbs \| Protein \| Fat \| Hydration \| Notes \|/);
   assert.match(markdown, /\| ID \| Severity \| Area \| Finding \| Evidence \|/);
-  assert.match(markdown, /high_demand_hydration_targets_not_explicit/);
+  assert.doesNotMatch(markdown, /high_demand_hydration_targets_not_explicit/);
+  assert.doesNotMatch(markdown, /moderate_cut_is_relative_not_first_class/);
+  assert.match(markdown, /No deterministic compatibility risks were detected/);
+  assert.match(markdown, /117 oz explicit/);
   assert.match(markdown, /Hard run/);
   assert.match(markdown, /Long run/);
 });

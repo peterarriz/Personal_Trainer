@@ -4,6 +4,7 @@ import { DOMAIN_ADAPTER_IDS } from "./goal-capability-resolution-service.js";
 import { getPerformanceRecordsForLog } from "./performance-record-service.js";
 import { resolveInputEffectHorizon } from "./planning-effect-matrix-service.js";
 import { getCurrentPrescribedDayRecord } from "./prescribed-day-history-service.js";
+import { adaptStrengthWorkoutForState } from "./strength-readiness-adaptation-service.js";
 
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
@@ -219,10 +220,10 @@ const softenFutureSession = (session = null, reasonTag = "") => {
     nextSession.label = "Conditioning (controlled)";
     nextSession.intensityGuidance = "Stay in a controlled aerobic range.";
   } else if (type === "strength+prehab") {
-    nextSession.label = sanitizeText(`${nextSession.label || "Strength"} (controlled)`, 120);
-    nextSession.strengthDose = "20-30 min maintenance strength";
-    nextSession.strengthDuration = "20-30 min";
-    nextSession.intensityGuidance = "Hold loading submaximal and leave a rep or two in reserve.";
+    const adapted = adaptStrengthWorkoutForState({ workout: nextSession, state: "reduced_load" });
+    adapted.label = sanitizeText(`${nextSession.label || "Strength"} (controlled)`, 120);
+    adapted.adaptationTag = reasonTag || "adaptive_cap";
+    return adapted;
   } else if (["power-skill", "reactive-plyo", "sprint-support"].includes(type)) {
     nextSession.label = sanitizeText(`${nextSession.label || "Power"} (controlled)`, 120);
     nextSession.power = {

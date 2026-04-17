@@ -31,9 +31,9 @@ const formatDateTimeLabel = (value = null) => {
 };
 
 export const COACH_SURFACE_MODES = Object.freeze({
-  todayWeek: "today_week",
-  changePlan: "change_plan",
-  askAnything: "ask_anything",
+  todayWeek: "adjust_today",
+  changePlan: "adjust_week",
+  askAnything: "ask_coach",
 });
 
 export const buildCoachActionLabel = (actionType = "") => {
@@ -284,14 +284,11 @@ export const buildCoachActionHistoryModel = ({
 export const buildCoachAskAnythingStateModel = ({
   apiKey = "",
 } = {}) => {
-  const aiAvailable = Boolean(sanitizeText(apiKey, 20));
   return {
-    aiAvailable,
+    aiAvailable: true,
     advisoryOnly: true,
     canMutatePlan: false,
-    headline: aiAvailable ? "Advisory only" : "AI advisory is off",
-    detail: aiAvailable
-      ? "Answers here can interpret, explain, and suggest. They never change plan state."
-      : "Open-ended Coach Q&A is unavailable right now. This mode never changes plan state.",
+    headline: "Answers only",
+    detail: "Ask for a call, a tradeoff, or a next step. Chat never changes your plan - preview a change before you accept it.",
   };
 };

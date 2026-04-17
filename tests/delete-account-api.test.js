@@ -45,11 +45,11 @@ const withEnv = async (patch, run) => {
   }
 };
 
-test("delete-account GET reports missing deployment configuration before the user hits a broken flow", async () => {
+test("delete-account GET requires an authenticated session", async () => {
   await withEnv({
     SUPABASE_URL: "https://forma.example.supabase.co",
     SUPABASE_ANON_KEY: "anon-key",
-    SUPABASE_SERVICE_ROLE_KEY: "",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
   }, async () => {
     const handler = loadHandler();
     const req = { method: "GET", headers: {} };
@@ -58,15 +58,64 @@ test("delete-account GET reports missing deployment configuration before the use
     await handler(req, res);
 
     const payload = readJson(res);
-    assert.equal(res.statusCode, 200);
-    assert.equal(payload.configured, false);
-    assert.equal(payload.code, "delete_account_not_configured");
-    assert.deepEqual(payload.missing, ["SUPABASE_SERVICE_ROLE_KEY"]);
-    assert.match(payload.fix, /SUPABASE_SERVICE_ROLE_KEY/i);
+    assert.equal(res.statusCode, 401);
+    assert.equal(payload.code, "auth_required");
   });
 });
 
-test("delete-account POST returns a structured not-configured response when permanent delete is unavailable", async () => {
+test("delete-account GET returns generic signed-in diagnostics without leaking env names", async () => {
+  global.fetch = async (url) => {
+    if (/\/auth\/v1\/user$/i.test(url)) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ id: "11111111-1111-4111-8111-111111111111", email: "athlete@example.com" }),
+      };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
+  await withEnv({
+    SUPABASE_URL: "https://forma.example.supabase.co",
+    SUPABASE_ANON_KEY: "anon-key",
+    SUPABASE_SERVICE_ROLE_KEY: "",
+  }, async () => {
+    const handler = loadHandler();
+    const req = {
+      method: "GET",
+      headers: {
+        authorization: "Bearer user-access-token",
+      },
+    };
+    const res = createRes();
+
+    await handler(req, res);
+
+    const payload = readJson(res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(payload.configured, false);
+    assert.equal(payload.code, "delete_account_not_configured");
+    assert.deepEqual(payload.missing, []);
+    assert.deepEqual(payload.required, []);
+    assert.equal(payload.fix, "");
+    assert.match(payload.message, /not available/i);
+  });
+
+  delete global.fetch;
+});
+
+test("delete-account POST returns a generic not-configured response when permanent delete is unavailable", async () => {
+  global.fetch = async (url) => {
+    if (/\/auth\/v1\/user$/i.test(url)) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ id: "11111111-1111-4111-8111-111111111111", email: "athlete@example.com" }),
+      };
+    }
+    throw new Error(`Unexpected fetch: ${url}`);
+  };
+
   await withEnv({
     SUPABASE_URL: "https://forma.example.supabase.co",
     SUPABASE_ANON_KEY: "anon-key",
@@ -87,9 +136,11 @@ test("delete-account POST returns a structured not-configured response when perm
     assert.equal(res.statusCode, 503);
     assert.equal(payload.ok, false);
     assert.equal(payload.code, "delete_account_not_configured");
-    assert.deepEqual(payload.missing, ["SUPABASE_SERVICE_ROLE_KEY"]);
-    assert.match(payload.fix, /redeploy/i);
+    assert.deepEqual(payload.missing, []);
+    assert.equal(payload.fix, "");
   });
+
+  delete global.fetch;
 });
 
 test("delete-account POST deletes the signed-in auth user when the deployment is configured", async () => {
@@ -146,3 +197,4 @@ test("delete-account POST deletes the signed-in auth user when the deployment is
 
   delete global.fetch;
 });
+

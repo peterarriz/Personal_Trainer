@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { createAuthStorageModule } from "../src/modules-auth-storage.js";
 import { buildPersistedTrainerPayload } from "../src/services/persistence-adapter-service.js";
+import { SYNC_DIAGNOSTIC_EVENT_TYPES } from "../src/services/sync-diagnostics-service.js";
 
 const noop = () => {};
 
@@ -76,7 +77,7 @@ const installLocalStorage = (initial = {}) => {
   return store;
 };
 
-const createModule = ({ fetchImpl }) => {
+const createModule = ({ fetchImpl, reportSyncDiagnostic = noop }) => {
   global.window = {
     __SUPABASE_URL: "https://example.supabase.co",
     __SUPABASE_ANON_KEY: "anon-key",
@@ -88,6 +89,7 @@ const createModule = ({ fetchImpl }) => {
     normalizeGoals: (goals) => goals,
     DEFAULT_PERSONALIZATION: {},
     DEFAULT_MULTI_GOALS: [],
+    reportSyncDiagnostic,
   });
 };
 
@@ -324,6 +326,81 @@ test("sbLoad replays pending nutrition actual logs from newer local cache into c
   assert.equal(savedCache?.nutritionActualLogs?.["2026-04-15"]?.note, "Missed the pre-run meal");
 });
 
+test("sbLoad resumes newer pending onboarding intake locally without replaying it to cloud yet", async () => {
+  const session = buildSession();
+  const cloudPayload = buildPayload({
+    label: "Cloud Easy Run",
+    note: "Older cloud copy",
+    ts: 1713990000000,
+  });
+  const localPayload = {
+    ...buildPayload({
+      label: "Local Setup Draft",
+      note: "Resume my unfinished intake",
+      ts: 1714000000000,
+    }),
+    personalization: {
+      profile: {
+        onboardingComplete: false,
+        profileSetupComplete: true,
+      },
+    },
+    syncMeta: {
+      pendingCloudWrite: true,
+      lastLocalMutationTs: 1714000000000,
+      lastCloudSyncTs: 1713990000000,
+    },
+  };
+  installLocalStorage({
+    trainer_local_cache_v4: localPayload,
+  });
+
+  const requests = [];
+  const module = createModule({
+    fetchImpl: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+        body: options.body ? JSON.parse(options.body) : null,
+      });
+      if (/\/rest\/v1\/trainer_data\?user_id=eq\./.test(url)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{ id: "trainer_v1_user", user_id: session.user.id, data: cloudPayload }],
+          text: async () => "",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  let appliedLogs = null;
+  await module.sbLoad({
+    authSession: session,
+    setters: {
+      setLogs: (value) => {
+        appliedLogs = value;
+      },
+    },
+    persistAll: noop,
+    setAuthSession: noop,
+  });
+
+  assert.equal(appliedLogs?.["2026-04-16"]?.type, "Local Setup Draft");
+  const replayPost = requests.find((request) => /\/rest\/v1\/trainer_data$/.test(request.url) && request.method === "POST");
+  assert.equal(replayPost, undefined);
+
+  const savedCache = JSON.parse(global.localStorage.getItem("trainer_local_cache_v4") || "{}");
+  assert.equal(savedCache?.syncMeta?.pendingCloudWrite, true);
+  assert.equal(savedCache?.personalization?.profile?.onboardingComplete, false);
+});
+
 test("pending local replay after a transient failure reconciles once and does not replay again on the next identical load", async () => {
   const session = buildSession();
   const cloudPayload = buildPayload({
@@ -442,4 +519,224 @@ test("pending local replay after a transient failure reconciles once and does no
 
   const replayPostsAfterRepeatLoad = requests.filter((request) => /\/rest\/v1\/trainer_data$/.test(request.url) && request.method === "POST").length;
   assert.equal(replayPostsAfterRepeatLoad, replayPostsAfterRecovery);
+});
+
+test("sbLoad prefers pending local writes when payloads differ even if local and cloud timestamps tie", async () => {
+  const session = buildSession();
+  const sharedTs = 1714000000000;
+  const cloudPayload = buildPayload({
+    label: "Cloud Easy Run",
+    note: "Older cloud copy",
+    ts: sharedTs,
+  });
+  const localPayload = {
+    ...buildPayload({
+      label: "Local Tempo Run",
+      note: "Pending local recovery copy",
+      ts: sharedTs,
+    }),
+    syncMeta: {
+      pendingCloudWrite: true,
+      lastLocalMutationTs: sharedTs,
+      lastCloudSyncTs: sharedTs,
+    },
+  };
+  installLocalStorage({
+    trainer_local_cache_v4: localPayload,
+  });
+
+  const requests = [];
+  const module = createModule({
+    fetchImpl: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+        body: options.body ? JSON.parse(options.body) : null,
+      });
+      if (/\/rest\/v1\/trainer_data\?user_id=eq\./.test(url)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{ id: "trainer_v1_user", user_id: session.user.id, data: cloudPayload }],
+          text: async () => "",
+        };
+      }
+      if (/\/rest\/v1\/trainer_data$/.test(url) && (options.method || "GET") === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ([]),
+          text: async () => "",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  let appliedLogs = null;
+  await module.sbLoad({
+    authSession: session,
+    setters: {
+      setLogs: (value) => {
+        appliedLogs = value;
+      },
+    },
+    persistAll: noop,
+    setAuthSession: noop,
+  });
+
+  assert.equal(appliedLogs?.["2026-04-16"]?.type, "Local Tempo Run");
+  const replayPost = requests.find((request) => /\/rest\/v1\/trainer_data$/.test(request.url) && request.method === "POST");
+  assert.equal(replayPost?.body?.data?.dailyCheckins?.["2026-04-16"]?.note, "Pending local recovery copy");
+
+  const savedCache = JSON.parse(global.localStorage.getItem("trainer_local_cache_v4") || "{}");
+  assert.equal(savedCache?.syncMeta?.pendingCloudWrite, false);
+  assert.equal(savedCache?.dailyCheckins?.["2026-04-16"]?.note, "Pending local recovery copy");
+});
+
+test("persistAll reports trainer_data save diagnostics with status, retry eligibility, and pending local writes", async () => {
+  installLocalStorage();
+  const session = buildSession();
+  const diagnostics = [];
+  const module = createModule({
+    reportSyncDiagnostic: (event) => diagnostics.push(event),
+    fetchImpl: async (url, options = {}) => {
+      if (/\/rest\/v1\/trainer_data$/.test(url) && (options.method || "GET") === "POST") {
+        return {
+          ok: false,
+          status: 504,
+          json: async () => ([]),
+          text: async () => "gateway timeout",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  const result = await module.persistAll({
+    payload: buildPayload(),
+    authSession: session,
+    setStorageStatus: noop,
+    setAuthSession: noop,
+  });
+
+  assert.equal(result?.ok, false);
+  const saveAttempt = diagnostics.find((event) => event?.type === SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataSaveAttempt);
+  const saveFailure = diagnostics.find((event) => event?.type === SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataSaveResult && event?.ok === false);
+  assert.equal(saveAttempt?.endpoint, "rest/v1/trainer_data");
+  assert.equal(saveAttempt?.method, "POST");
+  assert.equal(saveFailure?.httpStatus, 504);
+  assert.equal(saveFailure?.retryEligible, true);
+  assert.equal(saveFailure?.pendingLocalWrites, true);
+});
+
+test("ensureValidSession reports auth refresh diagnostics when the refresh token is rejected", async () => {
+  installLocalStorage();
+  const diagnostics = [];
+  const expiredSession = {
+    ...buildSession(),
+    expires_at: Math.floor((Date.now() - 60_000) / 1000),
+  };
+  const module = createModule({
+    reportSyncDiagnostic: (event) => diagnostics.push(event),
+    fetchImpl: async (url) => {
+      if (/\/auth\/v1\/token\?grant_type=refresh_token/.test(url)) {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ message: "Invalid refresh token", code: "invalid_grant" }),
+          text: async () => JSON.stringify({ message: "Invalid refresh token", code: "invalid_grant" }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  const result = await module.ensureValidSession(expiredSession, { reason: "unit_test_refresh_failure" });
+
+  assert.equal(result?.status, "refresh_failed");
+  const refreshFailure = diagnostics.find((event) => event?.type === SYNC_DIAGNOSTIC_EVENT_TYPES.authRefreshResult && event?.ok === false);
+  assert.equal(refreshFailure?.endpoint, "auth/v1/token?grant_type=refresh_token");
+  assert.equal(refreshFailure?.httpStatus, 401);
+  assert.equal(refreshFailure?.supabaseErrorCode, "invalid_grant");
+});
+
+test("sbLoad reports when a newer pending local cache outranks the cloud row", async () => {
+  const session = buildSession();
+  const cloudPayload = buildPayload({
+    label: "Cloud Easy Run",
+    note: "Older cloud copy",
+    ts: 1713990000000,
+  });
+  const localPayload = {
+    ...buildPayload({
+      label: "Local Tempo Run",
+      note: "Unsynced local copy",
+      ts: 1714000000000,
+    }),
+    syncMeta: {
+      pendingCloudWrite: true,
+      lastLocalMutationTs: 1714000000000,
+      lastCloudSyncTs: 1713990000000,
+    },
+  };
+  installLocalStorage({
+    trainer_local_cache_v4: localPayload,
+  });
+
+  const diagnostics = [];
+  const module = createModule({
+    reportSyncDiagnostic: (event) => diagnostics.push(event),
+    fetchImpl: async (url, options = {}) => {
+      if (/\/rest\/v1\/trainer_data\?user_id=eq\./.test(url)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{ id: "trainer_v1_user", user_id: session.user.id, data: cloudPayload }],
+          text: async () => "",
+        };
+      }
+      if (/\/rest\/v1\/trainer_data$/.test(url) && (options.method || "GET") === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ([]),
+          text: async () => "",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  await module.sbLoad({
+    authSession: session,
+    setters: {},
+    persistAll: noop,
+    setAuthSession: noop,
+  });
+
+  const authorityDecision = diagnostics.find((event) => event?.type === SYNC_DIAGNOSTIC_EVENT_TYPES.localCacheDecision);
+  assert.equal(authorityDecision?.decision, "prefer_pending_local");
+  assert.equal(authorityDecision?.localTs, 1714000000000);
+  assert.equal(authorityDecision?.cloudTs, 1713990000000);
 });

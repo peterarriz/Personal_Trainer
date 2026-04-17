@@ -97,6 +97,30 @@ test("signed-out local resume path resolves to offline-local instead of fake syn
   assert.match(model.assurance, /local/i);
 });
 
+test("setup-deferred signed-in intake stays in device-only mode with explicit local-first copy", () => {
+  const model = buildSyncStateModel({
+    storageStatus: buildStorageStatus({
+      mode: "local",
+      label: "SETUP LOCAL",
+      reason: STORAGE_STATUS_REASONS.setupDeferred,
+      detail: "Setup is still in progress. Changes stay on this device until onboarding finishes.",
+    }),
+    authSession: {
+      user: { id: "user_1" },
+    },
+    syncRuntime: createInitialSyncRuntimeState({ isOnline: true, now: 2500 }),
+    hasLocalCache: true,
+    authInitializing: false,
+    appLoading: false,
+    now: 2500,
+  });
+
+  assert.equal(model.id, SYNC_STATE_IDS.offlineLocal);
+  assert.equal(model.reasonKey, "setup_incomplete_local");
+  assert.match(model.detail, /onboarding finishes/i);
+  assert.match(model.nextStep, /finish onboarding/i);
+});
+
 test("realtime interruption surfaces stale-cloud while preserving local assurance", () => {
   const runtime = reduceSyncRuntimeState(
     createInitialSyncRuntimeState({ isOnline: true, now: 3000 }),

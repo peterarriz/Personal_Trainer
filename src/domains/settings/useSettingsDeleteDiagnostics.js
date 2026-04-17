@@ -5,12 +5,13 @@ import { createEmptySettingsDeleteDiagnosticsState } from "./settings-surface-mo
 export function useSettingsDeleteDiagnostics({
   activeSettingsSurface = "account",
   authEmail = "",
+  authAccessToken = "",
   onTrackFrictionEvent = () => {},
 } = {}) {
   const [deleteDiagnostics, setDeleteDiagnostics] = useState(createEmptySettingsDeleteDiagnosticsState);
 
   const refreshDeleteDiagnostics = async () => {
-    if (!authEmail) {
+    if (!authEmail || !authAccessToken) {
       const emptyState = createEmptySettingsDeleteDiagnosticsState();
       setDeleteDiagnostics(emptyState);
       return { ok: false, diagnostics: emptyState };
@@ -21,7 +22,10 @@ export function useSettingsDeleteDiagnostics({
     try {
       const res = await fetch("/api/auth/delete-account", {
         method: "GET",
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${authAccessToken}`,
+        },
       });
       const data = await res.json().catch(() => ({}));
       const next = {
@@ -71,8 +75,8 @@ export function useSettingsDeleteDiagnostics({
   };
 
   useEffect(() => {
-    if (activeSettingsSurface !== "account" || !authEmail) {
-      if (!authEmail) setDeleteDiagnostics(createEmptySettingsDeleteDiagnosticsState());
+    if (activeSettingsSurface !== "account" || !authEmail || !authAccessToken) {
+      if (!authEmail || !authAccessToken) setDeleteDiagnostics(createEmptySettingsDeleteDiagnosticsState());
       return;
     }
     let active = true;
@@ -83,7 +87,7 @@ export function useSettingsDeleteDiagnostics({
     return () => {
       active = false;
     };
-  }, [activeSettingsSurface, authEmail, onTrackFrictionEvent]);
+  }, [activeSettingsSurface, authAccessToken, authEmail, onTrackFrictionEvent]);
 
   return {
     deleteDiagnostics,

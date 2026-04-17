@@ -30,8 +30,10 @@ const toFiniteNumber = (value, fallback = null) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const DASH_RANGE_PATTERN = /(\d+)\s*[-\u2013\u2014]\s*(\d+)/;
+
 const parseSetPrescription = (setsText = "") => {
-  const normalized = sanitizeText(setsText).replace(/[x×]/gi, "x");
+  const normalized = sanitizeText(setsText).replace(/[x\u00d7]/gi, "x");
   const matched = normalized.match(/^(\d+)\s*x\s*(.+)$/i);
   if (matched) {
     return { setsText: matched[1], repsText: sanitizeText(matched[2]) || "As prescribed" };
@@ -41,7 +43,7 @@ const parseSetPrescription = (setsText = "") => {
 
 const parseRepTarget = (repsText = "") => {
   const text = sanitizeText(repsText).toLowerCase();
-  const range = text.match(/(\d+)\s*[-–—]\s*(\d+)/);
+  const range = text.match(DASH_RANGE_PATTERN);
   if (range) return Number(range[2]);
   const simple = text.match(/(\d+)/);
   return simple ? Number(simple[1]) : 8;
@@ -58,7 +60,7 @@ const normalizeNumericText = (value = "") => {
   return String(value).trim();
 };
 
-const joinQuickParts = (parts = []) => parts.filter(Boolean).join(" · ");
+const joinQuickParts = (parts = []) => parts.filter(Boolean).join(" - ");
 
 const buildStrengthSubstitutionMeta = ({ exercise = "", prescribedExercise = "" } = {}) => {
   const actualKey = normalizePerformanceExerciseKey(exercise || "");
@@ -183,6 +185,9 @@ const normalizePrescribedExercise = (entry = {}) => {
   const parsedSet = parseSetPrescription(entry?.sets || "");
   const repsText = sanitizeText(entry?.reps || parsedSet.repsText || "");
   const mode = inferPerformanceExerciseMode(exercise, entry?.mode || "");
+  const prescribedSets = Math.max(1, parseSetCount(parsedSet.setsText));
+  const prescribedReps = Math.max(1, parseRepTarget(repsText || parsedSet.repsText));
+  const prescribedWeight = toFiniteNumber(entry?.prescribedWeight ?? entry?.weight ?? entry?.weightUsed, null);
   const substitutionMeta = buildStrengthSubstitutionMeta({
     exercise,
     prescribedExercise: exercise,
@@ -193,12 +198,12 @@ const normalizePrescribedExercise = (entry = {}) => {
     exercise,
     prescribedSetsText: sanitizeText(parsedSet.setsText),
     prescribedRepsText: repsText || "As prescribed",
-    prescribedSets: Math.max(1, parseSetCount(parsedSet.setsText)),
-    prescribedReps: Math.max(1, parseRepTarget(repsText || parsedSet.repsText)),
-    prescribedWeight: toFiniteNumber(entry?.prescribedWeight ?? entry?.weight ?? entry?.weightUsed, null),
-    actualWeight: toFiniteNumber(entry?.actualWeight ?? entry?.weightUsed, null),
-    actualSets: "",
-    actualReps: "",
+    prescribedSets,
+    prescribedReps,
+    prescribedWeight,
+    actualWeight: mode === "bodyweight" || mode === "band" ? "" : normalizeNumericText(entry?.actualWeight ?? entry?.weightUsed ?? prescribedWeight ?? ""),
+    actualSets: normalizeNumericText(prescribedSets),
+    actualReps: normalizeNumericText(prescribedReps),
     bandTension: sanitizeText(entry?.bandTension || ""),
     bodyweightOnly: mode === "bodyweight",
     mode,
@@ -207,6 +212,7 @@ const normalizePrescribedExercise = (entry = {}) => {
     substitutionState: substitutionMeta.substitutionState,
     canResetToPrescribed: substitutionMeta.canResetToPrescribed,
     substitutionAllowed: true,
+    prefilledFromPrescription: true,
   };
 };
 

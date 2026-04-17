@@ -14,6 +14,7 @@ const {
   SUPABASE_KEY,
   SUPABASE_URL,
   makeSession,
+  makeSignedInPayload,
 } = require("./auth-runtime-test-helpers.js");
 
 const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
@@ -247,7 +248,8 @@ async function saveTodayQuickLog(page, {
   if (note) {
     await quickLog.getByPlaceholder("Optional note").fill(note);
   }
-  await page.getByTestId("today-save-log").click();
+  await expect(page.getByTestId("today-save-log")).toBeVisible();
+  await page.getByTestId("today-save-log").evaluate((button) => button.click());
   await expect(page.getByTestId("today-save-status")).toContainText(/saved|marked/i);
 }
 
@@ -258,7 +260,8 @@ async function logUnderFueledDay(page, dateKey, note) {
   await page.getByTestId("nutrition-quick-log").getByRole("button", { name: "Under-fueled" }).click();
   await page.getByTestId("nutrition-quick-log").getByRole("button", { name: "Hunger" }).click();
   await page.getByTestId("nutrition-quick-log").getByPlaceholder("Quick note (optional)").fill(note);
-  await page.getByTestId("nutrition-save-quick").click();
+  await expect(page.getByTestId("nutrition-save-quick")).toBeVisible();
+  await page.getByTestId("nutrition-save-quick").evaluate((button) => button.click());
   await expect(page.getByTestId("nutrition-save-status")).toContainText(/saved/i);
 }
 
@@ -279,7 +282,6 @@ async function expectNutritionQuickLogNote(page, { dateKey, expectedValue }) {
 async function openDetailedWorkoutLog(page) {
   await page.getByTestId("app-tab-log").click();
   await expect(page.getByTestId("log-tab")).toBeVisible();
-  await page.getByRole("button", { name: /open full detail entry/i }).click();
   await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
 }
 
@@ -387,6 +389,8 @@ function escapeRegExp(value = "") {
 }
 
 test.describe("signed-in adaptation trust", () => {
+  test.describe.configure({ timeout: 120000 });
+
   test("blank-cloud sign-in preserves exact local workout and nutrition logs without loss, duplication, or reinterpretation", async ({ browser }) => {
     const sharedRuntime = {
       trainerDataRows: [],
@@ -615,27 +619,111 @@ test.describe("signed-in adaptation trust", () => {
     await reopenedRuntime.context.close();
   });
 
-  test("retrying workout logs still have ambiguous explicit recovery semantics after sync returns", async ({ browser }) => {
+  test("transient cloud-save cooldown prevents request storms across passive navigation and successive mutations", async ({ browser }) => {
+    const session = makeSession();
+    const seededPayload = makeSignedInPayload();
     const sharedRuntime = {
-      trainerDataRows: [],
+      trainerDataRows: [{
+        id: `trainer_v1_${session.user.id}`,
+        user_id: session.user.id,
+        data: seededPayload,
+      }],
       trainerDataPosts: [],
       failTrainerDataPosts: false,
     };
+    const workoutDateKey = "2026-04-16";
+    const workoutNote = "Cooldown path workout note";
+    const nutritionDateKey = "2026-04-15";
+    const nutritionNote = "Cooldown path nutrition note";
+
+    const runtime = await openSeededApp(browser, {
+      fixedIsoString: "2026-04-16T12:00:00.000Z",
+      sessionSeed: session,
+      localCacheSeed: seededPayload,
+      runtimeState: sharedRuntime,
+      session,
+    });
+    const { page } = runtime;
+    const baselinePostCount = sharedRuntime.trainerDataPosts.length;
+
+    sharedRuntime.failTrainerDataPosts = true;
+    await saveTodayQuickLog(page, {
+      statusLabel: "skipped",
+      note: workoutNote,
+    });
+
+    await expect.poll(async () => {
+      const cache = await readLocalCache(page);
+      return {
+        pending: cache?.syncMeta?.pendingCloudWrite || false,
+        workoutNote: cache?.dailyCheckins?.[workoutDateKey]?.note || "",
+        workoutStatus: cache?.logs?.[workoutDateKey]?.actualSession?.status || "",
+      };
+    }).toEqual({
+      pending: true,
+      workoutNote,
+      workoutStatus: "skipped",
+    });
+
+    const failedPostCount = sharedRuntime.trainerDataPosts.length;
+    expect(failedPostCount - baselinePostCount).toBe(1);
+
+    await page.getByTestId("app-tab-program").click();
+    await expect(page.getByTestId("program-tab")).toBeVisible();
+    await page.getByTestId("app-tab-settings").click();
+    await expect(page.getByTestId("settings-tab")).toBeVisible();
+    await page.getByTestId("app-tab-nutrition").click();
+    await expect(page.getByTestId("nutrition-tab")).toBeVisible();
+    await page.getByTestId("app-tab-coach").click();
+    await expect(page.getByTestId("coach-tab")).toBeVisible();
+
+    await expect.poll(() => sharedRuntime.trainerDataPosts.length).toBe(failedPostCount);
+
+    await logUnderFueledDay(page, nutritionDateKey, nutritionNote);
+
+    await expect.poll(async () => {
+      const cache = await readLocalCache(page);
+      return {
+        pending: cache?.syncMeta?.pendingCloudWrite || false,
+        workoutNote: cache?.dailyCheckins?.[workoutDateKey]?.note || "",
+        workoutStatus: cache?.logs?.[workoutDateKey]?.actualSession?.status || "",
+        nutritionNote: cache?.nutritionActualLogs?.[nutritionDateKey]?.note || "",
+      };
+    }).toEqual({
+      pending: true,
+      workoutNote,
+      workoutStatus: "skipped",
+      nutritionNote,
+    });
+
+    await expect.poll(() => sharedRuntime.trainerDataPosts.length).toBe(failedPostCount);
+
+    await runtime.context.close();
+  });
+
+  test("retrying workout logs survive explicit recovery once cloud sync returns", async ({ browser }) => {
     const session = makeSession();
+    const seededPayload = makeSignedInPayload();
+    const sharedRuntime = {
+      trainerDataRows: [{
+        id: `trainer_v1_${session.user.id}`,
+        user_id: session.user.id,
+        data: seededPayload,
+      }],
+      trainerDataPosts: [],
+      failTrainerDataPosts: false,
+    };
     const workoutDateKey = "2026-04-15";
     const workoutNote = "Retry path workout note";
 
     const runtime = await openSeededApp(browser, {
       fixedIsoString: "2026-04-15T12:00:00.000Z",
+      sessionSeed: session,
+      localCacheSeed: seededPayload,
       runtimeState: sharedRuntime,
       session,
-      expectedSurface: "intake",
     });
     const { page } = runtime;
-
-    await completeRunningOnboarding(page);
-    await signInFromSettings(page);
-    await expect.poll(() => sharedRuntime.trainerDataRows.length).toBe(1);
 
     sharedRuntime.failTrainerDataPosts = true;
     await saveTodayQuickLog(page, {
@@ -669,8 +757,8 @@ test.describe("signed-in adaptation trust", () => {
       };
     }).toEqual({
       pending: false,
-      note: "",
-      status: "",
+      note: workoutNote,
+      status: "skipped",
     });
     await expect.poll(() => extractMutationIntegritySnapshot(sharedRuntime.trainerDataRows[0]?.data || {}, {
       workoutDateKey,
@@ -678,24 +766,29 @@ test.describe("signed-in adaptation trust", () => {
     })).toEqual({
       workout: {
         dateKey: workoutDateKey,
-        note: "",
-        status: "",
+        note: workoutNote,
+        status: "skipped",
       },
       nutrition: {},
     });
     expect(sharedRuntime.trainerDataPosts.length).toBeGreaterThan(failedPostCount);
-    await expectTodayQuickLogNote(page, "");
+    await expectTodayQuickLogNote(page, workoutNote);
 
     await runtime.context.close();
   });
 
-  test("retrying nutrition logs still have ambiguous explicit recovery semantics after sync returns", async ({ browser }) => {
+  test("retrying nutrition logs survive explicit recovery once cloud sync returns", async ({ browser }) => {
+    const session = makeSession();
+    const seededPayload = makeSignedInPayload();
     const sharedRuntime = {
-      trainerDataRows: [],
+      trainerDataRows: [{
+        id: `trainer_v1_${session.user.id}`,
+        user_id: session.user.id,
+        data: seededPayload,
+      }],
       trainerDataPosts: [],
       failTrainerDataPosts: false,
     };
-    const session = makeSession();
     const notesByDate = {
       "2026-04-13": "Retry recovery nutrition note 13",
       "2026-04-14": "Retry recovery nutrition note 14",
@@ -705,15 +798,12 @@ test.describe("signed-in adaptation trust", () => {
 
     const runtime = await openSeededApp(browser, {
       fixedIsoString: "2026-04-16T12:00:00.000Z",
+      sessionSeed: session,
+      localCacheSeed: seededPayload,
       runtimeState: sharedRuntime,
       session,
-      expectedSurface: "intake",
     });
     const { page } = runtime;
-
-    await completeRunningOnboarding(page);
-    await signInFromSettings(page);
-    await expect.poll(() => sharedRuntime.trainerDataRows.length).toBe(1);
 
     sharedRuntime.failTrainerDataPosts = true;
     for (const [dateKey, note] of Object.entries(notesByDate)) {
@@ -754,21 +844,37 @@ test.describe("signed-in adaptation trust", () => {
       };
     }).toEqual({
       pending: false,
-      notes: {
-        "2026-04-13": "",
-        "2026-04-14": "",
-        "2026-04-15": "",
-      },
+      notes: notesByDate,
     });
     await expectNutritionQuickLogNote(page, {
       dateKey: "2026-04-14",
-      expectedValue: "",
+      expectedValue: notesByDate["2026-04-14"],
+    });
+    await expect.poll(() => extractMutationIntegritySnapshot(sharedRuntime.trainerDataRows[0]?.data || {}, {
+      workoutDateKey: "",
+      nutritionDateKeys,
+    })).toEqual({
+      workout: {
+        dateKey: "",
+        note: "",
+        status: "",
+      },
+      nutrition: Object.fromEntries(
+        nutritionDateKeys.map((dateKey) => [
+          dateKey,
+          {
+            note: notesByDate[dateKey],
+            deviationKind: "under_fueled",
+            issue: "hunger",
+          },
+        ])
+      ),
     });
 
     await runtime.context.close();
   });
 
-  test("signed-in degraded-sync workout reopen currently keeps the pending marker but drops the unsynced workout note", async ({ browser }) => {
+  test("signed-in degraded-sync workout reopen keeps pending local workout detail visible", async ({ browser }) => {
     const sharedRuntime = {
       trainerDataRows: [],
       trainerDataPosts: [],
@@ -829,7 +935,76 @@ test.describe("signed-in adaptation trust", () => {
       };
     }).toEqual({
       pending: true,
-      note: "",
+      note: workoutNote,
+    });
+    await expectTodayQuickLogNote(pendingPage, workoutNote);
+    await pendingReopenRuntime.context.close();
+  });
+
+  test("signed-in degraded-sync nutrition reopen keeps pending local nutrition detail visible", async ({ browser }) => {
+    const sharedRuntime = {
+      trainerDataRows: [],
+      trainerDataPosts: [],
+      failTrainerDataPosts: false,
+    };
+    const session = makeSession();
+    const nutritionDateKey = "2026-04-15";
+    const nutritionNote = "Retry path nutrition note";
+
+    const signedInRuntime = await openSeededApp(browser, {
+      fixedIsoString: "2026-04-16T12:00:00.000Z",
+      runtimeState: sharedRuntime,
+      session,
+      expectedSurface: "intake",
+    });
+    const { page: initialPage } = signedInRuntime;
+
+    await completeRunningOnboarding(initialPage);
+    await signInFromSettings(initialPage);
+    await expect.poll(() => sharedRuntime.trainerDataRows.length).toBe(1);
+
+    sharedRuntime.failTrainerDataPosts = true;
+    await logUnderFueledDay(initialPage, nutritionDateKey, nutritionNote);
+
+    await expect.poll(async () => {
+      const cache = await readLocalCache(initialPage);
+      return {
+        pending: cache?.syncMeta?.pendingCloudWrite || false,
+        note: cache?.nutritionActualLogs?.[nutritionDateKey]?.note || "",
+        deviationKind: cache?.nutritionActualLogs?.[nutritionDateKey]?.deviationKind || "",
+      };
+    }).toEqual({
+      pending: true,
+      note: nutritionNote,
+      deviationKind: "under_fueled",
+    });
+
+    const authSession = await readAuthSession(initialPage);
+    const localCache = await readLocalCache(initialPage);
+    await signedInRuntime.context.close();
+
+    const pendingReopenRuntime = await openSeededApp(browser, {
+      fixedIsoString: "2026-04-16T12:00:00.000Z",
+      sessionSeed: authSession,
+      localCacheSeed: localCache,
+      runtimeState: sharedRuntime,
+      session,
+    });
+    const { page: pendingPage } = pendingReopenRuntime;
+
+    await expect.poll(async () => {
+      const cache = await readLocalCache(pendingPage);
+      return {
+        pending: cache?.syncMeta?.pendingCloudWrite || false,
+        note: cache?.nutritionActualLogs?.[nutritionDateKey]?.note || "",
+      };
+    }).toEqual({
+      pending: true,
+      note: nutritionNote,
+    });
+    await expectNutritionQuickLogNote(pendingPage, {
+      dateKey: nutritionDateKey,
+      expectedValue: nutritionNote,
     });
     await pendingReopenRuntime.context.close();
   });

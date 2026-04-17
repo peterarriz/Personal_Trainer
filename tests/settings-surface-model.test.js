@@ -30,21 +30,31 @@ test("focus routing sends old aliases to the right settings surface", () => {
 test("protected diagnostics stay hidden unless debug mode and an explicit staff flag are both present", () => {
   assert.equal(readSettingsDiagnosticsVisibility({
     debugMode: false,
+    hostname: "localhost",
     locationSearch: "?diagnostics=1",
     storedDiagnosticsFlag: "1",
   }), false);
   assert.equal(readSettingsDiagnosticsVisibility({
     debugMode: true,
+    hostname: "beta.forma.run",
+    locationSearch: "?diagnostics=1",
+    storedDiagnosticsFlag: "1",
+  }), false);
+  assert.equal(readSettingsDiagnosticsVisibility({
+    debugMode: true,
+    hostname: "localhost",
     locationSearch: "?diagnostics=1",
     storedDiagnosticsFlag: "0",
   }), true);
   assert.equal(readSettingsDiagnosticsVisibility({
     debugMode: true,
+    hostname: "localhost",
     locationSearch: "",
     storedDiagnosticsFlag: "1",
   }), true);
   assert.equal(readSettingsDiagnosticsVisibility({
     debugMode: true,
+    hostname: "localhost",
     locationSearch: "",
     storedDiagnosticsFlag: "0",
   }), false);

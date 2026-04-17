@@ -8,12 +8,7 @@ Give QA or a skeptical reviewer one compact export that makes plan evolution ins
 
 `src/services/audits/plan-evolution-export-service.js` builds the deterministic markdown report.
 
-It is exposed in the product from:
-
-- `Settings`
-- `Account & sync`
-- `Advanced recovery and destructive actions`
-- `Reviewer report`
+This artifact is intentionally internal-only now. It is not meant to appear in the consumer app.
 
 Each exported day includes:
 
@@ -46,7 +41,7 @@ If the saved review does not contain enough evidence, the export leaves the driv
 
 ## Intended Use
 
-- Reviewers can generate a markdown report directly in the UI instead of opening internal dev tools.
+- Internal QA or reviewer workflows can generate the markdown report in trusted local/debug contexts without opening dev tools.
 - QA can compare the original prescription against the latest prescription and check whether actual logs stayed visible beside them.
 - Week summaries give a compact view of what the app planned, what happened, and what changed next across current and archived plan arcs.
 - The artifact is meant to expose history, not to overwrite it or summarize it away.

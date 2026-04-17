@@ -1,14 +1,12 @@
-const STATIC_CACHE = "pt-static-v1";
-const RUNTIME_CACHE = "pt-runtime-v1";
-const APP_SHELL = [
-  "/",
-  "/index.html",
-  "/manifest.json",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png",
-  "/splash/apple-splash-1179x2556.png",
-  "/splash/apple-splash-1170x2532.png",
-];
+const STATIC_CACHE = __FORMA_STATIC_CACHE__;
+const RUNTIME_CACHE = __FORMA_RUNTIME_CACHE__;
+const APP_SHELL = __FORMA_APP_SHELL__;
+const STATIC_ASSET_PREFIXES = __FORMA_STATIC_ASSET_PREFIXES__;
+
+const isStaticAssetRequest = (url) => (
+  STATIC_ASSET_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))
+  || APP_SHELL.includes(url.pathname)
+);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -36,8 +34,10 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(RUNTIME_CACHE).then((cache) => cache.put("/index.html", copy));
+          if (response && response.ok) {
+            const copy = response.clone();
+            caches.open(RUNTIME_CACHE).then((cache) => cache.put("/index.html", copy));
+          }
           return response;
         })
         .catch(async () => {
@@ -48,18 +48,30 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      const networkFetch = fetch(request)
-        .then((response) => {
+  if (isStaticAssetRequest(url)) {
+    event.respondWith(
+      caches.match(request).then((cached) => (
+        cached || fetch(request).then((response) => {
           if (response && response.ok) {
             const copy = response.clone();
-            caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
+            caches.open(STATIC_CACHE).then((cache) => cache.put(request, copy));
           }
           return response;
         })
-        .catch(() => cached);
-      return cached || networkFetch;
-    })
+      ))
+    );
+    return;
+  }
+
+  event.respondWith(
+    fetch(request)
+      .then((response) => {
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(request))
   );
 });

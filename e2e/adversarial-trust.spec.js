@@ -230,7 +230,6 @@ const buildSevenGoalStackFromLibrary = async (page, { finishBuild = true } = {})
 const openDetailedWorkoutLog = async (page) => {
   await page.getByTestId("app-tab-log").click();
   await expect(page.getByTestId("log-tab")).toBeVisible();
-  await page.getByRole("button", { name: /open full detail entry/i }).click();
   await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
 };
 

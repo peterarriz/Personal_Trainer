@@ -192,13 +192,12 @@ test("Coach keeps only applied-action surfaces visible", async ({ page }) => {
   await openTab(page, "app-tab-coach");
 
   await expect(page.getByTestId("coach-mode-switcher")).toBeVisible();
-  await expect(page.getByTestId("coach-mode-panel-today_week")).toBeVisible();
+  await expect(page.getByTestId("coach-mode-panel-adjust_today")).toBeVisible();
   await expect(page.getByText("Helpful?")).toHaveCount(0);
   await expect(page.getByText("MEMORY / SETTINGS")).toHaveCount(0);
   await expect(page.getByPlaceholder("Anthropic key (optional)")).toHaveCount(0);
 
-  await page.locator("[data-testid^='coach-preview-action-']").first().click();
-  await expect(page.getByTestId("coach-mode-panel-change_plan")).toBeVisible();
+  await page.getByTestId("coach-preview-adjust-today").click();
   await expect(page.getByTestId("coach-action-preview")).toContainText(/Week \d+ volume target becomes|Nothing changes until/i);
 });
 
@@ -244,8 +243,6 @@ test("Today keeps one workout surface and Log keeps detailed entry inside Log wo
   await openTab(page, "app-tab-log");
   await expect(page.getByTestId("log-tab")).toBeVisible();
   await expect(page.getByText("Detailed workout log")).toHaveCount(0);
-
-  await page.getByRole("button", { name: /open full detail entry/i }).click();
   const detailedEntry = page.getByTestId("log-detailed-entry");
   await expect(detailedEntry).toBeVisible();
   await expect(detailedEntry.getByTestId("planned-session-plan")).toBeVisible();

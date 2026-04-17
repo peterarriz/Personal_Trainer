@@ -135,8 +135,8 @@ test.describe("friction analytics smoke", () => {
 
     await page.getByTestId("app-tab-coach").click();
     await expect(page.getByTestId("coach-tab")).toBeVisible();
-    await page.getByTestId("coach-mode-button-change_plan").click();
-    await page.locator("[data-testid^='coach-change-action-']").first().click();
+    await page.getByTestId("coach-mode-button-adjust_week").click();
+    await page.getByTestId("coach-preview-adjust-week").click();
 
     await expect.poll(async () => {
       const analyticsNames = await getAnalyticsNames(page);

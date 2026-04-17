@@ -424,6 +424,11 @@ export const AUTH_ENTRY_STYLE_TEXT = `
     line-height:1.55;
     color:var(--auth-text-soft, var(--text-soft, #8ea7b8));
   }
+  .auth-inline-links{
+    display:flex;
+    justify-content:flex-end;
+    margin-top:-0.2rem;
+  }
   .auth-local-cta{
     display:grid;
     gap:0.35rem;
@@ -451,6 +456,15 @@ export const AUTH_ENTRY_STYLE_TEXT = `
     border:1px solid rgba(212, 151, 55, 0.42);
     background:rgba(92, 56, 12, 0.28);
     color:#ffd590;
+    font-size:0.68rem;
+    line-height:1.58;
+  }
+  .auth-notice{
+    padding:0.88rem 0.95rem;
+    border-radius:16px;
+    border:1px solid var(--auth-badge-border, var(--badge-border, rgba(82,212,200,0.22)));
+    background:var(--auth-badge-bg, var(--badge-bg, rgba(82,212,200,0.12)));
+    color:var(--auth-badge-text, var(--badge-text, #bfece7));
     font-size:0.68rem;
     line-height:1.58;
   }
