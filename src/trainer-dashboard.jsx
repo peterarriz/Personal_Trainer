@@ -108,6 +108,10 @@ import {
   buildHistoricalWeekAuditEntries,
 } from "./services/history-audit-service.js";
 import {
+  buildPlanEvolutionExport,
+  renderPlanEvolutionExportMarkdown,
+} from "./services/audits/plan-evolution-export-service.js";
+import {
   CALIBRATION_MIN_HISTORY_COUNT,
   deriveCalibrationState,
 } from "./services/calibration-state-service.js";
@@ -5023,6 +5027,7 @@ export default function TrainerDashboard() {
   const sbLoadRef = useRef(null);
   const logDiagRef = useRef(null);
   const historyRelabelAppliedRef = useRef(false);
+  const bootPersistenceReadyRef = useRef(false);
   const [startFreshConfirmOpen, setStartFreshConfirmOpen] = useState(false);
   const [showAppleHealthFirstLaunch, setShowAppleHealthFirstLaunch] = useState(false);
   const DEBUG_MODE = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
@@ -5789,6 +5794,90 @@ export default function TrainerDashboard() {
     nutritionActualLogs,
   }), [todayKey, planDay, plannedDayRecords, nutritionActualLogs]);
   const weeklyReview = generateWeeklyCoachReview({ momentum, arbitration, signals: computeAdaptiveSignals({ logs, bodyweights, personalization }), personalization, patterns, learning: learningLayer, nutritionActualLogs, weeklyNutritionReview, expectations, recalibration });
+  const planHistoryReviewDateKeys = useMemo(
+    () => Array.from(new Set([
+      ...Object.keys(logs || {}),
+      ...Object.keys(dailyCheckins || {}),
+      ...Object.keys(plannedDayRecords || {}),
+      ...Object.keys(nutritionActualLogs || {}),
+      todayKey,
+    ])).filter((dateKey) => dateKey && dateKey <= todayKey).sort((a, b) => b.localeCompare(a)),
+    [logs, dailyCheckins, plannedDayRecords, nutritionActualLogs, todayKey]
+  );
+  const planHistoryDayReviews = useMemo(
+    () => planHistoryReviewDateKeys
+      .map((dateKey) => buildDayReview({
+        dateKey,
+        logs,
+        dailyCheckins,
+        nutritionActualLogs,
+        resolvePrescribedHistory: (requestedDateKey, actualLog = null) => resolvePlannedDayHistoryEntry({
+          dateKey: requestedDateKey,
+          existingEntry: plannedDayRecords?.[requestedDateKey] || null,
+          todayKey,
+          todayPlannedDayRecord,
+          legacySnapshot: actualLog?.prescribedPlanSnapshot
+            ? { ...actualLog.prescribedPlanSnapshot, ts: actualLog?.ts || null }
+            : null,
+          planStartDate: canonicalGoalState?.planStartDate || "",
+        }),
+        getCurrentPrescribedDayRevision,
+        getCurrentPrescribedDayRecord,
+      }))
+      .filter(Boolean)
+      .map((review) => ({ ...review, reportSource: "Current plan history" })),
+    [
+      planHistoryReviewDateKeys,
+      logs,
+      dailyCheckins,
+      nutritionActualLogs,
+      plannedDayRecords,
+      todayKey,
+      todayPlannedDayRecord,
+      canonicalGoalState?.planStartDate,
+    ]
+  );
+  const planHistoryArchivedAudits = useMemo(
+    () => (personalization?.planArchives || []).map((archive) => buildArchivedPlanAudit({ archive })).filter(Boolean),
+    [personalization?.planArchives]
+  );
+  const planHistoryWeekSummaries = useMemo(() => {
+    const currentWeekSummaries = buildHistoricalWeekAuditEntries({
+      planWeekRecords,
+      logs,
+      weeklyCheckins,
+      currentWeek,
+    })
+      .filter((entry) => Number(entry?.absoluteWeek || 0) <= Number(currentWeek || 0))
+      .map((entry) => ({ ...entry, reportSource: "Current plan history" }));
+    const archivedWeekSummaries = planHistoryArchivedAudits.flatMap((archive) => (
+      Array.isArray(archive?.weekReviews)
+        ? archive.weekReviews.map((entry) => ({
+            ...entry,
+            reportSource: `Archived plan: ${archive.label || archive.id}`,
+          }))
+        : []
+    ));
+    return [...currentWeekSummaries, ...archivedWeekSummaries];
+  }, [planHistoryArchivedAudits, planWeekRecords, logs, weeklyCheckins, currentWeek]);
+  const planHistoryReportReviews = useMemo(
+    () => [
+      ...planHistoryDayReviews,
+      ...planHistoryArchivedAudits.flatMap((archive) => (
+        Array.isArray(archive?.dayEntries)
+          ? archive.dayEntries
+            .map((entry) => entry?.review
+              ? {
+                  ...entry.review,
+                  reportSource: `Archived plan: ${archive.label || archive.id}`,
+                }
+              : null)
+            .filter(Boolean)
+          : []
+      )),
+    ],
+    [planHistoryDayReviews, planHistoryArchivedAudits]
+  );
   const baseProactiveTriggers = buildProactiveTriggers({ momentum, personalization, goals: goalsModel, learning: learningLayer, nutritionActualLogs, longTermMemory }).filter(t => !dismissedTriggers.includes(t.id));
   const optimizationTrigger = optimizationLayer.experimentation.canExperiment && optimizationLayer.experimentation.pendingExperiment
     ? [{
@@ -6812,6 +6901,7 @@ export default function TrainerDashboard() {
           : "Cloud sync is unavailable right now. Using local data on this device."
       );
       resumeUsableLocalState({ statusOverride: providerStatus, fallbackToAuthGate: true });
+      bootPersistenceReadyRef.current = true;
       setAuthInitializing(false);
       setLoading(false);
       return;
@@ -6847,6 +6937,7 @@ export default function TrainerDashboard() {
           });
         }
       }
+      bootPersistenceReadyRef.current = true;
       setAuthInitializing(false);
       setLoading(false);
     })();
@@ -6854,6 +6945,7 @@ export default function TrainerDashboard() {
 
   useEffect(() => {
     if (authInitializing || !authSession?.user?.id) return;
+    bootPersistenceReadyRef.current = false;
     (async () => {
       setLoading(true);
       try {
@@ -6888,6 +6980,7 @@ export default function TrainerDashboard() {
         }
         applyStorageStatus(nextStatus);
       }
+      bootPersistenceReadyRef.current = true;
       setLoading(false);
     })();
   }, [authSession?.user?.id, authInitializing]);
@@ -7048,8 +7141,8 @@ export default function TrainerDashboard() {
       skipNextGoalsPersistRef.current = false;
       return;
     }
-    if (!loading) persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
-  }, [goals]);
+    if (!loading && bootPersistenceReadyRef.current) persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
+  }, [goals, loading]);
 
   useEffect(() => {
     if (loading || typeof window === "undefined" || typeof Notification === "undefined") return;
@@ -9292,7 +9385,7 @@ Keep it plain and specific.`;
           await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
         }} />}
 
-        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} onOpenAuthGate={() => {
+        {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} planHistoryReviews={planHistoryReportReviews} planHistoryWeekSummaries={planHistoryWeekSummaries} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} onOpenAuthGate={() => {
           setAuthMode("signin");
           setStartupLocalResumeAccepted(false);
         }} focusSection={settingsFocus} frictionDashboard={frictionDashboard} onTrackFrictionEvent={trackFrictionEvent} onPersist={async (nextPersonalization) => {
@@ -10450,7 +10543,24 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       additionalGoals: secondaryGoalEntries,
     });
   };
+  const buildFoundationPlanAnswers = () => {
+    const baseAnswers = syncGoalStackDraftToAnswers({
+      primaryGoalText: "",
+      additionalGoals: [],
+      goalSelections: [],
+    });
+    return {
+      ...baseAnswers,
+      primary_goal: "general_fitness",
+      experience_level: baseAnswers?.experience_level || "beginner",
+      training_days: baseAnswers?.training_days || "3",
+      session_length: baseAnswers?.session_length || "30",
+      coaching_style: baseAnswers?.coaching_style || "Balanced coaching",
+    };
+  };
   const startFoundationPlanFlow = async () => {
+    if (confirmBuildSubmitting || confirmBuildLockRef.current || phase === INTAKE_UI_PHASES.building) return;
+    confirmBuildLockRef.current = true;
     onTrackFrictionEvent({
       flow: "intake",
       action: "foundation_plan",
@@ -10460,18 +10570,45 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
         stage: intakeMachineRef.current?.stage || intakeMachine?.stage || "",
       },
     });
-    const foundationAnswers = {
-      ...syncGoalStackDraftToAnswers({
-        primaryGoalText: "",
-        additionalGoals: [],
-        goalSelections: [],
-      }),
-      primary_goal: "general_fitness",
-    };
+    const foundationAnswers = buildFoundationPlanAnswers();
+    const missingDefaults = [];
+    if (!answers?.experience_level) missingDefaults.push("beginner training background");
+    if (!answers?.training_days) missingDefaults.push("3 training days per week");
+    if (!answers?.session_length) missingDefaults.push("30-minute sessions");
+    if (!answers?.coaching_style) missingDefaults.push("balanced coaching");
+    if (!answers?.training_location) missingDefaults.push("environment left unconfirmed");
+    const foundationAssessmentLine = missingDefaults.length
+      ? `Foundation plan built without goal intake. Defaults used: ${missingDefaults.join(", ")}.`
+      : "Foundation plan built without goal intake using the details already on this page.";
+    setAnswers(foundationAnswers);
     setAskedClarifyingQuestions([]);
     setPendingClarifyingQuestion(null);
     setPendingSecondaryGoalPrompt(null);
-    await runAssessment({ updatedAnswers: foundationAnswers, askedQuestions: [] });
+    setAssessmentText(foundationAssessmentLine);
+    setConfirmBuildError("");
+    setPhase(INTAKE_UI_PHASES.building);
+    setConfirmBuildSubmitting(true);
+    try {
+      await onComplete({
+        ...foundationAnswers,
+        timeline_assessment: foundationAssessmentLine,
+        starting_fresh: startingFresh,
+      });
+      sessionPersistenceDisabledRef.current = true;
+      safeStorageRemove(sessionStorage, INTAKE_SESSION_STORAGE_KEY);
+    } catch (error) {
+      const failureMessage = sanitizeIntakeText(
+        error?.message
+          ? `I hit a problem while building the foundation plan: ${error.message}`
+          : "I hit a problem while building the foundation plan. Please try again."
+      );
+      setConfirmBuildError(failureMessage);
+      setPhase(INTAKE_UI_PHASES.goals);
+      appendCoachMessage(failureMessage);
+    } finally {
+      confirmBuildLockRef.current = false;
+      setConfirmBuildSubmitting(false);
+    }
   };
   const submitGoalsStage = async () => {
     const stagedAnswers = syncGoalStackDraftToAnswers({
@@ -11654,7 +11791,6 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
       : "",
   ].filter(Boolean);
   const goalsStageCanContinue = goalsStageNeeds.length === 0;
-  const goalsStageCanStartFoundation = goalsStageNeeds.filter((item) => !/at least one goal/i.test(item)).length === 0;
   useEffect(() => {
     const syncedSelections = buildGoalTemplateSelectionsFromAnswers({ answers });
     const currentSerialized = JSON.stringify(intakeGoalSelections);
@@ -13648,7 +13784,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
                   data-testid="intake-footer-foundation"
                   className="btn"
                   onClick={startFoundationPlanFlow}
-                  disabled={!goalsStageCanStartFoundation || assessing}
+                  disabled={assessing || confirmBuildSubmitting}
                   style={{ color:"#dbe7f6", borderColor:"#324961" }}
                 >
                   Foundation plan
@@ -14477,7 +14613,7 @@ function MetricsBaselinesSection({
   );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, onResetThisDevice = async () => ({ ok: false }), onOpenAuthGate = () => {}, storageStatus = null, syncStateModel = null, syncSurfaceModel = null, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], focusSection = "", frictionDashboard = null, onTrackFrictionEvent = () => {} }) {
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, onResetThisDevice = async () => ({ ok: false }), onOpenAuthGate = () => {}, storageStatus = null, syncStateModel = null, syncSurfaceModel = null, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], planHistoryReviews = [], planHistoryWeekSummaries = [], focusSection = "", frictionDashboard = null, onTrackFrictionEvent = () => {} }) {
   const appleHealth = personalization?.connectedDevices?.appleHealth || {};
   const garmin = personalization?.connectedDevices?.garmin || {};
   const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
@@ -14501,6 +14637,8 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
   const [resetDeviceConfirm, setResetDeviceConfirm] = useState("");
   const [backupCode, setBackupCode] = useState("");
   const [backupMsg, setBackupMsg] = useState("");
+  const [planHistoryReportMarkdown, setPlanHistoryReportMarkdown] = useState("");
+  const [planHistoryReportMsg, setPlanHistoryReportMsg] = useState("");
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [pendingRestoreCode, setPendingRestoreCode] = useState("");
   const [appleImportText, setAppleImportText] = useState("");
@@ -15132,6 +15270,30 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
     } catch {
       setBackupCode(payload);
       setBackupMsg("Unable to copy automatically");
+    }
+  };
+  const buildPlanHistoryReportMarkdown = (generatedAt = new Date().toISOString()) => renderPlanEvolutionExportMarkdown(buildPlanEvolutionExport({
+    title: "Plan History Reviewer Report",
+    generatedAt,
+    reviews: planHistoryReviews,
+    weekSummaries: planHistoryWeekSummaries,
+  }));
+  const handleGeneratePlanHistoryReport = () => {
+    const generatedAt = new Date().toISOString();
+    setPlanHistoryReportMarkdown(buildPlanHistoryReportMarkdown(generatedAt));
+    setPlanHistoryReportMsg(`Generated ${new Date(generatedAt).toLocaleString()}`);
+  };
+  const handleCopyPlanHistoryReport = async () => {
+    const generatedAt = new Date().toISOString();
+    const markdown = planHistoryReportMarkdown || buildPlanHistoryReportMarkdown(generatedAt);
+    if (!planHistoryReportMarkdown) {
+      setPlanHistoryReportMarkdown(markdown);
+    }
+    try {
+      await navigator.clipboard.writeText(markdown);
+      setPlanHistoryReportMsg("Copied reviewer report.");
+    } catch {
+      setPlanHistoryReportMsg("Unable to copy automatically. The report stays visible below.");
     }
   };
   const handleRestoreRequest = () => {
@@ -16009,6 +16171,12 @@ function SettingsTab({ onStartFresh, personalization, setPersonalization, onPers
               onExportData: exportData,
               onCopyBackup: handleCopyBackup,
               onResetPlan: onStartFresh,
+            }}
+            historyReport={{
+              message: planHistoryReportMsg,
+              markdown: planHistoryReportMarkdown,
+              onGenerate: handleGeneratePlanHistoryReport,
+              onCopy: handleCopyPlanHistoryReport,
             }}
             showInternalSettingsTools={showInternalSettingsTools}
           />
@@ -20389,6 +20557,16 @@ function PlanTab({ planDay = null, surfaceModel = null, currentPlanWeek = null, 
                 <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.55 }}>Prioritized: {currentProgramBlock?.goalAllocation?.prioritized || planComposer?.blockIntent?.prioritized || arbitration.goalAllocation.primary}</div>
                 <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.5 }}>Maintained: {(currentProgramBlock?.goalAllocation?.maintained || planComposer?.blockIntent?.maintained || arbitration.goalAllocation.maintained || []).join(" - ") || "None"}</div>
                 <div style={{ fontSize:"0.54rem", color:C.amber, marginTop:"0.16rem", lineHeight:1.5 }}>Minimized: {currentProgramBlock?.goalAllocation?.minimized || planComposer?.blockIntent?.minimized || arbitration.goalAllocation.minimized || "None"}</div>
+                {!!((currentProgramBlock?.goalAllocation?.heldBack || planComposer?.blockIntent?.heldBack || []).length) && (
+                  <div style={{ fontSize:"0.52rem", color:"#fbbf24", marginTop:"0.16rem", lineHeight:1.5 }}>
+                    Held back: {(currentProgramBlock?.goalAllocation?.heldBack || planComposer?.blockIntent?.heldBack || []).join(" - ")}
+                  </div>
+                )}
+                {!!(currentProgramBlock?.goalAllocation?.why || planComposer?.blockIntent?.why) && (
+                  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.16rem", lineHeight:1.5 }}>
+                    {currentProgramBlock?.goalAllocation?.why || planComposer?.blockIntent?.why}
+                  </div>
+                )}
                 <div style={{ fontSize:"0.52rem", color:"#8fa5c8", marginTop:"0.22rem", lineHeight:1.5 }}>Tradeoff: {currentProgramBlock?.tradeoffs?.[0] || arbitration.coachTradeoffLine || arbitration.conflicts?.[0] || strengthLayer.tradeoff}</div>
               </div>
             </div>
@@ -22821,7 +22999,26 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
   const mealSlotByKey = Object.fromEntries(mealSlots.map((slot) => [slot.key, slot]));
 
   const todayKey = new Date().toISOString().split("T")[0];
+  const nutritionLogDateOptions = Array.from({ length: 7 }, (_, offset) => {
+    const nextDate = new Date(`${todayKey}T12:00:00`);
+    nextDate.setDate(nextDate.getDate() - offset);
+    return nextDate.toISOString().split("T")[0];
+  });
+  const [selectedLogDateKey, setSelectedLogDateKey] = useState(todayKey);
+  const selectedLogDateOptionKey = nutritionLogDateOptions.join("|");
+  const selectedLogIsToday = selectedLogDateKey === todayKey;
+  const formatNutritionLogDateLabel = (dateKey = "") => {
+    if (!dateKey) return "Today";
+    const safeDate = new Date(`${dateKey}T12:00:00`);
+    if (Number.isNaN(safeDate.getTime())) return dateKey;
+    const formatted = safeDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    return dateKey === todayKey ? `${formatted} (Today)` : formatted;
+  };
   const actualNutritionToday = nutritionActualLogs?.[todayKey] || planDay?.resolved?.nutrition?.actual || normalizeActualNutritionLog({ dateKey: todayKey, feedback: {} });
+  const actualNutritionForSelectedDate = nutritionActualLogs?.[selectedLogDateKey]
+    || (selectedLogIsToday ? planDay?.resolved?.nutrition?.actual : null)
+    || normalizeActualNutritionLog({ dateKey: selectedLogDateKey, feedback: {} });
+  const selectedLogDateLabel = formatNutritionLogDateLabel(selectedLogDateKey);
   const nutritionComparison = planDay?.resolved?.nutrition?.comparison || compareNutritionPrescriptionToActual({
     nutritionPrescription: nutritionLayer,
     actualNutritionLog: actualNutritionToday,
@@ -22889,6 +23086,10 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
     strengthDay,
   });
   useEffect(() => {
+    if (nutritionLogDateOptions.includes(selectedLogDateKey)) return;
+    setSelectedLogDateKey(todayKey);
+  }, [todayKey, selectedLogDateKey, selectedLogDateOptionKey]);
+  useEffect(() => {
     setMealAnchorDrafts({
       breakfast: savedMealAnchors.breakfast,
       lunch: savedMealAnchors.lunch,
@@ -22897,29 +23098,41 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
     });
   }, [savedMealAnchors.breakfast, savedMealAnchors.lunch, savedMealAnchors.travelFallback, savedMealAnchors.emergencyOrder]);
   useEffect(() => {
-    if (!actualNutritionToday?.loggedAt) {
+    if (!actualNutritionForSelectedDate?.loggedAt) {
       setNutritionCheck(EMPTY_NUTRITION_CHECK);
       setHydrationOz(0);
       setHydrationNudgedAt(null);
       setSupplementTaken({});
+      setShowHydrationNudge(false);
       return;
     }
     setNutritionCheck({
-      deviationKind: actualNutritionToday?.deviationKind || "",
-      issue: actualNutritionToday?.issue || "",
-      note: actualNutritionToday?.note || "",
+      deviationKind: actualNutritionForSelectedDate?.deviationKind || "",
+      issue: actualNutritionForSelectedDate?.issue || "",
+      note: actualNutritionForSelectedDate?.note || "",
     });
-    setHydrationOz(Number(actualNutritionToday?.hydration?.oz || 0));
-    setHydrationNudgedAt(actualNutritionToday?.hydration?.nudgedAt || null);
-    setSupplementTaken(actualNutritionToday?.supplements?.takenMap || {});
-  }, [actualNutritionToday?.loggedAt]);
+    setHydrationOz(Number(actualNutritionForSelectedDate?.hydration?.oz || 0));
+    setHydrationNudgedAt(actualNutritionForSelectedDate?.hydration?.nudgedAt || null);
+    setSupplementTaken(actualNutritionForSelectedDate?.supplements?.takenMap || {});
+    setShowHydrationNudge(false);
+  }, [
+    selectedLogDateKey,
+    actualNutritionForSelectedDate?.loggedAt,
+    actualNutritionForSelectedDate?.deviationKind,
+    actualNutritionForSelectedDate?.issue,
+    actualNutritionForSelectedDate?.note,
+    actualNutritionForSelectedDate?.hydration?.oz,
+    actualNutritionForSelectedDate?.hydration?.nudgedAt,
+    JSON.stringify(actualNutritionForSelectedDate?.supplements?.takenMap || {}),
+  ]);
   useEffect(() => {
+    if (!selectedLogIsToday) return;
     const hour = new Date().getHours();
     if (hour < 15 || hydrationPct >= 50 || hydrationNudgedAt || showHydrationNudge) return;
     setShowHydrationNudge(true);
     const nudgedAt = Date.now();
     setHydrationNudgedAt(nudgedAt);
-  }, [hydrationPct, hydrationNudgedAt, showHydrationNudge, todayKey]);
+  }, [hydrationPct, hydrationNudgedAt, selectedLogIsToday, showHydrationNudge, todayKey]);
   const requestFridgeMeal = () => {
     const reply = deriveFridgeCoachMealSuggestion({ fridgeInput, dayType });
     setFridgeCoachReply(reply.coachLine || "");
@@ -22941,7 +23154,7 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
   };
   const persistNutritionFeedback = async (payload, successMessage = "Saved nutrition update.") => {
     if (!hasExplicitNutritionSignal(payload)) return;
-    await saveNutritionActualLog(todayKey, payload);
+    await saveNutritionActualLog(selectedLogDateKey, payload);
     announceNutritionSave(successMessage);
   };
   const nutritionQuickLogReady = hasExplicitNutritionSignal({
@@ -23197,10 +23410,25 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
         <div style={{ display:"grid", gap:"0.18rem", marginBottom:"0.45rem" }}>
           <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>WHAT ACTUALLY HAPPENED</div>
           <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
-            Log the outcome once. Review and history can stay secondary.
+            {selectedLogIsToday
+              ? "Log the outcome once. Review and history can stay secondary."
+              : "Retro-log a recent day without leaving Nutrition so weekly adaptation sees the right intake signal."}
           </div>
         </div>
         <div style={{ display:"grid", gap:"0.35rem" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", flexWrap:"wrap", alignItems:"end" }}>
+            <div data-testid="nutrition-log-date-label" style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>
+              Logging actual intake for {selectedLogDateLabel}.
+            </div>
+            <label style={{ display:"grid", gap:"0.14rem", minWidth:180 }}>
+              <span style={{ fontSize:"0.44rem", color:"#64748b", letterSpacing:"0.08em" }}>LOG DAY</span>
+              <select data-testid="nutrition-log-date-select" value={selectedLogDateKey} onChange={(e)=>setSelectedLogDateKey(e.target.value)} style={{ fontSize:"0.54rem" }}>
+                {nutritionLogDateOptions.map((dateKey) => (
+                  <option key={dateKey} value={dateKey}>{formatNutritionLogDateLabel(dateKey)}</option>
+                ))}
+              </select>
+            </label>
+          </div>
           <div style={{ display:"grid", gap:"0.18rem" }}>
             <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>How did the day compare with the plan?</div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:"0.3rem" }}>
@@ -23223,7 +23451,7 @@ function NutritionTab({ planDay = null, surfaceModel = null, todayWorkout: legac
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.35rem", alignItems:"start" }}>
             <input value={nutritionCheck.note || ""} onChange={e=>setNutritionCheck((current)=>({ ...current, note:e.target.value }))} placeholder="Quick note (optional)" />
-            <button data-testid="nutrition-save-quick" className="btn btn-primary" disabled={!nutritionQuickLogReady} onClick={()=>persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken }, actualNutritionToday?.loggedAt ? "Nutrition log updated." : "Nutrition log saved.")} style={{ fontSize:"0.52rem", opacity:nutritionQuickLogReady ? 1 : 0.5, width:"fit-content" }}>
+            <button data-testid="nutrition-save-quick" className="btn btn-primary" disabled={!nutritionQuickLogReady} onClick={()=>persistNutritionFeedback({ ...nutritionCheck, hydrationOz, hydrationTargetOz, hydrationNudgedAt, supplementTaken }, actualNutritionForSelectedDate?.loggedAt ? `Nutrition log updated for ${selectedLogDateLabel}.` : `Nutrition log saved for ${selectedLogDateLabel}.`)} style={{ fontSize:"0.52rem", opacity:nutritionQuickLogReady ? 1 : 0.5, width:"fit-content" }}>
               Save
             </button>
           </div>

@@ -69,3 +69,16 @@ test("physique, low-impact re-entry, and aesthetic hybrids keep believable prote
   assert.ok(aestheticHybridCase.features.counts.run >= 2);
   assert.equal(aestheticHybridCase.failures.length, 0);
 });
+
+test("six-pack, visible-abs, and body-fat-percentage phrases stay on the proxy-based leaner path", () => {
+  const sixPackCase = evaluateCase("get_leaner_physique_standard_structured_intake_4");
+  const visibleAbsCase = evaluateCase("get_leaner_physique_standard_structured_intake_5");
+  const bodyFatCase = evaluateCase("get_leaner_physique_standard_structured_intake_6");
+
+  assert.equal(sixPackCase.primary?.structuredIntentId, "get_leaner");
+  assert.equal(visibleAbsCase.primary?.structuredIntentId, "get_leaner");
+  assert.equal(bodyFatCase.primary?.structuredIntentId, "get_leaner");
+  assert.equal(sixPackCase.failures.length, 0);
+  assert.equal(visibleAbsCase.failures.length, 0);
+  assert.equal(bodyFatCase.failures.length, 0);
+});

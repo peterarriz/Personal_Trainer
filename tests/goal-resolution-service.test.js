@@ -356,8 +356,11 @@ test("appearance goals stay proxy-measurable and use a time horizon when timing 
   assert.equal(result.resolvedGoals[0].measurabilityTier, GOAL_MEASURABILITY_TIERS.proxyMeasurable);
   assert.equal(result.resolvedGoals[0].targetDate, "");
   assert.equal(result.resolvedGoals[0].targetHorizonWeeks, 16);
-  assert.ok(result.resolvedGoals[0].proxyMetrics.some((metric) => metric.key === "waist"));
-  assert.ok(result.unresolvedGaps.some((gap) => /approximate/i.test(gap)));
+  assert.ok(result.resolvedGoals[0].proxyMetrics.some((metric) => metric.key === "waist_circumference"));
+  assert.match(
+    result.resolvedGoals[0].unresolvedGaps.join(" "),
+    /proxy|bodyweight|waist/i
+  );
 });
 
 test("lean-for-summer goals preserve raw intent and resolve into proxy-tracked body-comp planning input", () => {
@@ -511,6 +514,126 @@ test("running plus maintained strength stays run-led and event-specific when exp
   assert.equal(result.resolvedGoals[1].goalFamily, "strength");
   assert.equal(result.resolvedGoals[1].summary, "Keep strength in the plan while another priority leads");
   assert.doesNotMatch(result.resolvedGoals[0].summary, /hybrid/i);
+});
+
+test("running plus numeric weight loss stays run-led with an explicit body-comp secondary goal", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 1:45 half marathon and lose 15 pounds",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "run a 1:45 half marathon and lose 15 pounds" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-16",
+  });
+
+  assert.equal(result.resolvedGoals.length, 2);
+  assert.equal(result.resolvedGoals[0].goalFamily, "performance");
+  assert.equal(result.resolvedGoals[0].planningCategory, "running");
+  assert.equal(result.resolvedGoals[0].summary, "Run a half marathon in 1:45:00");
+  assert.equal(result.resolvedGoals[1].goalFamily, "body_comp");
+  assert.equal(result.resolvedGoals[1].planningCategory, "body_comp");
+  assert.equal(result.resolvedGoals[1].primaryMetric?.key, "bodyweight_change");
+  assert.equal(result.resolvedGoals[1].primaryMetric?.targetValue, "-15");
+});
+
+test("running plus visible-abs language stays run-led with an appearance secondary goal", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 1:45 half marathon and get visible abs",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "run a 1:45 half marathon and get visible abs",
+      appearanceConstraints: ["visible abs"],
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-16",
+  });
+
+  assert.equal(result.resolvedGoals.length, 2);
+  assert.equal(result.resolvedGoals[0].goalFamily, "performance");
+  assert.equal(result.resolvedGoals[0].planningCategory, "running");
+  assert.equal(result.resolvedGoals[0].summary, "Run a half marathon in 1:45:00");
+  assert.equal(result.resolvedGoals[1].goalFamily, "appearance");
+  assert.equal(result.resolvedGoals[1].planningCategory, "body_comp");
+  assert.match(result.resolvedGoals[1].summary, /midsection definition|visible abs/i);
+});
+
+test("body-fat percentage language stays proxy-based instead of pretending the app has a direct verifier", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "body fat under 12%",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "body fat under 12%" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-17",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "appearance");
+  assert.equal(result.resolvedGoals[0].planningCategory, "body_comp");
+  assert.equal(result.resolvedGoals[0].measurabilityTier, GOAL_MEASURABILITY_TIERS.proxyMeasurable);
+  assert.equal(result.resolvedGoals[0].primaryMetric, null);
+  assert.match(result.resolvedGoals[0].summary, /body-fat range|lean out/i);
+  assert.ok(result.resolvedGoals[0].proxyMetrics.some((metric) => metric.key === "waist_circumference"));
+  assert.ok(result.resolvedGoals[0].proxyMetrics.some((metric) => metric.key === "bodyweight_trend"));
+  assert.match(
+    result.resolvedGoals[0].unresolvedGaps.join(" "),
+    /waist|bodyweight|body-fat measurement method|reliable/i
+  );
+});
+
+test("body-fat percentage language no longer corrupts an accompanying bench target", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "body fat under 10% and bench 225",
+    typedIntakePacket: buildIntakePacket({ rawGoalText: "body fat under 10% and bench 225" }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-17",
+  });
+
+  assert.equal(result.resolvedGoals.length, 2);
+  const strengthGoal = result.resolvedGoals.find((goal) => goal.goalFamily === "strength");
+  const appearanceGoal = result.resolvedGoals.find((goal) => goal.goalFamily === "appearance");
+
+  assert.ok(strengthGoal);
+  assert.equal(strengthGoal.primaryMetric?.key, "bench_press_weight");
+  assert.equal(strengthGoal.primaryMetric?.targetValue, "225");
+  assert.match(strengthGoal.summary, /strength/i);
+  assert.ok(result.planningGoals.some((goal) => goal.category === "strength" && /225 lb/i.test(goal.measurableTarget)));
+  assert.ok(appearanceGoal);
+  assert.equal(appearanceGoal.planningCategory, "body_comp");
+  assert.equal(appearanceGoal.primaryMetric, null);
+  assert.ok(appearanceGoal.proxyMetrics.some((metric) => metric.key === "waist_circumference"));
+});
+
+test("visible-abs timing language resolves to an honest appearance summary instead of raw copied text", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "visible abs by August",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "visible abs by August",
+      timingConstraints: ["by August"],
+      appearanceConstraints: ["visible abs"],
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-17",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].goalFamily, "appearance");
+  assert.match(result.resolvedGoals[0].summary, /midsection definition/i);
+  assert.ok(result.resolvedGoals[0].targetHorizonWeeks > 0);
+});
+
+test("three-domain stacks keep running, strength, weight, and appearance outcomes visible", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "run a 1:45 half marathon and bench 225 and lose 15 pounds and get visible abs",
+    typedIntakePacket: buildIntakePacket({
+      rawGoalText: "run a 1:45 half marathon and bench 225 and lose 15 pounds and get visible abs",
+      appearanceConstraints: ["visible abs"],
+    }),
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-16",
+  });
+
+  assert.equal(result.resolvedGoals.length, 4);
+  assert.equal(result.resolvedGoals[0].summary, "Run a half marathon in 1:45:00");
+  assert.equal(result.resolvedGoals[1].summary, "Bench press 225 lb");
+  assert.equal(result.resolvedGoals[2].primaryMetric?.key, "bodyweight_change");
+  assert.equal(result.resolvedGoals[2].primaryMetric?.targetValue, "-15");
+  assert.equal(result.resolvedGoals[3].goalFamily, "appearance");
 });
 
 test("dunk goals map into the athletic-power family without breaking the planning model", () => {

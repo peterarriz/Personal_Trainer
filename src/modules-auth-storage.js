@@ -133,6 +133,53 @@ const createStableFingerprint = (value) => {
   }
 };
 
+const normalizeSyncMetaNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const stripSyncMeta = (payload = {}) => {
+  if (!payload || typeof payload !== "object") return {};
+  const { syncMeta, ...rest } = payload;
+  return rest;
+};
+
+const createPersistedPayloadFingerprint = (payload = {}) => createStableFingerprint(
+  stripSyncMeta(payload || {})
+);
+
+const buildLocalCachePayload = ({
+  payload = {},
+  pendingCloudWrite = false,
+  syncedAt = null,
+  previousSyncMeta = null,
+} = {}) => {
+  const localTs = normalizeSyncMetaNumber(payload?.ts) || Date.now();
+  const previous = previousSyncMeta && typeof previousSyncMeta === "object" ? previousSyncMeta : {};
+  const nextSyncMeta = {
+    pendingCloudWrite: Boolean(pendingCloudWrite),
+    lastLocalMutationTs: localTs,
+    lastCloudSyncTs: Boolean(pendingCloudWrite)
+      ? normalizeSyncMetaNumber(previous?.lastCloudSyncTs)
+      : normalizeSyncMetaNumber(syncedAt)
+        || normalizeSyncMetaNumber(previous?.lastCloudSyncTs)
+        || localTs,
+  };
+  return {
+    ...(payload || {}),
+    syncMeta: nextSyncMeta,
+  };
+};
+
+const shouldPreferPendingLocalCache = ({
+  localPayload = null,
+  cloudPayload = null,
+} = {}) => {
+  const localTs = normalizeSyncMetaNumber(localPayload?.ts);
+  const cloudTs = normalizeSyncMetaNumber(cloudPayload?.ts);
+  return Boolean(localPayload?.syncMeta?.pendingCloudWrite) && Boolean(localTs) && (!cloudTs || localTs > cloudTs);
+};
+
 export const decodeJwtPayload = (token) => {
   try {
     const [, payload = ""] = String(token || "").split(".");
@@ -938,12 +985,19 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     });
     if (!res.ok) throw new Error("Load failed " + res.status + ": " + await res.text());
     const rows = await res.json();
+    const cache = localLoad();
     if (rows && rows.length > 0 && rows[0].data) {
+      const cloudPayload = rows[0].data;
+      const preferPendingLocalCache = shouldPreferPendingLocalCache({
+        localPayload: cache,
+        cloudPayload,
+      });
+      const effectivePayload = preferPendingLocalCache ? cache : cloudPayload;
       try {
-        lastSyncedGoalsFingerprint = createStableFingerprint(rows[0].data?.goals || []);
-        lastSyncedCoachMemoryFingerprint = createStableFingerprint(rows[0].data?.personalization?.coachMemory || {});
+        lastSyncedGoalsFingerprint = createStableFingerprint(effectivePayload?.goals || []);
+        lastSyncedCoachMemoryFingerprint = createStableFingerprint(effectivePayload?.personalization?.coachMemory || {});
         const runtimeState = buildCanonicalRuntimeStateFromStorage({
-          storedPayload: rows[0].data,
+          storedPayload: effectivePayload,
           mergePersonalization,
           DEFAULT_PERSONALIZATION,
           normalizeGoals,
@@ -953,13 +1007,44 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           runtimeState,
           setters,
         });
+        if (!preferPendingLocalCache) {
+          localSave(buildLocalCachePayload({
+            payload: effectivePayload,
+            pendingCloudWrite: false,
+            syncedAt: Date.now(),
+            previousSyncMeta: cache?.syncMeta || null,
+          }));
+        }
       } catch (e) {
         logDiag("cloud.load.data_incompatible", e?.message || "unknown");
         throw new Error(AUTH_DATA_INCOMPATIBLE);
       }
-      } else {
-        const cache = localLoad();
-        if (cache && typeof cache === "object") {
+      if (preferPendingLocalCache) {
+        try {
+          await sbSave({
+            payload: stripSyncMeta(effectivePayload),
+            authSession: sessionUsed || normalized,
+            setAuthSession,
+          });
+          lastPersistedPayloadFingerprint = createPersistedPayloadFingerprint(effectivePayload);
+          lastPersistedUserId = String(userId || "");
+          localSave(buildLocalCachePayload({
+            payload: effectivePayload,
+            pendingCloudWrite: false,
+            syncedAt: Date.now(),
+            previousSyncMeta: effectivePayload?.syncMeta || null,
+          }));
+        } catch (e) {
+          localSave(buildLocalCachePayload({
+            payload: effectivePayload,
+            pendingCloudWrite: true,
+            previousSyncMeta: effectivePayload?.syncMeta || null,
+          }));
+          throw e;
+        }
+      }
+    } else {
+      if (cache && typeof cache === "object") {
           lastSyncedGoalsFingerprint = createStableFingerprint(cache?.goals || []);
           lastSyncedCoachMemoryFingerprint = createStableFingerprint(cache?.personalization?.coachMemory || {});
           const cachedRuntimeState = buildCanonicalRuntimeStateFromStorage({
@@ -1007,7 +1092,13 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     setAuthSession,
   }) => {
     const startedAt = Date.now();
-    localSave(payload);
+    const previousLocalPayload = localLoad();
+    const localPayload = buildLocalCachePayload({
+      payload,
+      pendingCloudWrite: Boolean(authSession?.user?.id),
+      previousSyncMeta: previousLocalPayload?.syncMeta || null,
+    });
+    localSave(localPayload);
     if (!authSession?.user?.id) {
       lastPersistedPayloadFingerprint = "";
       lastPersistedUserId = "";
@@ -1043,7 +1134,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       };
     }
     try {
-      const payloadFingerprint = createStableFingerprint(payload || {});
+      const payloadFingerprint = createPersistedPayloadFingerprint(payload || {});
       const currentUserId = String(authSession?.user?.id || "");
       if (payloadFingerprint === lastPersistedPayloadFingerprint && currentUserId === lastPersistedUserId) {
         const alreadyCurrentStatus = buildStorageStatus({
@@ -1052,6 +1143,12 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           reason: STORAGE_STATUS_REASONS.synced,
           detail: "Cloud state is already current.",
         });
+        localSave(buildLocalCachePayload({
+          payload,
+          pendingCloudWrite: false,
+          syncedAt: Date.now(),
+          previousSyncMeta: localPayload?.syncMeta || null,
+        }));
         applyStorageStatusUpdate(setStorageStatus, alreadyCurrentStatus);
         trackAnalytics({
           flow: "sync",
@@ -1073,6 +1170,12 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       await sbSave({ payload, authSession, setAuthSession });
       lastPersistedPayloadFingerprint = payloadFingerprint;
       lastPersistedUserId = currentUserId;
+      localSave(buildLocalCachePayload({
+        payload,
+        pendingCloudWrite: false,
+        syncedAt: Date.now(),
+        previousSyncMeta: localPayload?.syncMeta || null,
+      }));
       const nextGoalsFingerprint = createStableFingerprint(payload?.goals || []);
       const nextCoachMemoryFingerprint = createStableFingerprint((payload?.personalization || DEFAULT_PERSONALIZATION)?.coachMemory || {});
       try {

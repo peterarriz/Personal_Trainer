@@ -885,6 +885,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
 
   if (goalFamily === "appearance" && goalRole === "primary") {
     const appearanceHasExplicitTimingSignal = /\b(by|before|for)\b|\bspring\b|\bsummer\b|\bfall\b|\bautumn\b|\bwinter\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b|\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b/i.test(String(goal?.rawIntent?.text || ""));
+    const bodyFatTargetLanguage = /(?:\bbody[- ]?fat\b|\bbodyfat\b|\bbf\b)[\s\S]{0,18}\d{1,2}(?:\.\d+)?\s*%|\b\d{1,2}(?:\.\d+)?\s*%\s*(?:body[- ]?fat|bodyfat|bf)\b/i.test(String(goal?.rawIntent?.text || goal?.summary || ""));
     const proxyAnchorReady = Boolean(
       facts?.currentBodyweight
       || facts?.currentWaist
@@ -902,8 +903,10 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
       goalRole,
       question: buildQuestion({
         key: INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
-        prompt: "For your appearance goal, what's one proxy we can track right now: current bodyweight or waist?",
-        placeholder: "Example: 198 lb or 35-inch waist",
+        prompt: bodyFatTargetLanguage
+          ? "For this body-fat goal, what's one repeatable proxy we can track right now: current bodyweight or waist?"
+          : "For your appearance goal, what's one proxy we can track right now: current bodyweight or waist?",
+        placeholder: bodyFatTargetLanguage ? "Example: 198 lb or 35-inch waist" : "Example: 198 lb or 35-inch waist",
         fieldKeys: [
           INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
           INTAKE_COMPLETENESS_FIELDS.currentWaist,
@@ -940,7 +943,9 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
         ],
         validation: {
           kind: "appearance_proxy_anchor",
-          message: "Add one clean proxy we can track right away, or skip it for now and let the first block stay more conservative.",
+          message: bodyFatTargetLanguage
+            ? "Add one repeatable proxy we can track right away, or skip it for now and let the first block stay more conservative."
+            : "Add one clean proxy we can track right away, or skip it for now and let the first block stay more conservative.",
         },
       }),
     }));

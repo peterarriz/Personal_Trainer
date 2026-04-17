@@ -391,6 +391,12 @@ const buildSummary = ({
   }
   if (intent?.id === "get_stronger") return "Get stronger with repeatable training";
   if (intent?.id === "get_leaner") {
+    if (/\b(visible abs|six pack)\b/i.test(rawText)) {
+      return hasAppearanceTimingCue(rawText, timeline) ? "Improve midsection definition by the target window" : "Improve midsection definition";
+    }
+    if (/(?:\bbody[- ]?fat\b|\bbodyfat\b|\bbf\b)[\s\S]{0,18}\d{1,2}(?:\.\d+)?\s*%|\b\d{1,2}(?:\.\d+)?\s*%\s*(?:body[- ]?fat|bodyfat|bf)\b/i.test(rawText)) {
+      return hasAppearanceTimingCue(rawText, timeline) ? "Lean out toward the target body-fat range by the target window" : "Lean out toward the target body-fat range";
+    }
     if (/\blook athletic again\b/i.test(rawText)) return "Look athletic again with repeatable training";
     return hasAppearanceTimingCue(rawText, timeline) ? "Get leaner within the current time window" : "Get leaner";
   }
@@ -412,6 +418,16 @@ const inferStructuredMeasurabilityTier = ({ intent = null, archetype = null, pri
   }
   return primaryMetric?.key ? GOAL_MEASURABILITY_TIERS.proxyMeasurable : GOAL_MEASURABILITY_TIERS.exploratoryFuzzy;
 };
+
+const hasBodyFatPercentageLanguage = (text = "") => (
+  /(?:\bbody[- ]?fat\b|\bbodyfat\b|\bbf\b)[\s\S]{0,18}\d{1,2}(?:\.\d+)?\s*%|\b\d{1,2}(?:\.\d+)?\s*%\s*(?:body[- ]?fat|bodyfat|bf)\b/i.test(
+    sanitizeText(text, 240)
+  )
+);
+
+const hasAppearanceProxyAnchor = (context = {}) => (
+  Boolean(sanitizeText(context?.current_bodyweight || "", 80) || sanitizeText(context?.current_waist || "", 80))
+);
 
 const resolveMissingAnchors = ({ archetype = null, fields = {}, context = {} } = {}) => {
   const missing = [];
@@ -464,6 +480,7 @@ const buildResolverContext = ({
     swim_access_reality: normalizeChoice(readFieldValue(fields, "swim_access_reality")),
     current_strength_baseline: readFieldValue(fields, "current_strength_baseline"),
     current_bodyweight: readFieldValue(fields, "current_bodyweight"),
+    current_waist: readFieldValue(fields, "current_waist"),
     current_endurance_anchor: readFieldValue(fields, "current_endurance_anchor"),
     longest_recent_endurance_session: readFieldValue(fields, "longest_recent_endurance_session"),
     busyFriendly: parseDaysPerWeek(intakeContext?.scheduleReality?.trainingDaysPerWeek) <= 3 || normalizeChoice(readFieldValue(fields, "body_comp_tempo")) === "busy_life",
@@ -610,7 +627,14 @@ export const resolveStructuredGoalPath = ({
     eventDistance: context.eventDistance,
     templateSelection,
   });
-  const unresolvedGaps = resolveMissingAnchors({ archetype: best.archetype, fields: context.fields, context }).map((anchor) => `Need ${anchor.replace(/_/g, " ")} for a tighter first plan.`);
+  const unresolvedGaps = dedupeStrings([
+    ...resolveMissingAnchors({ archetype: best.archetype, fields: context.fields, context }).map((anchor) => `Need ${anchor.replace(/_/g, " ")} for a tighter first plan.`),
+    intent?.id === "get_leaner" && !hasAppearanceProxyAnchor(context)
+      ? hasBodyFatPercentageLanguage(rawIntentText)
+        ? "Need a waist or bodyweight proxy, or a reliable body-fat measurement method, if the percentage target should guide planning."
+        : "Need a repeatable body-composition proxy like current bodyweight or waist if the appearance goal should guide planning."
+      : "",
+  ]);
   const measurabilityTier = inferStructuredMeasurabilityTier({
     intent,
     archetype: best.archetype,

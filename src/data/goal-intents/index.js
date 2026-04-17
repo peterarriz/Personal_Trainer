@@ -283,7 +283,7 @@ export const STRUCTURED_GOAL_INTENTS = Object.freeze([
     summary: "Get leaner",
     planningCategory: "body_comp",
     goalFamily: "appearance",
-    keywords: ["leaner", "lean", "defined", "look better", "tone up", "look athletic", "look athletic again", "lean out", "more defined", "aesthetic"],
+    keywords: ["leaner", "lean", "defined", "look better", "tone up", "look athletic", "look athletic again", "lean out", "more defined", "aesthetic", "visible abs", "six pack", "body fat under", "body fat below", "% body fat"],
     proxyMetrics: BODY_COMP_PROXIES,
     legacyAliases: ["get_leaner", "tone_up", "look_athletic_again"],
     specificityProfile: { summary: "Capture one useful proxy and whether this is open-ended or tied to a date.", questions: ["leaner_profile"] },
@@ -658,7 +658,7 @@ export const inferStructuredGoalIntentFromText = (text = "") => {
   if (/\b(triathlon|sprint tri|multisport)\b/i.test(corpus)) {
     return findStructuredGoalIntentById("triathlon_multisport");
   }
-  if (/\blook athletic again\b|\blook athletic\b|\btone up\b|\blean out\b|\bmore defined\b|\bvisible upper[- ]body aesthetics\b/i.test(corpus)) {
+  if (/\blook athletic again\b|\blook athletic\b|\btone up\b|\blean out\b|\bmore defined\b|\bvisible abs\b|\bsix pack\b|\bvisible upper[- ]body aesthetics\b|(?:\bbody[- ]?fat\b|\bbodyfat\b|\bbf\b)[\s\S]{0,18}\d{1,2}(?:\.\d+)?\s*%|\b\d{1,2}(?:\.\d+)?\s*%\s*(?:body[- ]?fat|bodyfat|bf)\b/i.test(corpus)) {
     return findStructuredGoalIntentById("get_leaner");
   }
   if (/\blose fat and gain muscle\b|\blose fat while gaining muscle\b|\brecomposition\b/i.test(corpus)) {

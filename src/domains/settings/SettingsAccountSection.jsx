@@ -54,6 +54,7 @@ export function SettingsAccountSection({
   resetDevice = {},
   deleteAccount = {},
   backupAndReset = {},
+  historyReport = {},
   showInternalSettingsTools = false,
 }) {
   const resetDeviceUi = {
@@ -86,6 +87,13 @@ export function SettingsAccountSection({
     onCopyBackup: () => {},
     onResetPlan: () => {},
     ...backupAndReset,
+  };
+  const historyReportUi = {
+    message: "",
+    markdown: "",
+    onGenerate: () => {},
+    onCopy: () => {},
+    ...historyReport,
   };
   const deleteDiagnostics = deleteAccountUi.diagnostics || {};
   const accountActionStyles = resolveAccountActionStyles(accountActionTone);
@@ -292,6 +300,34 @@ export function SettingsAccountSection({
           {!!backupUi.message && <div style={{ fontSize:"0.47rem", color:"#cbd5e1" }}>{backupUi.message}</div>}
           <textarea value={backupUi.code} onChange={(e) => backupUi.onCodeChange(e.target.value)} placeholder="Paste backup code to restore" style={{ minHeight:62, fontSize:"0.5rem" }} />
           <button className="btn" onClick={backupUi.onReviewRestore} style={{ width:"fit-content", fontSize:"0.47rem", color:colors.green, borderColor:colors.green + "35" }}>Review restore</button>
+        </div>
+        <div data-testid="settings-reviewer-report-card" style={{ border:"1px solid #243752", borderRadius:12, background:"#0f172a", padding:"0.55rem 0.6rem", display:"grid", gap:"0.4rem" }}>
+          <div style={{ display:"grid", gap:"0.14rem" }}>
+            <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>REVIEWER REPORT</div>
+            <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              Generate a markdown report with original prescription, latest prescription, actual log, revision count, and week summaries so a skeptical reviewer can inspect plan changes without internal tools.
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            <button data-testid="settings-reviewer-report-generate" className="btn" onClick={historyReportUi.onGenerate} style={{ fontSize:"0.48rem", color:colors.blue, borderColor:colors.blue + "35" }}>
+              Generate reviewer report
+            </button>
+            <button data-testid="settings-reviewer-report-copy" className="btn" onClick={historyReportUi.onCopy} style={{ fontSize:"0.48rem", color:"#dbe7f6" }}>
+              Copy report
+            </button>
+          </div>
+          {!!historyReportUi.message && (
+            <div data-testid="settings-reviewer-report-status" style={{ fontSize:"0.47rem", color:"#cbd5e1", lineHeight:1.5 }}>
+              {historyReportUi.message}
+            </div>
+          )}
+          <textarea
+            data-testid="settings-reviewer-report-textarea"
+            value={historyReportUi.markdown}
+            readOnly
+            placeholder="Generate a reviewer report to inspect plan evolution and weekly summaries."
+            style={{ minHeight:160, fontSize:"0.5rem", lineHeight:1.55 }}
+          />
         </div>
       </details>
     </section>

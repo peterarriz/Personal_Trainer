@@ -562,6 +562,8 @@ const buildProgramBlockCompatibilityIntent = (programBlock = null) => (
     prioritized: programBlock?.goalAllocation?.prioritized || programBlock?.dominantEmphasis?.label || "Consistency and execution",
     maintained: clonePlainValue(programBlock?.goalAllocation?.maintained || [programBlock?.secondaryEmphasis?.label || "general fitness"].filter(Boolean)),
     minimized: programBlock?.goalAllocation?.minimized || "non-primary volume",
+    heldBack: clonePlainValue(programBlock?.goalAllocation?.heldBack || []),
+    why: programBlock?.goalAllocation?.why || "",
     narrative: programBlock?.summary || "",
   }
 );
@@ -619,6 +621,8 @@ const buildFallbackProgramBlockFromCompatibilityIntent = ({
       prioritized,
       maintained,
       minimized: blockIntent?.minimized || "non-primary volume",
+      heldBack: clonePlainValue(blockIntent?.heldBack || []),
+      why: blockIntent?.why || "",
     },
     drivers: dedupeStrings([prioritized, ...(maintained || [])]),
     summary: blockIntent?.narrative || `${prioritized} gets the most planning weight while the other priorities stay in the mix.`,
@@ -678,6 +682,72 @@ const goalLooksUpperBodyFocused = (goal = {}) => {
     goal?.resolvedGoal?.primaryMetric?.key,
   ].filter(Boolean).join(" "), 240).toLowerCase();
   return /(bench|upper body|push|pull|press|chin|pull-up|pull up|row)/i.test(text);
+};
+
+const goalLooksRaceLike = (goal = {}) => {
+  const text = sanitizeText([
+    goal?.name,
+    goal?.resolvedGoal?.summary,
+    goal?.resolvedGoal?.primaryMetric?.label,
+    goal?.resolvedGoal?.primaryMetric?.key,
+  ].filter(Boolean).join(" "), 240).toLowerCase();
+  return /(race|half marathon|marathon|10k|5k|run)/i.test(text);
+};
+
+const buildConcurrentPriorityExplanation = ({
+  primary = null,
+  runningGoal = null,
+  strengthGoal = null,
+  bodyCompGoal = null,
+  dominantLabel = "",
+} = {}) => {
+  if (!runningGoal || !strengthGoal || !bodyCompGoal) return null;
+
+  const primaryCategory = sanitizeText(primary?.category || "", 40).toLowerCase();
+  const strengthName = sanitizeText(strengthGoal?.name || "Strength work", 120);
+  const runningName = sanitizeText(runningGoal?.name || "Endurance work", 120);
+  const bodyCompName = sanitizeText(bodyCompGoal?.name || "Fat loss", 120);
+  const benchmarkWord = /bench/i.test(strengthName) ? "bench-progression" : "strength";
+  let priorityLine = "";
+  let heldBack = [];
+
+  if (primaryCategory === "running") {
+    priorityLine = `Prioritized: ${sanitizeText(dominantLabel || "Race prep", 120)} gets the cleanest fatigue and scheduling windows.`;
+    heldBack = [
+      `${strengthName} stays in maintenance territory, not a maximal ${benchmarkWord} push.`,
+      `${bodyCompName} stays moderate and recovery-compatible, not an aggressive cut.`,
+    ];
+  } else if (primaryCategory === "strength") {
+    priorityLine = `Prioritized: ${sanitizeText(dominantLabel || strengthName || "Strength progression", 120)} gets the cleanest recovery and loading windows.`;
+    heldBack = [
+      `${runningName} stays supportive, not a maximal race push.`,
+      `${bodyCompName} stays moderate and recovery-compatible, not an aggressive cut.`,
+    ];
+  } else if (primaryCategory === "body_comp") {
+    priorityLine = `Prioritized: ${sanitizeText(dominantLabel || bodyCompName || "Fat loss", 120)} stays repeatable enough to preserve training quality and lean mass.`;
+    heldBack = [
+      `${strengthName} stays retention-first, not a maximal ${benchmarkWord} push.`,
+      `${runningName} stays supportive, not a maximal race push.`,
+    ];
+  } else {
+    priorityLine = `Prioritized: ${sanitizeText(dominantLabel || primary?.name || "The top priority", 120)} gets the cleanest planning weight.`;
+    heldBack = [
+      `${strengthName} stays supportive, not maximal.`,
+      `${bodyCompName} stays moderate rather than aggressive.`,
+    ];
+  }
+
+  const whyLine = /bench/i.test(strengthName) && goalLooksRaceLike(runningGoal)
+    ? "Why: the app cannot honestly promise maximal bench progress, maximal race improvement, and maximal fat loss in the same block."
+    : "Why: the app cannot honestly promise maximal strength progress, maximal endurance improvement, and maximal fat loss in the same block.";
+
+  return {
+    priorityLine,
+    heldBack,
+    heldBackLine: `Held back: ${heldBack.join(" ")}`,
+    whyLine,
+    summary: [priorityLine, `Held back: ${heldBack.join(" ")}`, whyLine].filter(Boolean).join(" ").trim(),
+  };
 };
 
 export const buildProgramBlock = ({
@@ -1203,6 +1273,13 @@ export const buildProgramBlock = ({
 
   if (unlockMessage) tradeoffs = [...tradeoffs, unlockMessage];
 
+  const concurrentPriorityExplanation = buildConcurrentPriorityExplanation({
+    primary,
+    runningGoal,
+    strengthGoal,
+    bodyCompGoal,
+    dominantLabel: dominantEmphasis.label,
+  });
   const safeConstraints = dedupeStrings([...(constraints || [])]);
   const safeTradeoffs = dedupeStrings([...(tradeoffs || []), ...safeConstraints.slice(0, 2)]).slice(0, 5);
   const safeCriteria = dedupeStrings(successCriteria.filter(Boolean)).slice(0, 5);
@@ -1210,7 +1287,12 @@ export const buildProgramBlock = ({
   const maintained = maintainedGoals.length
     ? maintainedGoals
     : [secondaryEmphasis.label || "general fitness"].filter(Boolean);
-  const summary = `${dominantEmphasis.objective} ${secondaryEmphasis.objective} ${minimizedEmphasis.objective}`.trim();
+  const summary = [
+    concurrentPriorityExplanation?.summary || "",
+    dominantEmphasis.objective,
+    secondaryEmphasis.objective,
+    minimizedEmphasis.objective,
+  ].filter(Boolean).join(" ").trim();
 
   return {
     version: PROGRAM_BLOCK_MODEL_VERSION,
@@ -1231,7 +1313,10 @@ export const buildProgramBlock = ({
       prioritized,
       maintained,
       minimized: minimizedGoal,
+      heldBack: clonePlainValue(concurrentPriorityExplanation?.heldBack || []),
+      why: concurrentPriorityExplanation?.whyLine || "",
     },
+    priorityExplanation: clonePlainValue(concurrentPriorityExplanation || null),
     goalStack: {
       primaryResolvedGoalId: primaryResolvedGoal?.id || "",
       secondaryResolvedGoalIds: resolvedContext.resolvedSecondaryGoals.map((goal) => goal.id).filter(Boolean),
@@ -1412,6 +1497,7 @@ export const deriveWeeklyIntent = ({
   const maintainedFocus = normalizedProgramBlock?.secondaryEmphasis?.label || "";
   const minimizedFocus = normalizedProgramBlock?.minimizedEmphasis?.label || normalizedProgramBlock?.goalAllocation?.minimized || "";
   const tradeoffFocus = normalizedProgramBlock?.tradeoffs?.[0] || "";
+  const priorityExplanation = clonePlainValue(normalizedProgramBlock?.priorityExplanation || null);
   const successDefinition = recoveryBias === "high"
     ? ["event_prep_upper_body_maintenance", "race_prep_dominant"].includes(architecture)
       ? architecture === "event_prep_upper_body_maintenance"
@@ -1430,12 +1516,18 @@ export const deriveWeeklyIntent = ({
   const rationale = adjusted
     ? `This week is adjusted inside ${String(normalizedProgramBlock?.label || "the current block").toLowerCase()} around ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture. ${maintainedFocus ? `${maintainedFocus} stays active with less emphasis than the top priority.` : ""} ${minimizedFocus ? `${minimizedFocus} gets the least dedicated block volume.` : ""}`.trim()
     : `This week sits inside ${String(normalizedProgramBlock?.label || "the current block").toLowerCase()} and advances ${focus.toLowerCase()} with a ${aggressionLevel.replace(/_/g, " ")} posture. ${maintainedFocus ? `${maintainedFocus} stays active with less emphasis than the top priority.` : ""} ${minimizedFocus ? `${minimizedFocus} gets the least dedicated block volume.` : ""}`.trim();
+  const rationaleWithPriorityExplanation = [
+    rationale,
+    priorityExplanation?.priorityLine,
+    priorityExplanation?.heldBackLine,
+    priorityExplanation?.whyLine,
+  ].filter(Boolean).join(" ").trim();
   const basisLead = planningBasis?.activeProgramName
     ? `${planningBasis.activeProgramName} is shaping the live week.`
     : planningBasis?.activeStyleName
     ? `${planningBasis.activeStyleName} is shaping the feel of the week.`
     : "";
-  const rationaleWithBasis = [basisLead, rationale].filter(Boolean).join(" ").trim();
+  const rationaleWithBasis = [basisLead, rationaleWithPriorityExplanation].filter(Boolean).join(" ").trim();
   const changeSummary = clonePlainValue(adaptationState?.changeSummary || null);
   const rationaleWithChange = [rationaleWithBasis, changeSummary?.headline, changeSummary?.preserved].filter(Boolean).join(" ").trim();
 

@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   composeGoalNativePlan,
+  buildPlanWeek,
   generateTodayPlan,
   normalizeGoals,
 } = require("../src/modules-planning.js");
@@ -226,6 +227,36 @@ test("under-fueling trend protects the next quality session without rewriting th
   assert.match(adaptedComposer.changeSummary?.preserved || "", /structure stays intact/i);
 });
 
+test("under-fueling trend also caps a future long run when it is the next quality exposure", () => {
+  const goals = buildGoals([
+    { name: "Run a 1:45 half marathon", category: "running", targetDate: "2026-10-10" },
+  ]);
+  const baselineComposer = buildComposer({
+    goals,
+    todayKey: "2026-04-16",
+    currentDayOfWeek: 4,
+  });
+
+  const adaptedComposer = buildComposer({
+    goals,
+    todayKey: "2026-04-16",
+    currentDayOfWeek: 4,
+    weeklyNutritionReview: {
+      adaptation: {
+        shouldAdapt: true,
+        mode: "protect_key_session_fueling",
+        summary: "Fueling is off track this week, so intensity stays capped until recovery stabilizes.",
+        support: "Repeated under-fueling showed up before performance-relevant days.",
+      },
+    },
+  });
+
+  assert.equal(baselineComposer.dayTemplates?.[6]?.type, "long-run");
+  assert.equal(adaptedComposer.dayTemplates?.[6]?.type, "easy-run");
+  assert.match(adaptedComposer.dayTemplates?.[6]?.label || "", /long run \(capped\)/i);
+  assert.match(adaptedComposer.changeSummary?.headline || "", /fueling stabilizes/i);
+});
+
 test("swim goals route through the shared swimming adapter instead of generic fallback", () => {
   const goals = buildGoals([
     { name: "Swim a faster mile", category: "general_fitness" },
@@ -257,6 +288,53 @@ test("run-focused goals keep explicit support work instead of run-only prescript
   assert.ok(supportSessions.some((session) => session?.nutri === NUTRITION_DAY_TYPES.hybridSupport));
   assert.ok(supportSessions.some((session) => session?.nutri === NUTRITION_DAY_TYPES.strengthSupport));
   assert.ok(supportSessions.every((session) => String(session?.optionalSecondary || "").trim().length > 0));
+});
+
+test("weekly rationale makes the concurrent run, bench, and cut tradeoff explicit", () => {
+  const goals = buildGoals([
+    { name: "Run a 1:45 half marathon", category: "running", targetDate: "2026-10-10" },
+    { name: "Bench 225", category: "strength", priority: 2 },
+    { name: "Lose 15 lb", category: "body_comp", priority: 3 },
+  ]);
+
+  const composer = buildComposer({
+    goals,
+    personalization: {
+      travelState: { access: "full gym" },
+      userGoalProfile: { days_per_week: 5, session_length: "45" },
+      profile: { estimatedFitnessLevel: "intermediate" },
+    },
+  });
+  const planWeek = buildPlanWeek({
+    weekNumber: 1,
+    template: BASE_WEEK,
+    weekTemplates: WEEK_TEMPLATES,
+    referenceTemplate: BASE_WEEK,
+    goals,
+    architecture: composer.architecture,
+    programBlock: composer.programBlock,
+    programContext: composer.programContext,
+    blockIntent: composer.blockIntent,
+    split: composer.split,
+    sessionsByDay: composer.dayTemplates,
+    weeklyCheckin: { energy: 3, stress: 2, confidence: 4 },
+    coachPlanAdjustments: {},
+    failureMode: {},
+    constraints: composer.constraints,
+  });
+
+  assert.match(
+    planWeek.weeklyIntent?.rationale || "",
+    /Held back: Bench 225 stays in maintenance territory, not a maximal bench-progression push\./i
+  );
+  assert.match(
+    planWeek.weeklyIntent?.rationale || "",
+    /Lose 15 lb stays moderate and recovery-compatible, not an aggressive cut\./i
+  );
+  assert.match(
+    planWeek.weeklyIntent?.rationale || "",
+    /Why: the app cannot honestly promise maximal bench progress, maximal race improvement, and maximal fat loss in the same block\./i
+  );
 });
 
 test("vertical jump goals route through the shared power adapter", () => {

@@ -192,3 +192,38 @@ test("weekly nutrition review chooses hydration reinforcement when hydration con
   assert.equal(review.adaptation.shouldAdapt, true);
   assert.match(review.adaptation.summary, /hydration/i);
 });
+
+test("weekly nutrition review protects key-session fueling when repeated hunger shows up even before hard-day history is dense", () => {
+  const plannedDayRecords = {
+    "2026-04-13": buildHistoryEntry({ dateKey: "2026-04-13", dayType: "easyRun" }),
+    "2026-04-14": buildHistoryEntry({ dateKey: "2026-04-14", dayType: "easyRun" }),
+    "2026-04-15": buildHistoryEntry({ dateKey: "2026-04-15", dayType: "easyRun" }),
+  };
+  const nutritionActualLogs = {
+    "2026-04-13": normalizeActualNutritionLog({
+      dateKey: "2026-04-13",
+      feedback: { deviationKind: "under_fueled", issue: "hunger", hydrationOz: 40, hydrationTargetOz: 100 },
+    }),
+    "2026-04-14": normalizeActualNutritionLog({
+      dateKey: "2026-04-14",
+      feedback: { deviationKind: "under_fueled", issue: "hunger", hydrationOz: 55, hydrationTargetOz: 100 },
+    }),
+    "2026-04-15": normalizeActualNutritionLog({
+      dateKey: "2026-04-15",
+      feedback: { deviationKind: "under_fueled", issue: "hunger", hydrationOz: 60, hydrationTargetOz: 100 },
+    }),
+  };
+
+  const review = buildWeeklyNutritionReview({
+    anchorDateKey: "2026-04-16",
+    windowDays: 4,
+    plannedDayRecords,
+    nutritionActualLogs,
+  });
+
+  assert.equal(review.prescribed.hardTrainingDays, 0);
+  assert.equal(review.friction.dominantCause, "hunger");
+  assert.equal(review.adaptation.mode, "protect_key_session_fueling");
+  assert.equal(review.adaptation.shouldAdapt, true);
+  assert.match(review.adaptation.support, /hunger pattern/i);
+});

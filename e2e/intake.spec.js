@@ -21,9 +21,9 @@ const expectNoFakeTranscript = async (page) => {
 };
 
 const expectStructuredSetupCopy = async (page) => {
-  await expect(page.getByTestId("intake-shell-title")).toHaveText("Intake");
+  await expect(page.getByTestId("intake-shell-title")).toContainText("Intake");
   await expect(page.getByTestId("intake-shell-subtitle")).toContainText("Autosaves as you go.");
-  await expect(page.getByTestId("intake-shell-helper")).toContainText("details that change week one");
+  await expect(page.getByTestId("intake-shell-helper")).toContainText(/change week one/i);
 };
 
 const expectNoFauxChatCopy = async (page) => {
@@ -68,6 +68,26 @@ const answerActiveAnchorFromMap = async (page, responsesByFieldId = {}) => {
 test.describe("intake onboarding e2e", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1120 });
+  });
+
+  test("foundation plan can skip intake and still build a full starter week", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+    await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+    await expect(page.getByTestId("intake-footer-foundation")).toBeEnabled();
+
+    await page.getByTestId("intake-footer-foundation").click();
+    await waitForPostOnboarding(page);
+
+    const cache = await readLocalCache(page);
+    expect(cache?.personalization?.profile?.onboardingComplete).toBe(true);
+
+    await expect(page.getByTestId("today-canonical-session-label")).not.toHaveText(/^\s*$/);
+
+    await page.getByTestId("app-tab-program").click();
+    await expect(page.getByTestId("program-tab")).toBeVisible();
+    await expect(page.getByTestId("program-this-week")).toBeVisible();
+    const sessionRows = page.getByTestId("program-this-week").locator("[data-testid^='program-this-week-session-item-']");
+    expect(await sessionRows.count()).toBeGreaterThan(1);
   });
 
   test("exact running goal goes straight into clarify and builds deterministically", async ({ page }) => {

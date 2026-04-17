@@ -198,6 +198,14 @@ const softenFutureSession = (session = null, reasonTag = "") => {
       t: "Steady",
     };
     nextSession.intensityGuidance = "Hold intensity below threshold until recovery stabilizes.";
+  } else if (type === "long-run") {
+    nextSession.type = "easy-run";
+    nextSession.label = "Long Run (capped)";
+    nextSession.run = {
+      ...(nextSession.run || {}),
+      t: "Steady",
+    };
+    nextSession.intensityGuidance = "Keep the run fully aerobic and trim it short if fueling or form starts to fall off.";
   } else if (type === "swim-threshold") {
     nextSession.type = "swim-aerobic";
     nextSession.label = "Steady Swim (capped)";

@@ -133,6 +133,24 @@ test("vague appearance-goal completeness asks for a proxy anchor without forcing
   ]);
 });
 
+test("body-fat percentage goals ask for a repeatable proxy anchor instead of a fake direct body-fat benchmark", () => {
+  const state = deriveIntakeCompletenessState({
+    resolvedGoals: buildResolvedGoals("body fat under 12%"),
+    answers: {},
+  });
+
+  assert.equal(state.isComplete, false);
+  assert.deepEqual(state.missingRequired.map((item) => item.key), [
+    INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
+  ]);
+  assert.match(state.nextQuestions[0].prompt, /proxy|bodyweight|waist/i);
+  assert.equal(state.nextQuestions[0].expectedValueType, INTAKE_COMPLETENESS_VALUE_TYPES.appearanceProxyAnchor);
+  assert.deepEqual(state.nextQuestions[0].inputFields.map((field) => field.key), [
+    "current_bodyweight",
+    "current_waist",
+  ]);
+});
+
 test("swim-goal completeness asks for a recent swim anchor and water reality together", () => {
   const state = deriveIntakeCompletenessState({
     resolvedGoals: buildResolvedGoals("swim a mile in open water"),

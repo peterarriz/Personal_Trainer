@@ -51,7 +51,10 @@ const collectGoalSignals = (goals = []) => {
     text,
     hasRunning: activeGoals.some((goal) => goal?.category === "running") || /\b(run|marathon|half marathon|10k|5k)\b/.test(text),
     hasStrength: activeGoals.some((goal) => goal?.category === "strength") || /\b(bench|deadlift|squat|stronger|strength)\b/.test(text),
-    hasBodyComp: activeGoals.some((goal) => goal?.category === "body_comp") || /\b(fat loss|lean|recomp|body comp|physique|look athletic)\b/.test(text),
+    hasBodyComp: activeGoals.some((goal) => goal?.category === "body_comp" && goal?.resolvedGoal?.goalFamily !== "appearance")
+      || /\b(fat loss|lose body fat|lose fat|lose weight|recomp|body comp)\b/.test(text),
+    hasAppearance: activeGoals.some((goal) => goal?.resolvedGoal?.goalFamily === "appearance")
+      || /\b(visible abs|six pack|body fat\s*(?:under|below|around|at|to)?\s*\d{1,2}(?:\.\d+)?\s*%|\d{1,2}(?:\.\d+)?\s*%\s*body fat|look athletic|physique|defined)\b/.test(text),
     hasSwim: /\b(swim|swimming|pool|open water)\b/.test(text),
     hasCycling: /\b(cycling|bike|biking|ride|riding|trainer|peloton)\b/.test(text),
     hasTriathlon: /\b(triathlon|multisport|sprint tri|olympic tri|70\.3|ironman)\b/.test(text),
@@ -86,6 +89,23 @@ export const resolveSupportTier = ({
   }
 
   if (
+    adapterId === DOMAIN_ADAPTER_IDS.bodyComp
+    && signals.activeGoals.length > 0
+    && signals.hasAppearance
+    && !signals.hasBodyComp
+    && !signals.hasRunning
+    && !signals.hasStrength
+    && !signals.hasSwim
+    && !signals.hasCycling
+    && !signals.hasTriathlon
+    && !signals.hasPower
+    && !signals.hasDurability
+    && !signals.hasHybrid
+  ) {
+    return SUPPORT_TIER_LEVELS.tier2;
+  }
+
+  if (
     [
       DOMAIN_ADAPTER_IDS.foundation,
       DOMAIN_ADAPTER_IDS.strength,
@@ -117,7 +137,7 @@ export const resolveSupportTier = ({
     return SUPPORT_TIER_LEVELS.tier1;
   }
 
-  if (signals.hasSwim || signals.hasCycling || signals.hasTriathlon || signals.hasPower || signals.hasHybrid) {
+  if (signals.hasSwim || signals.hasCycling || signals.hasTriathlon || signals.hasPower || signals.hasHybrid || signals.hasAppearance) {
     return SUPPORT_TIER_LEVELS.tier2;
   }
 
@@ -151,6 +171,8 @@ export const buildSupportTierModel = ({
     ? "Swimming is handled through the shared planner with a narrower adapter and more explicit metric honesty."
     : signals.hasPower
     ? "Vertical and power goals are handled through the shared power adapter instead of a one-off planner."
+    : signals.hasAppearance && !signals.hasBodyComp
+    ? "Appearance language is handled through repeatable proxies like waist and bodyweight instead of pretending the app can verify a mirror outcome directly."
     : "Support tier follows the dominant goal family and the active domain adapter.";
 
   return {

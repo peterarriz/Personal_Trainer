@@ -8,6 +8,7 @@
     "lab:synthetic": "node -r sucrase/register scripts/run-synthetic-athlete-lab.js --catalog expanded --count 101 --weeks 26",
     "lab:synthetic:quick": "node -r sucrase/register scripts/run-synthetic-athlete-lab.js --catalog focus --weeks 4",
     "lab:synthetic:matrix": "node -r sucrase/register scripts/run-synthetic-athlete-lab.js --catalog release-gate --weeks 12",
+    "qa:peter-proof-gate": "node scripts/run-peter-proof-gate.cjs",
     "qa:manual-pack": "node scripts/run-manual-qa-pack.cjs",
     "qa:release-gate": "node scripts/run-manual-qa-pack.cjs",
     "bench:goals": "node -r sucrase/register scripts/print-goal-benchmark-summary.cjs",

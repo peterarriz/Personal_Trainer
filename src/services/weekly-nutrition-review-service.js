@@ -169,14 +169,17 @@ export const deriveWeeklyNutritionAdaptation = ({ summary = null } = {}) => {
   const supplementMissDays = Number(summary?.supplements?.missedDays || 0);
   const dominantFriction = summary?.friction?.topCauses?.[0]?.key || "";
   const hardPrescriptionDays = Number(summary?.prescribed?.hardTrainingDays || 0);
+  const strongHungerSignal = dominantFriction === "hunger";
 
-  if (underFueledDays >= 2 && hardPrescriptionDays >= 1) {
+  if (underFueledDays >= 2 && (hardPrescriptionDays >= 1 || strongHungerSignal)) {
     return {
       mode: "protect_key_session_fueling",
       shouldAdapt: true,
       summary: "Protect fueling before and after key sessions next week.",
-      support: "Repeated under-fueling showed up against performance-relevant days, so the safest deterministic move is to bias consistency around those sessions.",
-      reasons: ["repeated_under_fueling", "hard_training_days_present"],
+      support: hardPrescriptionDays >= 1
+        ? "Repeated under-fueling showed up against performance-relevant days, so the safest deterministic move is to bias consistency around those sessions."
+        : "Repeated under-fueling with a clear hunger pattern is strong enough to protect upcoming key sessions even when recent prescription history is still sparse.",
+      reasons: ["repeated_under_fueling", hardPrescriptionDays >= 1 ? "hard_training_days_present" : "strong_hunger_signal"],
       actions: [
         "Anchor one pre-session carb and one post-session protein default on quality days.",
         "Do not tighten calories further on hard or long-session days.",

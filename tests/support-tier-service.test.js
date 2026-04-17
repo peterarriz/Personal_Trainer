@@ -88,3 +88,53 @@ test("re-entry and safe-rebuild goals stay tier 2 even when they share the gener
   assert.equal(tier.id, "tier_2");
   assert.match(tier.honestyLine, /guardrails/i);
 });
+
+test("appearance-only physique goals stay tier 2 even when they share the body-comp adapter", () => {
+  const tier = buildSupportTierModel({
+    goals: [{
+      active: true,
+      category: "body_comp",
+      name: "Visible abs by August",
+      resolvedGoal: {
+        goalFamily: "appearance",
+        planningCategory: "body_comp",
+        summary: "Improve midsection definition by the target window",
+      },
+    }],
+    domainAdapterId: DOMAIN_ADAPTER_IDS.bodyComp,
+    goalCapabilityStack: {
+      primary: {
+        primaryDomain: DOMAIN_ADAPTER_IDS.bodyComp,
+        fallbackPlanningMode: "body_comp_conditioning",
+      },
+    },
+  });
+
+  assert.equal(tier.id, "tier_2");
+  assert.match(tier.honestyLine, /guardrails|anchors/i);
+  assert.match(tier.basisLine, /appearance|proxy/i);
+});
+
+test("numeric weight-loss goals remain tier 1 on the body-comp adapter", () => {
+  const tier = buildSupportTierModel({
+    goals: [{
+      active: true,
+      category: "body_comp",
+      name: "Lose 15 lb",
+      resolvedGoal: {
+        goalFamily: "body_comp",
+        planningCategory: "body_comp",
+        summary: "Lose 15 lb",
+      },
+    }],
+    domainAdapterId: DOMAIN_ADAPTER_IDS.bodyComp,
+    goalCapabilityStack: {
+      primary: {
+        primaryDomain: DOMAIN_ADAPTER_IDS.bodyComp,
+        fallbackPlanningMode: "body_comp_conditioning",
+      },
+    },
+  });
+
+  assert.equal(tier.id, "tier_1");
+});

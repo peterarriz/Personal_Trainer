@@ -583,6 +583,9 @@ const MAINSTREAM_SEEDS = [
       makePhrase("get leaner"),
       makePhrase("look athletic again"),
       makePhrase("tone up"),
+      makePhrase("get a six pack"),
+      makePhrase("get visible abs"),
+      makePhrase("body fat under 12%"),
     ],
   },
   {

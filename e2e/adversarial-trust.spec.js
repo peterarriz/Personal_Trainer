@@ -167,6 +167,20 @@ const buildSevenGoalStackFromLibrary = async (page, { finishBuild = true } = {})
   await gotoIntakeInLocalMode(page);
   await expect(page.getByTestId("intake-goals-step")).toBeVisible();
 
+  const categoryAliases = {
+    running: "endurance",
+    swim: "endurance",
+    sport: "hybrid",
+    health: "general_fitness",
+  };
+  const templateAliases = {
+    half_marathon: "train_for_run_race",
+    bench_225: "improve_big_lifts",
+    soccer_resilience: "sport_support",
+    capability_longevity: "healthy_routine_fitness",
+    swim_endurance: "swim_better",
+    build_energy: "build_consistency",
+  };
   const selections = [
     ["running", "half_marathon"],
     ["strength", "bench_225"],
@@ -177,8 +191,10 @@ const buildSevenGoalStackFromLibrary = async (page, { finishBuild = true } = {})
     ["health", "build_energy"],
   ];
   for (const [categoryId, templateId] of selections) {
-    await page.getByTestId(`intake-goal-category-${categoryId}`).click();
-    await page.getByTestId(`intake-goal-template-${templateId}`).click();
+    const resolvedCategoryId = categoryAliases[categoryId] || categoryId;
+    const resolvedTemplateId = templateAliases[templateId] || templateId;
+    await page.getByTestId(`intake-goal-category-${resolvedCategoryId}`).click();
+    await page.getByTestId(`intake-goal-template-${resolvedTemplateId}`).click();
   }
 
   await page.getByTestId("intake-goals-option-experience-level-intermediate").click();

@@ -329,6 +329,60 @@ test("ProgramBlock flows through WeeklyIntent, PlanWeek, and PlanDay as one hier
   });
 });
 
+test("concurrent race, bench, and fat-loss goals expose an explicit no-max-everything contract", async () => {
+  await withMockedNow("2026-04-09T12:00:00Z", async () => {
+    const goals = buildGoals([
+      {
+        name: "Run a 1:45 half marathon",
+        category: "running",
+        priority: 1,
+        targetDate: "2026-10-10",
+      },
+      {
+        name: "Bench 225",
+        category: "strength",
+        priority: 2,
+      },
+      {
+        name: "Lose 15 lb",
+        category: "body_comp",
+        priority: 3,
+      },
+    ]);
+
+    const composer = buildComposer({
+      goals,
+      personalization: {
+        travelState: { access: "full gym" },
+        userGoalProfile: { days_per_week: 5, session_length: "45" },
+        profile: { estimatedFitnessLevel: "intermediate" },
+      },
+      momentum: { inconsistencyRisk: "low" },
+      learningLayer: {},
+    });
+
+    assert.equal(composer.architecture, "event_prep_upper_body_maintenance");
+    assert.equal(
+      composer.programBlock?.goalAllocation?.why,
+      "Why: the app cannot honestly promise maximal bench progress, maximal race improvement, and maximal fat loss in the same block."
+    );
+    assert.deepEqual(composer.programBlock?.goalAllocation?.heldBack, [
+      "Bench 225 stays in maintenance territory, not a maximal bench-progression push.",
+      "Lose 15 lb stays moderate and recovery-compatible, not an aggressive cut.",
+    ]);
+    assert.match(
+      composer.programBlock?.summary || "",
+      /Held back: Bench 225 stays in maintenance territory, not a maximal bench-progression push\./i
+    );
+    assert.match(
+      composer.programBlock?.summary || "",
+      /Why: the app cannot honestly promise maximal bench progress, maximal race improvement, and maximal fat loss in the same block\./i
+    );
+    assert.equal(composer.blockIntent?.why, composer.programBlock?.goalAllocation?.why);
+    assert.deepEqual(composer.blockIntent?.heldBack, composer.programBlock?.goalAllocation?.heldBack);
+  });
+});
+
 test("ProgramBlock uses resolved goal structure to express horizon, proxies, and conflict-aware posture", async () => {
   await withMockedNow("2026-04-09T12:00:00Z", async () => {
     const goals = buildGoals([
