@@ -56,7 +56,7 @@ test("post-intake ready model gives a clear first action, week shape, and roadma
   assert.equal(model.roadmap.rows.length, 4);
   assert.match(model.roadmap.summary, /next few weeks|next block|lighter week|builds toward/i);
   assert.equal(model.checklist.items[0].done, false);
-  assert.match(model.adaptation.lines[0], /each log|latest log/i);
+  assert.match(model.adaptation.lines[0], /log today|latest log/i);
 });
 
 test("post-intake ready model keeps recovery days reassuring instead of blank", () => {

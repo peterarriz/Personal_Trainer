@@ -197,6 +197,7 @@ import {
  joinDisplayParts,
  sanitizeDisplayCopy,
 } from "./services/text-format-service.js";
+import { formatRunTarget } from "./services/session-label-format-service.js";
 import { adaptStrengthWorkoutForState, isStrengthWorkoutCandidate } from "./services/strength-readiness-adaptation-service.js";
 import { buildDayPrescriptionDisplay } from "./services/day-prescription-display-service.js";
 import { getMovementExplanation } from "./services/movement-explanation-service.js";
@@ -1795,7 +1796,11 @@ const deriveTodayReadinessInfluence = ({ todayKey = new Date().toISOString().spl
  adjustedWorkout.run.d = baseDemand === "high" ? "20-30 min easy aerobic" : "15-25 min walk or easy spin";
  }
  adjustedWorkout.type = strengthLaneActive ? (baseWorkout?.type || "strength+prehab") : (adjustedWorkout?.run ? "recovery" : "rest");
- adjustedWorkout.label = appendWorkoutQualifier(baseWorkout?.label, "Recovery focus");
+ adjustedWorkout.label = refreshAdjustedWorkoutLabel({
+ workout: adjustedWorkout,
+ qualifier: "Recovery focus",
+ injuryState: personalization?.injuryPainState,
+ });
  adjustedWorkout.minDay = true;
  adjustedWorkout.nutri = NUTRITION_DAY_TYPES.recovery;
  adjustedWorkout.success = "Keep effort easy, do the mobility work, and finish fresher than you started.";
@@ -2079,7 +2084,11 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
  adjustedWorkout.run.d = baseDemand === "high" ? "20-30 min easy aerobic" : "15-25 min walk or easy spin";
  }
  adjustedWorkout.type = strengthLaneActive ? (baseWorkout?.type || "strength+prehab") : (adjustedWorkout?.run ? "recovery" : "rest");
- adjustedWorkout.label = appendWorkoutQualifier(baseWorkout?.label, "Recovery focus");
+ adjustedWorkout.label = refreshAdjustedWorkoutLabel({
+ workout: adjustedWorkout,
+ qualifier: "Recovery focus",
+ injuryState: personalization?.injuryPainState,
+ });
  adjustedWorkout.minDay = true;
  adjustedWorkout.nutri = NUTRITION_DAY_TYPES.recovery;
  adjustedWorkout.success = "Keep effort easy, do the mobility work, and finish fresher than you started.";
@@ -2099,7 +2108,11 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
  adjustedWorkout.run.d = baseDemand === "high" ? "20-30 min easy aerobic" : scaleSessionDescriptor(adjustedWorkout.run.d || "", "20-30 min controlled");
  if (["hard-run", "long-run"].includes(baseWorkout?.type || "")) adjustedWorkout.type = "easy-run";
  }
- adjustedWorkout.label = appendWorkoutQualifier(baseWorkout?.label, "Reduced-load");
+ adjustedWorkout.label = refreshAdjustedWorkoutLabel({
+ workout: adjustedWorkout,
+ qualifier: "Reduced-load",
+ injuryState: personalization?.injuryPainState,
+ });
  adjustedWorkout.minDay = true;
  adjustedWorkout.nutri = adjustedWorkout?.run ? NUTRITION_DAY_TYPES.runEasy : (baseWorkout?.nutri || NUTRITION_DAY_TYPES.strengthSupport);
  adjustedWorkout.success = "Keep intensity capped, finish the first useful block, and stop there.";
@@ -2115,7 +2128,11 @@ const deriveDeterministicReadinessState = ({ todayKey = new Date().toISOString()
  } else if (state === "progression") {
  badge = "Progression-ready";
  if (adjustedWorkout?.run && /easy/i.test(String(adjustedWorkout?.run?.t || ""))) adjustedWorkout.run.t = "Easy + strides";
- adjustedWorkout.label = appendWorkoutQualifier(baseWorkout?.label, "Progression-ready");
+ adjustedWorkout.label = refreshAdjustedWorkoutLabel({
+ workout: adjustedWorkout,
+ qualifier: "Progression-ready",
+ injuryState: personalization?.injuryPainState,
+ });
  adjustedWorkout.success = "Keep the planned session and add only one controlled progression if it stays smooth.";
  adjustedWorkout.recoveryRecommendation = "Keep your normal fueling and recovery; no extra hero volume after the session.";
  adjustedWorkout.intensityGuidance = "planned plus one small progression";
@@ -2356,6 +2373,7 @@ const PHASE_ARC_LABELS = {
 };
 const SESSION_NAMING = {
  EASY_RUN: "Easy Run",
+ RECOVERY_RUN: "Recovery Run",
  RECOVERY_MOBILITY: "Active Recovery",
  LOW_IMPACT: "Low-Impact Cardio",
  HYBRID_PREFIX: "Easy Run + Strength",
@@ -2363,15 +2381,6 @@ const SESSION_NAMING = {
  ACHILLES_BADGE: "Modified for Achilles",
 };
 const isRunTarget = (value = "") => /(\d+(\.\d+)?\s*mi|\d+\s*(min|minutes?))/i.test(String(value || ""));
-const formatRunTarget = (value = "") => {
- const raw = String(value || "").trim();
- if (!raw) return "";
- const miles = raw.match(/(\d+(\.\d+)?)\s*mi/i);
- if (miles) return `${miles[1]} mi`;
- const mins = raw.match(/(\d+)\s*(min|minutes?)/i);
- if (mins) return `${mins[1]} min`;
- return raw;
-};
 const formatRunTargetFromLogEntry = (entry = {}) => {
  const miles = Number(entry?.miles || 0);
  if (Number.isFinite(miles) && miles > 0) return `${miles} mi`;
@@ -2397,6 +2406,10 @@ const applySessionNamingRules = (session = {}, injuryState = {}) => {
  }
  if (hasRunningPrescription) {
  const runTarget = formatRunTarget(runDescriptor);
+ if (type === "recovery" || /recovery/.test(runType)) {
+ next.label = runTarget ? joinDisplayParts([SESSION_NAMING.RECOVERY_RUN, runTarget]) : SESSION_NAMING.RECOVERY_RUN;
+ return next;
+ }
  if (type === "run+strength") {
  next.label = `${SESSION_NAMING.HYBRID_PREFIX} ${next?.strSess || "A"}`;
  return next;
@@ -2419,6 +2432,12 @@ const applySessionNamingRules = (session = {}, injuryState = {}) => {
  const lowImpactOnly = /(bike|elliptical|pool|incline walk|low-impact)/i.test(`${next?.label || ""} ${next?.environmentNote || ""}`);
  next.label = lowImpactOnly ? SESSION_NAMING.LOW_IMPACT : SESSION_NAMING.RECOVERY_MOBILITY;
  return next;
+};
+const refreshAdjustedWorkoutLabel = ({ workout = {}, qualifier = "", injuryState = {} } = {}) => {
+ const safeWorkout = workout && typeof workout === "object" ? workout : {};
+ const relabeledWorkout = safeWorkout?.run ? applySessionNamingRules(safeWorkout, injuryState) : safeWorkout;
+ const baseLabel = String(relabeledWorkout?.label || safeWorkout?.label || "Session").trim() || "Session";
+ return appendWorkoutQualifier(baseLabel, qualifier);
 };
 const relabelRecentLogs = (logs = {}) => {
  const now = Date.now();
@@ -9819,10 +9838,9 @@ const getAnthropicKey = () => (typeof window !== "undefined"
 <h1 data-testid="app-brand-wordmark" style={{ fontFamily:"var(--font-display)", fontWeight:700, fontSize:"clamp(1.32rem, 5vw, 1.92rem)", letterSpacing:"0.05em", color:"var(--heading-start)", lineHeight:1, margin:0 }}>
 {PRODUCT_BRAND.name}
 </h1>
- <span className="tag" style={{ fontSize:"0.46rem" }}>{activeBrandTheme?.label || "Atlas"} - {activeAppearanceMode}</span>
  </div>
  <div style={{ fontFamily:"var(--font-body)", fontSize:"0.58rem", color:"var(--text-soft)", letterSpacing:"0.04em", marginTop:6, lineHeight:1.55 }}>
- {joinDisplayParts([PRODUCT_BRAND.strapline, fmtDate(today).toUpperCase(), `Week ${currentWeek}`])}
+ {joinDisplayParts([fmtDate(today).toUpperCase(), `Week ${currentWeek}`])}
  </div>
  </div>
  </div>
@@ -19107,7 +19125,7 @@ const todayNextStepLine = sanitizeDisplayText(
  <div style={{ display:"grid", gap:"0.7rem" }}>
  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"flex-start", flexWrap:"wrap" }}>
  <div style={{ display:"grid", gap:"0.22rem", minWidth:0, flex:"1 1 300px" }}>
- <div className="sect-title" style={{ color:C.green, marginBottom:0 }}>WEEK ONE</div>
+ <div className="ui-eyebrow" style={{ color:C.green }}>Ready</div>
  <div data-testid="post-intake-ready-headline" style={{ fontSize:"0.82rem", color:"var(--consumer-text)", lineHeight:1.28, overflowWrap:"anywhere" }}>
  {postIntakeReadyModel.title}
  </div>
@@ -19281,41 +19299,44 @@ const todayNextStepLine = sanitizeDisplayText(
  </div>
 
  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(100%, 220px),1fr))", gap:"0.5rem" }}>
- <div
+ <details
  data-testid="post-intake-ready-adapts"
  style={{
  border:"1px solid var(--consumer-border)",
  borderRadius:16,
  padding:"0.65rem",
  background:"var(--consumer-panel)",
- display:"grid",
- gap:"0.32rem",
  }}
  >
- <div style={{ fontSize:"0.5rem", color:"var(--consumer-text)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ <summary style={{ padding:"0 0 0.1rem", cursor:"pointer", color:"var(--consumer-text)" }}>
+ <span style={{ fontSize:"0.5rem", letterSpacing:"0.08em", textTransform:"uppercase" }}>
  {postIntakeReadyModel.adaptation.title}
- </div>
+ </span>
+ </summary>
+ <div style={{ display:"grid", gap:"0.32rem", paddingTop:"0.12rem" }}>
  {postIntakeReadyModel.adaptation.lines.map((line, index) => (
  <div key={`post-intake-adapt-${index}`} style={{ fontSize:"0.5rem", color:"var(--consumer-text-soft)", lineHeight:1.5, overflowWrap:"anywhere" }}>
  {line}
  </div>
  ))}
  </div>
+ </details>
 
- <div
+ <details
  data-testid="post-intake-ready-checklist"
  style={{
  border:"1px solid var(--consumer-border)",
  borderRadius:16,
  padding:"0.65rem",
  background:"var(--consumer-panel)",
- display:"grid",
- gap:"0.32rem",
  }}
  >
- <div style={{ fontSize:"0.5rem", color:"var(--consumer-text)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ <summary style={{ padding:"0 0 0.1rem", cursor:"pointer", color:"var(--consumer-text)" }}>
+ <span style={{ fontSize:"0.5rem", letterSpacing:"0.08em", textTransform:"uppercase" }}>
  {postIntakeReadyModel.checklist.title}
- </div>
+ </span>
+ </summary>
+ <div style={{ display:"grid", gap:"0.32rem", paddingTop:"0.12rem" }}>
  {postIntakeReadyModel.checklist.items.map((item, index) => (
  <div
  key={`post-intake-check-${item.id}`}
@@ -19350,6 +19371,7 @@ const todayNextStepLine = sanitizeDisplayText(
  </div>
  ))}
  </div>
+ </details>
  </div>
  </div>
  </div>

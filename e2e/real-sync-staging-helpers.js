@@ -73,10 +73,47 @@ const buildRealSyncSeedPayload = ({
   return payload;
 };
 
+const normalizeGoalList = (goals = []) => (
+  Array.isArray(goals)
+    ? goals.filter((goal) => goal && typeof goal === "object")
+    : []
+);
+
+const readGoalSummary = (goal = null) => {
+  if (!goal || typeof goal !== "object") return "";
+  return String(
+    goal.summary
+    || goal.name
+    || goal.title
+    || goal.resolvedGoal?.summary
+    || goal.resolvedGoal?.name
+    || ""
+  ).trim();
+};
+
+const findPrimaryGoalRecord = (goals = [], goalId = REAL_SYNC_TEST_DATA.goalId) => {
+  const normalizedGoals = normalizeGoalList(goals);
+  if (!normalizedGoals.length) return null;
+
+  const directIdMatch = normalizedGoals.find((goal) => String(goal?.id || "") === String(goalId));
+  if (directIdMatch) return directIdMatch;
+
+  const resolvedIdMatch = normalizedGoals.find((goal) => String(goal?.resolvedGoal?.id || "") === String(goalId));
+  if (resolvedIdMatch) return resolvedIdMatch;
+
+  const activeByPriority = normalizedGoals
+    .filter((goal) => goal?.active !== false)
+    .sort((left, right) => {
+      const leftPriority = Number(left?.priority || Number.MAX_SAFE_INTEGER);
+      const rightPriority = Number(right?.priority || Number.MAX_SAFE_INTEGER);
+      return leftPriority - rightPriority;
+    });
+  return activeByPriority[0] || normalizedGoals[0] || null;
+};
+
 const findGoalValue = (goals = [], goalId = REAL_SYNC_TEST_DATA.goalId) => {
-  const match = (Array.isArray(goals) ? goals : []).find((goal) => String(goal?.id || "") === String(goalId));
-  if (!match) return "";
-  return String(match.summary || match.name || match.title || "").trim();
+  const match = findPrimaryGoalRecord(goals, goalId);
+  return readGoalSummary(match);
 };
 
 const buildParitySnapshotFromPayload = (payload = {}) => ({
@@ -106,4 +143,5 @@ module.exports = {
   buildRealSyncSeedPayload,
   buildParitySnapshotFromPayload,
   hasMachineReadableRetryReason,
+  findGoalValue,
 };

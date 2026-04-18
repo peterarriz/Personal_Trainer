@@ -72,7 +72,7 @@ const buildRoadmapSecondaryLine = (row = null) => {
 };
 
 const buildRoadmapSummary = (rows = []) => {
-  if (!rows.length) return "The next few weeks are already in view.";
+  if (!rows.length) return "The next few weeks are already mapped.";
   const hasCutback = rows.some((row) => row?.cutback);
   const hasPhaseChange = rows.some((row) => row?.isPhaseStart && !row?.isCurrentWeek);
   if (hasCutback && hasPhaseChange) {
@@ -113,10 +113,10 @@ const buildAdaptationLines = ({ roadmapRows = [], hasLogged = false } = {}) => {
   return [
     hasLogged
       ? "Your latest log is already shaping the next sessions."
-      : "Each log helps the next sessions match what actually happened.",
+      : "Log today so the next sessions fit what actually happened.",
     nextRow?.phaseLabel
-      ? `The bigger build toward ${sanitizeText(nextRow.phaseLabel, 40)} stays in view.`
-      : "The bigger build stays in view while the details sharpen.",
+      ? `Next block: ${sanitizeText(nextRow.phaseLabel, 40)}.`
+      : "The bigger build stays mapped while the details sharpen.",
   ].map((line) => sanitizeText(line, 170));
 };
 
@@ -141,7 +141,7 @@ const buildChecklistItems = ({
     },
     {
       id: "log",
-      label: "Log each session right after you finish so the plan can stay honest.",
+      label: "Log each session right after you finish so the plan stays honest.",
       done: Boolean(hasLogged),
     },
     {

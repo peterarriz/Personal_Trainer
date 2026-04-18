@@ -26,6 +26,7 @@ const installRealSyncBrowserHooks = async (context) => {
     localCacheKey,
     fixedIsoString,
   }) => {
+    const seedGuardKey = "__forma_real_sync_seeded__";
     const fixedNow = new Date(fixedIsoString).getTime();
     const OriginalDate = Date;
     function MockDate(...args) {
@@ -44,8 +45,11 @@ const installRealSyncBrowserHooks = async (context) => {
     window.__E2E_SYNC_TEST = true;
     try {
       localStorage.setItem("trainer_debug", "1");
-      localStorage.removeItem(authCacheKey);
-      localStorage.removeItem(localCacheKey);
+      if (!sessionStorage.getItem(seedGuardKey)) {
+        localStorage.removeItem(authCacheKey);
+        localStorage.removeItem(localCacheKey);
+        sessionStorage.setItem(seedGuardKey, "1");
+      }
     } catch {}
   }, {
     authCacheKey: AUTH_CACHE_KEY,
