@@ -1,5 +1,20 @@
 import React from "react";
 
+import {
+  SETTINGS_ACTION_ROW_STYLE,
+  SETTINGS_BODY_STYLE,
+  SETTINGS_DIVIDER_STYLE,
+  SETTINGS_LABEL_STYLE,
+  SETTINGS_PANEL_STYLE,
+  SETTINGS_SECTION_HEADER_STYLE,
+  SETTINGS_SECTION_INTRO_STYLE,
+  SETTINGS_SECTION_STYLE,
+  SETTINGS_STACK_STYLE,
+  SETTINGS_SUBPANEL_STYLE,
+  SETTINGS_TITLE_STYLE,
+  SETTINGS_TWO_COL_GRID_STYLE,
+} from "./settings-ui.js";
+
 export function SettingsProgramsSection({
   colors,
   settingsPlanBasisExplanation = null,
@@ -31,33 +46,33 @@ export function SettingsProgramsSection({
   const incompatibleOutcome = compatibilityOutcomes.incompatible || "incompatible";
 
   return (
-    <section data-testid="settings-programs-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.4rem" }}>
-      <div style={{ display:"grid", gap:"0.14rem" }}>
-        <div className="sect-title" style={{ color:colors.blue, marginBottom:0 }}>PLAN STYLE</div>
-        <div style={{ fontSize:"0.52rem", color:"#8fa5c8", lineHeight:1.5 }}>
-          Choose whether the plan stays adaptive, follows a more structured template, or leans toward a specific training bias.
+    <section data-testid="settings-programs-section" style={SETTINGS_SECTION_STYLE}>
+      <div style={SETTINGS_SECTION_HEADER_STYLE}>
+        <div className="sect-title" style={{ color:colors.blue, marginBottom:0 }}>TRAINING STYLE</div>
+        <div style={SETTINGS_SECTION_INTRO_STYLE}>
+          Choose a named plan, or keep FORMA building one around your goals and routine.
         </div>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
-        <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
-          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>CURRENT PLAN</div>
-          <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45, marginTop:"0.12rem" }}>
-            {settingsPlanBasisExplanation?.basisSummary || "Adaptive plan"}
+      <div style={SETTINGS_TWO_COL_GRID_STYLE}>
+        <div style={SETTINGS_SUBPANEL_STYLE}>
+          <div style={SETTINGS_LABEL_STYLE}>CURRENT PLAN</div>
+          <div style={SETTINGS_TITLE_STYLE}>
+            {settingsPlanBasisExplanation?.basisSummary || "Built for you"}
           </div>
-          <div style={{ fontSize:"0.49rem", color:"#8fa5c8", marginTop:"0.14rem", lineHeight:1.5 }}>
-            {settingsPlanBasisExplanation?.personalizationSummary || "No extra structure or bias is active."}
+          <div style={SETTINGS_BODY_STYLE}>
+            {settingsPlanBasisExplanation?.personalizationSummary || "No named plan or training feel is active right now."}
           </div>
         </div>
-        <div style={{ border:"1px solid #22324a", borderRadius:12, background:"#0f172a", padding:"0.6rem" }}>
-          <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.08em" }}>ACTIVE CHOICES</div>
-          <div style={{ fontSize:"0.54rem", color:"#e2e8f0", marginTop:"0.12rem", lineHeight:1.5 }}>
-            Structure: {activeProgramDefinition?.displayName || "Adaptive"}
+        <div style={SETTINGS_SUBPANEL_STYLE}>
+          <div style={SETTINGS_LABEL_STYLE}>ACTIVE CHOICES</div>
+          <div style={{ ...SETTINGS_TITLE_STYLE, fontSize:"0.56rem" }}>
+            Plan: {activeProgramDefinition?.displayName || "Built for you"}
           </div>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.5 }}>
-            Bias: {activeStyleDefinition?.displayName || "None"}
+          <div style={SETTINGS_BODY_STYLE}>
+            Style: {activeStyleDefinition?.displayName || "None"}
           </div>
-          <button className="btn" onClick={onClearProgramLayer} style={{ width:"fit-content", marginTop:"0.3rem", fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#2b3d55" }}>
-            Back to adaptive plan
+          <button className="btn" onClick={onClearProgramLayer} style={{ width:"fit-content", marginTop:"0.12rem", fontSize:"0.48rem" }}>
+            Back to built-for-you plan
           </button>
         </div>
       </div>
@@ -66,42 +81,44 @@ export function SettingsProgramsSection({
           {planManagementError || planManagementNotice}
         </div>
       )}
-      <div style={{ border:"1px solid #22324a", borderRadius:14, background:"#0f172a", padding:"0.65rem", display:"grid", gap:"0.35rem" }}>
-        <div style={{ display:"grid", gap:"0.14rem" }}>
-          <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.1em" }}>STRUCTURE</div>
-          <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>Pick a named plan when you want more structure than the default adaptive approach.</div>
+      <div style={{ ...SETTINGS_PANEL_STYLE, gap:"0.45rem" }}>
+        <div style={SETTINGS_STACK_STYLE}>
+          <div style={SETTINGS_LABEL_STYLE}>PLAN</div>
+          <div style={SETTINGS_TITLE_STYLE}>Pick a named plan when you want more structure than FORMA&apos;s built-for-you approach.</div>
         </div>
         <select value={selectedSettingsProgramId} onChange={(e) => onSelectProgramId(e.target.value)} style={{ fontSize:"0.54rem" }}>
           {programDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName}</option>)}
         </select>
         <select value={selectedSettingsProgramFidelityMode} onChange={(e) => onSelectProgramFidelityMode(e.target.value)} style={{ fontSize:"0.52rem" }}>
-          <option value={adaptiveMode}>Adaptive</option>
-          <option value={structuredMode}>Structured</option>
-          <option value={styleMode}>Use as training bias</option>
+          <option value={adaptiveMode}>Fit it to me</option>
+          <option value={structuredMode}>Follow it closely</option>
+          <option value={styleMode}>Use for feel</option>
         </select>
-        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{selectedSettingsProgramDefinition?.summary || "Select a program."}</div>
+        <div style={SETTINGS_BODY_STYLE}>{selectedSettingsProgramDefinition?.summary || "Select a program."}</div>
         {settingsProgramCompatibility?.headline && (
-          <div style={{ fontSize:"0.48rem", color:settingsProgramCompatibility?.outcome === incompatibleOutcome ? colors.amber : "#8fa5c8", lineHeight:1.45 }}>
+          <div style={{ ...SETTINGS_BODY_STYLE, fontSize:"0.48rem", color:settingsProgramCompatibility?.outcome === incompatibleOutcome ? colors.amber : "var(--text-soft)" }}>
             {settingsProgramCompatibility.headline}
           </div>
         )}
         <button className="btn btn-primary" onClick={onActivateProgram} style={{ width:"fit-content", fontSize:"0.5rem" }}>
           Use this plan
         </button>
-        <div style={{ borderTop:"1px solid #1e293b", paddingTop:"0.35rem", display:"grid", gap:"0.35rem" }}>
-          <div style={{ fontSize:"0.48rem", color:"#64748b", letterSpacing:"0.08em" }}>BIAS</div>
+        <div style={SETTINGS_DIVIDER_STYLE}>
+          <div style={SETTINGS_LABEL_STYLE}>STYLE</div>
           <select value={selectedSettingsStyleId} onChange={(e) => onSelectStyleId(e.target.value)} style={{ fontSize:"0.54rem" }}>
             {styleDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName}</option>)}
           </select>
-          <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{selectedSettingsStyleDefinition?.summary || "Select a bias."}</div>
+          <div style={SETTINGS_BODY_STYLE}>{selectedSettingsStyleDefinition?.summary || "Select a style."}</div>
           {settingsStyleCompatibility?.headline && (
-            <div style={{ fontSize:"0.48rem", color:settingsStyleCompatibility?.outcome === incompatibleOutcome ? colors.amber : "#8fa5c8", lineHeight:1.45 }}>
+            <div style={{ ...SETTINGS_BODY_STYLE, fontSize:"0.48rem", color:settingsStyleCompatibility?.outcome === incompatibleOutcome ? colors.amber : "var(--text-soft)" }}>
               {settingsStyleCompatibility.headline}
             </div>
           )}
-          <button className="btn" onClick={onActivateStyle} style={{ width:"fit-content", fontSize:"0.5rem", color:colors.green, borderColor:colors.green + "35" }}>
-            Apply bias
-          </button>
+          <div style={SETTINGS_ACTION_ROW_STYLE}>
+            <button className="btn" onClick={onActivateStyle} style={{ width:"fit-content", fontSize:"0.5rem", color:colors.green, borderColor:colors.green + "35" }}>
+            Use this style
+            </button>
+          </div>
         </div>
       </div>
     </section>

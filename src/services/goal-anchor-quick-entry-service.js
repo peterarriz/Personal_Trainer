@@ -75,6 +75,11 @@ export const buildGoalAnchorQuickEntryModel = ({
   const hasStrengthGoal = goalCards.some((card) => card?.planningCategory === "strength");
   const hasRunningGoal = goalCards.some((card) => card?.planningCategory === "running");
   const hasBodyCompGoal = goalCards.some((card) => card?.planningCategory === "body_comp" || card?.goalFamily === "appearance");
+  const hasSwimGoal = goalCards.some((card) => (
+    card?.primaryDomain === "swimming_endurance_technique"
+    || /\bswim\b/i.test(String(card?.summary || ""))
+    || (Array.isArray(card?.trackedItems) && card.trackedItems.some((item) => /swim/i.test(String(item?.key || ""))))
+  ));
   const hasExploratoryGoal = goalCards.some((card) => card?.trackingMode === "exploratory" || card?.goalFamily === "re_entry");
   const anchors = [];
 
@@ -123,6 +128,30 @@ export const buildGoalAnchorQuickEntryModel = ({
       label: "Recent run result",
       helperText: "Save a recent distance, time, and pace anchor so run goals have something concrete to track.",
       fields: ["date", "distance", "duration", "pace"],
+    }));
+  }
+
+  if (
+    hasSwimGoal
+    || trackedKeys.has("swim_benchmark_retest")
+    || trackedKeys.has("weekly_swim_frequency")
+  ) {
+    anchors.push(createAnchor({
+      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimBenchmark,
+      label: "Recent swim result",
+      helperText: "Save a recent swim distance or time so swim goals stop leaning on broad defaults.",
+      fields: ["date", "distance", "duration", "distanceUnit"],
+      surfaces: ["program"],
+    }));
+  }
+
+  if (hasSwimGoal || trackedKeys.has("swim_access_reality")) {
+    anchors.push(createAnchor({
+      type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimAccessReality,
+      label: "Swim access reality",
+      helperText: "Confirm whether this is mostly pool, open water, or both so the plan stays realistic.",
+      fields: ["date", "value"],
+      surfaces: ["program"],
     }));
   }
 
@@ -182,8 +211,8 @@ export const upsertGoalAnchorQuickEntry = ({
     const nextRow = {
       date: toDateKey(entry?.date || null),
       distanceMiles: toFiniteNumber(entry?.distanceMiles ?? entry?.distance, null),
-      durationMinutes: sanitizeText(entry?.durationMinutes ?? entry?.duration || "", 24),
-      paceText: sanitizeText(entry?.paceText ?? entry?.pace || "", 24),
+      durationMinutes: sanitizeText((entry?.durationMinutes ?? entry?.duration) || "", 24),
+      paceText: sanitizeText((entry?.paceText ?? entry?.pace) || "", 24),
       note: meta.note,
       source: meta.source,
       provenance: meta.provenance,

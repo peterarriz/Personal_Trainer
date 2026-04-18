@@ -53,7 +53,7 @@ test.describe("friction analytics smoke", () => {
 
     await page.getByTestId("app-tab-log").click();
     await expect(page.getByTestId("log-tab")).toBeVisible();
-    await page.getByTestId("log-complete-prescribed").click();
+    await page.getByTestId("log-save-quick").click();
     await expect(page.getByTestId("log-save-status")).toContainText("Saved");
 
     await expect.poll(async () => {

@@ -1,21 +1,23 @@
 import React from "react";
 import { formatSyncDiagnosticTimestamp } from "../../services/sync-diagnostics-service.js";
+import {
+  SETTINGS_BODY_STYLE,
+  SETTINGS_LABEL_STYLE,
+  SETTINGS_PANEL_STYLE,
+  SETTINGS_SECTION_HEADER_STYLE,
+  SETTINGS_SECTION_STYLE,
+  SETTINGS_SUBPANEL_STYLE,
+  SETTINGS_TITLE_STYLE,
+} from "./settings-ui.js";
 
 const ACCOUNT_PANEL_STYLE = {
-  border: "1px solid var(--border)",
-  borderRadius: 12,
-  background: "var(--surface-1)",
-  padding: "0.62rem",
-  display: "grid",
+  ...SETTINGS_SUBPANEL_STYLE,
   gap: "0.34rem",
 };
 
 const LIFECYCLE_CARD_STYLE = {
-  border: "1px solid var(--border)",
-  borderRadius: 12,
-  background: "var(--surface-1)",
+  ...SETTINGS_SUBPANEL_STYLE,
   padding: "0.58rem 0.62rem",
-  display: "grid",
   gap: "0.18rem",
 };
 
@@ -134,10 +136,10 @@ export function SettingsAccountSection({
   const yesNo = (value) => (value ? "Yes" : "No");
 
   return (
-    <section data-testid="settings-account-section" style={{ borderTop:"1px solid var(--border)", paddingTop:"0.75rem", display:"grid", gap:"0.45rem" }}>
-      <div style={{ display:"grid", gap:"0.14rem" }}>
+    <section data-testid="settings-account-section" style={SETTINGS_SECTION_STYLE}>
+      <div style={SETTINGS_SECTION_HEADER_STYLE}>
         <div className="sect-title" style={{ color:"var(--text-strong)", marginBottom:0 }}>Account & sync</div>
-        <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.45 }}>
+        <div style={SETTINGS_BODY_STYLE}>
           {authEmail
             ? `Signed in as ${authEmail}.`
             : "You are currently using this device without a signed-in cloud account."}
@@ -147,9 +149,9 @@ export function SettingsAccountSection({
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.38rem" }}>
         {lifecycleSummaryCards.map((card) => (
           <div key={card.id} style={LIFECYCLE_CARD_STYLE}>
-            <div style={{ fontSize:"0.46rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>{card.id.toUpperCase()}</div>
-            <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>{card.label}</div>
-            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>{card.detail}</div>
+            <div style={SETTINGS_LABEL_STYLE}>{card.id.toUpperCase()}</div>
+            <div style={{ ...SETTINGS_TITLE_STYLE, fontSize:"0.56rem" }}>{card.label}</div>
+            <div style={{ ...SETTINGS_BODY_STYLE, fontSize:"0.47rem" }}>{card.detail}</div>
           </div>
         ))}
       </div>
@@ -172,24 +174,24 @@ export function SettingsAccountSection({
       {authEmail ? (
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
           <div style={ACCOUNT_PANEL_STYLE}>
-            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>CLOUD COPY</div>
-            <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Reload the signed-in cloud record onto this device.</div>
-            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>Use this when you want to re-pull synced state, not when you want to sign out or clear the device.</div>
+            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>REFRESH ACCOUNT DATA</div>
+            <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Refresh this device with the latest saved version from your account.</div>
+            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>Use this when you want the latest saved state here, not when you want to sign out or clear the device.</div>
             <button className="btn" disabled={accountActionBusy !== ""} onClick={onReloadCloud} style={{ width:"fit-content", fontSize:"0.48rem", ...brandButtonStyle }}>
-              {accountActionBusy === "reload" ? "Reloading..." : "Reload cloud data"}
+              {accountActionBusy === "reload" ? "Refreshing..." : "Refresh from account"}
             </button>
           </div>
           <div style={ACCOUNT_PANEL_STYLE}>
-            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>LEAVE THIS DEVICE</div>
-            <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Sign out fast without deleting the cloud account.</div>
-            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>This signs out immediately and keeps this browser in local mode unless you choose a device reset.</div>
+            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>SIGN OUT</div>
+            <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Sign out without deleting your account.</div>
+            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>This signs you out here and keeps the browser in local mode unless you reset the device.</div>
             <button data-testid="settings-logout" className="btn" disabled={accountActionBusy !== ""} onClick={onLifecycleSignOut} style={{ width:"fit-content", fontSize:"0.48rem", ...neutralButtonStyle }}>
               {accountActionBusy === "logout" ? "Signing out..." : "Sign out"}
             </button>
           </div>
           <div data-testid="settings-password-reset-card" style={ACCOUNT_PANEL_STYLE}>
-            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>PASSWORD RESET</div>
-            <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Email a reset link to the signed-in account.</div>
+            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>PASSWORD</div>
+            <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Email a password reset link to your account.</div>
             <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>Use this if you want to change your password without signing out first.</div>
             <button
               data-testid="settings-send-password-reset"
@@ -210,7 +212,7 @@ export function SettingsAccountSection({
       ) : (
         <div style={{ display:"grid", gap:"0.35rem" }}>
           <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", lineHeight:1.45 }}>
-            Local mode is active on this device. Open sign-in only when you want cloud sync, device handoff, or permanent account controls. Recovery and reset tools stay tucked under the advanced panel below.
+            This device is in local mode right now. Sign in when you want account sync, handoff across devices, or full account controls. Export and reset tools stay below.
           </div>
           <button
             data-testid="settings-open-auth-gate"
@@ -218,23 +220,23 @@ export function SettingsAccountSection({
             onClick={onOpenAuthGate}
             style={{ width:"fit-content", fontSize:"0.48rem", ...brandButtonStyle }}
           >
-            Sign in to cloud account
+            Sign in to sync
           </button>
         </div>
       )}
-      <details data-testid="settings-account-advanced" style={{ border:"1px solid var(--border)", borderRadius:12, background:"var(--surface-1)", padding:"0.55rem 0.6rem", display:"grid", gap:"0.45rem" }}>
+      <details data-testid="settings-account-advanced" style={SETTINGS_PANEL_STYLE}>
         <summary style={{ cursor:"pointer", fontSize:"0.52rem", color:"var(--text-strong)", lineHeight:1.45 }}>
-          Advanced recovery and destructive actions
+          Export, restore, reset, and delete
         </summary>
         <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", lineHeight:1.5 }}>
-          Open this only when you want export, restore, reset this device, or permanently delete the signed-in account.
+          Open this when you want to export your data, restore from a backup, reset this device, or permanently delete your account.
         </div>
         {authEmail && (
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
             <div style={{ border:"1px solid var(--border)", borderRadius:12, background:"var(--surface-2)", padding:"0.62rem", display:"grid", gap:"0.34rem" }}>
-              <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>LOCAL-ONLY RESET</div>
-              <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Clear this device without deleting the cloud account.</div>
-              <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>This wipes the local cache, signs this browser out, and sends you back to a blank auth gate. Your cloud account still exists.</div>
+              <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>RESET THIS DEVICE</div>
+              <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Clear this device without deleting your account.</div>
+              <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>This clears saved data here, signs this browser out, and takes you back to sign-in. Your account still exists.</div>
               <button
                 data-testid="settings-reset-device"
                 className="btn"
@@ -246,7 +248,7 @@ export function SettingsAccountSection({
               </button>
               {resetDeviceUi.open && (
                 <div style={{ border:"1px solid var(--border)", borderRadius:10, padding:"0.48rem", display:"grid", gap:"0.28rem" }}>
-                  <div style={{ fontSize:"0.49rem", color:"var(--text-strong)", lineHeight:1.5 }}>Type <b>RESET</b> to clear only this device. The cloud account will still be available on other devices.</div>
+                  <div style={{ fontSize:"0.49rem", color:"var(--text-strong)", lineHeight:1.5 }}>Type <b>RESET</b> to clear only this device. Your account will still be available on other devices.</div>
                   <input data-testid="settings-reset-device-confirm" value={resetDeviceUi.confirm} onChange={(e) => resetDeviceUi.onConfirmChange(e.target.value)} placeholder="RESET" />
                   <button
                     data-testid="settings-reset-device-submit"
@@ -261,12 +263,12 @@ export function SettingsAccountSection({
               )}
             </div>
             <div data-testid="settings-delete-account-card" style={{ border:"1px solid rgba(216,93,120,0.18)", borderRadius:12, background:"rgba(44,18,28,0.28)", padding:"0.62rem", display:"grid", gap:"0.34rem" }}>
-              <div style={{ fontSize:"0.47rem", color:"#c8a4b3", letterSpacing:"0.08em" }}>PERMANENT DELETE</div>
-              <div style={{ fontSize:"0.54rem", color:"#f1d4dd", lineHeight:1.45 }}>Delete the auth identity and remove local account data.</div>
-              <div style={{ fontSize:"0.47rem", color:"#c8a4b3", lineHeight:1.5 }}>This is the only action that should make the same email behave like a fresh signup again. It needs server-side delete support on the deployment.</div>
+              <div style={{ fontSize:"0.47rem", color:"#c8a4b3", letterSpacing:"0.08em" }}>DELETE ACCOUNT</div>
+              <div style={{ fontSize:"0.54rem", color:"#f1d4dd", lineHeight:1.45 }}>Delete your account and remove this device's saved data.</div>
+              <div style={{ fontSize:"0.47rem", color:"#c8a4b3", lineHeight:1.5 }}>This fully removes the account. It requires deletion support on the current deployment.</div>
               <div data-testid="settings-delete-account-status" style={{ fontSize:"0.47rem", color:deleteDiagnostics.loading ? "var(--text-strong)" : deleteDiagnostics.configured === true ? "#c9f1db" : "#f7d39a", lineHeight:1.5 }}>
                 {deleteDiagnostics.loading
-                  ? "Checking whether permanent delete is configured on this deployment..."
+                  ? "Checking whether full account deletion is available here..."
                   : deleteDiagnostics.checked
                   ? deleteDiagnostics.message
                   : "Delete support has not been checked yet."}
@@ -322,7 +324,7 @@ export function SettingsAccountSection({
                 <div style={{ border:"1px solid rgba(216,93,120,0.18)", borderRadius:10, padding:"0.48rem", display:"grid", gap:"0.3rem" }}>
                   {deleteAccountUi.step === 1 ? (
                     <>
-                      <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>Export first if you may need this history later. Permanent delete removes the account itself, not just this device&apos;s copy.</div>
+                      <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>Export first if you may want this history later. Deleting removes the account itself, not just this device&apos;s copy.</div>
                       <button data-testid="settings-delete-account-export" className="btn" onClick={deleteAccountUi.onExportFirst} style={{ width:"fit-content", fontSize:"0.48rem", ...neutralButtonStyle }}>Export first, then continue</button>
                     </>
                   ) : (
@@ -343,7 +345,7 @@ export function SettingsAccountSection({
           <div style={{ display:"grid", gap:"0.14rem" }}>
             <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>BACKUP AND RESET</div>
             <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>
-              Export before destructive changes. Keep a backup code if you want an offline restore path, and use plan reset only when you want to rebuild training without changing the account itself.
+              Export before bigger changes. Keep a backup code if you want an offline restore option, and reset your plan only when you want a fresh training start without changing the account itself.
             </div>
           </div>
           <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
@@ -352,23 +354,23 @@ export function SettingsAccountSection({
             <button className="btn" onClick={backupUi.onResetPlan} style={{ fontSize:"0.48rem", color:"var(--text)", borderColor:"var(--border)" }}>Reset plan</button>
           </div>
           {!!backupUi.message && <div style={{ fontSize:"0.47rem", color:"var(--text)" }}>{backupUi.message}</div>}
-          <textarea value={backupUi.code} onChange={(e) => backupUi.onCodeChange(e.target.value)} placeholder="Paste backup code to restore" style={{ minHeight:62, fontSize:"0.5rem" }} />
+          <textarea aria-label="Backup code to restore" value={backupUi.code} onChange={(e) => backupUi.onCodeChange(e.target.value)} placeholder="Paste backup code to restore" style={{ minHeight:62, fontSize:"max(16px, 0.5rem)" }} />
           <button className="btn" onClick={backupUi.onReviewRestore} style={{ width:"fit-content", fontSize:"0.47rem", ...brandButtonStyle }}>Review restore</button>
         </div>
         {showInternalSettingsTools && (
           <div data-testid="settings-reviewer-report-card" style={{ border:"1px solid var(--border)", borderRadius:12, background:"var(--surface-1)", padding:"0.55rem 0.6rem", display:"grid", gap:"0.4rem" }}>
             <div style={{ display:"grid", gap:"0.14rem" }}>
-              <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>REVIEWER REPORT</div>
+              <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>PLAN HISTORY EXPORT</div>
               <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>
-                Generate a markdown report with original prescription, latest prescription, actual log, revision count, and week summaries for internal QA review only.
+                Generate a markdown export with the original plan, latest plan, workout log, revision count, and week summaries.
               </div>
             </div>
             <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
               <button data-testid="settings-reviewer-report-generate" className="btn" onClick={historyReportUi.onGenerate} style={{ fontSize:"0.48rem", ...brandButtonStyle }}>
-                Generate reviewer report
+                Create history export
               </button>
               <button data-testid="settings-reviewer-report-copy" className="btn" onClick={historyReportUi.onCopy} style={{ fontSize:"0.48rem", ...neutralButtonStyle }}>
-                Copy report
+                Copy export
               </button>
             </div>
             {!!historyReportUi.message && (
@@ -380,8 +382,8 @@ export function SettingsAccountSection({
               data-testid="settings-reviewer-report-textarea"
               value={historyReportUi.markdown}
               readOnly
-              placeholder="Generate a reviewer report to inspect plan evolution and weekly summaries."
-              style={{ minHeight:160, fontSize:"0.5rem", lineHeight:1.55 }}
+              placeholder="Create a plan history export to review how your training changed over time."
+              style={{ minHeight:160, fontSize:"max(16px, 0.5rem)", lineHeight:1.55 }}
             />
           </div>
         )}

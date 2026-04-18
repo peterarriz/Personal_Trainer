@@ -7,9 +7,9 @@ import { buildCompatibilityHeadline, COMPATIBILITY_OUTCOMES } from "./program-co
 import { resolveStyleOverlayImpact } from "./style-overlay-service.ts";
 
 const formatModeLabel = (mode = "") => (
-  mode === PROGRAM_FIDELITY_MODES.runAsWritten ? "Run mostly as written"
-  : mode === PROGRAM_FIDELITY_MODES.useAsStyle ? "Use as a style"
-  : "Adapt to me"
+  mode === PROGRAM_FIDELITY_MODES.runAsWritten ? "Follow closely"
+  : mode === PROGRAM_FIDELITY_MODES.useAsStyle ? "Use for feel"
+  : "Fit it to me"
 );
 
 const toSentence = (value = "") => {
@@ -32,17 +32,17 @@ export const buildPlanBasisExplanation = ({
   const goals = Array.isArray(athleteProfile?.goals) ? athleteProfile.goals.filter((goal) => goal?.active) : [];
   const daysPerWeek = athleteProfile?.userProfile?.daysPerWeek || 0;
   const equipment = athleteProfile?.trainingContext?.equipmentAccess?.items || athleteProfile?.userProfile?.equipmentAccess || [];
-  const equipmentLine = Array.isArray(equipment) && equipment.length ? `Current equipment: ${equipment.join(", ")}.` : "Equipment is still fairly general.";
-  const scheduleLine = daysPerWeek ? `Current schedule reality looks like about ${daysPerWeek} sessions per week.` : "Weekly availability still needs to be pinned down more clearly.";
+  const equipmentLine = Array.isArray(equipment) && equipment.length ? `Equipment on hand: ${equipment.join(", ")}.` : "Equipment is still fairly open.";
+  const scheduleLine = daysPerWeek ? `Right now, your week looks like about ${daysPerWeek} sessions.` : "Your weekly schedule still has some room to settle in.";
 
   if (!activeProgramInstance && !activeStyleSelection) {
     return {
       basisType: "default_goal_driven",
       basisSummary: goals.length
-        ? "Your plan is currently coming from FORMA's goal-driven default logic."
-        : "Your plan is currently coming from FORMA's default foundation logic.",
+        ? "Your plan is built around your goals, schedule, and available equipment."
+        : "Your plan is built around your current routine and available equipment.",
       personalizationSummary: joinBits([
-        goals.length ? `Active goals: ${goals.map((goal) => goal?.name).filter(Boolean).slice(0, 2).join(" and ")}.` : "No formal goal is required to keep planning useful.",
+        goals.length ? `Main focus: ${goals.map((goal) => goal?.name).filter(Boolean).slice(0, 2).join(" and ")}.` : "You do not need a formal goal to get a useful plan.",
         scheduleLine,
         equipmentLine,
       ]),
@@ -56,16 +56,16 @@ export const buildPlanBasisExplanation = ({
     const overlay = resolveStyleOverlayImpact({ styleDefinition, influenceLevel: activeStyleSelection?.influenceLevel, programDefinition });
     return {
       basisType: "program_plus_style",
-      basisSummary: `${programDefinition.displayName} is the backbone, with ${styleDefinition.displayName} layered on top as a style influence.`,
+      basisSummary: `${programDefinition.displayName} is the main plan, with ${styleDefinition.displayName} shaping the feel.`,
       personalizationSummary: joinBits([
-        `${formatModeLabel(activeProgramInstance?.fidelityMode)} is active for the program layer.`,
+        `${formatModeLabel(activeProgramInstance?.fidelityMode)} is on for the plan.`,
         scheduleLine,
         equipmentLine,
         overlay?.biasSummary || "",
       ]),
       sourceConfidence: programDefinition?.sourceConfidence || styleDefinition?.sourceConfidence || "medium",
       caveats: [
-        compatibilityAssessment?.outcome === COMPATIBILITY_OUTCOMES.caution ? "The style layer is allowed, but adaptation matters." : "",
+        compatibilityAssessment?.outcome === COMPATIBILITY_OUTCOMES.caution ? "This style fits, but it still needs to match your real week." : "",
       ].filter(Boolean),
       lastUpdatedAt: new Date().toISOString(),
     };
@@ -79,10 +79,10 @@ export const buildPlanBasisExplanation = ({
       : "program_adapted";
     const summary =
       fidelityMode === PROGRAM_FIDELITY_MODES.runAsWritten
-        ? `${programDefinition.displayName} is your active program backbone.`
+        ? `${programDefinition.displayName} is your main plan right now.`
         : fidelityMode === PROGRAM_FIDELITY_MODES.useAsStyle
-        ? `${programDefinition.displayName} is influencing the plan as a style rather than a literal template.`
-        : `${programDefinition.displayName} is the backbone, but it is being adapted to your current reality.`;
+        ? `${programDefinition.displayName} is shaping the feel of your plan instead of setting it day by day.`
+        : `${programDefinition.displayName} is your main plan, adjusted to fit your current routine.`;
 
     return {
       basisType,
@@ -95,8 +95,8 @@ export const buildPlanBasisExplanation = ({
       ]),
       sourceConfidence: programDefinition?.sourceConfidence || "medium",
       caveats: uniqueCaveats([
-        compatibilityAssessment?.outcome === COMPATIBILITY_OUTCOMES.caution ? "This program needs visible adaptation to stay honest." : "",
-        "Safety, schedule, equipment, and injury rules still outrank the template.",
+        compatibilityAssessment?.outcome === COMPATIBILITY_OUTCOMES.caution ? "This plan needs a few adjustments to fit your current setup." : "",
+        "Safety, schedule, equipment, and injuries still come first.",
       ]),
       lastUpdatedAt: new Date().toISOString(),
     };
@@ -104,14 +104,14 @@ export const buildPlanBasisExplanation = ({
 
   return {
     basisType: "goal_driven_with_style",
-    basisSummary: `${styleDefinition?.displayName || "Selected style"} is biasing the current goal-driven plan.`,
+    basisSummary: `${styleDefinition?.displayName || "Selected style"} is shaping the feel of your current plan.`,
     personalizationSummary: joinBits([
       styleDefinition?.summary || "",
       scheduleLine,
       equipmentLine,
     ]),
     sourceConfidence: styleDefinition?.sourceConfidence || "medium",
-    caveats: ["The style layer nudges the plan, but it does not override safety or core goal logic."],
+    caveats: ["Style can guide the feel, but it never overrides safety or your main goal."],
     lastUpdatedAt: new Date().toISOString(),
   };
 };
@@ -125,7 +125,7 @@ export const buildProgramCardExplanation = ({
     summary: programDefinition.explanationTemplate?.cardSummary || programDefinition.summary,
     basisLine: PROGRAM_SOURCE_BASIS_LABELS[programDefinition.sourceBasis] || "Source-backed basis",
     confidenceLine: SOURCE_CONFIDENCE_LABELS[programDefinition.sourceConfidence] || "Confidence noted",
-    commitmentLine: `${programDefinition.typicalSessionsPerWeek.typical} sessions/week • about ${programDefinition.typicalDurationWeeks} weeks`,
+    commitmentLine: `${programDefinition.typicalSessionsPerWeek.typical} sessions a week, about ${programDefinition.typicalDurationWeeks} weeks`,
     cautionLine: programDefinition?.contraindications?.[0] || "",
   };
 };
@@ -139,7 +139,7 @@ export const buildStyleCardExplanation = ({
     summary: styleDefinition.explanationTemplate?.cardSummary || styleDefinition.summary,
     basisLine: PROGRAM_SOURCE_BASIS_LABELS[styleDefinition.sourceBasis] || "Source-backed basis",
     confidenceLine: SOURCE_CONFIDENCE_LABELS[styleDefinition.sourceConfidence] || "Confidence noted",
-    emphasisLine: `${styleDefinition.volumeBias} volume • ${styleDefinition.intensityBias} intensity • ${styleDefinition.cardioBias} cardio`,
+    emphasisLine: `${styleDefinition.volumeBias} volume, ${styleDefinition.intensityBias} intensity, ${styleDefinition.cardioBias} cardio`,
   };
 };
 
@@ -153,7 +153,7 @@ export const buildActivationConfirmationCopy = ({
     return {
       headline: buildCompatibilityHeadline(compatibilityAssessment),
       body: joinBits([
-        `${programDefinition.displayName} is ready to activate in ${formatModeLabel(fidelityMode).toLowerCase()} mode.`,
+        `${programDefinition.displayName} is ready in ${formatModeLabel(fidelityMode).toLowerCase()} mode.`,
         compatibilityAssessment?.reasons?.[0] || "",
       ]),
       detail: programDefinition.explanationTemplate?.activationSummary || "",
@@ -163,7 +163,7 @@ export const buildActivationConfirmationCopy = ({
     return {
       headline: buildCompatibilityHeadline(compatibilityAssessment),
       body: joinBits([
-        `${styleDefinition.displayName} is ready to bias the current plan.`,
+        `${styleDefinition.displayName} is ready to shape your current plan.`,
         compatibilityAssessment?.reasons?.[0] || "",
       ]),
       detail: styleDefinition.explanationTemplate?.overlaySummary || "",
@@ -197,6 +197,6 @@ export const buildProgramWeekExplanation = ({
   if (!basisExplanation) return "";
   return toSentence(joinBits([
     basisExplanation.basisSummary,
-    currentBlockLabel ? `The visible week is still filtered through ${currentBlockLabel.toLowerCase()}.` : "",
+    currentBlockLabel ? `The week on screen is still shaped by ${currentBlockLabel.toLowerCase()}.` : "",
   ]));
 };

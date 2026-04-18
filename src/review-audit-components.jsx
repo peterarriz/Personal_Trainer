@@ -1,27 +1,27 @@
 const basePanelCardStyle = {
-  background: "#0f172a",
-  border: "1px solid #1e293b",
+  background: "var(--consumer-panel)",
+  border: "1px solid var(--consumer-border)",
   borderRadius: 10,
   padding: "0.55rem",
 };
 
 const detailDisclosureStyle = {
-  background: "#0f172a",
-  border: "1px solid #1e293b",
+  background: "var(--consumer-panel)",
+  border: "1px solid var(--consumer-border)",
   borderRadius: 10,
   padding: "0.5rem 0.55rem",
 };
 
 const eyebrowStyle = {
   fontSize: "0.48rem",
-  color: "#64748b",
+  color: "var(--consumer-text-faint)",
   letterSpacing: "0.08em",
   textTransform: "uppercase",
 };
 
 const primaryContextStyle = {
   fontSize: "0.52rem",
-  color: "#8fa5c8",
+  color: "var(--consumer-text-muted)",
   lineHeight: 1.55,
 };
 
@@ -44,6 +44,33 @@ const formatAuditLabel = (value = "", fallback = "unknown") => {
   const raw = String(value || "").trim();
   if (!raw) return fallback;
   return raw.replaceAll("_", " ").replaceAll("-", " ");
+};
+
+const formatHistorySourceLabel = (value = "", fallback = "FORMA") => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (/(ai|coach)/i.test(normalized)) return "Coach";
+  if (/(legacy|snapshot|backfill)/i.test(normalized)) return "Past saved data";
+  if (/schedule/i.test(normalized)) return "Earlier schedule";
+  if (/(plan_day_engine|current_plan_week|current|engine)/i.test(normalized)) return "FORMA";
+  return formatAuditLabel(normalized, fallback);
+};
+
+const formatHistoryAccessLabel = (value = "", fallback = "saved") => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (normalized === "durable") return "saved";
+  if (normalized === "legacy_backfill") return "imported from older data";
+  if (normalized === "fallback_derived") return "filled in from earlier schedule";
+  return formatAuditLabel(normalized, fallback);
+};
+
+const formatWeekSaveTypeLabel = (value = "", fallback = "saved") => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (normalized === "projected") return "preview";
+  if (normalized === "committed") return "saved";
+  return formatAuditLabel(normalized, fallback);
 };
 
 export function HistoryAuditDayReviewCard({
@@ -85,7 +112,7 @@ export function HistoryAuditDayReviewCard({
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", marginBottom: "0.45rem", flexWrap: "wrap" }}>
         <div>
           <div className="sect-title" style={{ color: C.blue, marginBottom: "0.12rem" }}>{title}</div>
-          {subtitle && <div style={{ fontSize: "0.54rem", color: "#94a3b8" }}>{subtitle}</div>}
+          {subtitle && <div style={{ fontSize: "0.54rem", color: "var(--consumer-text-muted)" }}>{subtitle}</div>}
         </div>
         {selector}
       </div>
@@ -113,19 +140,19 @@ export function HistoryAuditDayReviewCard({
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: "0.45rem" }}>
           <div style={basePanelCardStyle}>
             <div style={eyebrowStyle}>What Was Planned</div>
-            <div style={{ fontSize: "0.62rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+            <div style={{ fontSize: "0.62rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
               {sanitizeDisplayText(story?.plannedSummary?.label || currentSummary.label)}
             </div>
-            <div style={{ fontSize: "0.53rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.55 }}>
+            <div style={{ fontSize: "0.53rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem", lineHeight: 1.55 }}>
               {sanitizeDisplayText(story?.plannedSummary?.detail || currentSummary.detail || currentSummary.type || "No saved session detail.")}
             </div>
           </div>
           <div style={basePanelCardStyle}>
             <div style={eyebrowStyle}>What Happened</div>
-            <div style={{ fontSize: "0.62rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+            <div style={{ fontSize: "0.62rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
               {sanitizeDisplayText(story?.actualSummary?.label || cleanHistorySessionName(review?.actualLog?.type || "No workout log"))}
             </div>
-            <div style={{ fontSize: "0.53rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.55 }}>
+            <div style={{ fontSize: "0.53rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem", lineHeight: 1.55 }}>
               {sanitizeDisplayText(story?.actualSummary?.detail || review?.actualLog?.notes || "No actual session detail was saved.")}
             </div>
           </div>
@@ -134,13 +161,13 @@ export function HistoryAuditDayReviewCard({
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem" }}>
           <div style={basePanelCardStyle}>
             <div style={eyebrowStyle}>Why It Mattered</div>
-            <div style={{ fontSize: "0.57rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.6 }}>
+            <div style={{ fontSize: "0.57rem", color: "var(--consumer-text-soft)", marginTop: "0.18rem", lineHeight: 1.6 }}>
               {sanitizeDisplayText(story?.mainLesson || review?.comparison?.summary || "No lesson is available yet.")}
             </div>
           </div>
           <div style={basePanelCardStyle}>
             <div style={eyebrowStyle}>What changes next</div>
-            <div style={{ fontSize: "0.57rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.6 }}>
+            <div style={{ fontSize: "0.57rem", color: "var(--consumer-text-soft)", marginTop: "0.18rem", lineHeight: 1.6 }}>
               {sanitizeDisplayText(story?.nextEffect || "No forward-looking effect is available yet.")}
             </div>
           </div>
@@ -151,10 +178,10 @@ export function HistoryAuditDayReviewCard({
             {showCheckinContext && (
               <div style={basePanelCardStyle}>
                 <div style={eyebrowStyle}>Check-in context</div>
-                <div style={{ fontSize: "0.55rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                <div style={{ fontSize: "0.55rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
                   {sanitizeDisplayText(review?.actualCheckin?.status || "Check-in saved")}
                 </div>
-                <div style={{ fontSize: "0.5rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                <div style={{ fontSize: "0.5rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem", lineHeight: 1.5 }}>
                   {sanitizeDisplayText(review?.actualCheckin?.note || review?.actualCheckin?.blocker || review?.actualCheckin?.sessionFeel || "No extra check-in detail saved.")}
                 </div>
               </div>
@@ -162,10 +189,10 @@ export function HistoryAuditDayReviewCard({
             {showNutritionContext && (
               <div style={basePanelCardStyle}>
                 <div style={eyebrowStyle}>Nutrition</div>
-                <div style={{ fontSize: "0.55rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                <div style={{ fontSize: "0.55rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
                   {sanitizeDisplayText(nutritionSummary.label)}
                 </div>
-                <div style={{ fontSize: "0.5rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                <div style={{ fontSize: "0.5rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem", lineHeight: 1.5 }}>
                   {sanitizeDisplayText(review?.nutritionComparison?.summary || nutritionSummary.detail)}
                 </div>
               </div>
@@ -173,10 +200,10 @@ export function HistoryAuditDayReviewCard({
             {showRecoveryContext && (
               <div style={basePanelCardStyle}>
                 <div style={eyebrowStyle}>Recovery</div>
-                <div style={{ fontSize: "0.55rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+                <div style={{ fontSize: "0.55rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
                   {sanitizeDisplayText(recoverySummary.label)}
                 </div>
-                <div style={{ fontSize: "0.5rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                <div style={{ fontSize: "0.5rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem", lineHeight: 1.5 }}>
                   {sanitizeDisplayText(recoverySummary.detail)}
                 </div>
               </div>
@@ -186,48 +213,48 @@ export function HistoryAuditDayReviewCard({
       </div>
 
       <details style={{ ...detailDisclosureStyle, marginTop: "0.6rem" }} data-testid="history-day-review-audit">
-        <summary style={{ cursor: "pointer", fontSize: "0.55rem", color: "#dbe7f6" }}>Audit mode</summary>
+        <summary style={{ cursor: "pointer", fontSize: "0.55rem", color: "var(--consumer-text)" }}>More detail</summary>
         <div style={{ marginTop: "0.4rem", display: "grid", gap: "0.45rem" }}>
-          <div style={{ ...primaryContextStyle, color: "#94a3b8" }}>
-            Review the full saved plan-capture trail here without crowding the main training story.
+          <div style={{ ...primaryContextStyle, color: "var(--consumer-text-muted)" }}>
+            See the saved version history here without crowding the main story.
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem" }}>
             <div style={basePanelCardStyle}>
-              <div style={eyebrowStyle}>Active plan capture</div>
-              <div style={{ fontSize: "0.6rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+              <div style={eyebrowStyle}>Current saved plan</div>
+              <div style={{ fontSize: "0.6rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
                 {sanitizeDisplayText(currentSummary.label)}
               </div>
-              <div style={{ fontSize: "0.52rem", color: "#8fa5c8", marginTop: "0.12rem" }}>
+              <div style={{ fontSize: "0.52rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem" }}>
                 {sanitizeDisplayText(currentSummary.detail || currentSummary.type || "No saved session detail.")}
               </div>
-              <div style={{ fontSize: "0.49rem", color: "#94a3b8", marginTop: "0.18rem", lineHeight: 1.5 }}>
+              <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", marginTop: "0.18rem", lineHeight: 1.5 }}>
                 {review?.currentRevision
-                  ? `${formatReviewTimestamp(review.currentRevision.capturedAt)} • ${sanitizeStatusLabel(review.currentRevision.sourceType, "unknown")} • ${sanitizeStatusLabel(review.currentRevision.durability, "unknown")}`
-                  : "No active plan capture was found."}
+                  ? `${formatReviewTimestamp(review.currentRevision.capturedAt)} • ${formatHistorySourceLabel(review.currentRevision.sourceType)} • ${formatHistoryAccessLabel(review.currentRevision.durability)}`
+                  : "No current saved plan was found."}
               </div>
-              <div style={{ fontSize: "0.49rem", color: "#64748b", marginTop: "0.14rem", lineHeight: 1.5 }}>
+              <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-faint)", marginTop: "0.14rem", lineHeight: 1.5 }}>
                 {sanitizeDisplayText(review?.provenanceSummary || describeProvenanceRecord(review?.currentRevision?.provenance || null, review?.currentRevision?.reason || "latest_revision"))}
               </div>
             </div>
 
             <div style={basePanelCardStyle}>
-              <div style={eyebrowStyle}>{review?.revisions?.length > 1 ? "First saved capture" : "Saved capture"}</div>
-              <div style={{ fontSize: "0.6rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+              <div style={eyebrowStyle}>{review?.revisions?.length > 1 ? "First saved plan" : "Saved plan"}</div>
+              <div style={{ fontSize: "0.6rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
                 {sanitizeDisplayText(originalSummary.label)}
               </div>
-              <div style={{ fontSize: "0.52rem", color: "#8fa5c8", marginTop: "0.12rem" }}>
+              <div style={{ fontSize: "0.52rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem" }}>
                 {sanitizeDisplayText(originalSummary.detail || originalSummary.type || "No saved session detail.")}
               </div>
-              <div style={{ fontSize: "0.49rem", color: "#94a3b8", marginTop: "0.18rem", lineHeight: 1.5 }}>
+              <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", marginTop: "0.18rem", lineHeight: 1.5 }}>
                 {review?.originalRevision
-                  ? `${formatReviewTimestamp(review.originalRevision.capturedAt)} • ${sanitizeStatusLabel(review.originalRevision.sourceType, "unknown")} • ${sanitizeStatusLabel(review.originalRevision.durability, "unknown")}`
+                  ? `${formatReviewTimestamp(review.originalRevision.capturedAt)} • ${formatHistorySourceLabel(review.originalRevision.sourceType)} • ${formatHistoryAccessLabel(review.originalRevision.durability)}`
                   : "No earlier saved capture was found."}
               </div>
-              <div style={{ fontSize: "0.49rem", color: "#64748b", marginTop: "0.14rem", lineHeight: 1.5 }}>
+              <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-faint)", marginTop: "0.14rem", lineHeight: 1.5 }}>
                 {sanitizeDisplayText(
                   review?.originalRevision
                     ? describeProvenanceRecord(review.originalRevision.provenance || null, review.originalRevision.reason || "initial_capture")
-                    : "No provenance detail was saved."
+                    : "No extra context was saved."
                 )}
               </div>
             </div>
@@ -236,67 +263,67 @@ export function HistoryAuditDayReviewCard({
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: "0.45rem" }}>
             <div style={basePanelCardStyle}>
               <div style={eyebrowStyle}>Execution classification</div>
-              <div style={{ fontSize: "0.56rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+              <div style={{ fontSize: "0.56rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
                 {sanitizeDisplayText(summarizeExecutionDelta(review?.comparison))}
               </div>
-              <div style={{ fontSize: "0.49rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+              <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem", lineHeight: 1.5 }}>
                 {sanitizeDisplayText(review?.comparison?.summary || "Comparison unavailable.")}
               </div>
             </div>
 
             <div style={basePanelCardStyle}>
-              <div style={eyebrowStyle}>Source detail</div>
-              <div style={{ fontSize: "0.56rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
-                {sanitizeStatusLabel(review?.compatibility?.sourceType, "unknown")}
+              <div style={eyebrowStyle}>Saved from</div>
+              <div style={{ fontSize: "0.56rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
+                {formatHistorySourceLabel(review?.compatibility?.sourceType)}
               </div>
-              <div style={{ fontSize: "0.49rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
-                Durability: {sanitizeStatusLabel(review?.compatibility?.durability, "unknown")}
+              <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem", lineHeight: 1.5 }}>
+                Saved as {formatHistoryAccessLabel(review?.compatibility?.durability)}.
               </div>
               {review?.compatibility?.usedFallbackHistory && (
                 <div style={{ fontSize: "0.49rem", color: C.amber || "#f59e0b", marginTop: "0.12rem", lineHeight: 1.5 }}>
-                  A legacy fallback history bridge was used for this review.
+                  An older saved version helped fill in this history.
                 </div>
               )}
             </div>
 
             <div style={basePanelCardStyle}>
               <div style={eyebrowStyle}>Actual outcome source</div>
-              <div style={{ fontSize: "0.56rem", color: "#e2e8f0", marginTop: "0.18rem" }}>
+              <div style={{ fontSize: "0.56rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
                 {sanitizeDisplayText(cleanHistorySessionName(review?.actualLog?.type || review?.actualLog?.label || review?.actualLog?.actualSession?.sessionLabel || "No workout log"))}
               </div>
-              <div style={{ fontSize: "0.49rem", color: "#8fa5c8", marginTop: "0.12rem", lineHeight: 1.5 }}>
+              <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem", lineHeight: 1.5 }}>
                 {sanitizeDisplayText(review?.actualLog?.notes || review?.actualCheckin?.note || "No extra actual-outcome detail was saved.")}
               </div>
             </div>
           </div>
 
           <div style={basePanelCardStyle}>
-            <div style={eyebrowStyle}>Plan capture history</div>
+            <div style={eyebrowStyle}>Saved version history</div>
             <div style={{ marginTop: "0.28rem", display: "grid", gap: "0.32rem" }}>
               {revisionTimeline.length === 0 && (
-                <div style={{ fontSize: "0.52rem", color: "#8fa5c8" }}>No saved plan capture history is available.</div>
+                <div style={{ fontSize: "0.52rem", color: "var(--consumer-text-muted)" }}>No saved version history is available.</div>
               )}
               {revisionTimeline.map((revision) => {
                 const summary = buildSessionSummary(revision?.record?.resolved?.training || revision?.record?.base?.training || null);
                 const isOriginal = revision?.revisionNumber === review?.originalRevision?.revisionNumber;
                 const isCurrent = revision?.revisionNumber === review?.currentRevision?.revisionNumber;
                 return (
-                  <div key={revision?.revisionId || `${review?.dateKey}_${revision?.revisionNumber}`} style={{ border: "1px solid #182335", borderRadius: 8, background: "rgba(8,12,20,0.65)", padding: "0.4rem 0.45rem" }}>
+                  <div key={revision?.revisionId || `${review?.dateKey}_${revision?.revisionNumber}`} style={{ border: "1px solid var(--consumer-border)", borderRadius: 8, background: "color-mix(in srgb, var(--consumer-panel) 86%, transparent)", padding: "0.4rem 0.45rem" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
-                      <div style={{ fontSize: "0.56rem", color: "#e2e8f0" }}>
-                        Capture {revision?.revisionNumber || 0}: {sanitizeDisplayText(summary.label)}
+                      <div style={{ fontSize: "0.56rem", color: "var(--consumer-text)" }}>
+                        Version {revision?.revisionNumber || 0}: {sanitizeDisplayText(summary.label)}
                       </div>
                       <div style={{ display: "flex", gap: "0.24rem", flexWrap: "wrap", alignItems: "center" }}>
                         {isOriginal && <span style={{ fontSize: "0.46rem", color: C.blue, background: `${C.blue}14`, padding: "0.12rem 0.35rem", borderRadius: 999 }}>first</span>}
                         {isCurrent && <span style={{ fontSize: "0.46rem", color: C.green, background: `${C.green}14`, padding: "0.12rem 0.35rem", borderRadius: 999 }}>active</span>}
-                        <div style={{ fontSize: "0.48rem", color: "#64748b" }}>{formatReviewTimestamp(revision?.capturedAt)}</div>
+                        <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-faint)" }}>{formatReviewTimestamp(revision?.capturedAt)}</div>
                       </div>
                     </div>
-                    <div style={{ fontSize: "0.5rem", color: "#8fa5c8", marginTop: "0.1rem" }}>
+                    <div style={{ fontSize: "0.5rem", color: "var(--consumer-text-muted)", marginTop: "0.1rem" }}>
                       {sanitizeDisplayText(summary.detail || summary.type || "No session detail saved.")}
                     </div>
-                    <div style={{ fontSize: "0.49rem", color: "#94a3b8", marginTop: "0.14rem", lineHeight: 1.5 }}>
-                      Saved because: {sanitizeDisplayText(revision?.provenanceSummary || revision?.reason || "unknown")} • {sanitizeDisplayText(formatAuditLabel(revision?.sourceType || "unknown"))} • {sanitizeDisplayText(formatAuditLabel(revision?.durability || "unknown"))}
+                    <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", marginTop: "0.14rem", lineHeight: 1.5 }}>
+                      Reason: {sanitizeDisplayText(revision?.provenanceSummary || revision?.reason || "unknown")} • {sanitizeDisplayText(formatHistorySourceLabel(revision?.sourceType))} • {sanitizeDisplayText(formatHistoryAccessLabel(revision?.durability))}
                     </div>
                   </div>
                 );
@@ -310,7 +337,7 @@ export function HistoryAuditDayReviewCard({
 }
 
 export function HistoryAuditWeekHistorySection({
-  title = "WEEK REVIEW HISTORY",
+  title = "SAVED WEEK STORIES",
   entries = [],
   emptyState = "",
   palette = {},
@@ -318,23 +345,23 @@ export function HistoryAuditWeekHistorySection({
   const C = palette;
   return (
     <details className="card" style={{ marginBottom: "0.8rem" }} data-testid="history-week-history-section">
-      <summary style={{ cursor: "pointer", fontSize: "0.58rem", color: "#94a3b8", letterSpacing: "0.06em" }}>{title}</summary>
+      <summary style={{ cursor: "pointer", fontSize: "0.58rem", color: "var(--consumer-text-muted)", letterSpacing: "0.06em" }}>{title}</summary>
       <div style={{ marginTop: "0.45rem", display: "grid", gap: "0.45rem" }}>
         <div style={primaryContextStyle}>
-          Each saved week review keeps the training story in the main view and leaves the deeper storage detail inside audit mode.
+          Each saved week story keeps the main takeaway up front, with a little more detail tucked here.
         </div>
         {entries.length === 0 ? (
-          <div style={{ fontSize: "0.55rem", color: "#64748b", lineHeight: 1.55 }}>{emptyState}</div>
+          <div style={{ fontSize: "0.55rem", color: "var(--consumer-text-faint)", lineHeight: 1.55 }}>{emptyState}</div>
         ) : entries.slice(0, 8).map((entry) => {
           const story = entry?.story || {};
           const storyTone = buildLocalTone(story?.toneKey || story?.classificationKey || entry?.status, C);
           return (
-            <div key={entry.weekKey} style={{ border: "1px solid #20314a", borderRadius: 10, background: "#0f172a", padding: "0.5rem 0.55rem" }} data-testid={`history-week-review-card-${entry.weekKey}`}>
+            <div key={entry.weekKey} style={{ border: "1px solid var(--consumer-border)", borderRadius: 10, background: "var(--consumer-panel)", padding: "0.5rem 0.55rem" }} data-testid={`history-week-review-card-${entry.weekKey}`}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" }}>
                 <div>
-                  <div style={{ fontSize: "0.58rem", color: "#dbe7f6" }}>{entry.label}</div>
+                  <div style={{ fontSize: "0.58rem", color: "var(--consumer-text)" }}>{entry.label}</div>
                   {(entry.startDate || entry.endDate) && (
-                    <div style={{ fontSize: "0.49rem", color: "#8fa5c8", marginTop: "0.1rem" }}>
+                    <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", marginTop: "0.1rem" }}>
                       {entry.startDate && entry.endDate ? `${entry.startDate} to ${entry.endDate}` : "Week window unavailable"}
                     </div>
                   )}
@@ -350,13 +377,13 @@ export function HistoryAuditWeekHistorySection({
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem", marginTop: "0.45rem" }}>
                 <div style={basePanelCardStyle}>
                   <div style={eyebrowStyle}>What Was Planned</div>
-                  <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
+                  <div style={{ fontSize: "0.55rem", color: "var(--consumer-text-soft)", marginTop: "0.18rem", lineHeight: 1.55 }}>
                     {story?.plannedSummary || `Planned ${entry?.plannedSessionCount || 0} sessions.`}
                   </div>
                 </div>
                 <div style={basePanelCardStyle}>
                   <div style={eyebrowStyle}>What Happened</div>
-                  <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
+                  <div style={{ fontSize: "0.55rem", color: "var(--consumer-text-soft)", marginTop: "0.18rem", lineHeight: 1.55 }}>
                     {story?.actualSummary || `Logged ${entry?.loggedSessionCount || 0} sessions.`}
                   </div>
                 </div>
@@ -365,37 +392,37 @@ export function HistoryAuditWeekHistorySection({
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: "0.45rem", marginTop: "0.45rem" }}>
                 <div style={basePanelCardStyle}>
                   <div style={eyebrowStyle}>Why It Mattered</div>
-                  <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
+                  <div style={{ fontSize: "0.55rem", color: "var(--consumer-text-soft)", marginTop: "0.18rem", lineHeight: 1.55 }}>
                     {story?.whatMattered || entry?.focus || entry?.summary || "No weekly context was saved."}
                   </div>
                 </div>
                 <div style={basePanelCardStyle}>
                   <div style={eyebrowStyle}>What changes next</div>
-                  <div style={{ fontSize: "0.55rem", color: "#dbe7f6", marginTop: "0.18rem", lineHeight: 1.55 }}>
+                  <div style={{ fontSize: "0.55rem", color: "var(--consumer-text-soft)", marginTop: "0.18rem", lineHeight: 1.55 }}>
                     {story?.nextEffect || "No forward-looking effect was saved."}
                   </div>
                 </div>
               </div>
 
               <details style={{ ...detailDisclosureStyle, marginTop: "0.45rem" }}>
-                <summary style={{ cursor: "pointer", fontSize: "0.53rem", color: "#cbd5e1" }}>Audit mode</summary>
+                <summary style={{ cursor: "pointer", fontSize: "0.53rem", color: "var(--consumer-text)" }}>More detail</summary>
                 <div style={{ marginTop: "0.35rem", display: "grid", gap: "0.32rem" }}>
-                  <div style={{ ...primaryContextStyle, color: "#94a3b8" }}>
-                    Commitment, durability, and weekly-check-in storage stay visible here for users who want the deeper record.
+                  <div style={{ ...primaryContextStyle, color: "var(--consumer-text-muted)" }}>
+                    Save type, source, and your weekly check-in stay here if you want the backstory.
                   </div>
-                  <div style={{ fontSize: "0.5rem", color: "#8fa5c8", lineHeight: 1.5 }}>
+                  <div style={{ fontSize: "0.5rem", color: "var(--consumer-text-muted)", lineHeight: 1.5 }}>
                     Status: {formatAuditLabel(entry?.status || "planned")} • {entry?.plannedSessionCount || 0} planned • {entry?.loggedSessionCount || 0} logged
                   </div>
-                  <div style={{ fontSize: "0.5rem", color: "#8fa5c8", lineHeight: 1.5 }}>
-                    Commitment: {formatAuditLabel(entry?.commitment || "committed")} • Durability: {formatAuditLabel(entry?.durability || "durable")}
+                  <div style={{ fontSize: "0.5rem", color: "var(--consumer-text-muted)", lineHeight: 1.5 }}>
+                    Saved as {formatWeekSaveTypeLabel(entry?.commitment || "committed")} • {formatHistoryAccessLabel(entry?.durability || "durable")}
                   </div>
                   {(entry?.focus || entry?.summary) && (
-                    <div style={{ fontSize: "0.5rem", color: "#94a3b8", lineHeight: 1.5 }}>
+                    <div style={{ fontSize: "0.5rem", color: "var(--consumer-text-muted)", lineHeight: 1.5 }}>
                       {entry?.focus || entry?.summary}
                     </div>
                   )}
                   {entry?.weeklyCheckin?.ts && (
-                    <div style={{ fontSize: "0.49rem", color: "#94a3b8", lineHeight: 1.5 }}>
+                    <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", lineHeight: 1.5 }}>
                       Weekly check-in: energy {entry.weeklyCheckin.energy || "?"}, stress {entry.weeklyCheckin.stress || "?"}, confidence {entry.weeklyCheckin.confidence || "?"}
                     </div>
                   )}
@@ -428,24 +455,24 @@ export function HistoryAuditArchiveSection({
   const C = palette;
   return (
     <details className="card" style={{ marginBottom: "0.8rem" }}>
-      <summary style={{ cursor: "pointer", fontSize: "0.58rem", color: "#94a3b8", letterSpacing: "0.06em" }}>PREVIOUS PLANS</summary>
+      <summary style={{ cursor: "pointer", fontSize: "0.58rem", color: "var(--consumer-text-muted)", letterSpacing: "0.06em" }}>PREVIOUS PLANS</summary>
       <div style={{ marginTop: "0.45rem", display: "grid", gap: "0.4rem" }}>
         {archives.length === 0 && (
-          <div style={{ fontSize: "0.55rem", color: "#64748b" }}>No archived plans yet.</div>
+          <div style={{ fontSize: "0.55rem", color: "var(--consumer-text-faint)" }}>No archived plans yet.</div>
         )}
         {archives.map((archive) => {
           const selected = selectedArchiveReview?.archiveId === archive.id;
           return (
-            <div key={archive.id} style={{ border: `1px solid ${selected ? C.blue + "55" : "#20314a"}`, borderRadius: 8, background: "#0f172a", padding: "0.45rem 0.5rem" }}>
-              <div style={{ fontSize: "0.56rem", color: "#dbe7f6" }}>{archive.label}</div>
-              <div style={{ fontSize: "0.5rem", color: "#7f94b3", marginTop: "0.1rem" }}>Archived {archive.archivedAt ? new Date(archive.archivedAt).toLocaleString() : "unknown"}</div>
+            <div key={archive.id} style={{ border: `1px solid ${selected ? C.blue + "55" : "var(--consumer-border)"}`, borderRadius: 8, background: "var(--consumer-panel)", padding: "0.45rem 0.5rem" }}>
+              <div style={{ fontSize: "0.56rem", color: "var(--consumer-text)" }}>{archive.label}</div>
+              <div style={{ fontSize: "0.5rem", color: "var(--consumer-text-muted)", marginTop: "0.1rem" }}>Archived {archive.archivedAt ? new Date(archive.archivedAt).toLocaleString() : "unknown"}</div>
               {archive.committedWeekCount > 0 && (
-                <div style={{ fontSize: "0.49rem", color: "#93c5fd", marginTop: "0.1rem" }}>
+                <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-soft)", marginTop: "0.1rem" }}>
                   {archive.committedWeekCount} saved week review{archive.committedWeekCount === 1 ? "" : "s"} archived.
                 </div>
               )}
               {archive.prescribedDayCount > 0 && (
-                <div style={{ fontSize: "0.49rem", color: "#8fa5c8", marginTop: "0.1rem" }}>
+                <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", marginTop: "0.1rem" }}>
                   {archive.prescribedDayCount} day review snapshot{archive.prescribedDayCount === 1 ? "" : "s"} archived.
                 </div>
               )}
@@ -453,7 +480,7 @@ export function HistoryAuditArchiveSection({
               {archive.weekReviews.length > 0 && (
                 <div style={{ marginTop: "0.25rem", display: "grid", gap: "0.18rem" }}>
                   {archive.weekReviews.slice(0, 4).map((entry) => (
-                    <div key={`${archive.id}_week_${entry.weekKey}`} style={{ fontSize: "0.52rem", color: "#9fb2d2", lineHeight: 1.55 }}>
+                    <div key={`${archive.id}_week_${entry.weekKey}`} style={{ fontSize: "0.52rem", color: "var(--consumer-text-muted)", lineHeight: 1.55 }}>
                       Week {entry.absoluteWeek || entry.weekNumber}: {sanitizeDisplayText(entry.label || "Saved week")} • {sanitizeDisplayText(entry?.story?.classificationLabel || formatAuditLabel(entry?.status || "planned"))}
                       {entry?.story?.whatMattered ? ` • ${sanitizeDisplayText(entry.story.whatMattered)}` : entry.focus ? ` • ${sanitizeDisplayText(entry.focus)}` : ""}
                     </div>

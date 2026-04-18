@@ -151,10 +151,10 @@ const DISPLAY_COPY_CAMEL_REPLACEMENTS = Object.freeze({
 });
 
 const DISPLAY_COPY_PHRASE_REPLACEMENTS = [
-  [/\bprogram_suspended_fallback\b/gi, "safer fallback"],
-  [/\bgoal_driven_with_style\b/gi, "goal-driven with style"],
-  [/\bprogram_used_as_style\b/gi, "program used as a style"],
-  [/\bprogram_backbone\b/gi, "program-led structure"],
+  [/\bprogram_suspended_fallback\b/gi, "lighter backup"],
+  [/\bgoal_driven_with_style\b/gi, "built-for-you plan with extra style"],
+  [/\bprogram_used_as_style\b/gi, "used for feel"],
+  [/\bprogram_backbone\b/gi, "main plan"],
 ];
 
 const preserveReplacementCase = (source = "", replacement = "") => {

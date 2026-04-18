@@ -765,15 +765,15 @@ const buildRuntimePlanBasisExplanation = ({
       ...base,
       basisType: "program_suspended_fallback",
       basisSummary: `${programName} is selected, but FORMA is not running it literally right now.`,
-      personalizationSummary: `${compromiseLine || "Current safety or setup realities make the template a poor literal fit, so the live week falls back to the safer goal-driven backbone."} ${adherence?.summary || ""}`.trim(),
+      personalizationSummary: `${compromiseLine || "Current safety or setup realities make the template a poor literal fit, so this week shifts back to FORMA's built-for-you plan."} ${adherence?.summary || ""}`.trim(),
       caveats: uniqueStrings([compromiseLine, ...(programCompatibility?.blockedConstraints || []), adherence?.summary]),
       sourceBasisLabel,
       sourceConfidenceLabel,
       requestedFidelityMode: activeProgramInstance?.fidelityMode || "",
       effectiveFidelityMode: runtimeFidelityMode,
       fidelityStatus,
-      todayLine: `${programName} is selected, but today's session is coming from the safer live planning fallback while the app respects your current constraints.`,
-      coachLine: `${programName} is on hold as a literal template right now. The current week is being driven by safer live planning until the blocking constraint changes.`,
+      todayLine: `${programName} is selected, but today's session is coming from FORMA's built-for-you plan while it respects your current constraints.`,
+      coachLine: `${programName} is on hold as a literal template right now. FORMA is using a safer built-for-you week until the blocking constraint changes.`,
       compromiseSummary: compromiseLine || "",
       adherenceSummary: adherence?.summary || "",
       lastUpdatedAt: new Date().toISOString(),
@@ -801,23 +801,23 @@ const buildRuntimePlanBasisExplanation = ({
       compromiseLine,
     ]).join(" "),
     todayLine: basisMode === "goal_driven_with_style"
-      ? `${styleName} is biasing today's session, but your priority order and live constraints still lead the plan.`
+      ? `${styleName} is shaping today's session, but your priority order and live constraints still lead the plan.`
       : basisMode === "program_plus_style"
       ? `Today's session comes from ${programName} in ${fidelityLabel} mode, with ${styleName} shaping the feel around the edges.`
       : basisMode === "program_used_as_style"
       ? `${programName} is shaping today's session as a directional influence rather than a literal template.`
       : programDefinition?.id
       ? `Today's session comes from ${programName} in ${fidelityLabel} mode.${compromiseLine ? ` ${compromiseLine}` : ""}`
-      : `${base?.basisSummary || "Today's session comes from FORMA's default planning logic."}`,
+      : `${base?.basisSummary || "Today's session comes from FORMA's built-for-you planning."}`,
     coachLine: basisMode === "program_plus_style"
-      ? `The plan is anchored to ${programName}, while ${styleName} biases exercise feel and weekly tone. Safety and real-life constraints still win first.`
+      ? `The plan is anchored to ${programName}, while ${styleName} shapes exercise feel and weekly tone. Safety and real-life constraints still come first.`
       : basisMode === "goal_driven_with_style"
-      ? `${styleName} is nudging the goal-driven plan, but it is not allowed to override the main priority order or safety rules.`
+      ? `${styleName} is shaping the built-for-you plan, but it never overrides your top priority or safety rules.`
       : basisMode === "program_used_as_style"
-      ? `${programName} is being used as a style influence only, so the planner borrows its direction without pretending to run the full template.`
+      ? `${programName} is being used for feel only, so FORMA borrows the direction without pretending to run the full template.`
       : programDefinition?.id
-      ? `${programName} is the live backbone right now. The week is running in ${fidelityLabel} mode, and visible compromises are explained instead of hidden.`
-      : base?.basisSummary || "The plan is currently coming from FORMA's default logic.",
+      ? `${programName} is the main plan right now. The week is running in ${fidelityLabel} mode, and any necessary changes are explained clearly.`
+      : base?.basisSummary || "The plan is currently coming from FORMA's built-for-you approach.",
     compromiseSummary: compromiseLine || "",
     adherenceSummary: adherence?.summary || "",
     lastUpdatedAt: new Date().toISOString(),

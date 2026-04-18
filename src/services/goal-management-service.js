@@ -55,31 +55,31 @@ const GOAL_LIFECYCLE_SECTIONS = [
     key: "futureGoals",
     status: GOAL_ARCHIVE_STATUSES.future,
     label: "Future goals",
-    helper: "Queued goals that stay visible but do not shape the live plan yet.",
+    helper: "Goals you want to keep in view, but not work on yet.",
   },
   {
     key: "pausedGoals",
     status: GOAL_ARCHIVE_STATUSES.paused,
     label: "Paused goals",
-    helper: "Temporarily on hold until you resume them.",
+    helper: "Goals that are on hold for now.",
   },
   {
     key: "completedGoals",
     status: GOAL_ARCHIVE_STATUSES.completed,
     label: "Completed goals",
-    helper: "Finished goals kept for context and audit history.",
+    helper: "Finished goals kept for context and history.",
   },
   {
     key: "archivedOnlyGoals",
     status: GOAL_ARCHIVE_STATUSES.archived,
     label: "Archived goals",
-    helper: "Closed goals that you want preserved without keeping them active.",
+    helper: "Closed goals you want to keep without making them active.",
   },
   {
     key: "droppedGoals",
     status: GOAL_ARCHIVE_STATUSES.dropped,
     label: "Dropped goals",
-    helper: "Goals intentionally taken out of the plan without marking them complete.",
+    helper: "Goals you decided not to keep pursuing.",
   },
 ];
 
@@ -108,14 +108,14 @@ const PROVENANCE_FIELDS = [
 ];
 
 const GOAL_TYPE_LABELS = {
-  performance: "Event goal",
-  running: "Running goal",
-  strength: "Strength goal",
-  body_comp: "Body-comp goal",
-  appearance: "Appearance goal",
-  athletic_power: "Athletic-power goal",
-  re_entry: "Re-entry goal",
-  general_fitness: "General fitness goal",
+  performance: "Event",
+  running: "Running",
+  strength: "Strength",
+  body_comp: "Body composition",
+  appearance: "Appearance",
+  athletic_power: "Athletic power",
+  re_entry: "Comeback",
+  general_fitness: "General fitness",
 };
 
 const DEFAULT_GOAL_MANAGEMENT = {
@@ -600,7 +600,7 @@ const buildPriorityRangeLabel = (startPriority = null, endPriority = null) => (
     : "Later priorities"
 );
 
-const GOAL_PRIORITY_EXPLANATION = "Priority 1 gets the most planning weight. Later priorities stay visible and still influence exercise selection, sequencing, and tracking when they fit cleanly.";
+const GOAL_PRIORITY_EXPLANATION = "Your top goal gets the most attention. The others still matter when they fit your week and your bigger direction.";
 
 const reorderByIds = (goals = [], orderedGoalIds = []) => {
   const map = new Map(sortGoalsByPriority(goals).map((goal) => [resolveRecordId(goal), goal]));
@@ -748,7 +748,7 @@ const buildGoalHistoryHeadline = (entry = {}) => {
 const buildGoalHistoryDetail = (entry = {}) => (
   sanitizeText(toArray(entry?.impactLines || [])[0] || "", 220)
   || sanitizeText((entry?.changedFields || []).map((field) => field?.label).filter(Boolean).join(", "), 220)
-  || "Historical plan truth and workout logs stay preserved."
+  || "Past plans and workout logs stay saved."
 );
 
 const buildGoalCardModel = ({
@@ -779,14 +779,14 @@ const buildGoalCardModel = ({
     tradeoff: sanitizeText((managedGoal?.tradeoffs || managedGoal?.resolvedGoal?.tradeoffs || [])[0] || "", 180),
     fuzzyLine: sanitizeText((managedGoal?.unresolvedGaps || managedGoal?.resolvedGoal?.unresolvedGaps || [])[0] || "", 180),
     lastChangedAt: managedGoal?.goalManagement?.lastChangedAt || activeVersion?.capturedAt || "",
-    activeVersionLabel: `Version ${(managedGoal?.goalManagement?.versions || []).length || 1}`,
+    activeVersionLabel: `Saved version ${(managedGoal?.goalManagement?.versions || []).length || 1}`,
     fieldRows: PROVENANCE_FIELDS.map((field) => ({
       field,
       label: FIELD_LABELS[field] || field,
       value: formatSnapshotFieldValue(field, snapshot?.[field]),
       provenanceSummary: describeProvenanceRecord(
         currentFieldProvenance?.[field] || null,
-        `${FIELD_LABELS[field] || field} came from the active goal version.`
+        `${FIELD_LABELS[field] || field} matches your current goal.`
       ),
       updatedAt: currentFieldProvenance?.[field]?.updatedAt || managedGoal?.goalManagement?.lastChangedAt || "",
     })),
@@ -814,41 +814,41 @@ const buildImpactLines = ({
   const lines = [];
   if (nextPrimary?.name) {
     if (resolveRecordId(currentPrimary) !== resolveRecordId(nextPrimary)) {
-      lines.push(`${nextPrimary.name} moves into Priority 1 and gets the clearest progression push.`);
+      lines.push(`${nextPrimary.name} moves to the top and gets the clearest focus.`);
     } else {
-      lines.push(`Priority 1 stays ${nextPrimary.name}.`);
+      lines.push(`${nextPrimary.name} stays your top goal.`);
     }
   }
   if (nextActiveGoals[1]?.name) {
-    lines.push(`${nextActiveGoals[1].name} stays high in the priority order with slightly less planning weight than Priority 1.`);
+    lines.push(`${nextActiveGoals[1].name} stays high on the list with a little less emphasis than your top goal.`);
   }
   if (nextActiveGoals.length >= 3) {
     const remainingGoals = nextActiveGoals.slice(2);
     if (remainingGoals.length === 1) {
-      lines.push(`${buildPriorityLabel(3)} stays ${remainingGoals[0].name}. It still shapes the plan when it fits cleanly.`);
+      lines.push(`${remainingGoals[0].name} stays in view and still shapes the plan when it fits your week.`);
     } else if (remainingGoals.length > 1) {
-      lines.push(`${buildPriorityRangeLabel(3, nextActiveGoals.length)} stay visible and can still influence exercise selection, sequencing, and tracking when they fit cleanly.`);
+      lines.push(`The rest of your goals stay visible and still shape training, timing, and tracking when they fit cleanly.`);
     }
   }
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.archive && subjectGoal?.name) {
     const nextStatus = normalizeGoalStatus(archiveStatus || subjectGoal?.status || GOAL_ARCHIVE_STATUSES.archived, GOAL_ARCHIVE_STATUSES.archived);
     if (nextStatus === GOAL_ARCHIVE_STATUSES.paused) {
-      lines.push(`${subjectGoal.name} moves out of the active priority order and into paused goals. Historical plans and logs stay attached to the earlier version.`);
+      lines.push(`${subjectGoal.name} moves out of your active goals and into Paused. Past plans and logs stay attached.`);
     } else if (nextStatus === GOAL_ARCHIVE_STATUSES.future) {
-      lines.push(`${subjectGoal.name} moves out of the active priority order and into future goals until you start it. Historical plans and logs stay attached to the earlier version.`);
+      lines.push(`${subjectGoal.name} moves out of your active goals and into Future until you start it. Past plans and logs stay attached.`);
     } else if (nextStatus === GOAL_ARCHIVE_STATUSES.completed) {
-      lines.push(`${subjectGoal.name} is marked completed and moves out of the active priority order. Historical plans and logs stay attached to the earlier version.`);
+      lines.push(`${subjectGoal.name} is marked complete and moves out of your active goals. Past plans and logs stay attached.`);
     } else if (nextStatus === GOAL_ARCHIVE_STATUSES.dropped) {
-      lines.push(`${subjectGoal.name} is marked dropped and moves out of the active priority order. Historical plans and logs stay attached to the earlier version.`);
+      lines.push(`${subjectGoal.name} is marked dropped and moves out of your active goals. Past plans and logs stay attached.`);
     } else {
-      lines.push(`${subjectGoal.name} is archived and moves out of the active priority order. Historical plans and logs stay attached to the earlier version.`);
+      lines.push(`${subjectGoal.name} is archived and moves out of your active goals. Past plans and logs stay attached.`);
     }
   }
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.add && subjectGoal?.name) {
-    lines.push(`${subjectGoal.name} joins the active priority order and starts shaping future plans after you confirm.`);
+    lines.push(`${subjectGoal.name} joins your active goals and starts shaping future plans once you save it.`);
   }
   if (changeType === GOAL_MANAGEMENT_CHANGE_TYPES.restore && subjectGoal?.name) {
-    lines.push(`${subjectGoal.name} returns to the active priority order and starts influencing plan decisions again.`);
+    lines.push(`${subjectGoal.name} returns to your active goals and starts shaping the plan again.`);
   }
   if (changedFields.some((entry) => ["targetDate", "targetHorizonWeeks", "openEnded"].includes(entry.field))) {
     const timing = buildGoalTimingPresentation(subjectGoal);
@@ -1334,6 +1334,6 @@ export const buildGoalManagementPreview = ({
     impactLines,
     previousOrder,
     nextOrder,
-    explicitHistoryNote: "Historical plan truth and workout logs stay preserved. This change only affects the active goal version going forward.",
+    explicitHistoryNote: "Past plans and workout logs stay saved. This change only affects what happens next.",
   };
 };

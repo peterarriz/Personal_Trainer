@@ -1,6 +1,17 @@
 import React from "react";
 
 import { SettingsFieldRow } from "./SettingsFieldRow.jsx";
+import {
+  SETTINGS_BODY_STYLE,
+  SETTINGS_CHIP_ROW_STYLE,
+  SETTINGS_DIVIDER_STYLE,
+  SETTINGS_PANEL_STYLE,
+  SETTINGS_SECTION_HEADER_STYLE,
+  SETTINGS_SECTION_INTRO_STYLE,
+  SETTINGS_SECTION_STYLE,
+  SETTINGS_SUBPANEL_STYLE,
+  buildSettingsPillStyle,
+} from "./settings-ui.js";
 
 export function SettingsPreferencesSection({
   colors,
@@ -46,14 +57,14 @@ export function SettingsPreferencesSection({
   };
 
   return (
-    <section data-testid="settings-preferences-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
-      <div style={{ display:"grid", gap:"0.14rem" }}>
+    <section data-testid="settings-preferences-section" style={SETTINGS_SECTION_STYLE}>
+      <div style={SETTINGS_SECTION_HEADER_STYLE}>
         <div className="sect-title" style={{ color:"var(--brand-accent)", marginBottom:0 }}>PREFERENCES</div>
-        <div style={{ fontSize:"0.56rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+        <div style={SETTINGS_SECTION_INTRO_STYLE}>
           Keep defaults, appearance, and reminder status simple without pretending unfinished delivery features are already live.
         </div>
       </div>
-      <div style={{ border:"1px solid var(--border)", borderRadius:12, background:"var(--surface-1)", padding:"0.55rem 0.75rem", display:"grid", gap:"0.08rem" }}>
+      <div style={{ ...SETTINGS_PANEL_STYLE, gap:"0.12rem" }}>
         <SettingsFieldRow label="Default environment" helper="Used unless Today overrides the setup for a single session.">
           <div style={{ display:"grid", gap:"0.35rem", maxWidth:320 }}>
             <button className="btn" onClick={onToggleEnvEditor} style={{ justifyContent:"space-between", fontSize:"0.56rem", color:"var(--text-strong)", borderColor:"var(--border)" }}>
@@ -81,26 +92,27 @@ export function SettingsPreferencesSection({
         </SettingsFieldRow>
         <SettingsFieldRow label="Intensity preference" helper="Tells the planner how much progression risk you want it to accept.">
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(100%, 140px),1fr))", gap:"0.3rem" }}>
-            {[["Conservative", "Lower risk"], ["Standard", "Balanced"], ["Aggressive", "Higher risk"]].map(([mode, desc]) => (
+            {[["Conservative", "Lower risk"], ["Standard", "Balanced"], ["Aggressive", "Higher risk"]].map(([mode, desc]) => {
+              const selected = trainingPrefs?.intensityPreference === mode;
+              return (
               <button
                 key={mode}
-                className="btn"
+                className={`btn ${selected ? "btn-selected" : ""}`}
                 onClick={() => patchTrainingPreferences({ intensityPreference: mode })}
                 style={{
                   fontSize:"0.54rem",
-                  color:trainingPrefs?.intensityPreference === mode ? "var(--text-strong)" : "var(--text)",
-                  borderColor:trainingPrefs?.intensityPreference === mode ? "var(--border-strong)" : "var(--border)",
-                  background:trainingPrefs?.intensityPreference === mode ? "var(--accent-soft)" : "var(--surface-2)",
                   textAlign:"left",
                   minWidth:0,
                   whiteSpace:"normal",
                   lineHeight:1.35,
+                  padding:"0.62rem 0.68rem",
                 }}
               >
                 <div>{mode}</div>
                 <div style={{ fontSize:"0.46rem", color:"var(--text-soft)", marginTop:"0.1rem" }}>{desc}</div>
               </button>
-            ))}
+              );
+            })}
           </div>
         </SettingsFieldRow>
         <SettingsFieldRow label="Nutrition defaults" helper="Make calorie intent explicit and nudge meal suggestions toward food you actually like.">
@@ -132,25 +144,22 @@ export function SettingsPreferencesSection({
                 </select>
               </label>
             </div>
-            <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+            <div style={SETTINGS_BODY_STYLE}>
               Leave maintenance blank if you want FORMA to estimate it and label that estimate as heuristic. The weekly cut target is stored explicitly so quality and long-run days do not quietly carry the whole deficit.
             </div>
             <div style={{ display:"grid", gap:"0.28rem" }}>
               <div style={{ fontSize:"0.5rem", color:"var(--text-strong)", lineHeight:1.4 }}>Preferred cuisines</div>
-              <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
+              <div style={SETTINGS_CHIP_ROW_STYLE}>
                 {cuisineOptions.map(([key, label]) => {
                   const selected = selectedCuisines.includes(key);
                   return (
                     <button
                       key={key}
-                      className="btn"
+                      className={`btn ${selected ? "btn-selected" : ""}`}
                       type="button"
                       onClick={() => toggleCuisine(key)}
                       style={{
                         fontSize:"0.52rem",
-                        color:selected ? "var(--text-strong)" : "var(--text)",
-                        borderColor:selected ? "var(--border-strong)" : "var(--border)",
-                        background:selected ? "var(--accent-soft)" : "var(--surface-2)",
                       }}
                     >
                       {label}
@@ -158,36 +167,29 @@ export function SettingsPreferencesSection({
                   );
                 })}
               </div>
-              <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+              <div style={{ ...SETTINGS_BODY_STYLE, fontSize:"0.48rem" }}>
                 These do not change macros. They steer meal examples and fast options toward food patterns you are more likely to repeat.
               </div>
             </div>
           </div>
         </SettingsFieldRow>
       </div>
-      <div style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
+      <div style={SETTINGS_DIVIDER_STYLE}>
         <div className="sect-title" style={{ color:"var(--text-strong)", marginBottom:0 }}>APPEARANCE</div>
         {AppearanceSection ? <AppearanceSection appearance={appearance} onPatchAppearance={(nextAppearance) => onPatchSettings({ appearance: nextAppearance })} /> : null}
       </div>
-      <div data-testid="settings-preferences-lower" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
+      <div data-testid="settings-preferences-lower" style={SETTINGS_DIVIDER_STYLE}>
         <div className="sect-title" style={{ color:"var(--text-strong)", marginBottom:0 }}>REMINDER STATUS</div>
-        <div data-testid="settings-notifications-section" style={{ border:"1px solid var(--border)", borderRadius:12, background:"var(--surface-1)", padding:"0.55rem 0.75rem", display:"grid", gap:"0.08rem", minWidth:0 }}>
+        <div data-testid="settings-notifications-section" style={{ ...SETTINGS_PANEL_STYLE, gap:"0.12rem" }}>
           <div
             data-testid="settings-reminders-status"
-            style={{
-              border:"1px solid var(--border)",
-              borderRadius:12,
-              background:"var(--surface-2)",
-              padding:"0.58rem 0.62rem",
-              display:"grid",
-              gap:"0.22rem",
-            }}
+            style={SETTINGS_SUBPANEL_STYLE}
           >
             <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"center", flexWrap:"wrap" }}>
               <div style={{ fontSize:"0.58rem", color:"var(--text-strong)", lineHeight:1.4 }}>Push reminders are planned, not live.</div>
-              <span className="tag" style={{ fontSize:"0.42rem", background:"var(--surface-3)", color:"var(--text-soft)", borderColor:"var(--border)" }}>Planned</span>
+              <span className="tag" style={buildSettingsPillStyle({ color:"var(--text-soft)", background:"var(--surface-3)", borderColor:"var(--border)", uppercase:true })}>Planned</span>
             </div>
-            <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.55 }}>
+            <div style={SETTINGS_BODY_STYLE}>
               FORMA does not currently have a production push subscription, service worker delivery path, or verified background reminder flow. Reminder choices below are shown as draft preferences only.
             </div>
           </div>

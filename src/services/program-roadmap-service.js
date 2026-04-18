@@ -135,12 +135,13 @@ export const buildProgramRoadmapRows = ({
   currentWeek = 1,
 } = {}) => {
   const safeRows = Array.isArray(displayHorizon) ? displayHorizon.filter(Boolean) : [];
+  const currentWeekNumber = Number(currentWeek || 0);
   let previousLongRun = null;
-  return safeRows.map((weekRow) => {
+  const rows = safeRows.map((weekRow) => {
     const absoluteWeek = Number(weekRow?.absoluteWeek || 0) || currentWeek;
     const sessions = resolveWeekSessions(weekRow);
     const longRunLabel = resolveLongRunDescriptor(weekRow, sessions);
-    const longRunValue = parseProgressionValue(longRunLabel);
+    const longRunProgress = parseProgressionValue(longRunLabel);
     const phaseKey = sanitizeText(
       weekRow?.planWeek?.phase
       || weekRow?.phase
@@ -175,17 +176,25 @@ export const buildProgramRoadmapRows = ({
       phaseLabel,
       focus,
       longRunLabel,
-      longRunDeltaLabel: formatProgressionDelta(longRunValue, previousLongRun),
+      longRunDeltaLabel: formatProgressionDelta(longRunProgress, previousLongRun),
+      longRunValue: longRunProgress?.value ?? null,
+      longRunUnit: longRunProgress?.unit || "",
       qualityCount,
       qualityLabel: qualityCount === 1 ? "1 quality session" : `${qualityCount} quality sessions`,
       strengthCount,
       strengthLabel: strengthCount > 0 ? `${strengthCount} strength touch${strengthCount === 1 ? "" : "es"}` : "No strength touch",
       cutback: Boolean(weekRow?.cutback || weekRow?.planWeek?.cutback),
-      isCurrentWeek: absoluteWeek === Number(currentWeek || 0),
+      isCurrentWeek: absoluteWeek === currentWeekNumber,
     };
-    if (longRunValue) previousLongRun = longRunValue;
+    if (longRunProgress) previousLongRun = longRunProgress;
     return row;
   });
+  return rows.map((row, index) => ({
+    ...row,
+    isNextWeek: row.absoluteWeek === currentWeekNumber + 1,
+    isPhaseStart: index === 0 || row.phaseKey !== rows[index - 1]?.phaseKey,
+    isPhaseEnd: index === rows.length - 1 || row.phaseKey !== rows[index + 1]?.phaseKey,
+  }));
 };
 
 const buildGridCellFromSession = (session = null, { dayKey = 1, isToday = false } = {}) => {

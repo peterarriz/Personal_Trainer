@@ -7,7 +7,7 @@ const {
   upsertGoalAnchorQuickEntry,
 } = require("../src/services/goal-anchor-quick-entry-service.js");
 
-test("quick-entry model exposes bodyweight, waist, run, and lift anchors for relevant goal tracking cards", () => {
+test("quick-entry model exposes bodyweight, waist, run, lift, and swim anchors for relevant goal tracking cards", () => {
   const anchors = buildGoalAnchorQuickEntryModel({
     goalProgressTracking: {
       goalCards: [
@@ -27,6 +27,14 @@ test("quick-entry model exposes bodyweight, waist, run, and lift anchors for rel
           planningCategory: "running",
           trackedItems: [{ key: "goal_pace_anchor" }],
         },
+        {
+          summary: "Swim a faster mile",
+          primaryDomain: "swimming_endurance_technique",
+          trackedItems: [
+            { key: "swim_benchmark_retest" },
+            { key: "swim_access_reality" },
+          ],
+        },
       ],
     },
   });
@@ -36,6 +44,8 @@ test("quick-entry model exposes bodyweight, waist, run, and lift anchors for rel
     GOAL_ANCHOR_QUICK_ENTRY_TYPES.waist,
     GOAL_ANCHOR_QUICK_ENTRY_TYPES.liftBenchmark,
     GOAL_ANCHOR_QUICK_ENTRY_TYPES.runBenchmark,
+    GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimBenchmark,
+    GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimAccessReality,
   ]);
 });
 
@@ -105,4 +115,31 @@ test("quick-entry upserts replace same-day benchmark entries instead of duplicat
   assert.equal(manualProgressInputs.benchmarks.run_results[0].durationMinutes, "31:20");
   assert.equal(manualProgressInputs.benchmarks.run_results[0].paceText, "7:50");
   assert.equal(manualProgressInputs.benchmarks.run_results[0].note, "Saved from Metrics / Baselines");
+});
+
+test("quick-entry upserts swim anchors into the shared manual-progress shape", () => {
+  let manualProgressInputs = upsertGoalAnchorQuickEntry({
+    manualProgressInputs: {},
+    type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimBenchmark,
+    entry: { date: "2026-04-12", distance: "1500", distanceUnit: "yd", duration: "29:40" },
+  });
+  manualProgressInputs = upsertGoalAnchorQuickEntry({
+    manualProgressInputs,
+    type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimAccessReality,
+    entry: { date: "2026-04-12", value: "pool" },
+  });
+
+  const swimRow = manualProgressInputs.metrics.swim_benchmark[0];
+  const swimRealityRow = manualProgressInputs.metrics.swim_access_reality[0];
+
+  assert.equal(swimRow.date, "2026-04-12");
+  assert.equal(swimRow.distance, 1500);
+  assert.equal(swimRow.distanceUnit, "yd");
+  assert.equal(swimRow.duration, "29:40");
+  assert.equal(swimRow.provenance?.events?.[0]?.details?.fieldId, "recent_swim_anchor");
+
+  assert.equal(swimRealityRow.date, "2026-04-12");
+  assert.equal(swimRealityRow.value, "pool");
+  assert.equal(swimRealityRow.label, "Pool only");
+  assert.equal(swimRealityRow.provenance?.events?.[0]?.details?.fieldId, "swim_access_reality");
 });

@@ -53,9 +53,10 @@ test("buildCoachActionPreviewModel describes deterministic impact without applyi
 
   assert.equal(preview.status, "ready");
   assert.equal(preview.headline, "Reduce this week's volume");
-  assert.ok(preview.effectLines.some((line) => /Week 6 volume target becomes 88% of normal\./.test(line)));
-  assert.ok(preview.effectLines.some((line) => /Audit note: Coach reduced this week volume by 12% for recovery control\./.test(line)));
-  assert.match(preview.auditLine, /Nothing changes until you explicitly accept/);
+  assert.equal(preview.likelyEffect, "This week lands at 88% of normal volume.");
+  assert.ok(preview.effectLines.some((line) => /This week lands at 88% of normal volume\./.test(line)));
+  assert.ok(preview.effectLines.some((line) => /reduced this week volume by 12% for recovery control\./i.test(line)));
+  assert.match(preview.auditLine, /review first, then apply/i);
 });
 
 test("buildCoachActionHistoryModel keeps accepted action audit detail visible", () => {
@@ -89,6 +90,6 @@ test("buildCoachAskAnythingStateModel stays advisory-only with or without AI ava
   assert.equal(available.aiAvailable, true);
   assert.equal(available.advisoryOnly, true);
   assert.equal(available.canMutatePlan, false);
-  assert.equal(available.headline, "Answers only");
-  assert.match(available.detail, /preview a change before you accept it/i);
+  assert.equal(available.headline, "Ask for a clear call");
+  assert.match(available.detail, /keeps the answer short/i);
 });

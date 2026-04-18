@@ -72,9 +72,9 @@ test("account state model keeps signed-out settings copy consumer-friendly", () 
   });
 
   assert.deepEqual(model.lifecycleSummaryCards.map((card) => card.id), ["identity", "cloud", "device"]);
-  assert.equal(model.accountIdentityState.label, "No cloud account active");
-  assert.equal(model.deviceLifecycleState.label, "Local cache available");
-  assert.match(model.lifecycleSummaryCards[2]?.detail || "", /signing out pauses cloud sync/i);
+  assert.equal(model.accountIdentityState.label, "No account connected");
+  assert.equal(model.deviceLifecycleState.label, "Saved on this device");
+  assert.match(model.lifecycleSummaryCards[2]?.detail || "", /signing out pauses account sync/i);
 });
 
 test("account state model shows reset devices as blank starts", () => {
@@ -90,7 +90,7 @@ test("account state model shows reset devices as blank starts", () => {
 
   assert.equal(model.accountIdentityState.label, "Signed-in account");
   assert.equal(model.accountIdentityState.detail, "athlete@example.com");
-  assert.equal(model.deviceLifecycleState.label, "Blank local start");
+  assert.equal(model.deviceLifecycleState.label, "Fresh on this device");
   assert.match(model.accountSyncState.label, /cloud pending/i);
 });
 

@@ -33,12 +33,12 @@ test("starter goal types expose broad families first and keep custom as the fina
 });
 
 test("intake copy deck stays concise and week-one oriented", () => {
-  assert.deepEqual(INTAKE_STAGE_CONTRACT.map((stage) => stage.label), ["Setup", "Details", "Build"]);
-  assert.equal(INTAKE_COPY_DECK.shell.title, "Intake");
-  assert.equal(INTAKE_COPY_DECK.summaryRail.title, "What week one will use");
-  assert.equal(INTAKE_COPY_DECK.clarify.structuredToggle, "Structured");
-  assert.equal(INTAKE_COPY_DECK.clarify.naturalToggle, "Free text");
-  assert.match(INTAKE_COPY_DECK.shell.helper, /week one/i);
+  assert.deepEqual(INTAKE_STAGE_CONTRACT.map((stage) => stage.label), ["Start", "Details", "Your plan"]);
+  assert.equal(INTAKE_COPY_DECK.shell.title, "Getting started");
+  assert.equal(INTAKE_COPY_DECK.summaryRail.title, "What your first week is built on");
+  assert.equal(INTAKE_COPY_DECK.clarify.structuredToggle, "Quick picks");
+  assert.equal(INTAKE_COPY_DECK.clarify.naturalToggle, "Write it myself");
+  assert.match(INTAKE_COPY_DECK.shell.helper, /first week/i);
   assert.doesNotMatch(JSON.stringify(INTAKE_COPY_DECK), /coach note|guided|fallback|deterministic/i);
 });
 

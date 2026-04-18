@@ -163,7 +163,7 @@ test("reprioritize preview updates order and impact copy before commit", () => {
 
   assert.ok(preview);
   assert.equal(preview.nextViewModel.currentGoals[0].summary, "Bench press 225 lb");
-  assert.match(preview.impactLines[0], /Bench press 225 lb moves into Priority 1/i);
+  assert.match(preview.impactLines[0], /Bench press 225 lb moves to the top and gets the clearest focus/i);
   assert.deepEqual(preview.nextOrder, ["goal_bench_record", "goal_running_record"]);
 });
 
@@ -231,7 +231,7 @@ test("adding a new goal from the preset library previews a clean active goal ins
   assert.equal(preview.nextViewModel.currentGoals[1].summary, "Bench press 225 lb");
   assert.equal(preview.nextResolvedGoals[1].goalTemplateId, "bench_225");
   assert.match(preview.changeLabel, /Add Bench press 225 lb/i);
-  assert.match(preview.impactLines.join(" "), /joins the active priority order/i);
+  assert.match(preview.impactLines.join(" "), /joins your active goals and starts shaping future plans once you save it/i);
 });
 
 test("archive and restore previews keep goal history while moving goals in and out of the active stack", () => {
@@ -291,7 +291,7 @@ test("archive and restore previews keep goal history while moving goals in and o
   assert.ok(restorePreview);
   assert.equal(restorePreview.nextViewModel.currentGoals.length, 2);
   assert.equal(restorePreview.nextGoalManagement.archivedGoals.length, 0);
-  assert.match(restorePreview.impactLines.join(" "), /returns to the active priority order/i);
+  assert.match(restorePreview.impactLines.join(" "), /returns to your active goals and starts shaping the plan again/i);
   assert.equal(restorePreview.historyEntry.previousStatus, GOAL_ARCHIVE_STATUSES.completed);
   assert.equal(restorePreview.historyEntry.nextStatus, "active");
 });
@@ -333,7 +333,7 @@ test("pause preview routes a goal into the paused lifecycle bucket and emits a r
   assert.equal(preview.historyEntry.previousStatus, "active");
   assert.equal(preview.historyEntry.nextStatus, GOAL_ARCHIVE_STATUSES.paused);
   assert.match(preview.historyEntry.changeLabel || "", /paused/i);
-  assert.match(preview.impactLines.join(" "), /paused goals/i);
+  assert.match(preview.impactLines.join(" "), /moves out of your active goals and into Paused/i);
 
   const nextView = buildGoalSettingsViewModel({
     goals: preview.nextGoals,
@@ -378,5 +378,5 @@ test("goal management previews do not mutate the current goals or stored goal-ma
   assert.ok(preview);
   assert.deepEqual(goals, goalsBefore);
   assert.deepEqual(personalization, personalizationBefore);
-  assert.match(preview.explicitHistoryNote || "", /Historical plan truth/i);
+  assert.match(preview.explicitHistoryNote || "", /Past plans and workout logs stay saved/i);
 });

@@ -24,7 +24,7 @@ test("default explanation stays goal-driven when no program or style is active",
   });
 
   assert.equal(explanation.basisType, "default_goal_driven");
-  assert.ok(/goal-driven default logic/i.test(explanation.basisSummary));
+  assert.ok(/built around your goals, schedule, and available equipment/i.test(explanation.basisSummary));
 });
 
 test("program explanation reflects adapted mode", () => {

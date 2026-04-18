@@ -6,8 +6,8 @@ const SETTINGS_SURFACES = Object.freeze([
   { key: "account", label: "Account", helper: "Sign-in, backup, and reset" },
   { key: "profile", label: "Profile", helper: "Body, units, and athlete basics" },
   { key: "goals", label: "Goals", helper: "Edit priorities and timelines" },
-  { key: "baselines", label: "Plan inputs", helper: "Needed now, nice to add, accuracy later" },
-  { key: "programs", label: "Plan style", helper: "Adaptive, structured, and training bias" },
+  { key: "baselines", label: "Plan inputs", helper: "Current essentials, nice-to-add details, better accuracy later" },
+  { key: "programs", label: "Plan style", helper: "Built-for-you plan, named plans, and training feel" },
   { key: "preferences", label: "Preferences", helper: "Defaults, appearance, and reminder status" },
   { key: "advanced", label: "Devices", helper: "Apple Health, Garmin, and location" },
 ]);
@@ -62,27 +62,27 @@ const buildSettingsAccountIdentityState = (authEmail = "") => (
       detail: authEmail,
     }
     : {
-      label: "No cloud account active",
-      detail: "This device is currently operating without a signed-in account.",
+      label: "No account connected",
+      detail: "This device is currently being used without a signed-in account.",
     }
 );
 
 const buildSettingsDeviceLifecycleState = ({ storageReason = "", syncStateModel = null } = {}) => {
   if (storageReason === "device_reset") {
     return {
-      label: "Blank local start",
-      detail: "Local runtime data was cleared on this device. The next step can be sign-in or a brand-new local session.",
+      label: "Fresh on this device",
+      detail: "Saved app data was cleared on this device. You can sign in or start fresh here.",
     };
   }
   if (storageReason === "signed_out" || storageReason === "not_signed_in") {
     return {
-      label: "Local cache available",
-      detail: "Signing out pauses cloud sync but does not delete this device automatically unless you choose a device reset.",
+      label: "Saved on this device",
+      detail: "Signing out pauses account sync, but it does not clear this device unless you reset it.",
     };
   }
   return {
-    label: "Local resilience active",
-    detail: syncStateModel?.assurance || "This browser keeps a local copy so the app can stay usable through transient cloud issues.",
+    label: "Saved on this device",
+    detail: syncStateModel?.assurance || "This browser keeps a local copy so FORMA stays usable when account sync has a temporary issue.",
   };
 };
 
@@ -93,8 +93,8 @@ export const buildSettingsAccountStateModel = ({
 } = {}) => {
   const accountIdentityState = buildSettingsAccountIdentityState(authEmail);
   const accountSyncState = {
-    label: syncStateModel?.headline || "Cloud and device are aligned",
-    detail: syncStateModel?.detail || "Cloud data is up to date.",
+    label: syncStateModel?.headline || "Your account and this device are up to date",
+    detail: syncStateModel?.detail || "Everything is saved.",
   };
   const deviceLifecycleState = buildSettingsDeviceLifecycleState({
     storageReason,
@@ -116,5 +116,5 @@ export const buildSettingsAccountStateModel = ({
 export const buildDeleteAccountHelpText = (deleteDiagnostics = null) => (
   deleteDiagnostics?.configured === true
     ? ""
-    : "Permanent delete is not available here yet. You can still sign out or reset this device."
+    : "Full account deletion is not available here yet. You can still sign out or reset this device."
 );

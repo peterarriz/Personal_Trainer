@@ -287,7 +287,7 @@ test.describe("mobile surface simplification", () => {
 
     await page.getByTestId("app-tab-log").click();
     await expect(page.getByTestId("log-tab")).toBeVisible();
-    await page.getByTestId("log-complete-prescribed").click();
+    await page.getByTestId("log-save-quick").click();
     await expect(page.getByTestId("log-save-status")).toContainText("Saved");
 
     await page.getByTestId("app-tab-nutrition").click();
@@ -342,16 +342,16 @@ test.describe("mobile surface simplification", () => {
     await expect(headline).toContainText(/protect|pain|irritated/i);
   });
 
-  test("missing metrics route straight into baselines from Program", async ({ page }) => {
+  test("missing metrics open an inline repair flow from Program", async ({ page }) => {
     await completeRunningOnboarding(page);
 
     await page.getByTestId("app-tab-program").click();
     await expect(page.getByTestId("program-tab")).toBeVisible();
     await page.getByTestId("program-fix-metrics").click();
 
-    await expect(page.getByTestId("settings-tab")).toBeVisible();
-    await expect(page.getByTestId("settings-baselines-section")).toBeVisible();
-    await expect(page.getByTestId("settings-metrics-baselines")).toBeVisible();
-    await expect(page.getByText("Opened from Plan because a few inputs are still needed before the next block can get more specific.")).toBeVisible();
+    await expect(page.getByTestId("program-inline-repair")).toBeVisible();
+    await expect(page.getByTestId("metrics-baselines-section")).toBeVisible();
+    await expect(page.getByTestId("metrics-editor-environment")).toBeVisible();
+    await expect(page.getByText("Save missing inputs and carry-over details without leaving Program.")).toBeVisible();
   });
 });

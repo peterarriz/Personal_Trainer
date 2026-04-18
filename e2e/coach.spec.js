@@ -41,11 +41,12 @@ test.describe("coach surface", () => {
 
     await page.getByTestId("coach-mode-button-adjust_week").click();
     await expect(page.getByTestId("coach-mode-panel-adjust_week")).toBeVisible();
-    await expect(page.getByTestId("coach-job-card-adjust-week")).toContainText(/Recommendation|Why|Consequence/i);
+    await expect(page.getByTestId("coach-job-card-adjust-week")).toContainText(/Recommendation|Why|Likely effect/i);
 
     await page.getByTestId("coach-mode-button-ask_coach").click();
     await expect(page.getByTestId("coach-mode-panel-ask_coach")).toBeVisible();
-    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Answers only/i);
+    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/clear call/i);
+    await expect(page.getByText(/Advice only/i)).toHaveCount(0);
     await expect(page.getByText(/AI advisory is off/i)).toHaveCount(0);
   });
 
@@ -59,14 +60,14 @@ test.describe("coach surface", () => {
     await page.getByTestId("coach-mode-button-adjust_week").click();
     await page.getByTestId("coach-preview-adjust-week").click();
 
-    await expect(page.getByTestId("coach-action-preview")).toContainText(/Week \d+ volume target becomes|Take pressure off this week/i);
+    await expect(page.getByTestId("coach-action-preview")).toContainText(/This week lands at|Take pressure off this week/i);
     await expect(page.getByTestId("coach-preview-accept")).toBeVisible();
 
     const previewCache = await readLocalCache(page);
     expect(Array.isArray(previewCache?.coachActions) ? previewCache.coachActions.length : 0).toBe(beforeActionCount);
 
     await page.getByTestId("coach-preview-accept").click();
-    await expect(page.getByText("Accepted and saved. Future plan logic will now see this change.")).toBeVisible();
+    await expect(page.getByText("Change saved. Future workouts will follow this update.")).toBeVisible();
     await expect(page.getByTestId("coach-action-history")).toContainText("Reduce this week's volume");
 
     await expect.poll(async () => {
@@ -108,8 +109,9 @@ test.describe("coach surface", () => {
     await page.getByTestId("coach-ask-input").fill("Should I push this week?");
     await page.getByTestId("coach-ask-send").click();
 
-    await expect(page.getByTestId("coach-ask-answer-card")).toContainText(/Why:/i);
-    await expect(page.getByTestId("coach-ask-answer-card")).toContainText(/Consequence:/i);
+    await expect(page.getByTestId("coach-ask-answer-card")).toContainText(/Why/i);
+    await expect(page.getByTestId("coach-ask-answer-card")).toContainText(/Likely effect/i);
+    await expect(page.getByText(/Advice only/i)).toHaveCount(0);
     await expect(page.getByText(/AI advisory is off/i)).toHaveCount(0);
     await expect(page.getByTestId("coach-preview-accept")).toHaveCount(0);
 

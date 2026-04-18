@@ -11,21 +11,21 @@ const sanitizeText = (value = "", maxLength = 160) => String(value || "").replac
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
 
 export const INTAKE_STAGE_CONTRACT = Object.freeze([
-  Object.freeze({ key: "setup", label: "Setup", helper: "Choose what you want and the constraints that shape week one." }),
-  Object.freeze({ key: "details", label: "Details", helper: "Add only the details that still change the first plan, then continue." }),
-  Object.freeze({ key: "build", label: "Build", helper: "Create the first plan from the intake you just finished." }),
+  Object.freeze({ key: "setup", label: "Start", helper: "Choose what you want and the real-life details that shape your first week." }),
+  Object.freeze({ key: "details", label: "Details", helper: "Add only the details that still change your first week, then keep going." }),
+  Object.freeze({ key: "build", label: "Your plan", helper: "Create your first plan from what you just shared." }),
 ]);
 
 export const INTAKE_COPY_DECK = Object.freeze({
   shell: Object.freeze({
-    title: "Intake",
-    progressSuffix: "Autosaves as you go.",
-    helper: "Pick a goal path, answer the few details that really change week one, and keep moving.",
+    title: "Getting started",
+    progressSuffix: "Saves as you go.",
+    helper: "Pick a goal path, answer the few details that change your first week, and keep moving.",
   }),
   summaryRail: Object.freeze({
     eyebrow: "Live summary",
-    title: "What week one will use",
-    helper: "This updates as you choose goals, constraints, and key anchors.",
+    title: "What your first week is built on",
+    helper: "This updates as you choose goals, limits, and key details.",
   }),
   goals: Object.freeze({
     heroEyebrow: "START HERE",
@@ -34,39 +34,39 @@ export const INTAKE_COPY_DECK = Object.freeze({
   }),
   interpretation: Object.freeze({
     title: "Draft",
-    readyHelper: "Review the draft before adding more detail.",
-    assessingHelper: "Resolving your priority order...",
-    bannerEyebrow: "DRAFT ONLY",
-    bannerHelper: "Nothing becomes final until you confirm.",
-    emptyState: "Your resolved priorities will appear here once the draft is ready.",
+    readyHelper: "Check the draft before you add more detail.",
+    assessingHelper: "Lining up your priorities...",
+    bannerEyebrow: "DRAFT",
+    bannerHelper: "You can still change this before you continue.",
+    emptyState: "Your first draft will show up here.",
   }),
   clarify: Object.freeze({
-    helper: "Answer the details that still change week one, then continue from this same screen.",
+    helper: "Answer the details that still change your first week, then keep going.",
     stackEyebrow: "CURRENT PRIORITIES",
-    baselineNote: "Saved to your baselines so you can edit it later in Settings.",
-    structuredToggle: "Structured",
-    naturalToggle: "Free text",
+    baselineNote: "Saved in Settings so you can change it later.",
+    structuredToggle: "Quick picks",
+    naturalToggle: "Write it myself",
     naturalPlaceholder: "Add the detail in your own words.",
     genericPlaceholder: "Add the detail.",
   }),
   confirm: Object.freeze({
-    helper: "Review the intake details and continue when the stack looks right.",
+    helper: "Give the details a final look, then continue when it feels right.",
   }),
   adjust: Object.freeze({
-    title: "Adjust",
+    title: "Make a change",
     helper: "Describe what should change.",
     placeholder: "Describe the change.",
   }),
   build: Object.freeze({
-    helper: "Turning your intake into the first plan.",
-    status: "Building the first plan...",
+    helper: "Putting your first plan together.",
+    status: "Creating your first plan...",
   }),
   footer: Object.freeze({
-    goals: "Choose what you want and the real constraints around it.",
-    interpretation: "Check the draft before adding more detail.",
-    clarify: "Add any remaining details, review the stack here, and continue when it looks right.",
-    confirm: "Review the stack and continue when it looks right.",
-    building: "Building the first plan now.",
+    goals: "Choose what you want and the real-life details around it.",
+    interpretation: "Check the draft before you add more detail.",
+    clarify: "Add any last details, review everything here, and continue when it feels right.",
+    confirm: "Review everything here and continue when it feels right.",
+    building: "Creating your first plan now.",
     adjust: "Describe the change, then continue.",
   }),
 });
@@ -124,7 +124,7 @@ const STARTER_TYPES = Object.freeze([
     id: "custom",
     label: "Custom",
     eyebrow: "Custom",
-    helper: "Use only when the structured paths truly miss the goal.",
+    helper: "Choose this if the preset paths miss what you want.",
     categoryId: "all",
     featuredTemplateIds: [],
   }),
@@ -315,7 +315,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "running_baseline_profile",
           title: "Current running baseline",
-          helper: "A few real running details sharpen the first block.",
+          helper: "A few real running details sharpen your first week.",
           fieldKeys: ["current_run_frequency", "longest_recent_run", "recent_pace_baseline"],
           inputFields: [
             numberField("current_run_frequency", "Runs per week", "3", "How many times are you running in a normal week?", true),
@@ -348,7 +348,7 @@ const buildQuestionsForIntent = (selection = null) => {
           fieldKeys: ["starting_capacity_anchor", "progression_posture"],
           inputFields: [
             choiceField("starting_capacity_anchor", "Current repeatable capacity", "Pick the most honest starting point.", STARTING_CAPACITY_OPTIONS, true),
-            choiceField("progression_posture", "Progression posture", "Protective keeps the first block more conservative.", RISK_OPTIONS, true),
+            choiceField("progression_posture", "Progression feel", "Protective keeps your first week more conservative.", RISK_OPTIONS, true),
           ],
         }),
       ];
@@ -390,7 +390,7 @@ const buildQuestionsForIntent = (selection = null) => {
           inputFields: [
             choiceField("event_distance", "Race format", "Sprint is the safest default if you are unsure.", [choice("sprint_triathlon", "Sprint"), choice("olympic_triathlon", "Olympic"), choice("70_3", "70.3")], true),
             choiceField("hybrid_priority", "Priority lane", "This lane gets the cleanest recovery in the plan.", [choice("swim", "Swim"), choice("bike", "Bike"), choice("run", "Run"), choice("balanced", "Balanced")], true),
-            textField("recent_swim_anchor", "Recent swim anchor", "400 yd in 10:00", "One recent swim anchor keeps the first block honest."),
+            textField("recent_swim_anchor", "Recent swim anchor", "400 yd in 10:00", "One recent swim anchor keeps your first week realistic."),
           ],
         }),
       ];
@@ -435,7 +435,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "body_comp_profile",
           title: "Body-composition setup",
-          helper: "These choices decide whether the first block should bias retention, urgency, or simplicity.",
+          helper: "These choices decide whether your first week should lean toward muscle retention, urgency, or simplicity.",
           fieldKeys: ["current_bodyweight", "body_comp_tempo", "muscle_retention_priority", "cardio_preference", "target_timeline"],
           inputFields: [
             numberField("current_bodyweight", "Current bodyweight", "185", "Closest recent scale weight is fine.", false, "lb"),
@@ -455,11 +455,11 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "general_fitness_profile",
           title: "General fitness setup",
-          helper: "Keep the first block honest by choosing current capacity and the main quality you want to feel improve.",
+          helper: "Keep your first week realistic by choosing your current capacity and the main quality you want to feel improve.",
           fieldKeys: ["starting_capacity_anchor", "goal_focus"],
           inputFields: [
             choiceField("starting_capacity_anchor", "Current repeatable capacity", "Pick the most honest starting point.", STARTING_CAPACITY_OPTIONS, true),
-            choiceField("goal_focus", "Main quality", "This helps shape whether the first block feels more athletic, more routine-driven, or more work-capacity focused.", GOAL_FOCUS_OPTIONS, true),
+            choiceField("goal_focus", "Main quality", "This helps shape whether your first week feels more athletic, more routine-driven, or more work-capacity focused.", GOAL_FOCUS_OPTIONS, true),
           ],
         }),
       ];
@@ -472,7 +472,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "re_entry_profile",
           title: "Restart setup",
-          helper: "Choose the current capacity and how conservative the first block should feel.",
+          helper: "Choose your current capacity and how conservative your first week should feel.",
           fieldKeys: ["starting_capacity_anchor", "progression_posture"],
           inputFields: [
             choiceField("starting_capacity_anchor", "Current repeatable capacity", "Pick the most honest starting point.", STARTING_CAPACITY_OPTIONS, true),

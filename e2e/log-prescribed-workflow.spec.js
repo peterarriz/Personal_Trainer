@@ -187,7 +187,7 @@ test.describe("log prescribed workflow", () => {
     await expect(page.getByTestId("log-run-duration")).toBeVisible();
     await expect(page.getByTestId("log-strength-row-0")).toHaveCount(0);
     await expect(page.getByTestId("log-extra-exercises")).toHaveCount(0);
-    await expect(page.getByTestId("log-save-quick")).toBeDisabled();
+    await expect(page.getByTestId("log-save-quick")).toBeEnabled();
   });
 
   test("strength-only day prefills prescribed strength actuals and saves them without duplicate workout presentation", async ({ page }) => {
@@ -196,6 +196,9 @@ test.describe("log prescribed workflow", () => {
     const logTab = page.getByTestId("log-tab");
     await expect(logTab.getByRole("button", { name: /open full detail entry/i })).toHaveCount(0);
     await expect(logTab.getByTestId("planned-session-plan")).toHaveCount(1);
+    await expect(page.getByTestId("log-strength-actuals")).toBeVisible();
+    await expect(page.getByTestId("log-strength-row-0")).toBeHidden();
+    await page.getByTestId("log-strength-actuals").locator("summary").click();
     await expect(page.getByTestId("log-strength-row-0")).toBeVisible();
     await expect(page.getByTestId("log-strength-row-sets-0")).toHaveValue("4");
     await expect(page.getByTestId("log-strength-row-reps-0")).toHaveValue("6");
@@ -218,6 +221,8 @@ test.describe("log prescribed workflow", () => {
     const logTab = page.getByTestId("log-tab");
     await expect(logTab.getByTestId("planned-session-plan")).toHaveCount(1);
     await expect(page.getByTestId("log-run-duration")).toBeVisible();
+    await expect(page.getByTestId("log-strength-row-0")).toBeHidden();
+    await page.getByTestId("log-strength-actuals").locator("summary").click();
     await expect(page.getByTestId("log-strength-row-0")).toBeVisible();
     await expect(page.getByTestId("log-strength-row-sets-0")).toHaveValue("3");
     await expect(page.getByTestId("log-strength-row-reps-0")).toHaveValue("10");

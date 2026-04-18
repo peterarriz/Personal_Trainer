@@ -1,5 +1,17 @@
 import React from "react";
 
+import {
+  SETTINGS_ACTION_ROW_STYLE,
+  SETTINGS_BODY_STYLE,
+  SETTINGS_PANEL_STYLE,
+  SETTINGS_SECTION_HEADER_STYLE,
+  SETTINGS_SECTION_INTRO_STYLE,
+  SETTINGS_SECTION_STYLE,
+  SETTINGS_SUBPANEL_STYLE,
+  SETTINGS_TITLE_STYLE,
+  buildSettingsPillStyle,
+} from "./settings-ui.js";
+
 const GOAL_REQUEST_OPTIONS = Object.freeze([
   { value: "refine_current_goal", label: "Refine current goal" },
   { value: "reprioritize_goal_stack", label: "Re-prioritize goals" },
@@ -67,18 +79,18 @@ export function SettingsAdvancedSection({
   ];
 
   return (
-    <section data-testid="settings-advanced-section" style={{ borderTop:"1px solid #233851", paddingTop:"0.75rem", display:"grid", gap:"0.6rem" }}>
-      <div style={{ display:"grid", gap:"0.14rem" }}>
+    <section data-testid="settings-advanced-section" style={SETTINGS_SECTION_STYLE}>
+      <div style={SETTINGS_SECTION_HEADER_STYLE}>
         <div className="sect-title" style={{ color:"#dbe7f6", marginBottom:0 }}>DEVICES</div>
-        <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+        <div style={SETTINGS_SECTION_INTRO_STYLE}>
           Connect Apple Health, Garmin, and location here. Staff tooling stays out of normal consumer settings.
         </div>
       </div>
       {showProtectedDiagnostics && (
-        <div data-testid="settings-friction-summary" style={{ border:"1px solid #243752", borderRadius:14, background:"#0f172a", padding:"0.7rem", display:"grid", gap:"0.5rem" }}>
+        <div data-testid="settings-friction-summary" style={SETTINGS_PANEL_STYLE}>
           <div style={{ display:"grid", gap:"0.12rem" }}>
             <div className="sect-title" style={{ color:"#dbe7f6", marginBottom:0 }}>Staff diagnostics</div>
-            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
+            <div style={SETTINGS_BODY_STYLE}>
               Protected device diagnostics for staff/debug use only. Raw counters stay out of normal product surfaces.
             </div>
           </div>
@@ -102,7 +114,7 @@ export function SettingsAdvancedSection({
         </div>
       )}
       {showInternalSettingsTools && !showProtectedDiagnostics && (
-        <div style={{ border:"1px dashed #243752", borderRadius:14, background:"#0b1220", padding:"0.58rem 0.62rem", fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
+        <div style={{ ...SETTINGS_SUBPANEL_STYLE, borderStyle:"dashed" }}>
           Staff diagnostics are hidden unless protected diagnostics mode is enabled.
         </div>
       )}
@@ -119,7 +131,7 @@ export function SettingsAdvancedSection({
               ))}
             </select>
             <input value={resolvedGoalRequest.intent} onChange={(e) => resolvedGoalRequest.onIntentChange(e.target.value)} placeholder="Optional plain-English goal request" />
-            <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+            <div style={SETTINGS_ACTION_ROW_STYLE}>
               <button className="btn btn-primary" onClick={resolvedGoalRequest.onPreview} disabled={resolvedGoalRequest.previewing || resolvedGoalRequest.applying} style={{ fontSize:"0.5rem" }}>
                 {resolvedGoalRequest.previewing ? "Previewing..." : "Preview"}
               </button>
@@ -175,17 +187,17 @@ export function SettingsAdvancedSection({
             {integrationCards.map(([label, state]) => {
               const tone = resolvedIntegrations.getTone(state.state);
               return (
-                <div key={label} style={{ border:"1px solid #243752", borderRadius:10, background:"#0f172a", padding:"0.48rem 0.52rem" }}>
+                <div key={label} style={SETTINGS_SUBPANEL_STYLE}>
                   <div style={{ display:"flex", justifyContent:"space-between", gap:"0.3rem", alignItems:"center", flexWrap:"wrap" }}>
-                    <div style={{ fontSize:"0.5rem", color:"#dbe7f6" }}>{label}</div>
-                    <span style={{ fontSize:"0.45rem", color:tone.color, background:tone.bg, padding:"0.12rem 0.34rem", borderRadius:999 }}>{state.label}</span>
+                    <div style={{ ...SETTINGS_TITLE_STYLE, fontSize:"0.52rem" }}>{label}</div>
+                    <span style={buildSettingsPillStyle({ color:tone.color, background:tone.bg, borderColor:"transparent" })}>{state.label}</span>
                   </div>
-                  <div style={{ fontSize:"0.47rem", color:"#8fa5c8", marginTop:"0.12rem", lineHeight:1.45 }}>{state.summary}</div>
+                  <div style={{ ...SETTINGS_BODY_STYLE, fontSize:"0.47rem" }}>{state.summary}</div>
                 </div>
               );
             })}
           </div>
-          <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+          <div style={SETTINGS_ACTION_ROW_STYLE}>
             <button className="btn" onClick={resolvedIntegrations.onRequestAppleHealth} style={{ fontSize:"0.48rem", color:colors.blue, borderColor:colors.blue + "35" }}>Connect Apple Health</button>
             <button className="btn" onClick={resolvedIntegrations.onConnectGarmin} disabled={resolvedIntegrations.garminBusy !== ""} style={{ fontSize:"0.48rem", color:colors.green, borderColor:colors.green + "35" }}>
               {resolvedIntegrations.garminBusy === "connect" ? "Connecting..." : "Connect Garmin"}

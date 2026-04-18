@@ -117,7 +117,8 @@ const openTab = async (page, testId) => {
   await page.getByTestId(testId).click({ force: true });
 };
 
-const getHydrationButton = (page) => page.locator(".card").filter({ hasText: "HYDRATION / SUPPLEMENT" }).getByRole("button").first();
+const getHydrationCard = (page) => page.locator(".card").filter({ hasText: "HYDRATION & SUPPLEMENTS" }).first();
+const getHydrationButton = (page) => getHydrationCard(page).getByRole("button", { name: /Tap to add 12 oz/i });
 
 const readHydrationNumbers = async (page) => {
   const text = await getHydrationButton(page).innerText();
@@ -129,6 +130,11 @@ const readHydrationNumbers = async (page) => {
     loggedOz: Number(match[1]),
     targetOz: Number(match[2]),
   };
+};
+
+const clickHydrationButton = async (page) => {
+  const button = getHydrationButton(page);
+  await button.evaluate((node) => node.click());
 };
 
 test("Settings account controls show visible feedback and sign-out result", async ({ page }) => {
@@ -151,23 +157,23 @@ test("Settings account controls show visible feedback and sign-out result", asyn
   await expect(page.getByTestId("settings-sync-status")).toBeVisible();
   await expect(page.getByTestId("settings-sync-status")).toContainText(/Cloud and device are aligned|Synced/i);
 
-  await page.getByRole("button", { name: "Reload cloud data" }).click();
+  await page.getByRole("button", { name: "Refresh from account" }).click();
   await expect(page.getByText(/Reloaded cloud data|Cloud data could not be reloaded right now/i)).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByText("Sign in to cloud account")).toBeVisible();
+  await expect(page.getByText("Sign in to sync")).toBeVisible();
 });
 
 test("Nutrition hydration logging stays usable across and above target", async ({ page }) => {
   await openApp(page);
   await openTab(page, "app-tab-nutrition");
-  await expect(page.getByText("TODAY'S MEAL STRATEGY")).toBeVisible();
+  await expect(page.getByText("TODAY'S FOOD PLAN")).toBeVisible();
 
   const before = await readHydrationNumbers(page);
   for (let index = 0; index < 12; index += 1) {
     const current = await readHydrationNumbers(page);
     if (current.loggedOz > current.targetOz) break;
-    await getHydrationButton(page).click();
+    await clickHydrationButton(page);
     await expect.poll(async () => (await readHydrationNumbers(page)).loggedOz).toBeGreaterThan(current.loggedOz);
   }
   const after = await readHydrationNumbers(page);
@@ -180,10 +186,10 @@ test("Nutrition hydration logging stays usable across and above target", async (
 test("Nutrition hides supplement checklist until a stored plan exists", async ({ page }) => {
   await openApp(page);
   await openTab(page, "app-tab-nutrition");
-  await expect(page.getByText("TODAY'S MEAL STRATEGY")).toBeVisible();
+  await expect(page.getByText("TODAY'S FOOD PLAN")).toBeVisible();
 
-  const hydrationCard = page.locator(".card").filter({ hasText: "HYDRATION / SUPPLEMENT" });
-  await expect(hydrationCard.getByText("No supplement checklist is shown until a stored supplement plan is attached to today.")).toBeVisible();
+  const hydrationCard = getHydrationCard(page);
+  await expect(hydrationCard).toContainText(/No approved supplement stack yet\. Add only the supplements you actually use\.|No supplement stack is approved yet\. Add only the supplements you actually use\./i);
   await expect(hydrationCard.getByRole("button", { name: "Why" })).toHaveCount(0);
 });
 
@@ -198,7 +204,7 @@ test("Coach keeps only applied-action surfaces visible", async ({ page }) => {
   await expect(page.getByPlaceholder("Anthropic key (optional)")).toHaveCount(0);
 
   await page.getByTestId("coach-preview-adjust-today").click();
-  await expect(page.getByTestId("coach-action-preview")).toContainText(/Week \d+ volume target becomes|Nothing changes until/i);
+  await expect(page.getByTestId("coach-action-preview")).toContainText(/Likely effect|Today becomes|This week lands at|gets lighter/i);
 });
 
 test("Program and Log history copy stays free of internal jargon", async ({ page }) => {
@@ -223,13 +229,13 @@ test("Program and Log history copy stays free of internal jargon", async ({ page
   await expect(dayReviewPrimary.getByText("Why It Mattered", { exact: true })).toBeVisible();
   await expect(dayReviewPrimary.getByText("What changes next", { exact: true })).toBeVisible();
   await expect(dayReviewPrimary.getByText(/Capture \d+:|Saved because:|Durability:/i)).toHaveCount(0);
-  await expect(page.getByText("WEEK REVIEW HISTORY")).toHaveCount(1);
+  await expect(page.getByText("SAVED WEEK STORIES")).toHaveCount(1);
   await expect(page.getByText(/Rev\s+\d+\s+of\s+\d+/i)).toHaveCount(0);
   await expect(page.getByText(/durable\s+PlanWeek|canonical\s+PlanWeek|PlanWeek snapshot/i)).toHaveCount(0);
 
-  await dayReview.getByText("Audit mode").click();
-  await expect(dayReview.getByText("Plan capture history")).toBeVisible();
-  await expect(dayReview.getByText(/Saved because:/i)).toBeVisible();
+  await dayReview.getByText("More detail").click();
+  await expect(dayReview.getByText("Saved version history", { exact: true })).toBeVisible();
+  await expect(dayReview.getByText(/Reason:/i)).toBeVisible();
 });
 
 test("Today keeps one workout surface and Log keeps detailed entry inside Log workout", async ({ page }) => {

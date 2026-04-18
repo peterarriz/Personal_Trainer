@@ -1,6 +1,12 @@
 import React from "react";
 
 import { SettingsFieldRow } from "./SettingsFieldRow.jsx";
+import {
+  SETTINGS_PANEL_STYLE,
+  SETTINGS_SECTION_HEADER_STYLE,
+  SETTINGS_SECTION_INTRO_STYLE,
+  SETTINGS_SECTION_STYLE,
+} from "./settings-ui.js";
 
 export function SettingsProfileSection({
   colors,
@@ -14,14 +20,14 @@ export function SettingsProfileSection({
   };
 
   return (
-    <section data-testid="settings-profile-section" style={{ borderTop:"1px solid var(--border)", paddingTop:"0.75rem", display:"grid", gap:"0.35rem" }}>
-      <div style={{ display:"grid", gap:"0.14rem" }}>
+    <section data-testid="settings-profile-section" style={SETTINGS_SECTION_STYLE}>
+      <div style={SETTINGS_SECTION_HEADER_STYLE}>
         <div className="sect-title" style={{ color:"var(--brand-accent)", marginBottom:0 }}>PROFILE</div>
-        <div style={{ fontSize:"0.56rem", color:"var(--text-soft)", lineHeight:1.5 }}>
+        <div style={SETTINGS_SECTION_INTRO_STYLE}>
           Keep the athlete basics clear: identity, units, body metrics, and training age.
         </div>
       </div>
-      <div style={{ border:"1px solid var(--border)", borderRadius:12, background:"var(--surface-1)", padding:"0.55rem 0.75rem", display:"grid", gap:"0.1rem" }}>
+      <div style={{ ...SETTINGS_PANEL_STYLE, gap:"0.12rem" }}>
         <SettingsFieldRow label="Display name" helper="Shown across the app and coach surfaces.">
           <div style={{ maxWidth:360 }}>
             <input value={accountProfileDraft.name || ""} onChange={(e) => handleDraftPatch({ name: e.target.value })} placeholder="Display name" />
@@ -80,7 +86,7 @@ export function SettingsProfileSection({
             <input type="number" min="0" max="60" value={accountProfileDraft.trainingAgeYears || ""} onChange={(e) => handleDraftPatch({ trainingAgeYears: e.target.value })} placeholder="5" />
           </div>
         </SettingsFieldRow>
-        <button className="btn" onClick={onSaveProfile} style={{ width:"fit-content", fontSize:"0.52rem", color:"var(--brand-accent)", borderColor:"var(--cta-border)", marginTop:"0.3rem" }}>
+        <button className="btn btn-primary" onClick={onSaveProfile} style={{ width:"fit-content", fontSize:"0.52rem", marginTop:"0.36rem" }}>
           Save profile
         </button>
       </div>

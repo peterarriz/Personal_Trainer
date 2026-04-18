@@ -21,9 +21,9 @@ const expectNoFakeTranscript = async (page) => {
 };
 
 const expectStructuredSetupCopy = async (page) => {
-  await expect(page.getByTestId("intake-shell-title")).toContainText("Intake");
-  await expect(page.getByTestId("intake-shell-subtitle")).toContainText("Autosaves as you go.");
-  await expect(page.getByTestId("intake-shell-helper")).toContainText(/change week one/i);
+  await expect(page.getByTestId("intake-shell-title")).toContainText(/intake|getting started/i);
+  await expect(page.getByTestId("intake-shell-subtitle")).toContainText(/saves as you go/i);
+  await expect(page.getByTestId("intake-shell-helper")).toContainText(/first week/i);
 };
 
 const expectNoFauxChatCopy = async (page) => {
@@ -48,6 +48,16 @@ const expectNoLaneTheater = async (page) => {
   await expect(page.getByText("We will maintain", { exact: true })).toHaveCount(0);
   await expect(page.getByText("We will support in the background", { exact: true })).toHaveCount(0);
   await expect(page.getByText("We are deferring", { exact: true })).toHaveCount(0);
+};
+
+const expectPostIntakeReadyState = async (page) => {
+  await expect(page.getByTestId("post-intake-ready-card")).toBeVisible();
+  await expect(page.getByTestId("post-intake-ready-headline")).toContainText("ready");
+  await expect(page.getByTestId("post-intake-ready-first-action")).toBeVisible();
+  await expect(page.getByTestId("post-intake-ready-week-shape")).toBeVisible();
+  await expect(page.getByTestId("post-intake-ready-roadmap")).toBeVisible();
+  await expect(page.getByTestId("post-intake-ready-adapts")).toBeVisible();
+  await expect(page.getByTestId("post-intake-ready-checklist")).toBeVisible();
 };
 
 const readGoalCardSummaries = async (page, cardTestId) => (
@@ -131,7 +141,9 @@ test.describe("intake onboarding e2e", () => {
 
     const cache = await readLocalCache(page);
     expect(cache?.personalization?.profile?.onboardingComplete).toBe(true);
+    expect(cache?.personalization?.profile?.weekOneReadyDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     await expect.poll(() => readIntakeSession(page)).toBeNull();
+    await expectPostIntakeReadyState(page);
   });
 
   test("vague appearance goal shows proxies and a first 30-day win before any clarification", async ({ page }) => {

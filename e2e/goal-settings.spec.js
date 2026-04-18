@@ -19,6 +19,7 @@ const buildGoal = ({
   targetHorizonWeeks = null,
   primaryMetric = null,
   proxyMetrics = [],
+  unresolvedGaps = [],
 } = {}) => ({
   id: runtimeId,
   goalRecordId: recordId,
@@ -52,7 +53,7 @@ const buildGoal = ({
     confidence: "medium",
     measurabilityTier: primaryMetric?.targetValue ? "fully_measurable" : proxyMetrics.length ? "proxy_measurable" : "exploratory_fuzzy",
     tradeoffs: category === "strength" ? ["Strength focus can steal some recovery from running."] : [],
-    unresolvedGaps: [],
+    unresolvedGaps,
     reviewCadence: "weekly",
     refinementTrigger: "30_day_resolution_review",
   },
@@ -100,6 +101,7 @@ const buildSeedState = () => ({
           priority: 3,
           targetDate: "2026-07-01",
           proxyMetrics: [{ key: "waist", label: "Waist trend", unit: "in" }],
+          unresolvedGaps: ["Target shape still needs tightening."],
         }),
         {
           id: "g_resilience",
@@ -205,6 +207,15 @@ test("Settings goals management reprioritizes with preview before commit", async
 
   await expect(page.getByTestId("settings-goal-card-goal_bench_record")).toContainText("Priority 1");
   await expect(page.getByTestId("settings-goal-card-goal_running_record")).toContainText("Priority 2");
+});
+
+test("Settings goals cards let the user repair open target details in place", async ({ page }) => {
+  await openGoalManagement(page);
+
+  await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toContainText("Still open: Target shape still needs tightening.");
+  await page.getByTestId("settings-goal-fix-clarity-goal_cut_record").click();
+  await expect(page.getByTestId("settings-goal-editor")).toBeVisible();
+  await expect(page.getByTestId("settings-goal-editor-summary")).toHaveValue("Get lean for summer");
 });
 
 test("Settings goals management edits a dated goal into an open-ended goal with preview", async ({ page }) => {

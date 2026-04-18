@@ -47,9 +47,9 @@ test.describe("program inline session detail", () => {
 
     await expect(page.getByTestId("program-roadmap")).toContainText("15-WEEK ROADMAP");
     await expect(page.getByTestId("program-roadmap-grid").locator("[data-testid^='program-roadmap-week-']")).toHaveCount(15);
-    await expect(page.getByTestId("program-future-weeks")).toContainText("NEAR-TERM ADAPTIVE DETAIL");
+    await expect(page.getByTestId("program-future-weeks")).toContainText("COMING UP");
     await expect(page.getByTestId("program-future-weeks")).not.toContainText("LATER PHASES");
-    await expect(page.getByText(/saved week snapshot.*next 15 weeks stay projected/i).first()).toBeVisible();
+    await expect(page.getByText(/next 15 weeks stay visible/i).first()).toBeVisible();
   });
 
   test("current week grid makes today visually obvious at a glance", async ({ page }) => {
@@ -60,6 +60,24 @@ test.describe("program inline session detail", () => {
     await expect(weekGrid).toBeVisible();
     await expect(weekGrid.locator("[data-current-day='true']")).toHaveCount(1);
     await expect(weekGrid.locator("[data-current-day='true']")).toContainText("TODAY");
+  });
+
+  test("program repairs plan inputs inline instead of sending the user into Settings", async ({ page }) => {
+    await completeRunningOnboarding(page);
+    await page.getByTestId("app-tab-program").click();
+
+    await page.getByTestId("program-fix-metrics").click();
+    await expect(page.getByTestId("program-inline-repair")).toBeVisible();
+    await expect(page.getByTestId("metrics-baselines-section")).toBeVisible();
+    await page.getByTestId("metrics-input-environment-mode").selectOption("Gym");
+    await page.getByTestId("metrics-input-environment-equipment").selectOption("full_gym");
+    await page.getByTestId("metrics-input-environment-items").fill("rack, barbell, dumbbells");
+    await page.getByTestId("metrics-input-environment-time").selectOption("45");
+    await page.getByTestId("metrics-save-environment").click();
+
+    await expect(page.getByTestId("program-inline-repair")).toContainText("Saved. Future planning now uses your current setup.");
+    await expect(page.getByTestId("program-tab")).toBeVisible();
+    await expect(page.getByTestId("settings-tab")).toHaveCount(0);
   });
 
   test("current week opens detail in the anchored panel and keeps only one row selected", async ({ page }) => {
@@ -77,7 +95,7 @@ test.describe("program inline session detail", () => {
     const secondButton = secondRow.locator("[data-testid^='program-this-week-session-button-']");
 
     await expect(detailPanel).toBeVisible();
-    await expect(detailPanel).toContainText("Select a current-week day");
+    await expect(detailPanel).toContainText("Choose a day in this week");
 
     await firstButton.focus();
     await firstButton.press("Enter");
@@ -102,7 +120,7 @@ test.describe("program inline session detail", () => {
     await secondButton.click();
     await expect(secondButton).toHaveAttribute("aria-expanded", "false");
     await expect(detailPanel.getByTestId("planned-session-plan")).toHaveCount(0);
-    await expect(detailPanel).toContainText("Select a current-week day");
+    await expect(detailPanel).toContainText("Choose a day in this week");
   });
 
   test("keyboard navigation moves between days and current-week selection survives rerenders", async ({ page }) => {
@@ -135,7 +153,7 @@ test.describe("program inline session detail", () => {
     await secondButton.press("Escape");
     await expect(secondButton).toHaveAttribute("aria-expanded", "false");
     await expect(detailPanel.getByTestId("planned-session-plan")).toHaveCount(0);
-    await expect(detailPanel).toContainText("Select a current-week day");
+    await expect(detailPanel).toContainText("Choose a day in this week");
   });
 
   test("future week preview opens detail in the adjacent panel", async ({ page }) => {
@@ -156,7 +174,7 @@ test.describe("program inline session detail", () => {
     const secondButton = secondRow.locator("[data-testid^='program-future-week-session-button-']");
 
     await expect(detailPanel).toBeVisible();
-    await expect(detailPanel).toContainText("Select a projected day");
+    await expect(detailPanel).toContainText("Choose an upcoming day");
 
     await firstButton.click();
     await expect(firstButton).toHaveAttribute("aria-expanded", "true");
@@ -176,7 +194,7 @@ test.describe("program inline session detail", () => {
     await secondButton.click();
     await expect(secondButton).toHaveAttribute("aria-expanded", "false");
     await expect(detailPanel.getByTestId("planned-session-plan")).toHaveCount(0);
-    await expect(detailPanel).toContainText("Select a projected day");
+    await expect(detailPanel).toContainText("Choose an upcoming day");
   });
 
   test("hybrid run-plus-strength roadmap keeps strength touches visible in the zoomed-out view", async ({ page }) => {
