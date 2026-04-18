@@ -1861,7 +1861,7 @@ test("final review keeps running lead, maintained bench goal, and background abs
     reviewModel.reviewContract.lane_sections.map((section) => section.title),
     ["Priority 1", "Priority 2", "Priority 3", "Priorities 4+"]
   );
-  assert.equal(reviewModel.reviewContract.actions.confirm.label, "Confirm and build my plan");
+  assert.equal(reviewModel.reviewContract.actions.confirm.label, "Build my plan");
   assert.equal(reviewModel.reviewContract.actions.changePriority.label, "Reorder goals");
   assert.equal(reviewModel.reviewContract.actions.editGoal.label, "Edit a goal");
   assert.equal(reviewModel.reviewContract.actions.dropGoal.label, "Drop a goal");

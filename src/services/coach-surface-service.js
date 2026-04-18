@@ -162,22 +162,22 @@ export const buildCoachQuickChangeActions = ({
 
 const describeCoachActionPreviewSummary = (action = null) => {
   const type = sanitizeText(action?.type || "", 80).toUpperCase();
-  if (type === COACH_TOOL_ACTIONS.SWAP_TODAY_RECOVERY) return "Start with recovery instead of forcing the planned workload.";
-  if (type === COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME) return "Take pressure off this week while keeping the plan direction intact.";
-  if (type === COACH_TOOL_ACTIONS.CONVERT_RUN_TO_LOW_IMPACT || type === COACH_TOOL_ACTIONS.REPLACE_SPEED_EASY) return "Swap the riskier session for an easier low-impact version.";
-  if (type === COACH_TOOL_ACTIONS.REDUCE_LONG_RUN_AGGRESSIVENESS) return "Keep the long run progressing, but take the sharp edge off the build.";
-  if (type === COACH_TOOL_ACTIONS.SIMPLIFY_MEALS_THIS_WEEK || type === COACH_TOOL_ACTIONS.USE_DEFAULT_MEAL_STRUCTURE_3_DAYS) return "Trade food complexity for a simpler structure you can repeat.";
-  if (type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS || type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE) return "Switch to a travel-friendly nutrition setup that is easier to follow.";
-  if (type === COACH_TOOL_ACTIONS.SET_PAIN_STATE || type === COACH_TOOL_ACTIONS.ADD_ACHILLES_BLOCK) return "Shift the next stretch toward pain-aware modifications.";
-  if (type === COACH_TOOL_ACTIONS.INSERT_DELOAD_WEEK) return "Line up a lighter next week before you lock it in.";
-  if (type === COACH_TOOL_ACTIONS.MOVE_LONG_RUN) return "Move the long run later instead of stacking it into a bad day.";
-  if (type === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) return "Realign today's nutrition with the training day you actually need.";
-  if (type === COACH_TOOL_ACTIONS.INCREASE_PRELONGRUN_CARBS) return "Add a little more fuel before the long run so the session feels steadier.";
-  if (type === COACH_TOOL_ACTIONS.INCREASE_CALORIES_SLIGHTLY) return "Add a little more food support so recovery and training quality stay steady.";
-  if (type === COACH_TOOL_ACTIONS.REDUCE_DEFICIT_AGGRESSIVENESS) return "Ease the diet pressure so the plan stays easier to execute.";
-  if (type === COACH_TOOL_ACTIONS.SHIFT_CARBS_AROUND_WORKOUT) return "Move more fuel around training so the work feels better supported.";
-  if (type === COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS) return "Nudge strength emphasis forward without silently changing the whole plan.";
-  return "Look over the coach's change before you use it.";
+  if (type === COACH_TOOL_ACTIONS.SWAP_TODAY_RECOVERY) return "Recovery is the better call than forcing today's full workload.";
+  if (type === COACH_TOOL_ACTIONS.REDUCE_WEEKLY_VOLUME) return "This week needs less pressure, not a full rebuild.";
+  if (type === COACH_TOOL_ACTIONS.CONVERT_RUN_TO_LOW_IMPACT || type === COACH_TOOL_ACTIONS.REPLACE_SPEED_EASY) return "A lower-impact version keeps the signal without forcing the same risk.";
+  if (type === COACH_TOOL_ACTIONS.REDUCE_LONG_RUN_AGGRESSIVENESS) return "The long run can still move forward without pushing the edge today.";
+  if (type === COACH_TOOL_ACTIONS.SIMPLIFY_MEALS_THIS_WEEK || type === COACH_TOOL_ACTIONS.USE_DEFAULT_MEAL_STRUCTURE_3_DAYS) return "Food needs to get simpler before it gets more ambitious.";
+  if (type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_MEALS || type === COACH_TOOL_ACTIONS.SWITCH_TRAVEL_NUTRITION_MODE) return "Travel calls for a cleaner fallback than the normal home setup.";
+  if (type === COACH_TOOL_ACTIONS.SET_PAIN_STATE || type === COACH_TOOL_ACTIONS.ADD_ACHILLES_BLOCK) return "Your next stretch should respect the pain signal instead of talking around it.";
+  if (type === COACH_TOOL_ACTIONS.INSERT_DELOAD_WEEK) return "A lighter next week is the cleaner call before fatigue stacks higher.";
+  if (type === COACH_TOOL_ACTIONS.MOVE_LONG_RUN) return "The long run belongs on a better day this week.";
+  if (type === COACH_TOOL_ACTIONS.CHANGE_NUTRITION_DAY) return "Today's fueling should match the day you actually need.";
+  if (type === COACH_TOOL_ACTIONS.INCREASE_PRELONGRUN_CARBS) return "The long run needs a little more fuel support going in.";
+  if (type === COACH_TOOL_ACTIONS.INCREASE_CALORIES_SLIGHTLY) return "Recovery needs a small calorie lift right now.";
+  if (type === COACH_TOOL_ACTIONS.REDUCE_DEFICIT_AGGRESSIVENESS) return "The calorie deficit is asking too much from this stretch.";
+  if (type === COACH_TOOL_ACTIONS.SHIFT_CARBS_AROUND_WORKOUT) return "More of your fuel should land closer to the work.";
+  if (type === COACH_TOOL_ACTIONS.PROGRESS_STRENGTH_EMPHASIS) return "Strength is ready for a slightly stronger push.";
+  return "Coach has a clean next move ready.";
 };
 
 const stripCoachPrefix = (value = "", maxLength = 220) => sanitizeText(
@@ -341,6 +341,6 @@ export const buildCoachAskAnythingStateModel = ({
     advisoryOnly: true,
     canMutatePlan: false,
     headline: "Ask for a clear call",
-    detail: "Ask about training, recovery, or nutrition. Coach keeps the answer short and lines up a change when one is worth seeing.",
+    detail: "Ask about training, recovery, or nutrition. Coach answers briefly and only suggests a change when it is worth accepting.",
   };
 };

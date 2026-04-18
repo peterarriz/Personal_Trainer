@@ -5,6 +5,7 @@ const {
   applyIntakeStarterMetrics,
   INTAKE_COPY_DECK,
   INTAKE_STAGE_CONTRACT,
+  buildIntakeStarterFieldSchema,
   buildIntakeStarterGoalTypes,
   buildIntakeStarterMetricQuestions,
   inferIntakeStarterGoalTypeId,
@@ -96,6 +97,10 @@ test("run-race starter metrics combine race setup and baseline in one adaptive s
     "longest_recent_run",
     "recent_pace_baseline",
   ]);
+  assert.deepEqual(
+    questions[1].inputFields.map((field) => field.key),
+    ["current_run_frequency", "longest_recent_run_value", "longest_recent_run_unit", "recent_pace_baseline"]
+  );
 });
 
 test("applying starter metrics stores reusable completeness fields for the first draft", () => {
@@ -104,7 +109,10 @@ test("applying starter metrics stores reusable completeness fields for the first
     goalTypeId: "endurance",
     selection: buildGoalTemplateSelection({ templateId: "open_water_swim" }),
     values: {
-      recent_swim_anchor: "1000 yd in 22:30",
+      recent_swim_distance_value: "1000",
+      recent_swim_distance_unit: "yd",
+      recent_swim_time_minutes: "22",
+      recent_swim_time_seconds: "30",
       swim_access_reality: "open_water",
     },
   });
@@ -112,6 +120,77 @@ test("applying starter metrics stores reusable completeness fields for the first
   assert.equal(outcome.isValid, true);
   assert.equal(outcome.answers.intake_completeness.fields.recent_swim_anchor.raw, "1000 yd in 22:30");
   assert.equal(outcome.answers.intake_completeness.fields.swim_access_reality.value, "open_water");
+});
+
+test("structured running starter metrics convert split baseline inputs into canonical planning fields", () => {
+  const outcome = applyIntakeStarterMetrics({
+    answers: {},
+    goalTypeId: "endurance",
+    selection: buildGoalTemplateSelection({ templateId: "half_marathon" }),
+    values: {
+      event_distance: "half_marathon",
+      target_timeline: "October",
+      current_run_frequency: "4",
+      longest_recent_run_value: "8",
+      longest_recent_run_unit: "miles",
+    },
+  });
+
+  assert.equal(outcome.isValid, true);
+  assert.equal(outcome.answers.intake_completeness.fields.current_run_frequency.value, 4);
+  assert.equal(outcome.answers.intake_completeness.fields.longest_recent_run.raw, "8 miles");
+});
+
+test("improve-big-lifts schema exposes numeric target and baseline fields on the first screen", () => {
+  const schema = buildIntakeStarterFieldSchema({
+    goalTypeId: "strength",
+    selection: buildGoalTemplateSelection({ templateId: "improve_big_lifts" }),
+  });
+
+  assert.equal(schema.length, 2);
+  assert.deepEqual(
+    schema[0].fields.map((field) => field.key),
+    ["lift_focus", "lift_target_weight", "lift_target_reps", "target_timeline"]
+  );
+  assert.deepEqual(
+    schema[1].fields.map((field) => field.key),
+    ["current_strength_baseline_weight", "current_strength_baseline_reps"]
+  );
+});
+
+test("swim schema exposes structured distance, time, and access fields instead of one required free-text anchor", () => {
+  const schema = buildIntakeStarterFieldSchema({
+    goalTypeId: "endurance",
+    selection: buildGoalTemplateSelection({ templateId: "swim_better" }),
+  });
+
+  assert.deepEqual(
+    schema[0].fields.map((field) => field.key),
+    [
+      "recent_swim_distance_value",
+      "recent_swim_distance_unit",
+      "recent_swim_time_minutes",
+      "recent_swim_time_seconds",
+      "swim_access_reality",
+      "goal_focus",
+    ]
+  );
+});
+
+test("hybrid schema keeps the strength baseline on the first screen for direct-build flows", () => {
+  const schema = buildIntakeStarterFieldSchema({
+    goalTypeId: "hybrid",
+    selection: buildGoalTemplateSelection({ templateId: "run_and_lift" }),
+  });
+
+  assert.deepEqual(
+    schema.map((section) => section.key),
+    ["hybrid_profile", "strength_baseline"]
+  );
+  assert.deepEqual(
+    schema[1].fields.map((field) => field.key),
+    ["current_strength_baseline_weight", "current_strength_baseline_reps"]
+  );
 });
 
 test("starter goal type inference keeps custom text out of the preset-first lanes", () => {

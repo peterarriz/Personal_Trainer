@@ -155,7 +155,7 @@ test("Settings account controls show visible feedback and sign-out result", asyn
   await expect(accountSection.getByText("Account & sync")).toBeVisible();
   await expect(accountSection.getByText("Signed in as tester@example.com")).toBeVisible();
   await expect(page.getByTestId("settings-sync-status")).toBeVisible();
-  await expect(page.getByTestId("settings-sync-status")).toContainText(/Cloud and device are aligned|Synced/i);
+  await expect(page.getByTestId("settings-sync-status")).toContainText(/Everything is saved|Up to date/i);
 
   await page.getByRole("button", { name: "Refresh from account" }).click();
   await expect(page.getByText(/Reloaded cloud data|Cloud data could not be reloaded right now/i)).toBeVisible();
@@ -203,8 +203,9 @@ test("Coach keeps only applied-action surfaces visible", async ({ page }) => {
   await expect(page.getByText("MEMORY / SETTINGS")).toHaveCount(0);
   await expect(page.getByPlaceholder("Anthropic key (optional)")).toHaveCount(0);
 
-  await page.getByTestId("coach-preview-adjust-today").click();
-  await expect(page.getByTestId("coach-action-preview")).toContainText(/Likely effect|Today becomes|This week lands at|gets lighter/i);
+  await expect(page.getByTestId("coach-job-card-adjust-today")).toContainText(/Recommendation|Why|Likely effect|Accept/i);
+  await page.getByTestId("coach-job-card-adjust-today-details").locator("summary").click();
+  await expect(page.getByTestId("coach-job-card-adjust-today-details")).toContainText(/protective|volume|lighter|Today becomes|This week lands at/i);
 });
 
 test("Program and Log history copy stays free of internal jargon", async ({ page }) => {
@@ -212,12 +213,10 @@ test("Program and Log history copy stays free of internal jargon", async ({ page
 
   await openTab(page, "app-tab-program");
   await expect(page.getByTestId("program-this-week")).toBeVisible();
-  await expect(page.getByTestId("program-week-review")).toBeVisible();
-  await expect(page.getByTestId("program-week-review")).toContainText("WHAT WAS PLANNED");
-  await expect(page.getByTestId("program-week-review")).toContainText("WHAT CHANGES NEXT");
+  await expect(page.getByTestId("program-week-review")).toHaveCount(0);
   await expect(page.getByText("COMMITTED WEEK HISTORY")).toHaveCount(0);
   await expect(page.getByText(/durable\s+PlanWeek|canonical\s+PlanWeek|PlanWeek snapshot/i)).toHaveCount(0);
-  await expect(page.getByTestId("program-week-review").getByText(/Capture \d+:|revision|Durability:/i)).toHaveCount(0);
+  await expect(page.getByText(/Capture \d+:|revision|Durability:/i)).toHaveCount(0);
 
   await openTab(page, "app-tab-log");
   const logTab = page.getByTestId("log-tab");
@@ -229,13 +228,13 @@ test("Program and Log history copy stays free of internal jargon", async ({ page
   await expect(dayReviewPrimary.getByText("Why It Mattered", { exact: true })).toBeVisible();
   await expect(dayReviewPrimary.getByText("What changes next", { exact: true })).toBeVisible();
   await expect(dayReviewPrimary.getByText(/Capture \d+:|Saved because:|Durability:/i)).toHaveCount(0);
-  await expect(page.getByText("SAVED WEEK STORIES")).toHaveCount(1);
+  await expect(page.getByText("SAVED WEEK STORIES")).toHaveCount(0);
   await expect(page.getByText(/Rev\s+\d+\s+of\s+\d+/i)).toHaveCount(0);
   await expect(page.getByText(/durable\s+PlanWeek|canonical\s+PlanWeek|PlanWeek snapshot/i)).toHaveCount(0);
 
   await dayReview.getByText("More detail").click();
   await expect(dayReview.getByText("Saved version history", { exact: true })).toBeVisible();
-  await expect(dayReview.getByText(/Reason:/i)).toBeVisible();
+  await expect(dayReview.getByText(/Reason:/i)).toHaveCount(0);
 });
 
 test("Today keeps one workout surface and Log keeps detailed entry inside Log workout", async ({ page }) => {
@@ -244,7 +243,8 @@ test("Today keeps one workout surface and Log keeps detailed entry inside Log wo
   const todayTab = page.getByTestId("today-tab");
   await expect(todayTab).toBeVisible();
   await expect(todayTab.getByTestId("planned-session-plan")).toHaveCount(1);
-  await expect(todayTab.getByText("LOG TODAY", { exact: true })).toHaveCount(1);
+  await expect(todayTab.getByTestId("today-primary-cta")).toBeVisible();
+  await expect(todayTab.getByTestId("today-quick-log")).toHaveCount(0);
 
   await openTab(page, "app-tab-log");
   await expect(page.getByTestId("log-tab")).toBeVisible();

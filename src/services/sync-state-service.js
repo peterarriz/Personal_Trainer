@@ -1,6 +1,7 @@
 import { STORAGE_STATUS_REASONS } from "../modules-auth-storage.js";
 
 export const SYNC_STATE_IDS = Object.freeze({
+  loading: "loading",
   synced: "synced",
   syncing: "syncing",
   retrying: "retrying",
@@ -20,6 +21,9 @@ export const SYNC_STATE_TONES = Object.freeze({
 export const SYNC_SURFACE_KEYS = Object.freeze({
   today: "today",
   program: "program",
+  log: "log",
+  nutrition: "nutrition",
+  coach: "coach",
   settings: "settings",
   auth: "auth",
 });
@@ -247,11 +251,13 @@ const buildBaseStatePresentation = ({
   id = SYNC_STATE_IDS.synced,
   reasonKey = "synced",
   tone = SYNC_STATE_TONES.neutral,
-  chipLabel = "Synced",
-  headline = "Cloud and device are aligned",
+  chipLabel = "Up to date",
+  headline = "Everything is saved",
   detail = "",
   assurance = "",
   nextStep = "",
+  compactMessage = "",
+  compactDetail = "",
 } = {}) => ({
   id,
   reasonKey,
@@ -261,6 +267,8 @@ const buildBaseStatePresentation = ({
   detail,
   assurance,
   nextStep,
+  compactMessage: compactMessage || headline || detail,
+  compactDetail: compactDetail || detail || compactMessage || headline,
   needsAttention: tone !== SYNC_STATE_TONES.healthy,
 });
 
@@ -302,14 +310,28 @@ export const buildSyncStateModel = ({
   const unknownBootState = (authInitializing || appLoading) && !storageReason;
   const unknownInitialLocalState = !hasAuthSession && !authInitializing && !appLoading && storageReason === STORAGE_STATUS_REASONS.unknown;
 
-  if ((runtime.cloudSyncInFlight || storageStatus?.mode === "syncing" || unknownBootState) && !shouldFavorRetryingState) {
+  if (unknownBootState) {
+    return buildBaseStatePresentation({
+      id: SYNC_STATE_IDS.loading,
+      reasonKey: "loading",
+      tone: SYNC_STATE_TONES.neutral,
+      chipLabel: "Loading",
+      headline: "Checking your saved data",
+      detail: "This usually takes a moment.",
+      compactMessage: "Checking your saved data.",
+    });
+  }
+
+  if ((runtime.cloudSyncInFlight || storageStatus?.mode === "syncing") && !shouldFavorRetryingState) {
+    const refreshMode = /reload|resync/i.test(String(runtime?.activeSource || ""));
     return buildBaseStatePresentation({
       id: SYNC_STATE_IDS.syncing,
-      reasonKey: "syncing",
+      reasonKey: refreshMode ? "refreshing" : "saving",
       tone: SYNC_STATE_TONES.neutral,
-      chipLabel: "Syncing",
-      headline: "Syncing in background",
-      detail: detail || "Cloud copy is updating in the background.",
+      chipLabel: refreshMode ? "Refreshing" : "Saving",
+      headline: refreshMode ? "Refreshing from your account" : "Saving to your account",
+      detail: detail || (refreshMode ? "The latest saved copy is loading." : "Recent changes are on their way."),
+      compactMessage: refreshMode ? "Refreshing from your account." : "Saving to your account.",
     });
   }
 
@@ -319,10 +341,11 @@ export const buildSyncStateModel = ({
       reasonKey: "provider_unavailable",
       tone: SYNC_STATE_TONES.critical,
       chipLabel: "Cloud unavailable",
-      headline: "Cloud sync is unavailable",
-      detail: detail || authErrorText || "The cloud provider is unavailable or misconfigured, so FORMA is staying local on this device.",
-      assurance: "Local training data remains usable on this device.",
-      nextStep: "Keep using this device locally for now. Cloud features return once the deployment is fixed.",
+      headline: "Account sync is unavailable",
+      detail: detail || authErrorText || "FORMA kept this device running because the cloud setup is unavailable right now.",
+      assurance: "Your local training copy is still usable here.",
+      nextStep: "Keep using this device locally for now. Account sync returns after the deployment is fixed.",
+      compactMessage: "Account sync is unavailable.",
     });
   }
 
@@ -332,10 +355,11 @@ export const buildSyncStateModel = ({
       reasonKey: "data_incompatible",
       tone: SYNC_STATE_TONES.critical,
       chipLabel: "Needs review",
-      headline: "Sync needs review before cloud data can replace this device",
-      detail: detail || "Cloud data could not be applied safely, so FORMA kept local data active instead of guessing.",
-      assurance: "The current local copy remains the authoritative state on this device.",
-      nextStep: "Review the deployment data and reload cloud data when ready.",
+      headline: "We need your help before replacing saved data",
+      detail: detail || "This device kept its newer copy instead of guessing between versions.",
+      assurance: "Nothing was deleted on this device.",
+      nextStep: "Open Settings and refresh from your account after you review the mismatch.",
+      compactMessage: "Saved data needs review.",
     });
   }
 
@@ -345,21 +369,29 @@ export const buildSyncStateModel = ({
       reasonKey: runtime.realtimeInterrupted ? "realtime_interrupted" : "stale_after_retry",
       tone: SYNC_STATE_TONES.caution,
       chipLabel: "Cloud behind",
-      headline: "Cloud slightly behind",
-      detail: runtime.realtimeInterrupted
-        ? "Cloud copy may be a little behind this device right now."
-        : "Cloud copy may be a little behind this device right now.",
+      headline: "This device has newer changes",
+      detail: "Other devices may still be a step behind right now.",
+      assurance: "Keep using this device while the account copy catches up.",
+      nextStep: "If this stays stuck, refresh from your account in Settings.",
+      compactMessage: "Other devices may still be behind.",
     });
   }
 
   if (storageReason === STORAGE_STATUS_REASONS.transient || runtime.retryEligible) {
+    const retryReason = inferRetryReasonKey({ storageStatus, syncRuntime: runtime });
+    const retryDetail = retryReason === "network"
+      ? "Connection needs a moment before your account catches up."
+      : "We are still sending the latest changes to your account.";
     return buildBaseStatePresentation({
       id: SYNC_STATE_IDS.retrying,
-      reasonKey: inferRetryReasonKey({ storageStatus, syncRuntime: runtime }),
+      reasonKey: retryReason,
       tone: SYNC_STATE_TONES.caution,
-      chipLabel: "Retrying",
-      headline: "Retrying cloud sync",
-      detail: "Cloud sync is retrying in the background.",
+      chipLabel: "Saved here",
+      headline: "Saved on this device",
+      detail: retryDetail,
+      assurance: "You do not need to enter it again.",
+      nextStep: "No action is needed unless this keeps happening.",
+      compactMessage: `Saved here. ${retryDetail}`,
     });
   }
 
@@ -380,39 +412,99 @@ export const buildSyncStateModel = ({
       isOnline: browserOnline,
       hasLocalCache,
     });
-    const detailByReason = {
-      browser_offline: "Internet is offline, so FORMA is running from local data only for now.",
-      browser_offline_with_cache: "Internet is offline, so FORMA is using the training data already saved on this device.",
-      signed_out: "Cloud sync is paused until you sign back in.",
-      session_expired: "Your cloud session ended, so FORMA stayed on local data instead of discarding work.",
-      device_reset: "This device was cleared locally. Sign in to reload cloud data or keep going with a blank local start.",
-      account_deleted: "The cloud account was removed from this device. Local storage is now in a device-only state.",
-      setup_incomplete_local: "Setup is still in progress, so FORMA is keeping intake changes on this device until onboarding finishes.",
-      local_only_with_cache: "This device has a local training copy available even without cloud sign-in.",
-      local_only_blank: "This device is ready to start locally even before cloud sign-in is active.",
-      offline_local: "FORMA is staying local on this device until cloud access returns.",
+    const copyByReason = {
+      browser_offline: {
+        chipLabel: "Offline",
+        headline: "You are offline",
+        detail: "Changes stay on this device until you reconnect.",
+        assurance: "Nothing you save here is lost when the signal drops.",
+        nextStep: "Reconnect when you want your other devices to update.",
+        compactMessage: "Offline. Saving here for now.",
+      },
+      browser_offline_with_cache: {
+        chipLabel: "Offline",
+        headline: "You are offline",
+        detail: "This device is using the training copy it already saved locally.",
+        assurance: "Nothing you save here is lost when the signal drops.",
+        nextStep: "Reconnect when you want your other devices to update.",
+        compactMessage: "Offline. Saving here for now.",
+      },
+      signed_out: {
+        chipLabel: "Signed out",
+        headline: "This device is no longer linked to your account",
+        detail: "Your local copy is still here.",
+        assurance: "You can keep using this device.",
+        nextStep: "Sign in when you want sync and recovery back.",
+        compactMessage: "Signed out. This device keeps its copy.",
+      },
+      session_expired: {
+        chipLabel: "Sign in again",
+        headline: "Your account session ended",
+        detail: "This device kept its local copy instead of discarding work.",
+        assurance: "Recent work is still here on this device.",
+        nextStep: "Sign in again when you want sync back.",
+        compactMessage: "Session ended. This device kept your copy.",
+      },
+      device_reset: {
+        chipLabel: "Fresh start",
+        headline: "This device was cleared",
+        detail: "Sign in to reload your account copy or keep going locally from a blank start.",
+        assurance: "",
+        nextStep: "Choose sign in if you want your account data back here.",
+        compactMessage: "This device was cleared.",
+      },
+      account_deleted: {
+        chipLabel: "Account removed",
+        headline: "Your account was removed from this device",
+        detail: "The saved account connection is gone, so this device is now local only.",
+        assurance: "",
+        nextStep: "Create a new account if you want sync again.",
+        compactMessage: "Account removed from this device.",
+      },
+      setup_incomplete_local: {
+        chipLabel: "Finish setup",
+        headline: "Finish setup before this starts syncing",
+        detail: "Your intake progress stays on this device until onboarding is done.",
+        assurance: "You can keep going without losing this setup.",
+        nextStep: "Finish setup when you want account sync to begin.",
+        compactMessage: "Finish setup to start syncing.",
+      },
+      local_only_with_cache: {
+        chipLabel: "This device only",
+        headline: "This device is using its saved local copy",
+        detail: "You can keep training here without an account.",
+        assurance: "Local data stays here until you reset this device.",
+        nextStep: "Sign in when you want sync and backup.",
+        compactMessage: "This device is using its saved local copy.",
+      },
+      local_only_blank: {
+        chipLabel: "This device only",
+        headline: "This device is ready to start locally",
+        detail: "You can use FORMA here before connecting an account.",
+        assurance: "",
+        nextStep: "Create or sign in to an account when you want sync and backup.",
+        compactMessage: "This device is ready to start locally.",
+      },
+      offline_local: {
+        chipLabel: "This device only",
+        headline: "This device is staying local for now",
+        detail: "FORMA is keeping the latest copy on this device until account access returns.",
+        assurance: "You can keep using this device.",
+        nextStep: "Sign in when you want sync back.",
+        compactMessage: "This device is saving locally for now.",
+      },
     };
-    const nextStepByReason = {
-      browser_offline: "Reconnect when you want cloud sync back.",
-      browser_offline_with_cache: "Reconnect when you want cloud sync back.",
-      signed_out: "Sign in when you want sync, backup, and account recovery back.",
-      session_expired: "Sign in again when you want cloud sync back.",
-      device_reset: "Choose sign-in if you want the cloud copy, or continue locally to start fresh.",
-      account_deleted: "Create a new account if you want cloud sync again.",
-      setup_incomplete_local: "Finish onboarding when you want this device to start syncing to cloud.",
-      local_only_with_cache: "Sign in when you want sync, backup, and account recovery back.",
-      local_only_blank: "Create or sign in to a cloud account when you want sync and recovery.",
-      offline_local: "Sign in when cloud sync should resume.",
-    };
+    const resolvedCopy = copyByReason[reasonKey] || copyByReason.offline_local;
     return buildBaseStatePresentation({
       id: SYNC_STATE_IDS.offlineLocal,
       reasonKey,
       tone: SYNC_STATE_TONES.neutral,
-      chipLabel: "Device-only",
-      headline: "This device is running locally without cloud sync",
-      detail: detailByReason[reasonKey] || detail || "FORMA is staying local on this device for now.",
-      assurance: "Local resilience stays active unless you explicitly clear this device.",
-      nextStep: nextStepByReason[reasonKey] || "Sign in when you want cloud sync back.",
+      chipLabel: resolvedCopy.chipLabel,
+      headline: resolvedCopy.headline,
+      detail: detail || resolvedCopy.detail,
+      assurance: resolvedCopy.assurance,
+      nextStep: resolvedCopy.nextStep,
+      compactMessage: resolvedCopy.compactMessage,
     });
   }
 
@@ -421,11 +513,12 @@ export const buildSyncStateModel = ({
       id: SYNC_STATE_IDS.synced,
       reasonKey: "synced",
       tone: SYNC_STATE_TONES.healthy,
-      chipLabel: "Synced",
-      headline: "Cloud and device are aligned",
-      detail: detail || "Cloud sync is current and this device still keeps a local copy for resilience.",
-      assurance: "You can keep training if the connection drops later.",
+      chipLabel: "Up to date",
+      headline: "Everything is saved",
+      detail: detail || "This device and your account match.",
+      assurance: "This device still keeps a local copy for resilience.",
       nextStep: "No action needed.",
+      compactMessage: "Everything saved.",
     });
   }
 
@@ -433,11 +526,12 @@ export const buildSyncStateModel = ({
     id: SYNC_STATE_IDS.offlineLocal,
     reasonKey: "offline_local",
     tone: SYNC_STATE_TONES.neutral,
-    chipLabel: "Device-only",
-    headline: "This device is running locally without cloud sync",
-    detail: detail || "FORMA is keeping this device active locally while cloud status settles.",
-    assurance: "Local resilience stays active unless you explicitly clear this device.",
-    nextStep: "Sign in when you want cloud sync back.",
+    chipLabel: "This device only",
+    headline: "This device is saving locally for now",
+    detail: detail || "FORMA kept the latest copy on this device while account status settles.",
+    assurance: "You can keep using this device.",
+    nextStep: "Sign in when you want sync back.",
+    compactMessage: "This device is saving locally for now.",
   });
 };
 
@@ -553,7 +647,13 @@ const createSurfaceModel = ({
   surface = SYNC_SURFACE_KEYS.today,
 } = {}) => {
   const state = syncState || buildSyncStateModel();
-  const compact = surface === SYNC_SURFACE_KEYS.today || surface === SYNC_SURFACE_KEYS.program;
+  const compact = [
+    SYNC_SURFACE_KEYS.today,
+    SYNC_SURFACE_KEYS.program,
+    SYNC_SURFACE_KEYS.log,
+    SYNC_SURFACE_KEYS.nutrition,
+    SYNC_SURFACE_KEYS.coach,
+  ].includes(surface);
   const confirmedRisk = isConfirmedRiskSyncState(state.id);
   const transient = isTransientSyncState(state.id);
   const showFullCard = surface === SYNC_SURFACE_KEYS.settings
@@ -581,10 +681,8 @@ const createSurfaceModel = ({
     : confirmedRisk
     ? state.assurance
     : "";
-  const compactMessage = transient
-    ? state.detail || state.headline
-    : state.headline || state.detail;
-  const compactDetail = confirmedRisk ? detail : compactMessage;
+  const compactMessage = state.compactMessage || (transient ? state.detail || state.headline : state.headline || state.detail);
+  const compactDetail = state.compactDetail || (confirmedRisk ? detail : compactMessage);
   return {
     surface,
     tone: state.tone,

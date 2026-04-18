@@ -89,8 +89,9 @@ async function saveTodayQuickLog(page, {
   note = "",
   expectedStatusText = /saved/i,
 } = {}) {
-  const quickLog = page.getByTestId("today-quick-log");
   await page.getByTestId("app-tab-today").click();
+  await page.getByTestId("today-primary-cta").click();
+  const quickLog = page.getByTestId("today-quick-log");
   await expect(quickLog).toBeVisible();
   await quickLog.getByRole("button", { name: new RegExp(`^${escapeRegExp(statusLabel)}$`, "i") }).click();
   if (feelLabel) {
@@ -131,6 +132,7 @@ async function expectPersistedWorkoutLog(page, {
 
 async function expectQuickLogNote(page, note) {
   await page.getByTestId("app-tab-today").click();
+  await page.getByTestId("today-primary-cta").click();
   await expect(page.getByTestId("today-quick-log").getByPlaceholder("Optional note")).toHaveValue(note);
 }
 

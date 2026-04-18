@@ -27,6 +27,14 @@ Use short, direct verbs that sound confident and consumer-friendly.
 - Avoid: `Commit`, `Activate`, `Confirm change` unless legal or destructive
 - For previews, prefer `See change` or `See what changes`
 - For irreversible actions, say exactly what happens: `Delete account`, `Reset this device`
+- Keep one primary verb per surface. Do not mix `Activate`, `Apply`, and `Confirm` for the same kind of action.
+
+## Headings
+
+- Use short sentence-case headings.
+- Prefer a plain noun or a 2 to 5 word phrase over a full sentence.
+- Avoid all-caps labels unless they are small supporting eyebrow text.
+- A heading should tell the person where they are, not how the system thinks.
 
 ## Punctuation
 
@@ -50,6 +58,13 @@ Use short, direct verbs that sound confident and consumer-friendly.
 - Helper lines: usually 1 sentence, occasionally 2.
 - Body copy: say the main point first, then one useful consequence.
 - If a sentence can lose 5 words without losing meaning, cut it.
+- Default to one short sentence per block on first load.
+
+## Microcopy
+
+- Prefer everyday workout words like `what you did`, `details`, `plan`, and `session`.
+- Avoid meta language like `actuals`, `prescription`, `deterministic`, or `canonical` in consumer UI.
+- If a hint does not help the person choose or act right now, move it behind a reveal.
 
 ## Sync language
 

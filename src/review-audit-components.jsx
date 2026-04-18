@@ -262,7 +262,7 @@ export function HistoryAuditDayReviewCard({
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: "0.45rem" }}>
             <div style={basePanelCardStyle}>
-              <div style={eyebrowStyle}>Execution classification</div>
+              <div style={eyebrowStyle}>How it matched</div>
               <div style={{ fontSize: "0.56rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
                 {sanitizeDisplayText(summarizeExecutionDelta(review?.comparison))}
               </div>
@@ -272,12 +272,12 @@ export function HistoryAuditDayReviewCard({
             </div>
 
             <div style={basePanelCardStyle}>
-              <div style={eyebrowStyle}>Saved from</div>
+              <div style={eyebrowStyle}>Source</div>
               <div style={{ fontSize: "0.56rem", color: "var(--consumer-text)", marginTop: "0.18rem" }}>
                 {formatHistorySourceLabel(review?.compatibility?.sourceType)}
               </div>
               <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", marginTop: "0.12rem", lineHeight: 1.5 }}>
-                Saved as {formatHistoryAccessLabel(review?.compatibility?.durability)}.
+                Version: {formatHistoryAccessLabel(review?.compatibility?.durability)}.
               </div>
               {review?.compatibility?.usedFallbackHistory && (
                 <div style={{ fontSize: "0.49rem", color: C.amber || "#f59e0b", marginTop: "0.12rem", lineHeight: 1.5 }}>
@@ -323,7 +323,7 @@ export function HistoryAuditDayReviewCard({
                       {sanitizeDisplayText(summary.detail || summary.type || "No session detail saved.")}
                     </div>
                     <div style={{ fontSize: "0.49rem", color: "var(--consumer-text-muted)", marginTop: "0.14rem", lineHeight: 1.5 }}>
-                      Reason: {sanitizeDisplayText(revision?.provenanceSummary || revision?.reason || "unknown")} • {sanitizeDisplayText(formatHistorySourceLabel(revision?.sourceType))} • {sanitizeDisplayText(formatHistoryAccessLabel(revision?.durability))}
+                      Why: {sanitizeDisplayText(revision?.provenanceSummary || revision?.reason || "unknown")} • {sanitizeDisplayText(formatHistorySourceLabel(revision?.sourceType))} • {sanitizeDisplayText(formatHistoryAccessLabel(revision?.durability))}
                     </div>
                   </div>
                 );
@@ -337,7 +337,7 @@ export function HistoryAuditDayReviewCard({
 }
 
 export function HistoryAuditWeekHistorySection({
-  title = "SAVED WEEK STORIES",
+  title = "WEEK HISTORY",
   entries = [],
   emptyState = "",
   palette = {},

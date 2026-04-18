@@ -4,17 +4,6 @@ const path = require("node:path");
 
 const ROOT = process.cwd();
 
-const trackedOutput = execFileSync("git", ["ls-files", "-z"], {
-  cwd: process.cwd(),
-  encoding: "utf8",
-});
-
-const trackedFiles = trackedOutput
-  .split("\0")
-  .map((entry) => entry.trim())
-  .filter(Boolean)
-  .filter((filePath) => fs.existsSync(path.join(ROOT, filePath)));
-
 const allowedRootEntries = new Set([
   ".env.example",
   ".github",
@@ -50,27 +39,19 @@ const blockedTrackedPatterns = [
   /(^|\/)[^/]+\.(bak|orig|rej|tmp)$/i,
 ];
 
-const textGuardRoots = [/^src\//, /^api\//, /^tests\//];
+const textGuardRoots = [/^src\//, /^api\//, /^tests\//, /^e2e\//];
 const textGuardExtensions = /\.(js|jsx|ts|tsx|md)$/i;
-const textGuardExclusions = new Set([
-  "src/services/text-format-service.js",
+const bannedTextRules = Object.freeze([
+  { label: "em dash", pattern: /\u2014/g },
+  { label: "mojibake bullet", pattern: /\u00c2\u00b7/g },
+  { label: "mojibake degree", pattern: /\u00c2\u00b0/g },
+  { label: "mojibake multiply", pattern: /\u00c3\u00d7/g },
+  { label: "mojibake apostrophe", pattern: /\u00e2\u20ac\u2122/g },
+  { label: "mojibake dash", pattern: /\u00e2\u20ac[\u201c\u201d]/g },
+  { label: "mojibake ellipsis", pattern: /\u00e2\u20ac\u00a6/g },
+  { label: "mojibake quote", pattern: /\u00e2\u20ac(?:\u0153|\u009d)/g },
+  { label: "multi-pass mojibake", pattern: /(?:\u00c3\u0192|\u00c3\u00a2\u00e2\u201a\u00ac|\u00c3\u00af\u00c2\u00bf\u00c2\u00bd)/g },
 ]);
-const bannedTextSequences = [
-  { label: "em dash", value: "\u2014" },
-  { label: "mojibake bullet", value: "\u00c2\u00b7" },
-  { label: "mojibake multiply", value: "\u00c3\u00d7" },
-  { label: "mojibake euro-cluster", value: "\u00e2\u20ac" },
-];
-
-const unexpectedRootEntries = [...new Set(
-  trackedFiles
-    .map((filePath) => filePath.split("/")[0])
-    .filter((entry) => !allowedRootEntries.has(entry))
-)];
-
-const blockedTrackedFiles = trackedFiles.filter((filePath) => (
-  blockedTrackedPatterns.some((pattern) => pattern.test(filePath))
-));
 
 const computeLineAndColumn = (source = "", offset = 0) => {
   const slice = source.slice(0, offset);
@@ -81,50 +62,103 @@ const computeLineAndColumn = (source = "", offset = 0) => {
   };
 };
 
-const textGuardFiles = trackedFiles.filter((filePath) => (
-  !textGuardExclusions.has(filePath)
-  && textGuardExtensions.test(filePath)
-  && textGuardRoots.some((pattern) => pattern.test(filePath))
-));
-
-const bannedTextHits = [];
-for (const filePath of textGuardFiles) {
-  const absolutePath = path.join(ROOT, filePath);
-  const source = fs.readFileSync(absolutePath, "utf8");
-  bannedTextSequences.forEach(({ label, value }) => {
-    let offset = source.indexOf(value);
-    while (offset !== -1) {
-      const { line, column } = computeLineAndColumn(source, offset);
-      const lineText = source.split("\n")[line - 1] || "";
-      bannedTextHits.push({
-        filePath,
-        label,
-        line,
-        column,
-        excerpt: lineText.trim(),
-      });
-      offset = source.indexOf(value, offset + value.length);
-    }
+const getTrackedFiles = (root = ROOT) => {
+  const trackedOutput = execFileSync("git", ["ls-files", "-z"], {
+    cwd: root,
+    encoding: "utf8",
   });
-}
 
-if (unexpectedRootEntries.length || blockedTrackedFiles.length || bannedTextHits.length) {
+  return trackedOutput
+    .split("\0")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .filter((filePath) => fs.existsSync(path.join(root, filePath)));
+};
+
+const collectBannedTextHits = ({ root = ROOT, trackedFiles = [] } = {}) => {
+  const textGuardFiles = trackedFiles.filter((filePath) => (
+    textGuardExtensions.test(filePath)
+    && textGuardRoots.some((pattern) => pattern.test(filePath))
+  ));
+
+  const hits = [];
+  textGuardFiles.forEach((filePath) => {
+    const absolutePath = path.join(root, filePath);
+    const source = fs.readFileSync(absolutePath, "utf8");
+    bannedTextRules.forEach(({ label, pattern }) => {
+      pattern.lastIndex = 0;
+      let match = pattern.exec(source);
+      while (match) {
+        const { line, column } = computeLineAndColumn(source, match.index);
+        const lineText = source.split("\n")[line - 1] || "";
+        hits.push({
+          filePath,
+          label,
+          line,
+          column,
+          excerpt: lineText.trim(),
+        });
+        match = pattern.exec(source);
+      }
+      pattern.lastIndex = 0;
+    });
+  });
+
+  return hits;
+};
+
+const runRepoHygieneCheck = ({ root = ROOT } = {}) => {
+  const trackedFiles = getTrackedFiles(root);
+  const unexpectedRootEntries = [...new Set(
+    trackedFiles
+      .map((filePath) => filePath.split("/")[0])
+      .filter((entry) => !allowedRootEntries.has(entry))
+  )];
+
+  const blockedTrackedFiles = trackedFiles.filter((filePath) => (
+    blockedTrackedPatterns.some((pattern) => pattern.test(filePath))
+  ));
+
+  const bannedTextHits = collectBannedTextHits({ root, trackedFiles });
+
+  return {
+    root,
+    trackedFiles,
+    unexpectedRootEntries,
+    blockedTrackedFiles,
+    bannedTextHits,
+    passed: !unexpectedRootEntries.length && !blockedTrackedFiles.length && !bannedTextHits.length,
+  };
+};
+
+const printRepoHygieneFailure = (result) => {
   console.error("Repo hygiene check failed.");
-  if (unexpectedRootEntries.length) {
+  if (result.unexpectedRootEntries.length) {
     console.error("\nUnexpected tracked repo-root entries:");
-    unexpectedRootEntries.forEach((entry) => console.error(`- ${entry}`));
+    result.unexpectedRootEntries.forEach((entry) => console.error(`- ${entry}`));
   }
-  if (blockedTrackedFiles.length) {
+  if (result.blockedTrackedFiles.length) {
     console.error("\nBlocked tracked generated/debris files:");
-    blockedTrackedFiles.forEach((filePath) => console.error(`- ${filePath}`));
+    result.blockedTrackedFiles.forEach((filePath) => console.error(`- ${filePath}`));
   }
-  if (bannedTextHits.length) {
+  if (result.bannedTextHits.length) {
     console.error("\nBanned text encoding or punctuation hits:");
-    bannedTextHits.forEach(({ filePath, label, line, column, excerpt }) => {
+    result.bannedTextHits.forEach(({ filePath, label, line, column, excerpt }) => {
       console.error(`- ${filePath}:${line}:${column} [${label}] ${excerpt}`);
     });
   }
-  process.exit(1);
+};
+
+if (require.main === module) {
+  const result = runRepoHygieneCheck();
+  if (!result.passed) {
+    printRepoHygieneFailure(result);
+    process.exit(1);
+  }
+  console.log("Repo hygiene check passed.");
 }
 
-console.log("Repo hygiene check passed.");
+module.exports = {
+  bannedTextRules,
+  runRepoHygieneCheck,
+};

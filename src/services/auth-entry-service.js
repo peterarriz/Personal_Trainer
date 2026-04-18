@@ -1,6 +1,9 @@
-const normalizeAuthMode = (value = "") => (
-  String(value || "").trim().toLowerCase() === "signup" ? "signup" : "signin"
-);
+const normalizeAuthMode = (value = "") => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "signup") return "signup";
+  if (normalized === "recovery") return "recovery";
+  return "signin";
+};
 
 const parseHexColor = (value = "") => {
   const raw = String(value || "").trim();
@@ -609,6 +612,7 @@ export const buildAuthEntryViewModel = ({
 } = {}) => {
   const mode = normalizeAuthMode(authMode);
   const hasLocalPath = true;
+  const recoveryMode = mode === "recovery";
 
   const localPathDescription = startupLocalResumeAvailable
     ? "If you only need the last usable training state on this device, keep going locally for now. Sign in later to turn cloud backup and multi-device sync back on."
@@ -616,29 +620,48 @@ export const buildAuthEntryViewModel = ({
     ? "FORMA can keep working on this device while cloud sign-in is offline. Your local training data stays here until the cloud path returns."
     : "Use the local fallback only if you need this device right away. Sign in when you want cloud backup and multi-device sync.";
 
-  const subtitle = authProviderUnavailable
+  const subtitle = recoveryMode
+    ? "Choose a new password to finish the reset and get back into your account."
+    : authProviderUnavailable
     ? "Cloud sign-in is offline right now. FORMA can still keep working on this device until account access comes back."
     : startupLocalResumeAvailable
     ? "You can sign in to restore cloud backup and account controls. Your local training state is already safe on this device."
     : "Sign in or create an account to turn on syncing, backup, and recovery. Local mode stays available only as a fallback.";
 
   return {
-    eyebrow: "FORMA account access",
-    title: authProviderUnavailable ? "Keep training while cloud sign-in is offline" : "Sign in when you want cloud sync back",
+    eyebrow: recoveryMode ? "Password reset" : "FORMA account access",
+    title: recoveryMode
+      ? "Set your new password"
+      : authProviderUnavailable
+      ? "Keep training while cloud sign-in is offline"
+      : "Sign in when you want cloud sync back",
     subtitle,
     statusBadges: [
+      recoveryMode ? "Secure reset link confirmed" : null,
       startupLocalResumeAvailable ? "Local data available on this device" : null,
       authProviderUnavailable ? "Cloud sign-in temporarily unavailable" : "Cloud sync ready when you are",
     ].filter(Boolean),
     pathCards: [
       {
-        id: "cloud",
-        kicker: authProviderUnavailable ? "Cloud account offline" : "Cloud account",
-        title: authProviderUnavailable ? "Reconnect later, keep data safe" : "Sync your training across devices",
-        description: authProviderUnavailable
+        id: recoveryMode ? "recovery" : "cloud",
+        kicker: recoveryMode ? "Account recovery" : authProviderUnavailable ? "Cloud account offline" : "Cloud account",
+        title: recoveryMode
+          ? "You are one step away from getting back in"
+          : authProviderUnavailable
+          ? "Reconnect later, keep data safe"
+          : "Sync your training across devices",
+        description: recoveryMode
+          ? "This link came from your email. Set a new password here, then sign in again."
+          : authProviderUnavailable
           ? "Email sign-in, backup, and account recovery are temporarily unavailable. Nothing is wrong with your local training history."
           : "Use your FORMA account for cloud sync, backup, account controls, and recovery on a new device.",
-        benefits: authProviderUnavailable
+        benefits: recoveryMode
+          ? [
+              "You can finish the password change right here.",
+              "Your new password works the next time you sign in.",
+              "If this link has expired, request a fresh one from sign-in or Settings.",
+            ]
+          : authProviderUnavailable
           ? [
               "Cloud account access returns as soon as the auth provider is available again.",
               "Local progress does not disappear while the cloud path is offline.",
@@ -654,11 +677,13 @@ export const buildAuthEntryViewModel = ({
       },
     ],
     form: {
-      title: mode === "signup" ? "Create your account" : "Sign in",
+      title: mode === "signup" ? "Create your account" : recoveryMode ? "Create a new password" : "Sign in",
       description: mode === "signup"
         ? "Create the account first, then finish setup with the same intake flow you get after sign-in."
+        : recoveryMode
+        ? "Pick a password you will use the next time you sign in. Keep it simple and memorable."
         : "Use the email tied to your FORMA account to restore cloud sync, backup, and account controls.",
-      modeOptions: [
+      modeOptions: recoveryMode ? [] : [
         {
           id: "signin",
           label: "Sign in",
@@ -675,14 +700,16 @@ export const buildAuthEntryViewModel = ({
         },
       ],
       primaryAction: {
-        label: mode === "signup" ? "Create account" : "Sign in",
+        label: mode === "signup" ? "Create account" : recoveryMode ? "Update password" : "Sign in",
         variant: AUTH_ACTION_VARIANTS.primary,
       },
       primaryCaption: mode === "signup"
         ? "Turns on cloud backup and lets you recover this training state on another device."
+        : recoveryMode
+        ? "After you save it, FORMA will take you back to sign in with the new password ready."
         : "Signing in turns cloud sync, backup, and account controls back on for this device.",
     },
-    localAction: hasLocalPath ? {
+    localAction: recoveryMode ? null : hasLocalPath ? {
       title: startupLocalResumeAvailable ? "Need the fallback instead?" : "Need a local fallback?",
       label: "Use local data instead",
       description: localPathDescription,

@@ -91,5 +91,5 @@ test("buildCoachAskAnythingStateModel stays advisory-only with or without AI ava
   assert.equal(available.advisoryOnly, true);
   assert.equal(available.canMutatePlan, false);
   assert.equal(available.headline, "Ask for a clear call");
-  assert.match(available.detail, /keeps the answer short/i);
+  assert.match(available.detail, /only suggests a change/i);
 });

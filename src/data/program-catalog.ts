@@ -13,7 +13,7 @@ export const PROGRAM_CATALOG = [
     displayName: "Foundation Training",
     internalArchetype: "general_fitness_foundation",
     category: "foundation_general_fitness",
-    summary: "A calm, repeatable strength-and-conditioning backbone for users who want a serious plan without a narrow specialization.",
+    summary: "A calm, repeatable strength-and-conditioning plan for users who want a serious structure without a narrow specialization.",
     intendedOutcome: "Build baseline strength, aerobic support, and training consistency.",
     targetUser: "General users, re-entry athletes, or anyone who wants a smart default structure.",
     contraindications: [
@@ -60,7 +60,7 @@ export const PROGRAM_CATALOG = [
     brandSafetyFlags: [],
     explanationTemplate: {
       cardSummary: "A premium default template for users who want structure without over-specializing.",
-      activationSummary: "We will use Foundation Training as the planning backbone.",
+      activationSummary: "We will use Foundation Training as your main plan.",
       adaptationSummary: "The skeleton stays the same, but days and equipment can flex around real life.",
     },
     compatibleGoalTypes: ["general_fitness", "strength", "body_comp", "appearance", "re_entry"],
@@ -124,7 +124,7 @@ export const PROGRAM_CATALOG = [
     brandSafetyFlags: [],
     explanationTemplate: {
       cardSummary: "A sensible first stop for users who want strength to lead without losing general fitness.",
-      activationSummary: "We will anchor the plan to a repeatable strength backbone.",
+      activationSummary: "We will anchor the plan to a repeatable strength build.",
       adaptationSummary: "The main lift rhythm stays intact while accessory and conditioning details adjust.",
     },
     compatibleGoalTypes: ["strength", "general_fitness", "appearance", "body_comp"],
@@ -172,7 +172,7 @@ export const PROGRAM_CATALOG = [
       minSessionsForAdapted: 3,
       hardRules: ["Need at least three weekly lifting exposures to preserve the point of the program."],
       softPreferences: ["Accessory volume and finishers can scale down."],
-      blockedIf: ["No full-gym access in strict mode.", "Less than three reliable weekly sessions."],
+      blockedIf: ["No full-gym access when following it closely.", "Less than three reliable weekly sessions."],
     },
     fidelityModeSupport: {
       run_as_written: true,
@@ -189,7 +189,7 @@ export const PROGRAM_CATALOG = [
     brandSafetyFlags: [],
     explanationTemplate: {
       cardSummary: "Strength numbers lead, but physique volume still matters.",
-      activationSummary: "We will use a powerbuilding backbone with clear tradeoffs.",
+      activationSummary: "We will use a powerbuilding build with clear tradeoffs.",
       adaptationSummary: "The main lifts stay central while volume and weekly density adapt around your reality.",
     },
     compatibleGoalTypes: ["strength", "appearance", "body_comp"],
@@ -207,7 +207,7 @@ export const PROGRAM_CATALOG = [
     category: "endurance",
     summary: "A goal-optional running base template that builds weekly rhythm and long-run durability before sharper race work.",
     intendedOutcome: "Build durable half-marathon base fitness and repeatable weekly volume.",
-    targetUser: "Users who want a serious running backbone without jumping straight into peak prep.",
+    targetUser: "Users who want a serious running base without jumping straight into peak prep.",
     contraindications: [
       "Not appropriate as-written if current running frequency is extremely low.",
       "Not appropriate as-written for flared impact-limiting injuries.",
@@ -227,7 +227,7 @@ export const PROGRAM_CATALOG = [
     progressionModel: {
       type: "volume_ramp_with_cutbacks",
       summary: "Weekly run volume climbs progressively with cutbacks to protect consistency.",
-      hardRules: ["Long run stays in the week.", "At least four run touches in strict mode."],
+      hardRules: ["Long run stays in the week.", "At least four run touches when following it closely."],
       softPreferences: ["Maintenance strength stays light and secondary."],
     },
     adaptationPolicy: {
@@ -237,7 +237,7 @@ export const PROGRAM_CATALOG = [
       minSessionsForAdapted: 3,
       hardRules: ["Need at least three weekly run exposures in adapted mode."],
       softPreferences: ["Quality volume can shrink before long-run continuity does."],
-      blockedIf: ["No safe running access.", "Baseline running volume too low for strict mode."],
+      blockedIf: ["No safe running access.", "Baseline running volume too low for following it closely."],
     },
     fidelityModeSupport: {
       run_as_written: true,
@@ -254,7 +254,7 @@ export const PROGRAM_CATALOG = [
     brandSafetyFlags: [],
     explanationTemplate: {
       cardSummary: "A clean running base for users who need durable weekly rhythm before aggressive race work.",
-      activationSummary: "We will use a running-base structure as the main backbone.",
+      activationSummary: "We will use a running-base structure as the main plan.",
       adaptationSummary: "Run frequency and long-run continuity lead; workout sharpness flexes second.",
     },
     compatibleGoalTypes: ["running", "general_fitness"],
@@ -302,7 +302,7 @@ export const PROGRAM_CATALOG = [
       minSessionsForAdapted: 3,
       hardRules: ["Need enough time for a real long run each week."],
       softPreferences: ["Secondary runs can shorten before the long run does."],
-      blockedIf: ["Current baseline is too low for the requested horizon.", "Available time is too low for strict mode."],
+      blockedIf: ["Current baseline is too low for the requested horizon.", "Available time is too low for following it closely."],
     },
     fidelityModeSupport: {
       run_as_written: true,
@@ -340,7 +340,7 @@ export const PROGRAM_CATALOG = [
     targetUser: "Users who want a familiar public-program feel and a clear race-prep structure.",
     contraindications: [
       "Not a fit if the user cannot sustain regular run frequency.",
-      "Not a fit for strict mode when time or equipment constraints force heavy changes.",
+      "Not a fit for following closely when time or equipment constraints force heavy changes.",
     ],
     requiredEquipment: ["safe running access"],
     minimumExperience: "beginner",
@@ -357,7 +357,7 @@ export const PROGRAM_CATALOG = [
     progressionModel: {
       type: "coach_published_shape",
       summary: "Preserves the classic weekly rhythm while still adapting mileage and support work.",
-      hardRules: ["Keep the weekly run rhythm recognizable in strict mode."],
+      hardRules: ["Keep the weekly run rhythm recognizable when following it closely."],
       softPreferences: ["Cross-training can compress or disappear first."],
     },
     adaptationPolicy: {
@@ -447,7 +447,7 @@ export const PROGRAM_CATALOG = [
     brandSafetyFlags: [],
     explanationTemplate: {
       cardSummary: "A serious travel mode, not a throwaway deload tab.",
-      activationSummary: "We will use a travel-ready structure as the current backbone.",
+      activationSummary: "We will use a travel-ready structure as the current plan.",
       adaptationSummary: "The shape stays compact while exact exercises flex hard around the available setup.",
     },
     compatibleGoalTypes: ["general_fitness", "body_comp", "strength", "re_entry"],
@@ -572,7 +572,7 @@ export const PROGRAM_CATALOG = [
     brandSafetyFlags: [],
     explanationTemplate: {
       cardSummary: "A serious limited-setup option that still feels coached.",
-      activationSummary: "We will use a minimal-equipment conditioning backbone.",
+      activationSummary: "We will use a minimal-equipment conditioning plan.",
       adaptationSummary: "The training intent stays stable even when exact exercises change.",
     },
     compatibleGoalTypes: ["general_fitness", "body_comp", "appearance", "re_entry"],

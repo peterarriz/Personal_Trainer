@@ -104,3 +104,42 @@ test("sync diagnostics reducer tracks auth refresh failures, realtime reconnects
   assert.equal(state.localCache.authorityDecision, "prefer_pending_local");
   assert.equal(formatSyncDiagnosticTimestamp(state.localCache.authorityAt), new Date(startedAt + 340).toISOString());
 });
+
+test("sync diagnostics reducer captures client config and current auth session evidence", () => {
+  const startedAt = Date.UTC(2026, 3, 17, 14, 0, 0);
+  let state = createInitialSyncDiagnosticsState({ now: startedAt });
+
+  state = reduceSyncDiagnosticsState(state, {
+    type: SYNC_DIAGNOSTIC_EVENT_TYPES.clientConfigState,
+    supabaseUrlConfigured: true,
+    supabaseAnonKeyConfigured: true,
+    supabaseUrlSource: "SUPABASE_URL",
+    supabaseAnonKeySource: "SUPABASE_ANON_KEY",
+    supabaseUrlHost: "example.supabase.co",
+    configError: "",
+    at: startedAt + 100,
+  });
+  state = reduceSyncDiagnosticsState(state, {
+    type: SYNC_DIAGNOSTIC_EVENT_TYPES.authSessionState,
+    hasSession: true,
+    userId: "00000000-0000-0000-0000-000000000001",
+    email: "athlete@example.com",
+    hasRefreshToken: true,
+    expiresAt: startedAt + 3_600_000,
+    lastEnsureStatus: "active",
+    source: "auth_session",
+    at: startedAt + 150,
+  });
+
+  assert.equal(state.clientConfig.supabaseUrlConfigured, true);
+  assert.equal(state.clientConfig.supabaseAnonKeyConfigured, true);
+  assert.equal(state.clientConfig.supabaseUrlSource, "SUPABASE_URL");
+  assert.equal(state.clientConfig.supabaseAnonKeySource, "SUPABASE_ANON_KEY");
+  assert.equal(state.clientConfig.supabaseUrlHost, "example.supabase.co");
+  assert.equal(state.authState.hasSession, true);
+  assert.equal(state.authState.userId, "00000000-0000-0000-0000-000000000001");
+  assert.equal(state.authState.email, "athlete@example.com");
+  assert.equal(state.authState.hasRefreshToken, true);
+  assert.equal(state.authState.lastEnsureStatus, "active");
+  assert.equal(state.authState.source, "auth_session");
+});

@@ -11,26 +11,26 @@ const sanitizeText = (value = "", maxLength = 160) => String(value || "").replac
 const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [value];
 
 export const INTAKE_STAGE_CONTRACT = Object.freeze([
-  Object.freeze({ key: "setup", label: "Start", helper: "Choose what you want and the real-life details that shape your first week." }),
-  Object.freeze({ key: "details", label: "Details", helper: "Add only the details that still change your first week, then keep going." }),
-  Object.freeze({ key: "build", label: "Your plan", helper: "Create your first plan from what you just shared." }),
+  Object.freeze({ key: "setup", label: "Start", helper: "Pick your goal and week-one setup." }),
+  Object.freeze({ key: "details", label: "Details", helper: "Add the details that still change week one." }),
+  Object.freeze({ key: "build", label: "Your plan", helper: "Build your first week." }),
 ]);
 
 export const INTAKE_COPY_DECK = Object.freeze({
   shell: Object.freeze({
     title: "Getting started",
     progressSuffix: "Saves as you go.",
-    helper: "Pick a goal path, answer the few details that change your first week, and keep moving.",
+    helper: "Pick your goal, add the details that shape your first week, and build when it looks right.",
   }),
   summaryRail: Object.freeze({
     eyebrow: "Live summary",
     title: "What your first week is built on",
-    helper: "This updates as you choose goals, limits, and key details.",
+    helper: "Updates as you choose goals and key details.",
   }),
   goals: Object.freeze({
     heroEyebrow: "START HERE",
-    heroBody: "Choose the goal family that fits, then sharpen it with a few real-world details.",
-    goalTypeHelper: "Start broad, then let the next card sharpen the plan.",
+    heroBody: "Choose the goal path that fits, add the numbers that matter, and build from this screen.",
+    goalTypeHelper: "Start broad, then tighten it up.",
   }),
   interpretation: Object.freeze({
     title: "Draft",
@@ -41,7 +41,7 @@ export const INTAKE_COPY_DECK = Object.freeze({
     emptyState: "Your first draft will show up here.",
   }),
   clarify: Object.freeze({
-    helper: "Answer the details that still change your first week, then keep going.",
+    helper: "Answer the details that still change week one.",
     stackEyebrow: "CURRENT PRIORITIES",
     baselineNote: "Saved in Settings so you can change it later.",
     structuredToggle: "Quick picks",
@@ -50,23 +50,23 @@ export const INTAKE_COPY_DECK = Object.freeze({
     genericPlaceholder: "Add the detail.",
   }),
   confirm: Object.freeze({
-    helper: "Give the details a final look, then continue when it feels right.",
+    helper: "Give it one last look, then continue.",
   }),
   adjust: Object.freeze({
     title: "Make a change",
-    helper: "Describe what should change.",
+    helper: "Describe the change.",
     placeholder: "Describe the change.",
   }),
   build: Object.freeze({
-    helper: "Putting your first plan together.",
+    helper: "Building your first week.",
     status: "Creating your first plan...",
   }),
   footer: Object.freeze({
-    goals: "Choose what you want and the real-life details around it.",
+    goals: "Choose your goal, add the key details, and build from here when it looks right.",
     interpretation: "Check the draft before you add more detail.",
-    clarify: "Add any last details, review everything here, and continue when it feels right.",
-    confirm: "Review everything here and continue when it feels right.",
-    building: "Creating your first plan now.",
+    clarify: "Add anything that still changes week one.",
+    confirm: "One last look before you build.",
+    building: "Building week one now.",
     adjust: "Describe the change, then continue.",
   }),
 });
@@ -76,7 +76,7 @@ const STARTER_TYPES = Object.freeze([
     id: "endurance",
     label: "Endurance",
     eyebrow: "Family",
-    helper: "Race prep, aerobic base, swim, cycling, and multisport.",
+    helper: "Race prep, base, swim, bike, and multisport.",
     categoryId: "endurance",
     featuredTemplateIds: ["train_for_run_race", "build_endurance", "return_to_running", "swim_better", "ride_stronger"],
   }),
@@ -92,7 +92,7 @@ const STARTER_TYPES = Object.freeze([
     id: "physique",
     label: "Physique",
     eyebrow: "Family",
-    helper: "Lose fat, get leaner, recomp, or cut without losing muscle.",
+    helper: "Lose fat, get leaner, or recomp.",
     categoryId: "physique",
     featuredTemplateIds: ["lose_body_fat", "get_leaner", "recomp", "cut_for_event", "keep_strength_while_cutting"],
   }),
@@ -100,7 +100,7 @@ const STARTER_TYPES = Object.freeze([
     id: "general_fitness",
     label: "General fitness",
     eyebrow: "Family",
-    helper: "Get back in shape, build consistency, and feel more athletic.",
+    helper: "Build consistency and feel more athletic.",
     categoryId: "general_fitness",
     featuredTemplateIds: ["get_back_in_shape", "build_consistency", "feel_more_athletic", "improve_work_capacity", "healthy_routine_fitness"],
   }),
@@ -108,7 +108,7 @@ const STARTER_TYPES = Object.freeze([
     id: "re_entry",
     label: "Re-entry",
     eyebrow: "Family",
-    helper: "Restart safely, rebuild capacity, or return with a protected block.",
+    helper: "Restart safely and rebuild capacity.",
     categoryId: "re_entry",
     featuredTemplateIds: ["restart_safely", "ease_back_in", "rebuild_routine", "conservative_return", "low_impact_restart"],
   }),
@@ -116,7 +116,7 @@ const STARTER_TYPES = Object.freeze([
     id: "hybrid",
     label: "Hybrid",
     eyebrow: "Family",
-    helper: "Run and lift, get stronger and fitter, or support a sport.",
+    helper: "Run and lift, or get stronger and fitter.",
     categoryId: "hybrid",
     featuredTemplateIds: ["run_and_lift", "stronger_and_fitter", "aesthetic_plus_endurance", "sport_support", "tactical_fitness"],
   }),
@@ -124,7 +124,7 @@ const STARTER_TYPES = Object.freeze([
     id: "custom",
     label: "Custom",
     eyebrow: "Custom",
-    helper: "Choose this if the preset paths miss what you want.",
+    helper: "Use this if the preset paths miss.",
     categoryId: "all",
     featuredTemplateIds: [],
   }),
@@ -161,6 +161,9 @@ const createQuestion = ({
   helper = "",
   fieldKeys = [],
   inputFields = [],
+  answerValueTransform = null,
+  draftValueTransform = null,
+  fieldErrorMap = {},
 } = {}) => ({
   key,
   source: "completeness",
@@ -170,6 +173,9 @@ const createQuestion = ({
   label: title,
   fieldKeys,
   inputFields,
+  answerValueTransform: typeof answerValueTransform === "function" ? answerValueTransform : null,
+  draftValueTransform: typeof draftValueTransform === "function" ? draftValueTransform : null,
+  fieldErrorMap: fieldErrorMap && typeof fieldErrorMap === "object" ? { ...fieldErrorMap } : {},
 });
 
 const choiceField = (key, label, helperText, choiceOptions = [], required = false) => ({
@@ -199,6 +205,72 @@ const numberField = (key, label, placeholder, helperText, required = false, unit
   required,
   ...(unit ? { unit } : {}),
 });
+
+const parseDistanceOrDurationDraft = (value = "") => {
+  const raw = sanitizeText(value, 160);
+  if (!raw) return { value: "", unit: "" };
+  const milesMatch = raw.match(/(\d+(?:\.\d+)?)\s*(?:mi|mile|miles)\b/i);
+  if (milesMatch?.[1]) {
+    return {
+      value: String(milesMatch[1]).trim(),
+      unit: "miles",
+    };
+  }
+  const minutesMatch = raw.match(/(\d+(?:\.\d+)?)\s*(?:min|mins|minute|minutes)\b/i);
+  if (minutesMatch?.[1]) {
+    return {
+      value: String(minutesMatch[1]).trim(),
+      unit: "minutes",
+    };
+  }
+  return { value: "", unit: "" };
+};
+
+const buildDistanceOrDurationRaw = ({ value = "", unit = "" } = {}) => {
+  const cleanValue = sanitizeText(value, 40);
+  const cleanUnit = sanitizeText(unit, 40).toLowerCase();
+  if (!cleanValue || !cleanUnit) return "";
+  if (cleanUnit === "miles") return `${cleanValue} miles`;
+  if (cleanUnit === "minutes") return `${cleanValue} minutes`;
+  return "";
+};
+
+const parseSwimAnchorDraft = (value = "") => {
+  const raw = sanitizeText(value, 160);
+  if (!raw) {
+    return {
+      distanceValue: "",
+      distanceUnit: "yd",
+      minutes: "",
+      seconds: "",
+    };
+  }
+  const distanceMatch = raw.match(/(\d+(?:\.\d+)?)\s*(yd|yard|yards|m|meter|meters|metre|metres)\b/i);
+  const timeMatch = raw.match(/\b(\d{1,2}):(\d{2})(?::\d{2})?\b/);
+  return {
+    distanceValue: distanceMatch?.[1] ? String(distanceMatch[1]).trim() : "",
+    distanceUnit: distanceMatch?.[2] && /yd|yard/i.test(distanceMatch[2]) ? "yd" : "m",
+    minutes: timeMatch?.[1] ? String(Number(timeMatch[1])) : "",
+    seconds: timeMatch?.[2] ? String(timeMatch[2]).padStart(2, "0") : "",
+  };
+};
+
+const buildSwimAnchorRaw = ({
+  distanceValue = "",
+  distanceUnit = "",
+  minutes = "",
+  seconds = "",
+} = {}) => {
+  const cleanDistance = sanitizeText(distanceValue, 40);
+  const cleanUnit = sanitizeText(distanceUnit, 20).toLowerCase();
+  const cleanMinutes = sanitizeText(minutes, 20);
+  const cleanSeconds = sanitizeText(seconds, 20);
+  if (!cleanDistance || !cleanUnit || cleanMinutes === "" || cleanSeconds === "") return "";
+  const parsedSeconds = Number(cleanSeconds);
+  if (!Number.isFinite(parsedSeconds) || parsedSeconds < 0 || parsedSeconds > 59) return "";
+  const paddedSeconds = String(Math.round(parsedSeconds)).padStart(2, "0");
+  return `${cleanDistance} ${cleanUnit} in ${cleanMinutes}:${paddedSeconds}`;
+};
 
 const RISK_OPTIONS = Object.freeze([
   choice("protective", "Protective"),
@@ -289,6 +361,16 @@ const HYBRID_PRIORITY_OPTIONS = Object.freeze([
   choice("balanced", "Balanced"),
 ]);
 
+const RUN_BASELINE_UNIT_OPTIONS = Object.freeze([
+  choice("miles", "Miles"),
+  choice("minutes", "Minutes"),
+]);
+
+const SWIM_DISTANCE_UNIT_OPTIONS = Object.freeze([
+  choice("yd", "Yards"),
+  choice("m", "Meters"),
+]);
+
 const GOAL_FOCUS_OPTIONS = Object.freeze([
   choice("consistency", "Consistency"),
   choice("athleticism", "Athleticism"),
@@ -305,7 +387,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "endurance_race_profile",
           title: "Race setup",
-          helper: "Choose the race distance and add the time window if you have it.",
+          helper: "Pick the distance and timing.",
           fieldKeys: ["event_distance", "target_timeline"],
           inputFields: [
             choiceField("event_distance", "Race distance", "Pick the race you want to train for.", EVENT_DISTANCE_OPTIONS, true),
@@ -313,15 +395,40 @@ const buildQuestionsForIntent = (selection = null) => {
           ],
         }),
         createQuestion({
-          key: "running_baseline_profile",
+          key: "running_baseline",
           title: "Current running baseline",
-          helper: "A few real running details sharpen your first week.",
+          helper: "Use the weekly run count plus one recent long-run anchor.",
           fieldKeys: ["current_run_frequency", "longest_recent_run", "recent_pace_baseline"],
           inputFields: [
             numberField("current_run_frequency", "Runs per week", "3", "How many times are you running in a normal week?", true),
-            textField("longest_recent_run", "Longest recent run", "6 miles or 75 minutes", "Distance or duration is enough."),
-            textField("recent_pace_baseline", "Recent pace or race result", "29:30 5K or 9:15 easy pace", "Optional if the long run already tells the story."),
+            numberField("longest_recent_run_value", "Longest recent run", "7", "Use the longest repeatable run you have done recently.", true),
+            choiceField("longest_recent_run_unit", "Unit", "Choose miles or minutes.", RUN_BASELINE_UNIT_OPTIONS, true),
+            textField("recent_pace_baseline", "Recent pace or race result", "Optional", "Only add this if you already know it."),
           ],
+          answerValueTransform: (values = {}) => ({
+            current_run_frequency: values.current_run_frequency || "",
+            longest_recent_run: buildDistanceOrDurationRaw({
+              value: values.longest_recent_run_value,
+              unit: values.longest_recent_run_unit,
+            }),
+            recent_pace_baseline: values.recent_pace_baseline || "",
+          }),
+          draftValueTransform: ({ answers = {} } = {}) => {
+            const longestRunDraft = parseDistanceOrDurationDraft(
+              answers?.intake_completeness?.fields?.longest_recent_run?.raw
+              || answers?.intake_completeness?.fields?.longest_recent_run?.value
+              || ""
+            );
+            return {
+              current_run_frequency: answers?.intake_completeness?.fields?.current_run_frequency?.value ?? "",
+              longest_recent_run_value: longestRunDraft.value,
+              longest_recent_run_unit: longestRunDraft.unit,
+              recent_pace_baseline: answers?.intake_completeness?.fields?.recent_pace_baseline?.raw || "",
+            };
+          },
+          fieldErrorMap: {
+            longest_recent_run: "longest_recent_run_value",
+          },
         }),
       ];
     case "build_endurance":
@@ -330,7 +437,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "endurance_base_profile",
           title: "Endurance setup",
-          helper: "Pick the main mode and one recent anchor.",
+          helper: "Pick the mode and one recent anchor.",
           fieldKeys: ["primary_modality", "current_endurance_anchor", "longest_recent_endurance_session"],
           inputFields: [
             choiceField("primary_modality", "Main mode", "Choose the mode you most want the plan to lean on.", ENDURANCE_MODALITY_OPTIONS, true),
@@ -344,7 +451,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "return_to_run_profile",
           title: "Return-to-run setup",
-          helper: "Start where running is actually repeatable right now.",
+          helper: "Start where running is repeatable right now.",
           fieldKeys: ["starting_capacity_anchor", "progression_posture"],
           inputFields: [
             choiceField("starting_capacity_anchor", "Current repeatable capacity", "Pick the most honest starting point.", STARTING_CAPACITY_OPTIONS, true),
@@ -355,15 +462,46 @@ const buildQuestionsForIntent = (selection = null) => {
     case "swim_better":
       return [
         createQuestion({
-          key: "swim_profile",
+          key: "swim_baseline",
           title: "Swim setup",
-          helper: "Capture your water reality and the type of swim progress you want.",
+          helper: "Add one recent swim anchor and where you actually swim right now.",
           fieldKeys: ["recent_swim_anchor", "swim_access_reality", "goal_focus"],
           inputFields: [
-            textField("recent_swim_anchor", "Recent swim anchor", "1000 yd in 22:30", "One recent distance or time is enough.", true),
+            numberField("recent_swim_distance_value", "Recent swim distance", "1000", "Use one recent repeatable distance.", true),
+            choiceField("recent_swim_distance_unit", "Distance unit", "Choose yards or meters.", SWIM_DISTANCE_UNIT_OPTIONS, true),
+            numberField("recent_swim_time_minutes", "Minutes", "22", "Use the time for that recent swim anchor.", true),
+            numberField("recent_swim_time_seconds", "Seconds", "30", "Seconds for the swim anchor.", true),
             choiceField("swim_access_reality", "Water reality", "Choose where you actually swim right now.", SWIM_ACCESS_OPTIONS, true),
             choiceField("goal_focus", "Swim focus", "Fitness, endurance, technique, or open water.", SWIM_FOCUS_OPTIONS, false),
           ],
+          answerValueTransform: (values = {}) => ({
+            recent_swim_anchor: buildSwimAnchorRaw({
+              distanceValue: values.recent_swim_distance_value,
+              distanceUnit: values.recent_swim_distance_unit,
+              minutes: values.recent_swim_time_minutes,
+              seconds: values.recent_swim_time_seconds,
+            }),
+            swim_access_reality: values.swim_access_reality || "",
+            goal_focus: values.goal_focus || "",
+          }),
+          draftValueTransform: ({ answers = {} } = {}) => {
+            const swimDraft = parseSwimAnchorDraft(
+              answers?.intake_completeness?.fields?.recent_swim_anchor?.raw
+              || answers?.intake_completeness?.fields?.recent_swim_anchor?.value
+              || ""
+            );
+            return {
+              recent_swim_distance_value: swimDraft.distanceValue,
+              recent_swim_distance_unit: swimDraft.distanceUnit,
+              recent_swim_time_minutes: swimDraft.minutes,
+              recent_swim_time_seconds: swimDraft.seconds,
+              swim_access_reality: answers?.intake_completeness?.fields?.swim_access_reality?.value || "",
+              goal_focus: answers?.intake_completeness?.fields?.goal_focus?.value || "",
+            };
+          },
+          fieldErrorMap: {
+            recent_swim_anchor: "recent_swim_distance_value",
+          },
         }),
       ];
     case "ride_stronger":
@@ -371,7 +509,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "cycling_profile",
           title: "Ride setup",
-          helper: "Add one recent ride anchor so the plan can size week one honestly.",
+          helper: "Add one recent ride anchor.",
           fieldKeys: ["primary_modality", "current_endurance_anchor", "longest_recent_endurance_session"],
           inputFields: [
             choiceField("primary_modality", "Mode", "This lane stays cycling-first.", [choice("cycling", "Cycling")], true),
@@ -385,7 +523,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "triathlon_profile",
           title: "Triathlon setup",
-          helper: "Pick the event flavor and the lane that needs the cleanest recovery.",
+          helper: "Pick the race and priority lane.",
           fieldKeys: ["event_distance", "hybrid_priority", "recent_swim_anchor"],
           inputFields: [
             choiceField("event_distance", "Race format", "Sprint is the safest default if you are unsure.", [choice("sprint_triathlon", "Sprint"), choice("olympic_triathlon", "Olympic"), choice("70_3", "70.3")], true),
@@ -402,7 +540,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "strength_setup_profile",
           title: "Strength setup",
-          helper: "Pick the equipment, training age, and progression posture that match real life.",
+          helper: "Pick your setup and training age.",
           fieldKeys: ["equipment_profile", "training_age", "progression_posture"],
           inputFields: [
             choiceField("equipment_profile", "Equipment reality", "Choose the setup you actually have most weeks.", EQUIPMENT_OPTIONS, true),
@@ -416,12 +554,23 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "lift_focus_profile",
           title: "Lift focus",
-          helper: "Choose the lift that matters and add one recent top set.",
-          fieldKeys: ["lift_focus", "current_strength_baseline", "target_timeline"],
+          helper: "Pick the lift, the target load, and the time horizon.",
+          fieldKeys: ["lift_focus", "lift_target_weight", "lift_target_reps", "target_timeline"],
           inputFields: [
             choiceField("lift_focus", "Lift focus", "Pick the lift you want the plan to emphasize.", LIFT_FOCUS_OPTIONS, true),
-            textField("current_strength_baseline", "Current top set", "185 x 5 or 225 single", "A recent top set or estimated max is enough.", true),
-            textField("target_timeline", "Target date or window", "July or in 12 weeks", "Optional, but useful if the goal has a clear horizon."),
+            numberField("lift_target_weight", "Target load", "225", "Use the number you want to reach for this lift.", true, "lb"),
+            numberField("lift_target_reps", "Target reps", "1", "Optional if the goal is a single.", false),
+            textField("target_timeline", "Time horizon", "July or in 12 weeks", "A rough horizon is enough.", true),
+          ],
+        }),
+        createQuestion({
+          key: "strength_baseline",
+          title: "Current lift baseline",
+          helper: "Add the most honest recent number you have for this lift.",
+          fieldKeys: ["current_strength_baseline"],
+          inputFields: [
+            numberField("current_strength_baseline_weight", "Current load", "185", "Use a recent top set or estimated max.", true, "lb"),
+            numberField("current_strength_baseline_reps", "Current reps", "5", "Optional if you only know the load.", false),
           ],
         }),
       ];
@@ -435,7 +584,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "body_comp_profile",
           title: "Body-composition setup",
-          helper: "These choices decide whether your first week should lean toward muscle retention, urgency, or simplicity.",
+          helper: "These choices shape how aggressive week one should feel.",
           fieldKeys: ["current_bodyweight", "body_comp_tempo", "muscle_retention_priority", "cardio_preference", "target_timeline"],
           inputFields: [
             numberField("current_bodyweight", "Current bodyweight", "185", "Closest recent scale weight is fine.", false, "lb"),
@@ -455,7 +604,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "general_fitness_profile",
           title: "General fitness setup",
-          helper: "Keep your first week realistic by choosing your current capacity and the main quality you want to feel improve.",
+          helper: "Pick your current capacity and focus.",
           fieldKeys: ["starting_capacity_anchor", "goal_focus"],
           inputFields: [
             choiceField("starting_capacity_anchor", "Current repeatable capacity", "Pick the most honest starting point.", STARTING_CAPACITY_OPTIONS, true),
@@ -472,7 +621,7 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "re_entry_profile",
           title: "Restart setup",
-          helper: "Choose your current capacity and how conservative your first week should feel.",
+          helper: "Pick your current capacity and starting pace.",
           fieldKeys: ["starting_capacity_anchor", "progression_posture"],
           inputFields: [
             choiceField("starting_capacity_anchor", "Current repeatable capacity", "Pick the most honest starting point.", STARTING_CAPACITY_OPTIONS, true),
@@ -489,12 +638,23 @@ const buildQuestionsForIntent = (selection = null) => {
         createQuestion({
           key: "hybrid_profile",
           title: "Hybrid setup",
-          helper: "Pick the lane that gets the cleanest recovery so the plan does not pretend both goals can peak at once.",
-          fieldKeys: ["hybrid_priority", "equipment_profile", "goal_focus"],
+          helper: "Pick the lane that leads and add the minimum details that keep the split believable.",
+          fieldKeys: ["hybrid_priority", "equipment_profile", "current_run_frequency", "goal_focus"],
           inputFields: [
             choiceField("hybrid_priority", "Priority lane", "This lane gets the cleanest recovery and progression.", HYBRID_PRIORITY_OPTIONS, true),
             choiceField("equipment_profile", "Equipment reality", "Pick the setup you can actually count on.", EQUIPMENT_OPTIONS, true),
+            numberField("current_run_frequency", "Run sessions per week", "2", "Set this to the number of runs you can actually support right now.", true),
             choiceField("goal_focus", "Main support quality", "Use this when the hybrid goal leans athletic, tactical, or sport-support.", GOAL_FOCUS_OPTIONS, true),
+          ],
+        }),
+        createQuestion({
+          key: "strength_baseline",
+          title: "Strength baseline",
+          helper: "Add a recent top set or estimated max so the lift side of the split starts from something real.",
+          fieldKeys: ["current_strength_baseline"],
+          inputFields: [
+            numberField("current_strength_baseline_weight", "Current load", "185", "Use the best recent number you trust for the lift side.", true, "lb"),
+            numberField("current_strength_baseline_reps", "Current reps", "5", "Optional if you only know the load.", false),
           ],
         }),
       ];
@@ -532,6 +692,21 @@ export const buildIntakeStarterMetricQuestions = ({
   return buildQuestionsForIntent(selection);
 };
 
+export const buildIntakeStarterFieldSchema = ({
+  goalTypeId = "",
+  selection = null,
+} = {}) => (
+  buildIntakeStarterMetricQuestions({ goalTypeId, selection }).map((question) => ({
+    key: question.key,
+    title: question.title,
+    helper: question.helper,
+    fieldKeys: [...(question.fieldKeys || [])],
+    fields: (Array.isArray(question.inputFields) ? question.inputFields : []).map((field) => ({
+      ...field,
+    })),
+  }))
+);
+
 export const buildIntakeStarterMetricDraft = ({
   goalTypeId = "",
   selection = null,
@@ -540,7 +715,11 @@ export const buildIntakeStarterMetricDraft = ({
   const draft = {};
   buildIntakeStarterMetricQuestions({ goalTypeId, selection })
     .forEach((question) => {
-      Object.assign(draft, buildIntakeCompletenessDraft({ question, answers }));
+      if (typeof question?.draftValueTransform === "function") {
+        Object.assign(draft, question.draftValueTransform({ answers }));
+      } else {
+        Object.assign(draft, buildIntakeCompletenessDraft({ question, answers }));
+      }
     });
   return draft;
 };
@@ -569,13 +748,19 @@ export const applyIntakeStarterMetrics = ({
 
   questions.forEach((question) => {
     if (!hasMeaningfulQuestionValue(question, values)) return;
-    const answerValues = extractQuestionValues(question, values);
+    const rawAnswerValues = extractQuestionValues(question, values);
+    const answerValues = typeof question?.answerValueTransform === "function"
+      ? question.answerValueTransform(rawAnswerValues)
+      : rawAnswerValues;
     const validation = validateIntakeCompletenessAnswer({
       question,
       answerValues,
     });
     if (!validation.isValid) {
-      Object.assign(fieldErrors, validation.fieldErrors || {});
+      Object.entries(validation.fieldErrors || {}).forEach(([fieldKey, message]) => {
+        const mappedFieldKey = question?.fieldErrorMap?.[fieldKey] || fieldKey;
+        fieldErrors[mappedFieldKey] = message;
+      });
       if (validation.formError) formErrors.push(validation.formError);
       return;
     }

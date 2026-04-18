@@ -43,25 +43,28 @@ export function SettingsGoalsSection({
       <div style={SETTINGS_SECTION_HEADER_STYLE}>
         <div className="sect-title" style={{ color:colors.green, marginBottom:0 }}>GOALS</div>
         <div style={SETTINGS_SECTION_INTRO_STYLE}>
-          Update your goals here first, then keep moving.
+          Update your goals here.
         </div>
       </div>
       {focusSection === "plan" && (
         <div data-testid="settings-goals-migration-note" style={{ ...SETTINGS_SUBPANEL_STYLE, color:"var(--text-strong)" }}>
-          You came from Program. Goal changes live here now.
+          Goal changes live here now.
         </div>
       )}
       <div data-testid="settings-goals-management" style={{ ...SETTINGS_PANEL_STYLE, gap:"0.55rem" }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:"0.5rem", alignItems:"flex-start", flexWrap:"wrap" }}>
           <div style={{ display:"grid", gap:"0.14rem", maxWidth:720 }}>
             <div style={SETTINGS_LABEL_STYLE}>ACTIVE GOALS</div>
-            <div style={SETTINGS_TITLE_STYLE}>Set the order once, then update each goal when life changes.</div>
-            <div style={SETTINGS_BODY_STYLE}>
-              Goal order helps FORMA decide what gets the most attention, while the rest still stay in view. You can look over changes before you save them.
-            </div>
-            <div style={{ ...SETTINGS_BODY_STYLE, fontSize:"0.47rem", color:"var(--text-muted)" }}>
-              {priorityExplanation}
-            </div>
+            <div style={SETTINGS_TITLE_STYLE}>Set the order and update goals when life changes.</div>
+            <div style={SETTINGS_BODY_STYLE}>Priority 1 gets the most support.</div>
+            {!!priorityExplanation && (
+              <details>
+                <summary style={{ cursor:"pointer", fontSize:"0.47rem", color:"var(--text-muted)" }}>How priorities work</summary>
+                <div style={{ ...SETTINGS_BODY_STYLE, fontSize:"0.47rem", color:"var(--text-muted)", marginTop:"0.3rem" }}>
+                  {priorityExplanation}
+                </div>
+              </details>
+            )}
           </div>
           <div style={{ ...SETTINGS_ACTION_ROW_STYLE, justifyContent:"flex-end" }}>
             <div style={buildSettingsPillStyle({ color:"var(--text-soft)", background:"var(--surface-2)", borderColor:"var(--border)" })}>
@@ -110,19 +113,6 @@ export function SettingsGoalsSection({
                       <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
                         {goalCard.timingLabel}{goalCard.lastChangedAt ? ` - updated ${new Date(goalCard.lastChangedAt).toLocaleDateString()}` : ""}
                       </div>
-                      {goalCard.timingDetail ? (
-                        <div style={{ fontSize:"0.47rem", color:"#94a3b8", lineHeight:1.5 }}>
-                          {goalCard.timingDetail}
-                        </div>
-                      ) : null}
-                      <div style={{ fontSize:"0.49rem", color:"#dbe7f6", lineHeight:1.5 }}>
-                        Track: {goalCard.trackingLabels.length ? goalCard.trackingLabels.join(", ") : "30-day success definition"}
-                      </div>
-                      {goalCard.tradeoff && (
-                        <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
-                          Balance: {goalCard.tradeoff}
-                        </div>
-                      )}
                       {goalCard.fuzzyLine && (
                         <div style={{ display:"flex", gap:"0.32rem", flexWrap:"wrap", alignItems:"center" }}>
                           <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5, flex:"1 1 220px" }}>
@@ -178,7 +168,7 @@ export function SettingsGoalsSection({
         {goalOrderDirty && (
           <div data-testid="settings-goals-reorder-bar" style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1220", padding:"0.52rem", display:"grid", gap:"0.36rem" }}>
             <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.5 }}>
-              You've rearranged your goals. See what changes before you save the new order.
+              Review the new order before you save it.
             </div>
             <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
               <button data-testid="settings-goals-preview-reorder" className="btn btn-primary" onClick={onPreviewGoalReprioritization} disabled={goalManagementBusy}>
@@ -207,12 +197,9 @@ export function SettingsGoalsSection({
                 Changing: {goalManagementPreview.changedFields.map((entry) => entry.label).join(", ")}
               </div>
             )}
-            <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.5 }}>
-              {goalManagementPreview.explicitHistoryNote}
-            </div>
             <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
               <button data-testid="settings-goals-confirm-preview" className="btn" onClick={onApplyGoalManagement} disabled={goalManagementBusy} style={{ color:colors.green, borderColor:colors.green + "35" }}>
-                {goalManagementBusy ? "Saving..." : "Save goal change"}
+                {goalManagementBusy ? "Saving..." : "Save goal"}
               </button>
               <button data-testid="settings-goals-cancel-preview" className="btn" onClick={onResetGoalManagementWorkflow} disabled={goalManagementBusy} style={{ color:"#dbe7f6", borderColor:"#2b3d55" }}>
                 Cancel
@@ -222,22 +209,18 @@ export function SettingsGoalsSection({
         )}
       </div>
 
-      <div data-testid="settings-goals-lifecycle" style={{ ...SETTINGS_PANEL_STYLE, gap:"0.45rem" }}>
-        <div style={{ display:"grid", gap:"0.14rem" }}>
-          <div style={SETTINGS_LABEL_STYLE}>LIFECYCLE</div>
-          <div style={SETTINGS_TITLE_STYLE}>Keep future, paused, completed, archived, and dropped goals visible without muddying the live stack.</div>
-          <div style={SETTINGS_BODY_STYLE}>
-            Restoring a goal brings it back into the active priority order. Historical plans and logs stay attached to the earlier version either way.
+      <details data-testid="settings-goals-lifecycle" style={{ ...SETTINGS_PANEL_STYLE, gap:"0.45rem" }}>
+        <summary style={{ cursor:"pointer", listStyle:"none" }}>
+          <div style={{ display:"grid", gap:"0.14rem" }}>
+            <div style={SETTINGS_LABEL_STYLE}>LIFECYCLE</div>
+            <div style={SETTINGS_TITLE_STYLE}>Open goal history and restore older goals when you need them.</div>
           </div>
-        </div>
-        <div style={{ display:"grid", gap:"0.45rem" }}>
+        </summary>
+        <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.55rem" }}>
           {goalLifecycleSections.map((section) => (
             <div key={section.key} data-testid={`settings-goals-bucket-${section.status === "archived" ? "archived" : section.status}`} style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1220", padding:"0.58rem", display:"grid", gap:"0.35rem" }}>
               <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"flex-start", flexWrap:"wrap" }}>
-                <div style={{ display:"grid", gap:"0.12rem" }}>
-                  <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>{section.label}</div>
-                  <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.5 }}>{section.helper}</div>
-                </div>
+                <div style={{ fontSize:"0.54rem", color:"#dbe7f6", lineHeight:1.45 }}>{section.label}</div>
                 <div style={buildSettingsPillStyle({ color:"var(--text-soft)", background:"var(--surface-2)", borderColor:"var(--border)" })}>
                   {section.count}
                 </div>
@@ -256,12 +239,6 @@ export function SettingsGoalsSection({
                           </div>
                           <div style={{ fontSize:"0.58rem", color:"#e2e8f0", lineHeight:1.45 }}>{goalCard.summary}</div>
                           <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>{goalCard.timingLabel}</div>
-                          {goalCard.timingDetail ? (
-                            <div style={{ fontSize:"0.47rem", color:"#94a3b8", lineHeight:1.5 }}>{goalCard.timingDetail}</div>
-                          ) : null}
-                          <div style={{ fontSize:"0.48rem", color:"#dbe7f6", lineHeight:1.5 }}>
-                            Track: {goalCard.trackingLabels.length ? goalCard.trackingLabels.join(", ") : "Stored goal context"}
-                          </div>
                         </div>
                         <button data-testid={`settings-goal-restore-${goalCard.id}`} className="btn" onClick={() => onPreviewGoalRestore(goalCard.id)} disabled={goalManagementBusy} style={{ fontSize:"0.47rem", color:colors.green, borderColor:colors.green + "35" }}>
                           {getGoalRestoreLabel(goalCard.status)}
@@ -284,13 +261,13 @@ export function SettingsGoalsSection({
             </div>
           ))}
         </div>
-      </div>
+      </details>
 
       <details data-testid="settings-goals-audit" style={SETTINGS_PANEL_STYLE}>
         <summary style={{ cursor:"pointer", listStyle:"none" }}>
           <div style={{ display:"grid", gap:"0.14rem" }}>
             <div style={SETTINGS_LABEL_STYLE}>RECENT CHANGES</div>
-            <div style={SETTINGS_TITLE_STYLE}>Open if you want to review what changed and when.</div>
+            <div style={SETTINGS_TITLE_STYLE}>Open to review recent goal changes.</div>
           </div>
         </summary>
         <div style={{ display:"grid", gap:"0.45rem", marginTop:"0.5rem" }}>

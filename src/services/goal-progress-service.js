@@ -798,6 +798,141 @@ const buildStrengthTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressIn
   return [topSetItem, recordItem, consistencyItem];
 };
 
+const buildHybridDomainWindow = ({
+  dataIndex = {},
+  now = new Date(),
+  minDays = 0,
+  maxDays = 14,
+  domain = "strength",
+} = {}) => {
+  const safeDomain = sanitizeText(domain, 24).toLowerCase();
+  const dateKeys = new Set();
+  const logs = dataIndex?.logs || {};
+  const sessionRecords = dataIndex?.sessionRecords || [];
+  const exerciseRecords = dataIndex?.exerciseRecords || [];
+
+  Object.entries(logs).forEach(([dateKey, logEntry]) => {
+    if (!isWithinAgeWindow({ dateKey, now, minDays, maxDays })) return;
+    const rawText = `${logEntry?.type || ""} ${logEntry?.label || ""} ${logEntry?.actualSession?.sessionType || ""}`.toLowerCase();
+    const hasStrengthSignal = Array.isArray(logEntry?.performanceRecords) && logEntry.performanceRecords.length > 0;
+    const matchesStrength = hasStrengthSignal || /strength|bench|squat|deadlift|press|row|lift|prehab/.test(rawText);
+    const matchesEndurance = /run|tempo|interval|easy|long|swim|bike|ride|conditioning|cardio|otf|aerobic/.test(rawText);
+    if (safeDomain === "strength" && matchesStrength) dateKeys.add(dateKey);
+    if (safeDomain === "endurance" && matchesEndurance) dateKeys.add(dateKey);
+  });
+
+  sessionRecords.forEach((record) => {
+    if (!isWithinAgeWindow({ dateKey: record?.date || "", now, minDays, maxDays })) return;
+    const family = sanitizeText(record?.sessionFamily || "", 24).toLowerCase();
+    const typeText = `${record?.sessionType || ""} ${record?.sessionLabel || ""}`.toLowerCase();
+    if (safeDomain === "strength" && (family === "strength" || family === "hybrid" || /strength|lift|bench|squat|deadlift|press/.test(typeText))) {
+      dateKeys.add(record.date);
+    }
+    if (safeDomain === "endurance" && (family === "run" || family === "hybrid" || /run|swim|bike|ride|conditioning|cardio|tempo|interval|long|aerobic/.test(typeText))) {
+      dateKeys.add(record.date);
+    }
+  });
+
+  if (safeDomain === "strength") {
+    exerciseRecords.forEach((record) => {
+      if (!isWithinAgeWindow({ dateKey: record?.date || "", now, minDays, maxDays })) return;
+      dateKeys.add(record.date);
+    });
+  }
+
+  return [...dateKeys].sort();
+};
+
+const buildHybridFrequencyItem = ({
+  key = "",
+  label = "",
+  currentCount = 0,
+  priorCount = 0,
+  why = "",
+} = {}) => createTrackedItem({
+  key,
+  label,
+  kind: "proxy",
+  metricRefs: [key],
+  status: currentCount >= 2 ? GOAL_PROGRESS_STATUSES.onTrack : currentCount >= 1 ? GOAL_PROGRESS_STATUSES.building : GOAL_PROGRESS_STATUSES.needsData,
+  currentDisplay: currentCount > 0
+    ? `${currentCount} ${label.toLowerCase()} in the last 14 days`
+    : `No recent ${label.toLowerCase()} logged`,
+  trendDisplay: priorCount > 0
+    ? `${formatSignedDelta(currentCount - priorCount, 0, "days")} vs the prior 14 days`
+    : "",
+  why,
+});
+
+const buildHybridTrackedItems = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
+  const proxyMetricKeys = new Set((goal?.proxyMetrics || []).map((metric) => sanitizeText(metric?.key || metric, 60).toLowerCase()));
+  const primaryMetricKey = sanitizeText(goal?.primaryMetric?.key || "", 60).toLowerCase();
+  const hybridMetricKey = primaryMetricKey || "hybrid_consistency";
+  const hybridMetricLabel = sanitizeText(goal?.primaryMetric?.label || "Hybrid consistency", 80) || "Hybrid consistency";
+  const recentStrengthDates = buildHybridDomainWindow({ dataIndex, now, minDays: 0, maxDays: 14, domain: "strength" });
+  const priorStrengthDates = buildHybridDomainWindow({ dataIndex, now, minDays: 15, maxDays: 28, domain: "strength" });
+  const recentEnduranceDates = buildHybridDomainWindow({ dataIndex, now, minDays: 0, maxDays: 14, domain: "endurance" });
+  const priorEnduranceDates = buildHybridDomainWindow({ dataIndex, now, minDays: 15, maxDays: 28, domain: "endurance" });
+  const recentCombinedDays = new Set([...recentStrengthDates, ...recentEnduranceDates]).size;
+  const priorCombinedDays = new Set([...priorStrengthDates, ...priorEnduranceDates]).size;
+
+  const hybridItem = createTrackedItem({
+    key: hybridMetricKey,
+    label: hybridMetricLabel,
+    kind: "primary",
+    metricRefs: [hybridMetricKey, "weekly_strength_frequency", "weekly_run_frequency", "conditioning_consistency"],
+    status: recentStrengthDates.length >= 1 && recentEnduranceDates.length >= 1
+      ? GOAL_PROGRESS_STATUSES.onTrack
+      : recentCombinedDays > 0
+      ? GOAL_PROGRESS_STATUSES.building
+      : GOAL_PROGRESS_STATUSES.needsData,
+    currentDisplay: recentCombinedDays > 0
+      ? `${recentStrengthDates.length} strength days and ${recentEnduranceDates.length} endurance days in the last 14 days`
+      : "Both lanes still need recent logs",
+    trendDisplay: priorCombinedDays > 0
+      ? `${formatSignedDelta(recentCombinedDays - priorCombinedDays, 0, "days")} vs the prior 14 days`
+      : "",
+    why: "Hybrid plans only stay honest when both domains keep showing up in the real training week.",
+  });
+
+  const strengthItem = buildHybridFrequencyItem({
+    key: "weekly_strength_frequency",
+    label: "Strength days",
+    currentCount: recentStrengthDates.length,
+    priorCount: priorStrengthDates.length,
+    why: "The strength lane has to stay visible or the plan is no longer a real hybrid.",
+  });
+
+  const enduranceKey = proxyMetricKeys.has("weekly_run_frequency")
+    ? "weekly_run_frequency"
+    : proxyMetricKeys.has("conditioning_consistency")
+    ? "conditioning_consistency"
+    : proxyMetricKeys.has("work_capacity_check")
+    ? "work_capacity_check"
+    : "weekly_run_frequency";
+  const enduranceLabel = enduranceKey === "weekly_run_frequency"
+    ? "Endurance days"
+    : enduranceKey === "conditioning_consistency"
+    ? "Conditioning days"
+    : "Work-capacity days";
+  const enduranceItem = buildHybridFrequencyItem({
+    key: enduranceKey,
+    label: enduranceLabel,
+    currentCount: recentEnduranceDates.length,
+    priorCount: priorEnduranceDates.length,
+    why: "The endurance lane has to stay visible or the plan drifts back to a single-domain week.",
+  });
+
+  const items = [hybridItem, strengthItem, enduranceItem];
+  if (proxyMetricKeys.has("bodyweight_trend")) {
+    items.push(buildBodyweightTrendItem({ goal, dataIndex, now }));
+  }
+  if (proxyMetricKeys.has("waist_circumference")) {
+    items.push(buildWaistTrendItem({ now, manualProgressInputs }));
+  }
+  return items;
+};
+
 const buildBodyweightTrendItem = ({ goal = {}, dataIndex = {}, now = new Date() } = {}) => {
   const recentBodyweights = (dataIndex?.bodyweightSeries || []).filter((entry) => isWithinAgeWindow({ dateKey: entry?.date || "", now, minDays: 0, maxDays: 21 }));
   const latest = recentBodyweights[recentBodyweights.length - 1] || null;
@@ -1072,6 +1207,9 @@ const buildExploratoryTrackedItems = ({ dataIndex = {}, manualProgressInputs = {
 ];
 
 const buildTrackedItemsForGoal = ({ goal = {}, dataIndex = {}, manualProgressInputs = {}, now = new Date() } = {}) => {
+  if (goal?.goalFamily === "hybrid") {
+    return buildHybridTrackedItems({ goal, dataIndex, manualProgressInputs, now });
+  }
   if (goal?.goalFamily === "appearance") {
     return buildAppearanceTrackedItems({ goal, dataIndex, manualProgressInputs, now });
   }
@@ -1091,6 +1229,9 @@ const buildTrackedItemsForGoal = ({ goal = {}, dataIndex = {}, manualProgressInp
 };
 
 const buildStatusSummary = ({ goal = {}, trackingMode = GOAL_PROGRESS_TRACKING_MODES.proxy } = {}) => {
+  if (goal?.goalFamily === "hybrid") {
+    return "This hybrid goal is tracked through both lanes staying visible, not through a fake single-domain score.";
+  }
   if (goal?.goalFamily === "appearance") {
     return "This stays review-based: the app tracks appearance proxies on a cadence instead of pretending the mirror is a metric.";
   }
@@ -1115,6 +1256,9 @@ const buildStatusSummary = ({ goal = {}, trackingMode = GOAL_PROGRESS_TRACKING_M
 };
 
 const buildHonestyNote = ({ goal = {}, trackingMode = GOAL_PROGRESS_TRACKING_MODES.proxy, trackedItems = [] } = {}) => {
+  if (goal?.goalFamily === "hybrid") {
+    return "Hybrid goals stay honest only when the strength and endurance lanes both keep showing up in the logs.";
+  }
   if (goal?.goalFamily === "appearance") {
     return "Subjective look-based goals never get a fake exact completion score here.";
   }

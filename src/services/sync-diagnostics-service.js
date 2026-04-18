@@ -29,6 +29,8 @@ export const SYNC_DIAGNOSTIC_EVENT_TYPES = Object.freeze({
   trainerDataSaveResult: "trainer_data_save_result",
   trainerDataLoadAttempt: "trainer_data_load_attempt",
   trainerDataLoadResult: "trainer_data_load_result",
+  clientConfigState: "client_config_state",
+  authSessionState: "auth_session_state",
   authRefreshAttempt: "auth_refresh_attempt",
   authRefreshResult: "auth_refresh_result",
   realtimeStatus: "realtime_status",
@@ -51,7 +53,25 @@ export const createInitialSyncDiagnosticsState = ({ now = Date.now() } = {}) => 
   lastSupabaseErrorCode: "",
   lastErrorMessage: "",
   retryEligible: false,
+  retryReasonKey: "",
   pendingLocalWrites: false,
+  clientConfig: {
+    supabaseUrlConfigured: false,
+    supabaseAnonKeyConfigured: false,
+    supabaseUrlSource: "",
+    supabaseAnonKeySource: "",
+    supabaseUrlHost: "",
+    configError: "",
+  },
+  authState: {
+    hasSession: false,
+    userId: "",
+    email: "",
+    hasRefreshToken: false,
+    expiresAt: 0,
+    lastEnsureStatus: "",
+    source: "",
+  },
   trainerDataSave: createOperationState(),
   trainerDataLoad: createOperationState(),
   authRefresh: createOperationState(),
@@ -83,6 +103,23 @@ export const createInitialSyncDiagnosticsState = ({ now = Date.now() } = {}) => 
     cloudTs: 0,
   },
 });
+
+const inferRetryReasonKey = (event = {}) => {
+  const raw = [
+    event?.retryReasonKey,
+    event?.errorCode,
+    event?.supabaseErrorCode,
+    event?.errorMessage,
+  ]
+    .map((value) => sanitizeCopy(value, 240).toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+  if (/timeout|timed out|abort|aborted/.test(raw)) return "timeout";
+  if (/network|offline|failed_to_fetch|request_failed|fetch_network/.test(raw)) return "network";
+  if (/provider_unavailable|missing supabase|malformed supabase|anon key|supabase url/.test(raw)) return "provider_unavailable";
+  if (/auth_required|jwt|expired|refresh/.test(raw)) return "auth";
+  return sanitizeCopy(event?.retryReasonKey || "", 80) || "transient";
+};
 
 const applyAttemptToOperation = (operation = createOperationState(), event = {}, at = Date.now()) => ({
   ...operation,
@@ -119,6 +156,7 @@ const applyGlobalFailure = (state, event, at) => ({
   lastSupabaseErrorCode: sanitizeCopy(event?.supabaseErrorCode || "", 80),
   lastErrorMessage: sanitizeCopy(event?.errorMessage || "", 240),
   retryEligible: Boolean(event?.retryEligible),
+  retryReasonKey: Boolean(event?.retryEligible) ? inferRetryReasonKey(event) : state.retryReasonKey,
   pendingLocalWrites: event?.pendingLocalWrites == null ? state.pendingLocalWrites : Boolean(event.pendingLocalWrites),
 });
 
@@ -156,6 +194,9 @@ export const reduceSyncDiagnosticsState = (
       updatedAt: at,
       pendingLocalWrites: event?.pendingLocalWrites == null ? state.pendingLocalWrites : Boolean(event.pendingLocalWrites),
       retryEligible: event?.retryEligible == null ? state.retryEligible : Boolean(event.retryEligible),
+      retryReasonKey: event?.ok === false
+        ? inferRetryReasonKey(event)
+        : state.retryReasonKey,
       trainerDataSave: applyResultToOperation(state.trainerDataSave, event, at),
     };
     return event?.ok === false ? applyGlobalFailure(nextState, event, at) : nextState;
@@ -178,10 +219,44 @@ export const reduceSyncDiagnosticsState = (
       ...state,
       updatedAt: at,
       retryEligible: event?.retryEligible == null ? state.retryEligible : Boolean(event.retryEligible),
+      retryReasonKey: event?.ok === false
+        ? inferRetryReasonKey(event)
+        : state.retryReasonKey,
       pendingLocalWrites: event?.pendingLocalWrites == null ? state.pendingLocalWrites : Boolean(event.pendingLocalWrites),
       trainerDataLoad: applyResultToOperation(state.trainerDataLoad, event, at),
     };
     return event?.ok === false ? applyGlobalFailure(nextState, event, at) : nextState;
+  }
+
+  if (type === SYNC_DIAGNOSTIC_EVENT_TYPES.clientConfigState) {
+    return {
+      ...state,
+      updatedAt: at,
+      clientConfig: {
+        supabaseUrlConfigured: Boolean(event?.supabaseUrlConfigured),
+        supabaseAnonKeyConfigured: Boolean(event?.supabaseAnonKeyConfigured),
+        supabaseUrlSource: sanitizeCopy(event?.supabaseUrlSource || "", 60),
+        supabaseAnonKeySource: sanitizeCopy(event?.supabaseAnonKeySource || "", 60),
+        supabaseUrlHost: sanitizeCopy(event?.supabaseUrlHost || "", 120),
+        configError: sanitizeCopy(event?.configError || "", 240),
+      },
+    };
+  }
+
+  if (type === SYNC_DIAGNOSTIC_EVENT_TYPES.authSessionState) {
+    return {
+      ...state,
+      updatedAt: at,
+      authState: {
+        hasSession: Boolean(event?.hasSession),
+        userId: sanitizeCopy(event?.userId || "", 80),
+        email: sanitizeCopy(event?.email || "", 120),
+        hasRefreshToken: Boolean(event?.hasRefreshToken),
+        expiresAt: normalizeTimestamp(event?.expiresAt, 0),
+        lastEnsureStatus: sanitizeCopy(event?.lastEnsureStatus || "", 60),
+        source: sanitizeCopy(event?.source || "", 60),
+      },
+    };
   }
 
   if (type === SYNC_DIAGNOSTIC_EVENT_TYPES.authRefreshAttempt) {

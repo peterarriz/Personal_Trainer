@@ -298,6 +298,31 @@ test("planner produces materially different first weeks across distinct archetyp
   assert.notDeepEqual(marathonTypes, dumbbellTypes);
 });
 
+test("structured lift targets shape the resolved strength goal summary and primary metric", () => {
+  const resolvedGoal = resolveGoal({
+    templateId: "improve_big_lifts",
+    rawIntentText: "Improve my big lifts",
+    intakeContext: buildIntakeContext({
+      days: 4,
+      sessionLength: "45 min",
+      trainingLocation: "Gym",
+      equipment: ["barbell", "bench"],
+      fields: {
+        lift_focus: field("bench", "Bench"),
+        lift_target_weight: field(245, "245"),
+        lift_target_reps: field(3, "3"),
+        target_timeline: field("12 weeks", "12 weeks"),
+        current_strength_baseline: field("205 x 5", "205 x 5"),
+      },
+    }),
+  });
+
+  assert.equal(resolvedGoal.primaryMetric?.key, "bench_press_weight");
+  assert.equal(resolvedGoal.primaryMetric?.targetValue, "245");
+  assert.equal(resolvedGoal.primaryMetric?.targetReps, 3);
+  assert.match(resolvedGoal.summary || "", /bench press 245 lb for 3 reps/i);
+});
+
 test("cycling and triathlon goals drive dedicated planner overlays instead of generic conditioning fallback", () => {
   const cyclingGoal = resolveGoal({
     templateId: "ride_stronger",

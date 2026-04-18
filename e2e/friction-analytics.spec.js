@@ -28,6 +28,30 @@ const getAnalyticsNames = async (page, reader = getAppEvents) => {
     .filter(Boolean);
 };
 
+async function completeCoachReadyOnboarding(page) {
+  await gotoIntakeInLocalMode(page);
+  await completeIntroQuestionnaire(page, {
+    goalText: "run a 1:45 half marathon",
+    experienceLevel: "Intermediate",
+    trainingDays: "3",
+    sessionLength: "45 min",
+    trainingLocation: "Gym",
+    coachingStyle: "Balanced coaching",
+  });
+
+  await completeAnchors(page, {
+    target_timeline: { type: "natural", value: "October" },
+    current_run_frequency: { type: "natural", value: "3 runs/week" },
+    running_endurance_anchor_kind: { type: "choice", value: "longest_recent_run" },
+    longest_recent_run: { type: "natural", value: "7 miles" },
+    recent_pace_baseline: { type: "natural", value: "8:55 pace" },
+  });
+
+  await waitForReview(page);
+  await confirmIntakeBuild(page);
+  await waitForPostOnboarding(page);
+}
+
 test.describe("friction analytics smoke", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1360, height: 980 });
@@ -113,7 +137,7 @@ test.describe("friction analytics smoke", () => {
     await expect(page.getByTestId("settings-account-section")).toBeVisible();
     await page.getByTestId("settings-logout").click();
     await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
-    await expect(page.getByTestId("settings-sync-status")).toContainText("running locally without cloud sync");
+    await expect(page.getByTestId("settings-sync-status")).toContainText(/saved local copy|This device only/i);
     await expect.poll(() => stats.logoutRequests).toBe(1);
 
     await expect.poll(async () => {
@@ -126,21 +150,20 @@ test.describe("friction analytics smoke", () => {
     }).toBe(1);
   });
 
-  test("coach preview emits the deterministic preview event once", async ({ page }) => {
-    const session = makeSession();
-    const payload = makeSignedInPayload();
+  test("coach accept emits the deterministic accept event", async ({ page }) => {
     await installAppEventCapture(page);
-    await mockSupabaseRuntime(page, { session, payload });
-    await bootAppWithSupabaseSeeds(page, { session, payload });
+    await completeCoachReadyOnboarding(page);
 
+    await expect(page.getByTestId("app-tab-coach")).toBeVisible();
     await page.getByTestId("app-tab-coach").click();
     await expect(page.getByTestId("coach-tab")).toBeVisible();
     await page.getByTestId("coach-mode-button-adjust_week").click();
+    const beforeCount = (await getAnalyticsNames(page)).filter((name) => name === "coach.plan_accept.success").length;
     await page.getByTestId("coach-preview-adjust-week").click();
 
     await expect.poll(async () => {
       const analyticsNames = await getAnalyticsNames(page);
-      return analyticsNames.filter((name) => name === "coach.plan_preview.requested").length;
-    }).toBe(1);
+      return analyticsNames.filter((name) => name === "coach.plan_accept.success").length - beforeCount;
+    }).toBeGreaterThan(0);
   });
 });

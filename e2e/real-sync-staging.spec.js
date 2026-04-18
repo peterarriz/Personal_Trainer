@@ -218,8 +218,9 @@ const saveTodayQuickLog = async (page, {
   statusLabel,
   note = "",
 } = {}) => {
-  const quickLog = page.getByTestId("today-quick-log");
   await domClick(page.getByTestId("app-tab-today"));
+  await domClick(page.getByTestId("today-primary-cta"));
+  const quickLog = page.getByTestId("today-quick-log");
   await expect(quickLog).toBeVisible();
   await domClick(quickLog.getByRole("button", { name: new RegExp(`^${escapeRegExp(statusLabel)}$`, "i") }));
   if (note) {
@@ -272,6 +273,7 @@ const expectParityInUi = async (page, expected) => {
   await expect(page.getByTestId("settings-goals-management")).toContainText(expected.goalSummary);
 
   await domClick(page.getByTestId("app-tab-today"));
+  await domClick(page.getByTestId("today-primary-cta"));
   await expect(page.getByTestId("today-quick-log").getByPlaceholder("Optional note")).toHaveValue(expected.workoutNote);
 
   await domClick(page.getByTestId("app-tab-nutrition"));

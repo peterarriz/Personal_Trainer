@@ -50,7 +50,7 @@ test.describe("coach surface", () => {
     await expect(page.getByText(/AI advisory is off/i)).toHaveCount(0);
   });
 
-  test("deterministic change preview does not mutate until acceptance", async ({ page }) => {
+  test("deterministic coach change does not mutate until acceptance", async ({ page }) => {
     await completeRunningOnboarding(page);
 
     await page.getByTestId("app-tab-coach").click({ force: true });
@@ -58,17 +58,15 @@ test.describe("coach surface", () => {
     const beforeActionCount = Array.isArray(beforeCache?.coachActions) ? beforeCache.coachActions.length : 0;
 
     await page.getByTestId("coach-mode-button-adjust_week").click();
-    await page.getByTestId("coach-preview-adjust-week").click();
-
-    await expect(page.getByTestId("coach-action-preview")).toContainText(/This week lands at|Take pressure off this week/i);
-    await expect(page.getByTestId("coach-preview-accept")).toBeVisible();
+    await expect(page.getByTestId("coach-job-card-adjust-week")).toContainText(/Take pressure off this week|This week lands at/i);
 
     const previewCache = await readLocalCache(page);
     expect(Array.isArray(previewCache?.coachActions) ? previewCache.coachActions.length : 0).toBe(beforeActionCount);
 
-    await page.getByTestId("coach-preview-accept").click();
-    await expect(page.getByText("Change saved. Future workouts will follow this update.")).toBeVisible();
-    await expect(page.getByTestId("coach-action-history")).toContainText("Reduce this week's volume");
+    await page.getByTestId("coach-preview-adjust-week").click();
+    await expect(page.getByTestId("coach-feedback-status")).toContainText(/Saved/i);
+    await expect(page.getByTestId("coach-feedback-status")).toContainText(/Future workouts will follow this update\./i);
+    await expect(page.getByTestId("coach-action-history")).toHaveCount(0);
 
     await expect.poll(async () => {
       const cache = await readLocalCache(page);
@@ -113,7 +111,7 @@ test.describe("coach surface", () => {
     await expect(page.getByTestId("coach-ask-answer-card")).toContainText(/Likely effect/i);
     await expect(page.getByText(/Advice only/i)).toHaveCount(0);
     await expect(page.getByText(/AI advisory is off/i)).toHaveCount(0);
-    await expect(page.getByTestId("coach-preview-accept")).toHaveCount(0);
+    await expect(page.getByTestId("coach-action-history")).toHaveCount(0);
 
     const afterCache = await readLocalCache(page);
     expect(afterCache?.coachActions || []).toEqual(beforeCache?.coachActions || []);

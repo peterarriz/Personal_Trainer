@@ -284,10 +284,10 @@ const applySkippedKeyCarryForward = ({
     summary: {
       inputType: "workout_log",
       headline: `${sourceLabel} was carried forward after the earlier skip.`,
-      detail: `The next lower-priority slot was replaced so the week's backbone stays intact.`,
+      detail: "The next lower-priority slot moved so the week still holds together.",
       preserved: adapterId === DOMAIN_ADAPTER_IDS.running || adapterId === DOMAIN_ADAPTER_IDS.swimming
-        ? "The longer endurance backbone stays preserved."
-        : "The main weekly backbone stays preserved.",
+        ? "Your longer endurance work still stays in place."
+        : "Your main weekly focus still stays in place.",
     },
     sessionChanges: [
       {
@@ -365,7 +365,7 @@ const applyNutritionProtection = ({
       inputType: "nutrition_log",
       headline: "Intensity was capped until fueling stabilizes.",
       detail: weeklyNutritionReview?.adaptation?.support || "Recent under-fueling hit performance-relevant days, so intensity was reduced instead of pretending recovery is normal.",
-      preserved: "The weekly structure stays intact while the quality dose is controlled.",
+      preserved: "The weekly structure stays in place while quality work comes down a notch.",
     },
     sessionChanges: [
       {
@@ -414,9 +414,9 @@ const applyCoachActionInfluence = ({
         inputType: "coach_action",
         headline: "Strength emphasis was nudged up for the next exposure.",
         detail: adapterId === DOMAIN_ADAPTER_IDS.power
-          ? "The next strength touchpoint keeps force production visible without replacing the power backbone."
+          ? "The next strength touchpoint keeps power work visible without taking over the whole week."
           : "The next strength touchpoint got a small progression bump without rewriting the whole week.",
-        preserved: "The main weekly backbone stays intact.",
+        preserved: "Your main weekly focus stays in place.",
       },
       sessionChanges: [
         {
@@ -551,7 +551,7 @@ export const buildDynamicAdaptationState = ({
       inputType: "training_preference",
       headline: `${sanitizeText(preferencePolicy?.label || "Preference", 40)} preference changed the week shape.`,
       detail: dedupeStrings(preferenceEffects).join(" ") || "The selected preference changes progression tolerance and weekly density.",
-      preserved: "The main weekly backbone stays intact.",
+      preserved: "Your main weekly focus stays in place.",
     }
     : null;
   const nutritionOnlyAdjustment = !primarySummary && weeklyNutritionReview?.adaptation?.shouldAdapt;
@@ -563,7 +563,7 @@ export const buildDynamicAdaptationState = ({
           ? "Training stays as planned while hydration gets reinforced."
           : "Training stays as planned while nutrition defaults get simpler.",
         detail: weeklyNutritionReview?.adaptation?.summary || "The weekly nutrition signal changed, but it does not justify a structural training rewrite yet.",
-        preserved: "The current training backbone stays intact.",
+        preserved: "The current plan still stays on track.",
       },
       defaultInputType: "nutrition_log",
     })

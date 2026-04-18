@@ -54,8 +54,9 @@ async function saveTodayQuickLog(page, {
   statusLabel,
   note = "",
 } = {}) {
-  const quickLog = page.getByTestId("today-quick-log");
   await page.getByTestId("app-tab-today").click();
+  await page.getByTestId("today-primary-cta").click();
+  const quickLog = page.getByTestId("today-quick-log");
   await expect(quickLog).toBeVisible();
   await quickLog.getByRole("button", { name: new RegExp(`^${String(statusLabel || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") }).click();
   if (note) {
@@ -65,12 +66,12 @@ async function saveTodayQuickLog(page, {
   await expect(page.getByTestId("today-save-status")).toContainText(/saved|marked/i);
 }
 
-test.describe("reviewer report export", () => {
+test.describe("history export tooling", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 960 });
   });
 
-  test("consumer settings do not expose reviewer report tooling", async ({ page }) => {
+  test("consumer settings do not expose internal history export tooling", async ({ page }) => {
     await freezeBrowserDate(page, "2026-04-17T12:00:00.000Z");
     await completeRunningOnboarding(page);
     await saveTodayQuickLog(page, {

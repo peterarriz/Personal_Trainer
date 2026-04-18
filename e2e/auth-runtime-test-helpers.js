@@ -64,11 +64,12 @@ const makeSignedInPayload = () => ({
   ts: Date.now(),
 });
 
-const bootAppWithSupabaseSeeds = async (page, { session = null, payload = null } = {}) => {
+const bootAppWithSupabaseSeeds = async (page, { session = null, payload = null, path = "/" } = {}) => {
   await page.addInitScript(({ sessionSeed, payloadSeed, supabaseUrl, supabaseKey }) => {
     window.__SUPABASE_URL = supabaseUrl;
     window.__SUPABASE_ANON_KEY = supabaseKey;
     localStorage.removeItem("trainer_auth_session_v1");
+    localStorage.removeItem("trainer_auth_recovery_v1");
     localStorage.removeItem("trainer_local_cache_v4");
     if (sessionSeed) {
       localStorage.setItem("trainer_auth_session_v1", JSON.stringify(sessionSeed));
@@ -82,7 +83,7 @@ const bootAppWithSupabaseSeeds = async (page, { session = null, payload = null }
     supabaseUrl: SUPABASE_URL,
     supabaseKey: SUPABASE_KEY,
   });
-  await page.goto("/");
+  await page.goto(path);
 };
 
 const defaultDeleteDiagnostics = () => ({
@@ -115,6 +116,8 @@ const mockSupabaseRuntime = async (page, {
     logoutRequests: 0,
     recoverRequests: 0,
     lastRecoverBody: null,
+    passwordUpdateRequests: 0,
+    lastPasswordUpdateBody: null,
   };
 
   const resolvedDeleteDiagnostics = deleteDiagnosticsBody || defaultDeleteDiagnostics();
@@ -152,6 +155,10 @@ const mockSupabaseRuntime = async (page, {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });
   });
 
+  await page.route("**/auth/v1/verify**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(session) });
+  });
+
   await page.route("**/api/auth/forgot-password", async (route) => {
     stats.recoverRequests += 1;
     try {
@@ -166,6 +173,22 @@ const mockSupabaseRuntime = async (page, {
         ok: true,
         code: "password_reset_requested",
         message: "If that email can receive recovery mail, a reset link will arrive shortly.",
+      }),
+    });
+  });
+
+  await page.route("**/auth/v1/user**", async (route) => {
+    stats.passwordUpdateRequests += 1;
+    try {
+      stats.lastPasswordUpdateBody = JSON.parse(route.request().postData() || "{}");
+    } catch {
+      stats.lastPasswordUpdateBody = null;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        user: session.user,
       }),
     });
   });

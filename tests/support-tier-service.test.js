@@ -46,7 +46,7 @@ test("foundation-first unknown support stays exploratory when no stronger domain
   });
 
   assert.equal(tier.id, "tier_3");
-  assert.match(tier.honestyLine, /falling back to safer shared rules/i);
+  assert.match(tier.honestyLine, /starting simple|getting sharper/i);
 });
 
 test("goal-free foundation mode remains tier 1", () => {
@@ -62,7 +62,7 @@ test("goal-free foundation mode remains tier 1", () => {
   });
 
   assert.equal(tier.id, "tier_1");
-  assert.match(tier.basisLine, /No explicit goal is required/i);
+  assert.match(tier.basisLine, /do not need a formal goal|strong first week/i);
 });
 
 test("re-entry and safe-rebuild goals stay tier 2 even when they share the general planner backbone", () => {
@@ -86,7 +86,7 @@ test("re-entry and safe-rebuild goals stay tier 2 even when they share the gener
   });
 
   assert.equal(tier.id, "tier_2");
-  assert.match(tier.honestyLine, /guardrails/i);
+  assert.match(tier.honestyLine, /conservative|signal gets cleaner/i);
 });
 
 test("appearance-only physique goals stay tier 2 even when they share the body-comp adapter", () => {
@@ -111,8 +111,8 @@ test("appearance-only physique goals stay tier 2 even when they share the body-c
   });
 
   assert.equal(tier.id, "tier_2");
-  assert.match(tier.honestyLine, /guardrails|anchors/i);
-  assert.match(tier.basisLine, /appearance|proxy/i);
+  assert.match(tier.honestyLine, /conservative|signal gets cleaner/i);
+  assert.match(tier.basisLine, /appearance|trackable markers/i);
 });
 
 test("numeric weight-loss goals remain tier 1 on the body-comp adapter", () => {

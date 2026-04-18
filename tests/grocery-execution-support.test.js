@@ -49,7 +49,7 @@ test("grocery execution support builds a hard-day protein plus carb basket from 
   assert.equal(support.preferredStore, "Trader Joe's");
   assert.ok(support.basket.items.includes("rice"));
   assert.ok(support.mealAnchors.includes("Chicken + rice + vegetables"));
-  assert.match(support.honestyLine, /deterministic planning aid/i);
+  assert.match(support.honestyLine, /simple planning list/i);
 });
 
 test("grocery execution support switches to travel basket without claiming live availability", () => {

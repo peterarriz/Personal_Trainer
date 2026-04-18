@@ -68,6 +68,8 @@ const METRIC_LABELS = Object.freeze({
   bench_press_weight: { label: "Bench press", unit: "lb" },
   squat_weight: { label: "Squat", unit: "lb" },
   deadlift_weight: { label: "Deadlift", unit: "lb" },
+  overhead_press_weight: { label: "Overhead press", unit: "lb" },
+  pull_up_weight: { label: "Pull-up load", unit: "lb" },
   half_marathon_time: { label: "Half marathon time", unit: "time" },
   marathon_time: { label: "Marathon time", unit: "time" },
   "10k_time": { label: "10K time", unit: "time" },
@@ -289,12 +291,59 @@ const hasAppearanceTimingCue = (rawText = "", timeline = {}) => {
   );
 };
 
-const buildPrimaryMetric = ({ archetype = null, intent = null, rawText = "", eventDistance = "", templateSelection = null } = {}) => {
+const LIFT_FOCUS_METRIC_MAP = Object.freeze({
+  bench: { key: "bench_press_weight", label: "Bench press", unit: "lb" },
+  squat: { key: "squat_weight", label: "Squat", unit: "lb" },
+  deadlift: { key: "deadlift_weight", label: "Deadlift", unit: "lb" },
+  ohp: { key: "overhead_press_weight", label: "Overhead press", unit: "lb" },
+  pull_up: { key: "pull_up_weight", label: "Pull-up load", unit: "lb" },
+});
+
+const buildStructuredLiftTargetMetric = ({
+  fields = {},
+  templateSelection = null,
+  rawText = "",
+} = {}) => {
+  const liftFocus = normalizeChoice(readFieldValue(fields, "lift_focus") || templateSelection?.specificityDefaults?.lift_focus || "");
+  const liftMetric = LIFT_FOCUS_METRIC_MAP[liftFocus] || null;
+  if (!liftMetric) return null;
+  const targetValue = sanitizeText(
+    readFieldValue(fields, "lift_target_weight")
+    || parseStrengthTarget(rawText)
+    || templateSelection?.specificityDefaults?.metric_target
+    || "",
+    40
+  );
+  if (!targetValue) return null;
+  const targetRepsRaw = sanitizeText(readFieldValue(fields, "lift_target_reps") || "", 20);
+  const targetReps = targetRepsRaw ? Number(targetRepsRaw) : null;
+  return {
+    ...liftMetric,
+    targetValue,
+    kind: "primary",
+    ...(Number.isFinite(targetReps) && targetReps > 0 ? { targetReps: Math.round(targetReps) } : {}),
+  };
+};
+
+const buildPrimaryMetric = ({
+  archetype = null,
+  intent = null,
+  rawText = "",
+  eventDistance = "",
+  templateSelection = null,
+  fields = {},
+} = {}) => {
+  const structuredLiftMetric = buildStructuredLiftTargetMetric({
+    fields,
+    templateSelection,
+    rawText,
+  });
+  if (structuredLiftMetric && intent?.id === "improve_big_lifts") return structuredLiftMetric;
   const templateMetric = templateSelection?.primaryMetric || null;
   if (templateMetric?.key) return templateMetric;
   if (!archetype) return null;
   if (archetype.id === "lift_focus_bench") {
-    const targetValue = parseStrengthTarget(rawText) || templateSelection?.specificityDefaults?.metric_target || "";
+    const targetValue = structuredLiftMetric?.targetValue || parseStrengthTarget(rawText) || templateSelection?.specificityDefaults?.metric_target || "";
     return targetValue
       ? { key: "bench_press_weight", label: "Bench press", unit: "lb", targetValue, kind: "primary" }
       : null;
@@ -333,6 +382,18 @@ const buildPrimaryMetric = ({ archetype = null, intent = null, rawText = "", eve
     return { key: "swim_time", label: "Swim time", unit: "time", targetValue: targetDuration, kind: "primary" };
   }
   return null;
+};
+
+const formatPrimaryMetricTarget = (primaryMetric = null) => {
+  const targetValue = sanitizeText(primaryMetric?.targetValue || "", 40);
+  if (!targetValue) return "";
+  const unit = sanitizeText(primaryMetric?.unit || "", 20);
+  const targetReps = Number(primaryMetric?.targetReps);
+  const valueWithUnit = `${targetValue}${unit ? ` ${unit}` : ""}`.trim();
+  if (Number.isFinite(targetReps) && targetReps > 0) {
+    return `${valueWithUnit} for ${targetReps} reps`;
+  }
+  return valueWithUnit;
 };
 
 const buildProxyMetrics = ({ archetype = null, intent = null }) => {
@@ -387,7 +448,7 @@ const buildSummary = ({
       : "Build muscle";
   }
   if (intent?.id === "improve_big_lifts" && primaryMetric?.targetValue) {
-    return `${primaryMetric.label} ${primaryMetric.targetValue} ${primaryMetric.unit}`.trim();
+    return `${primaryMetric.label} ${formatPrimaryMetricTarget(primaryMetric)}`.trim();
   }
   if (intent?.id === "get_stronger") return "Get stronger with repeatable training";
   if (intent?.id === "get_leaner") {
@@ -626,6 +687,7 @@ export const resolveStructuredGoalPath = ({
     rawText: rawIntentText,
     eventDistance: context.eventDistance,
     templateSelection,
+    fields: context.fields,
   });
   const unresolvedGaps = dedupeStrings([
     ...resolveMissingAnchors({ archetype: best.archetype, fields: context.fields, context }).map((anchor) => `Need ${anchor.replace(/_/g, " ")} for a tighter first plan.`),

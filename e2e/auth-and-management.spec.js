@@ -80,7 +80,7 @@ test.describe("auth and management hardening", () => {
 
     await expect(page.getByTestId("settings-account-section")).toBeVisible();
     await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
-    await expect(page.getByTestId("settings-sync-status")).toContainText("running locally without cloud sync");
+    await expect(page.getByTestId("settings-sync-status")).toContainText(/saved local copy|This device only/i);
     await expect(page.getByTestId("auth-gate")).toHaveCount(0);
     await page.getByTestId("settings-open-auth-gate").click();
     await expect(page.getByTestId("auth-gate")).toBeVisible();
@@ -118,14 +118,13 @@ test.describe("auth and management hardening", () => {
     await expect(page.getByText(/Sign in failed/i)).toBeVisible();
   });
 
-  test("weekly nutrition planning stays visible and theme switching changes the real UI tokens", async ({ page }) => {
+  test("nutrition stays focused and theme switching changes the real UI tokens", async ({ page }) => {
     await completeRunningOnboarding(page);
 
     await page.getByTestId("app-tab-nutrition").click();
     await expect(page.getByTestId("nutrition-daily-target")).toBeVisible();
-    await expect(page.getByTestId("nutrition-weekly-planning")).toBeVisible();
-    await page.getByTestId("nutrition-weekly-planning").locator("summary").click();
-    await expect(page.getByTestId("nutrition-grocery-support")).toBeVisible();
+    await expect(page.getByTestId("nutrition-weekly-planning")).toHaveCount(0);
+    await expect(page.getByTestId("nutrition-performance-guidance")).toBeVisible();
 
     await page.getByTestId("app-tab-settings").click();
     await expect(page.getByTestId("settings-tab")).toBeVisible();

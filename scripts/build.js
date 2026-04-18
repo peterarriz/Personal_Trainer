@@ -31,8 +31,32 @@ const SUPABASE_UMD = fs.readFileSync(
   "utf8"
 );
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || "";
-const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || "";
+const resolveEnvCandidate = (...names) => {
+  for (const name of names) {
+    const value = String(process.env[name] || "").trim();
+    if (!value) continue;
+    return {
+      value,
+      source: name,
+    };
+  }
+  return {
+    value: "",
+    source: "",
+  };
+};
+
+const CLIENT_SUPABASE_URL_CONFIG = resolveEnvCandidate("VITE_SUPABASE_URL", "SUPABASE_URL");
+const CLIENT_SUPABASE_ANON_KEY_CONFIG = resolveEnvCandidate("VITE_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY");
+const SUPABASE_URL = CLIENT_SUPABASE_URL_CONFIG.value;
+const SUPABASE_ANON_KEY = CLIENT_SUPABASE_ANON_KEY_CONFIG.value;
+const SUPABASE_URL_HOST = (() => {
+  try {
+    return SUPABASE_URL ? new URL(SUPABASE_URL).host : "";
+  } catch {
+    return "";
+  }
+})();
 
 const LOCAL_DEPENDENCY_RE = /(?:import|export)\s+[\s\S]*?\s+from\s+['"](.+?)['"];?|require\(\s*['"](.+?)['"]\s*\)/gm;
 const STATIC_COPY_ENTRIES = [
@@ -58,7 +82,12 @@ const escapeScriptTag = (value) => String(value || "").replace(/<\/script>/gi, "
 const toModuleId = (filePath) => path.relative(ROOT, filePath).replace(/\\/g, "/");
 
 const ensureCleanDist = () => {
-  fs.rmSync(DIST, { recursive: true, force: true });
+  fs.rmSync(DIST, {
+    recursive: true,
+    force: true,
+    maxRetries: 8,
+    retryDelay: 150,
+  });
   fs.mkdirSync(DIST, { recursive: true });
   fs.mkdirSync(ASSETS_DIR, { recursive: true });
 };
@@ -139,6 +168,12 @@ const buildAppRuntime = ({ moduleEntries, entryId, buildMode }) => {
     "  window.__FORMA_BOOT_METRICS__ = window.__FORMA_BOOT_METRICS__ || {};",
     `  window.__FORMA_BOOT_METRICS__.buildMode = ${JSON.stringify(buildMode)};`,
     "  window.__FORMA_BOOT_METRICS__.bundleEvaluatedAt = Math.round(performance.now());",
+    "  window.__FORMA_CLIENT_CONFIG__ = window.__FORMA_CLIENT_CONFIG__ || {};",
+    `  window.__FORMA_CLIENT_CONFIG__.supabaseUrlConfigured = ${JSON.stringify(Boolean(SUPABASE_URL))};`,
+    `  window.__FORMA_CLIENT_CONFIG__.supabaseAnonKeyConfigured = ${JSON.stringify(Boolean(SUPABASE_ANON_KEY))};`,
+    `  window.__FORMA_CLIENT_CONFIG__.supabaseUrlSource = ${JSON.stringify(CLIENT_SUPABASE_URL_CONFIG.source || "")};`,
+    `  window.__FORMA_CLIENT_CONFIG__.supabaseAnonKeySource = ${JSON.stringify(CLIENT_SUPABASE_ANON_KEY_CONFIG.source || "")};`,
+    `  window.__FORMA_CLIENT_CONFIG__.supabaseUrlHost = ${JSON.stringify(SUPABASE_URL_HOST)};`,
     `  window.__SUPABASE_URL = window.__SUPABASE_URL || ${JSON.stringify(SUPABASE_URL)};`,
     `  window.__SUPABASE_ANON_KEY = window.__SUPABASE_ANON_KEY || ${JSON.stringify(SUPABASE_ANON_KEY)};`,
     "",
@@ -209,6 +244,13 @@ window.__FORMA_BOOT_METRICS__ = window.__FORMA_BOOT_METRICS__ || {
 window.__FORMA_BOOT_METRICS__.htmlParsedAt = Math.round(performance.now());
 window.__FORMA_BOOT_METRICS__.buildMode = ${JSON.stringify(buildMode)};
 window.__FORMA_BOOT_METRICS__.buildVersion = ${JSON.stringify(buildVersion)};
+window.__FORMA_CLIENT_CONFIG__ = window.__FORMA_CLIENT_CONFIG__ || {
+  supabaseUrlConfigured: ${JSON.stringify(Boolean(SUPABASE_URL))},
+  supabaseAnonKeyConfigured: ${JSON.stringify(Boolean(SUPABASE_ANON_KEY))},
+  supabaseUrlSource: ${JSON.stringify(CLIENT_SUPABASE_URL_CONFIG.source || "")},
+  supabaseAnonKeySource: ${JSON.stringify(CLIENT_SUPABASE_ANON_KEY_CONFIG.source || "")},
+  supabaseUrlHost: ${JSON.stringify(SUPABASE_URL_HOST)}
+};
 window.__SUPABASE_URL = window.__SUPABASE_URL || ${JSON.stringify(SUPABASE_URL)};
 window.__SUPABASE_ANON_KEY = window.__SUPABASE_ANON_KEY || ${JSON.stringify(SUPABASE_ANON_KEY)};
 `;
@@ -369,6 +411,10 @@ const writeBuildMeta = (meta) => {
 };
 
 console.log(`Building FORMA (${BUILD_MODE})...`);
+console.log(
+  `Client Supabase build config: url=${CLIENT_SUPABASE_URL_CONFIG.source || "missing"} ` +
+  `host=${SUPABASE_URL_HOST || "missing"} anon=${CLIENT_SUPABASE_ANON_KEY_CONFIG.source || "missing"}`
+);
 execFileSync(process.execPath, [path.join(__dirname, "check-repo-hygiene.cjs")], { stdio: "inherit" });
 
 ensureCleanDist();
@@ -402,6 +448,13 @@ const buildMeta = {
   vendorBytes: summary.vendorBytes,
   totalDistBytes: getFileBytes(OUT)
     + summary.assetFiles.reduce((sum, asset) => sum + asset.bytes, 0),
+  clientSupabaseConfig: {
+    urlSource: CLIENT_SUPABASE_URL_CONFIG.source || "",
+    anonKeySource: CLIENT_SUPABASE_ANON_KEY_CONFIG.source || "",
+    urlConfigured: Boolean(SUPABASE_URL),
+    anonKeyConfigured: Boolean(SUPABASE_ANON_KEY),
+    urlHost: SUPABASE_URL_HOST,
+  },
   assets: summary.assetFiles.map((asset) => ({
     fileName: asset.fileName,
     publicPath: asset.publicPath,

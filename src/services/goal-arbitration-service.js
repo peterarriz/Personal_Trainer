@@ -564,7 +564,7 @@ const buildFinalizationState = ({
   const validationIssues = orderedGoals.flatMap((goal) => normalizeValidationIssues(goal?.validationIssues || []));
   const clarificationPrompts = dedupeStrings([
     ...validationIssues.map((issue) => issue.prompt || issue.summary),
-    ...toArray(intakeCompleteness?.missingRequired || []).map((item) => `Confirm ${sanitizeText(item?.label || item, 160).toLowerCase()}.`),
+    ...toArray(intakeCompleteness?.missingRequired || []).map((item) => `Add ${sanitizeText(item?.label || item, 160).toLowerCase()}.`),
   ]);
   const requiresClarification = clarificationPrompts.length > 0;
   const blocked = requiresClarification || conflictSummary?.status === "blocked";

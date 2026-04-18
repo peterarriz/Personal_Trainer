@@ -47,6 +47,11 @@ import {
  NUTRITION_DAY_TYPES,
 } from "./services/nutrition-day-taxonomy-service.js";
 import { buildPlanArchetypeOverlay } from "./services/plan-generation/archetype-plan-generation-service.js";
+import {
+ auditPlanArchetypeContract,
+ enforcePlanArchetypeContract,
+ resolvePlanArchetypeContract,
+} from "./services/plan-archetype-contract-service.js";
 import { dedupeStrings } from "./utils/collection-utils.js";
 
 export { daysUntil, deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
@@ -87,13 +92,13 @@ const buildPlanDaySummary = (drivers = [], modifiedFromBase = false) => {
  const uniqueDrivers = dedupeStrings(drivers).slice(0, 3);
  if (!uniqueDrivers.length) {
  return modifiedFromBase
- ? "Today's recommendation reflects deterministic plan adjustments."
- : "Today's recommendation matches the planned day.";
+ ? "Today has been adjusted to fit your recent needs."
+ : "Today follows the plan.";
  }
  if (!modifiedFromBase) {
- return `Today's recommendation reflects ${uniqueDrivers.join(", ")}.`;
+ return `Today reflects ${uniqueDrivers.join(", ")}.`;
  }
- return `Today's recommendation was adjusted from the base plan by ${uniqueDrivers.join(", ")}.`;
+ return `Today has been adjusted for ${uniqueDrivers.join(", ")}.`;
 };
 
 const clampNumber = (value, min, max) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : min));
@@ -111,18 +116,53 @@ const resolvePlannedSessionKind = (plannedSession = null) => {
  return "";
 };
 const buildConditioningSession = ({
- label = "Conditioning",
- detail = "20-30 min zone-2 bike, rower, incline walk, or circuit",
- nutri = NUTRITION_DAY_TYPES.conditioningMixed,
- lowImpact = false,
+  label = "Conditioning",
+  detail = "20-30 min zone-2 bike, rower, incline walk, or circuit",
+  nutri = NUTRITION_DAY_TYPES.conditioningMixed,
+  lowImpact = false,
 } = {}) => ({
  type: "conditioning",
  label,
  nutri,
  fallback: detail,
- intensityGuidance: lowImpact ? "easy aerobic only" : "controlled aerobic conditioning",
- environmentNote: lowImpact ? "Use any low-impact aerobic setup available." : "",
+  intensityGuidance: lowImpact ? "easy aerobic only" : "controlled aerobic conditioning",
+  environmentNote: lowImpact ? "Use any low-impact aerobic setup available." : "",
 });
+
+const convertRunSessionForStrengthFirstPlan = (session = null) => {
+  if (!session || typeof session !== "object") return session;
+  const type = String(session?.type || "").toLowerCase();
+  if (!isRunSessionType(type)) return session;
+  if (type === "run+strength") {
+    return {
+      ...session,
+      type: "strength+prehab",
+      label: "Strength + Conditioning Primer",
+      run: undefined,
+      strengthDose: session?.strengthDose || "35-45 min strength",
+      optionalSecondary: "Optional: short bike, rower, or incline walk cooldown.",
+    };
+  }
+  const sessionText = sanitizeText([
+    session?.label,
+    session?.run?.t,
+    session?.run?.d,
+  ].join(" "), 160).toLowerCase();
+  const isHardConditioning = /tempo|interval|threshold|quality/.test(sessionText);
+  const duration = sanitizeText(session?.run?.d || "", 48)
+    .replace(/\+\s*strides optional/ig, "")
+    .trim();
+  const detail = isHardConditioning
+    ? "20-30 min controlled bike, rower, incline walk, or mixed-modality intervals"
+    : duration
+    ? `${duration} bike, rower, incline walk, or circuit`
+    : "20-30 min zone-2 bike, rower, incline walk, or circuit";
+  return buildConditioningSession({
+    label: isHardConditioning ? "Conditioning Intervals" : "Supportive Conditioning",
+    detail,
+    lowImpact: !isHardConditioning,
+  });
+};
 
 const buildScheduleBufferRecovery = (label = "Recovery / schedule buffer") => ({
  type: "rest",
@@ -998,7 +1038,7 @@ export const buildProgramBlock = ({
  ];
  tradeoffs = dedupeStrings([
  isSwimDomain
- ? "Dryland strength volume stays capped while the swim backbone receives the cleanest recovery windows."
+? "Dryland strength volume stays capped while swim work gets the cleanest recovery windows."
  : isCyclingDomain
  ? "Support strength volume stays capped while riding receives the cleanest recovery windows."
  : "Strength volume stays capped while running receives the cleanest recovery windows.",
@@ -2383,6 +2423,15 @@ export const composeGoalNativePlan = ({
  baseWeek,
  strengthPriority,
  });
+ const planContract = resolvePlanArchetypeContract({
+ goals: active,
+ primaryGoal: primary,
+ planArchetypeId: planArchetypeOverlay?.planArchetypeId || primary?.resolvedGoal?.planArchetypeId || "",
+ primaryDomain: domainAdapter?.id || planArchetypeOverlay?.primaryDomain || primary?.resolvedGoal?.primaryDomain || "",
+ planningCategory: primary?.resolvedGoal?.planningCategory || primary?.category || "",
+ goalFamily: primary?.resolvedGoal?.goalFamily || "",
+ architecture: effectiveArchitecture,
+ });
  let annotatedTemplates = liveProgramPlanning?.usesProgramBackbone && liveProgramPlanning?.dayTemplates
  ? clonePlainValue(liveProgramPlanning.dayTemplates)
  : annotateTemplate(planArchetypeOverlay?.dayTemplates || domainSpecificTemplates || dayTemplates[effectiveArchitecture] || dayTemplates[architecture] || {});
@@ -2421,13 +2470,22 @@ export const composeGoalNativePlan = ({
  adapter: domainAdapter,
  coachActions,
  });
- annotatedTemplates = adaptationState?.adaptedDayTemplates || annotatedTemplates;
- annotatedTemplates = Object.fromEntries(
- Object.entries(annotatedTemplates || {}).map(([day, session]) => [day, session ? normalizeSessionEntryLabel(session) : session])
- );
- const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
- dayTemplates: annotatedTemplates,
- targetDays: Number(personalization?.userGoalProfile?.days_per_week || personalization?.canonicalAthlete?.userProfile?.daysPerWeek || 0),
+annotatedTemplates = adaptationState?.adaptedDayTemplates || annotatedTemplates;
+annotatedTemplates = Object.fromEntries(
+  Object.entries(annotatedTemplates || {}).map(([day, session]) => [day, session ? normalizeSessionEntryLabel(session) : session])
+);
+if (!hasRunningGoal && primary?.category === "strength") {
+  annotatedTemplates = Object.fromEntries(
+    Object.entries(annotatedTemplates || {}).map(([day, session]) => [day, convertRunSessionForStrengthFirstPlan(session)])
+  );
+}
+annotatedTemplates = enforcePlanArchetypeContract({
+  contract: planContract,
+  dayTemplates: annotatedTemplates,
+});
+const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
+  dayTemplates: annotatedTemplates,
+  targetDays: Number(personalization?.userGoalProfile?.days_per_week || personalization?.canonicalAthlete?.userProfile?.daysPerWeek || 0),
  architecture: effectiveArchitecture,
  });
  annotatedTemplates = scheduleLimitedTemplates.dayTemplates || annotatedTemplates;
@@ -2436,6 +2494,10 @@ export const composeGoalNativePlan = ({
  annotatedTemplates[3] = { type: "strength+prehab", label: "Minimum Strength Touchpoint", strSess: "A", nutri: "strength", strengthDose: "20-30 min maintenance strength" };
  strengthSessionsPerWeek = 1;
  }
+ const planContractAudit = auditPlanArchetypeContract({
+ contract: planContract,
+ dayTemplates: annotatedTemplates,
+ });
  if (preferenceOverlay?.changed && preferenceOverlay?.effects?.length) {
  constraints.push(...preferenceOverlay.effects);
  }
@@ -2514,6 +2576,8 @@ export const composeGoalNativePlan = ({
  supportTier: clonePlainValue(supportTier || null),
  baselineInfluence: clonePlainValue(baselineInfluence || null),
  planArchetypeOverlay: clonePlainValue(planArchetypeOverlay || null),
+ planContract: clonePlainValue(planContract || null),
+ planContractAudit: clonePlainValue(planContractAudit || null),
  };
  const programBlock = buildProgramBlock({
  weekNumber: currentWeek,
@@ -2552,6 +2616,8 @@ export const composeGoalNativePlan = ({
  trainingPreferencePolicy: clonePlainValue(trainingPreferencePolicy || null),
  adaptationState: clonePlainValue(adaptationState || null),
  planArchetypeOverlay: clonePlainValue(planArchetypeOverlay || null),
+ planContract: clonePlainValue(planContract || null),
+ planContractAudit: clonePlainValue(planContractAudit || null),
  changeSummary: clonePlainValue(adaptationState?.changeSummary || null),
  activeProgramInstance: liveProgramPlanning?.activeProgramInstance || null,
  activeStyleSelection: liveProgramPlanning?.activeStyleSelection || null,

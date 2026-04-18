@@ -16,6 +16,7 @@ import { SYNC_DIAGNOSTIC_EVENT_TYPES } from "./services/sync-diagnostics-service
 export const SB_ROW = "trainer_v1";
 export const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
 export const AUTH_CACHE_KEY = "trainer_auth_session_v1";
+export const AUTH_RECOVERY_CACHE_KEY = "trainer_auth_recovery_v1";
 export const AUTH_REQUIRED = "AUTH_REQUIRED";
 export const AUTH_TRANSIENT = "AUTH_TRANSIENT";
 export const AUTH_PROVIDER_UNAVAILABLE = "AUTH_PROVIDER_UNAVAILABLE";
@@ -63,6 +64,24 @@ const buildStructuredError = (message, details = {}) => {
 const isTransientStorageMessage = (message = "") => (
   /auth_transient|fetch_timeout|fetch_network|timeout|timed out|abort|aborted|failed to fetch|networkerror|network request failed|load failed 5\d\d|load failed 429|temporarily unavailable/i.test(String(message || ""))
 );
+
+const isTerminalRefreshFailure = (error = null) => {
+  const code = String(error?.supabaseErrorCode || error?.code || "").trim().toLowerCase();
+  const status = Number(error?.httpStatus || 0);
+  const message = String(error?.message || error || "").trim().toLowerCase();
+  if (code === "invalid_grant" || code === "refresh_token_not_found" || code === "session_not_found") return true;
+  if (status === 400 || status === 401) return true;
+  return /invalid refresh token|refresh token.+expired|session.+expired|jwt expired|token.+revoked/.test(message);
+};
+
+const classifyRefreshFailureKind = (error = null) => {
+  if (String(error?.message || "") === AUTH_PROVIDER_UNAVAILABLE) return "provider_unavailable";
+  if (isTerminalRefreshFailure(error)) return "terminal";
+  const status = Number(error?.httpStatus || 0);
+  const message = String(error?.message || error || "");
+  if (status === 429 || status >= 500 || isTransientStorageMessage(message)) return "transient";
+  return "transient";
+};
 
 export const classifyStorageError = (error) => {
   const message = String(error?.message || error || "");
@@ -113,7 +132,7 @@ export const classifyStorageError = (error) => {
     mode: "local",
     label: "SYNC RETRYING",
     reason: STORAGE_STATUS_REASONS.transient,
-    detail: "Cloud sync is still retrying in the background. Local changes remain saved on this device.",
+    detail: "Still trying to sync to your account. Your changes are saved on this device.",
   });
 };
 
@@ -215,6 +234,37 @@ export const getTokenExpiryMs = (token) => {
   return Number(payload.exp) * 1000;
 };
 
+export const getClientCloudConfigDiagnostics = () => {
+  if (typeof window === "undefined") {
+    return {
+      supabaseUrlConfigured: false,
+      supabaseAnonKeyConfigured: false,
+      supabaseUrlSource: "",
+      supabaseAnonKeySource: "",
+      supabaseUrlHost: "",
+      configError: "",
+    };
+  }
+  const config = window.__FORMA_CLIENT_CONFIG__ || {};
+  const rawSupabaseUrl = String(window.__SUPABASE_URL || "").trim();
+  let urlHost = String(config?.supabaseUrlHost || "").trim();
+  if (!urlHost && rawSupabaseUrl) {
+    try {
+      urlHost = new URL(rawSupabaseUrl).host;
+    } catch {
+      urlHost = "";
+    }
+  }
+  return {
+    supabaseUrlConfigured: Boolean(rawSupabaseUrl),
+    supabaseAnonKeyConfigured: Boolean(String(window.__SUPABASE_ANON_KEY || "").trim()),
+    supabaseUrlSource: String(config?.supabaseUrlSource || "").trim(),
+    supabaseAnonKeySource: String(config?.supabaseAnonKeySource || "").trim(),
+    supabaseUrlHost: urlHost,
+    configError: String(config?.configError || "").trim(),
+  };
+};
+
 export const normalizeSession = (session, fallback = null) => {
   if (!session?.access_token || !(session?.user?.id || fallback?.user?.id)) return null;
   const expiresAt = getTokenExpiryMs(session.access_token) || Number(session.expires_at || 0) * 1000 || null;
@@ -284,12 +334,15 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     return (Date.now() - lastTransientPersistFailureAt) < TRANSIENT_PERSIST_RETRY_COOLDOWN_MS;
   };
   const SB_CONFIG_ERROR = !SB_URL
-    ? "Missing Supabase URL. Set VITE_SUPABASE_URL."
+    ? "Missing Supabase URL. Set VITE_SUPABASE_URL or SUPABASE_URL for the client build."
     : !hasValidSupabaseUrl
     ? `Malformed Supabase URL: ${SB_URL}`
     : !SB_KEY
-    ? "Missing Supabase anon key. Set VITE_SUPABASE_ANON_KEY."
+    ? "Missing Supabase anon key. Set VITE_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY for the client build."
     : "";
+  if (typeof window !== "undefined" && window.__FORMA_CLIENT_CONFIG__) {
+    window.__FORMA_CLIENT_CONFIG__.configError = SB_CONFIG_ERROR || "";
+  }
 
   const sbH = { "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + SB_KEY };
   const sbUserHeaders = (token) => ({ "Content-Type": "application/json", "apikey": SB_KEY, "Authorization": "Bearer " + token });
@@ -390,6 +443,28 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       }
     } catch {}
   };
+  const loadPasswordRecoverySession = () => {
+    try {
+      const raw = localStorage.getItem(AUTH_RECOVERY_CACHE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  };
+  const savePasswordRecoverySession = (session) => {
+    try {
+      localStorage.setItem(AUTH_RECOVERY_CACHE_KEY, JSON.stringify(session || null));
+    } catch {}
+  };
+  const clearPasswordRecoverySession = () => {
+    try {
+      if (typeof localStorage?.removeItem === "function") {
+        localStorage.removeItem(AUTH_RECOVERY_CACHE_KEY);
+      } else {
+        localStorage.setItem(AUTH_RECOVERY_CACHE_KEY, "null");
+      }
+    } catch {}
+  };
   const authRequest = async (path, options = {}) => {
     if (SB_CONFIG_ERROR) throw new Error(AUTH_PROVIDER_UNAVAILABLE);
     const method = String(options?.method || "GET").toUpperCase();
@@ -477,6 +552,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       return normalized;
     } catch (e) {
       logDiag("auth.refresh.failed", e?.message || "unknown");
+      const failureKind = classifyRefreshFailureKind(e);
       pushSyncDiagnostic({
         type: SYNC_DIAGNOSTIC_EVENT_TYPES.authRefreshResult,
         ok: false,
@@ -486,9 +562,21 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         httpStatus: e?.httpStatus,
         supabaseErrorCode: e?.supabaseErrorCode || e?.code || "",
         errorMessage: e?.message || "",
+        retryEligible: failureKind === "transient",
         at: Date.now(),
       });
-      return null;
+      if (failureKind === "terminal") {
+        return null;
+      }
+      const propagatedMessage = failureKind === "provider_unavailable" ? AUTH_PROVIDER_UNAVAILABLE : AUTH_TRANSIENT;
+      throw buildStructuredError(propagatedMessage, {
+        endpoint,
+        method: "POST",
+        httpStatus: e?.httpStatus || null,
+        supabaseErrorCode: String(e?.supabaseErrorCode || e?.code || "").trim(),
+        responseText: String(e?.responseText || "").slice(0, 400),
+        detail: String(e?.message || "").trim(),
+      });
     }
   };
 
@@ -516,8 +604,145 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       logDiag("auth.ensure.refresh_failed", reason);
       return { session: null, status: "refresh_failed" };
     } catch (e) {
+      if (e?.message === AUTH_PROVIDER_UNAVAILABLE) {
+        logDiag("auth.ensure.provider_unavailable", reason, e?.detail || e?.message || "unknown");
+        return { session: normalized, status: "provider_unavailable" };
+      }
       logDiag("auth.ensure.transient", reason, e?.message || "unknown");
       return { session: normalized, status: "transient" };
+    }
+  };
+
+  const buildRecoverySessionFromTokens = ({
+    accessToken = "",
+    refreshToken = "",
+  } = {}) => {
+    const normalizedAccessToken = String(accessToken || "").trim();
+    if (!normalizedAccessToken) return null;
+    const tokenPayload = decodeJwtPayload(normalizedAccessToken) || {};
+    const fallbackUser = tokenPayload?.sub
+      ? {
+          id: String(tokenPayload.sub || "").trim(),
+          email: String(tokenPayload.email || "").trim(),
+        }
+      : null;
+    return normalizeSession(
+      {
+        access_token: normalizedAccessToken,
+        refresh_token: String(refreshToken || "").trim(),
+        user: fallbackUser,
+        expires_at: Number(tokenPayload?.exp || 0) || null,
+      },
+      fallbackUser
+        ? {
+            refresh_token: String(refreshToken || "").trim(),
+            user: fallbackUser,
+            expires_at: Number(tokenPayload?.exp || 0) || null,
+          }
+        : null
+    );
+  };
+
+  const stripRecoveryParamsFromUrl = () => {
+    if (typeof window === "undefined" || typeof window.history?.replaceState !== "function") return;
+    const url = new URL(window.location.href);
+    [
+      "type",
+      "token_hash",
+      "access_token",
+      "refresh_token",
+      "expires_at",
+      "expires_in",
+      "code",
+    ].forEach((key) => url.searchParams.delete(key));
+    url.hash = "";
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const resolvePasswordRecoverySession = async () => {
+    const cachedRecoverySession = loadPasswordRecoverySession();
+    const cachedSession = normalizeSession(cachedRecoverySession, cachedRecoverySession);
+    if (typeof window === "undefined") {
+      return cachedSession?.access_token
+        ? { ok: true, session: cachedSession, source: "cache", strippedUrl: false }
+        : { ok: false, session: null, source: "missing", strippedUrl: false };
+    }
+    const searchParams = new URLSearchParams(window.location.search || "");
+    const hashParams = new URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
+    const recoveryType = String(
+      hashParams.get("type")
+      || searchParams.get("type")
+      || ""
+    ).trim().toLowerCase();
+    const accessToken = String(hashParams.get("access_token") || searchParams.get("access_token") || "").trim();
+    const refreshToken = String(hashParams.get("refresh_token") || searchParams.get("refresh_token") || "").trim();
+    const tokenHash = String(searchParams.get("token_hash") || hashParams.get("token_hash") || "").trim();
+    const hasRecoveryUrlState = Boolean(
+      recoveryType === "recovery"
+      || accessToken
+      || refreshToken
+      || tokenHash
+      || searchParams.get("code")
+    );
+    let strippedUrl = false;
+    try {
+      if (recoveryType === "recovery" && accessToken) {
+        const session = buildRecoverySessionFromTokens({ accessToken, refreshToken });
+        if (session?.access_token && session?.user?.id) {
+          savePasswordRecoverySession(session);
+          stripRecoveryParamsFromUrl();
+          strippedUrl = hasRecoveryUrlState;
+          return { ok: true, session, source: "link_tokens", strippedUrl };
+        }
+      }
+      if (recoveryType === "recovery" && tokenHash) {
+        const verified = await authRequest("verify", {
+          method: "POST",
+          body: JSON.stringify({
+            type: "recovery",
+            token_hash: tokenHash,
+          }),
+        });
+        const verifiedSession = verified?.session || verified;
+        const session = normalizeSession(verifiedSession, verifiedSession);
+        if (session?.access_token && session?.user?.id) {
+          savePasswordRecoverySession(session);
+          stripRecoveryParamsFromUrl();
+          strippedUrl = hasRecoveryUrlState;
+          return { ok: true, session, source: "verify_token_hash", strippedUrl };
+        }
+      }
+      if (cachedSession?.access_token && cachedSession?.user?.id) {
+        return { ok: true, session: cachedSession, source: "cache", strippedUrl };
+      }
+      if (hasRecoveryUrlState) {
+        clearPasswordRecoverySession();
+        stripRecoveryParamsFromUrl();
+        strippedUrl = true;
+      }
+      return { ok: false, session: null, source: hasRecoveryUrlState ? "invalid" : "missing", strippedUrl };
+    } catch (error) {
+      if (hasRecoveryUrlState) {
+        clearPasswordRecoverySession();
+        stripRecoveryParamsFromUrl();
+        strippedUrl = true;
+      }
+      if (cachedSession?.access_token && cachedSession?.user?.id) {
+        return {
+          ok: true,
+          session: cachedSession,
+          source: "cache_after_error",
+          strippedUrl,
+          error,
+        };
+      }
+      return {
+        ok: false,
+        session: null,
+        source: "error",
+        strippedUrl,
+        error,
+      };
     }
   };
 
@@ -697,6 +922,71 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       }
       setAuthError("Password reset request failed. Try again in a moment.");
       return { ok: false, error: e?.message || "forgot_password_failed" };
+    }
+  };
+
+  const handlePasswordRecoveryUpdate = async ({
+    recoverySession,
+    nextPassword,
+    setAuthError,
+  }) => {
+    if (typeof setAuthError === "function") setAuthError("");
+    const normalizedRecoverySession = normalizeSession(recoverySession, recoverySession);
+    if (!normalizedRecoverySession?.access_token || !normalizedRecoverySession?.user?.id) {
+      clearPasswordRecoverySession();
+      if (typeof setAuthError === "function") {
+        setAuthError("This reset link is no longer valid. Request a new one.");
+      }
+      return { ok: false, error: "missing_recovery_session" };
+    }
+    const startedAt = Date.now();
+    try {
+      await authRequest("user", {
+        method: "PUT",
+        headers: {
+          "Authorization": `Bearer ${normalizedRecoverySession.access_token}`,
+        },
+        body: JSON.stringify({
+          password: String(nextPassword || ""),
+        }),
+      });
+      clearPasswordRecoverySession();
+      trackAnalytics({
+        flow: "auth",
+        action: "password_recovery_update",
+        outcome: "success",
+        props: {
+          duration_ms: Date.now() - startedAt,
+        },
+      });
+      return { ok: true };
+    } catch (e) {
+      trackAnalytics({
+        flow: "auth",
+        action: "password_recovery_update",
+        outcome: "error",
+        props: {
+          duration_ms: Date.now() - startedAt,
+          error_code: classifyAnalyticsErrorCode(e),
+        },
+      });
+      if (e?.message === AUTH_PROVIDER_UNAVAILABLE) {
+        if (typeof setAuthError === "function") {
+          setAuthError("Cloud auth provider is unavailable or misconfigured.");
+        }
+        return { ok: false, error: AUTH_PROVIDER_UNAVAILABLE };
+      }
+      const message = String(e?.message || "");
+      if (/password|weak/i.test(message)) {
+        if (typeof setAuthError === "function") {
+          setAuthError(message);
+        }
+        return { ok: false, error: "weak_password" };
+      }
+      if (typeof setAuthError === "function") {
+        setAuthError("Password update failed. Request a fresh reset link and try again.");
+      }
+      return { ok: false, error: e?.message || "password_recovery_update_failed" };
     }
   };
 
@@ -1525,7 +1815,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             mode: "local",
             label: "SYNC RETRYING",
             reason: STORAGE_STATUS_REASONS.transient,
-            detail: "Cloud sync is still retrying in the background. Local changes remain saved on this device.",
+            detail: "Still trying to sync to your account. Your changes are saved on this device.",
           });
           applyStorageStatusUpdate(setStorageStatus, cooldownStatus);
           trackAnalytics({
@@ -1684,11 +1974,17 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     loadAuthSession,
     saveAuthSession,
     clearCachedAuthSession,
+    loadPasswordRecoverySession,
+    savePasswordRecoverySession,
+    clearPasswordRecoverySession,
+    getClientCloudConfigDiagnostics,
     authRequest,
     ensureValidSession,
-      handleSignIn,
+    resolvePasswordRecoverySession,
+    handleSignIn,
     handleSignUp,
     handleForgotPassword,
+    handlePasswordRecoveryUpdate,
     handleSignOut,
     handleDeleteAccount,
     checkDeleteAccountAvailability,

@@ -70,10 +70,10 @@ const toRuntimeFidelityMode = (mode = "") => (
 
 const formatRuntimeFidelityLabel = (mode = "") => (
   mode === PROGRAM_RUNTIME_FIDELITY.strict
-    ? "strict"
+    ? "follow closely"
     : mode === PROGRAM_RUNTIME_FIDELITY.styleOnly
-    ? "style-only"
-    : "adapted"
+    ? "use for feel"
+    : "fit to you"
 );
 
 const resolveAthleteProfile = ({
@@ -711,15 +711,15 @@ export const deriveProgramAdherenceState = ({
 
   const summary = state === "aligned"
     ? runtimeFidelityMode === PROGRAM_RUNTIME_FIDELITY.strict
-      ? "You are still running this program close enough to the written backbone that strict mode means something."
-      : "The program backbone is still showing up clearly in your real training."
+      ? "Your recent training still matches the written plan closely."
+      : "This plan is still showing up clearly in your real training."
     : state === "drifting"
     ? runtimeFidelityMode === PROGRAM_RUNTIME_FIDELITY.strict
-      ? "The written template is starting to drift, so the app will protect the backbone more carefully."
-      : "The backbone is still present, but recent execution is drifting enough that adaptation needs to lead."
+      ? "Your recent training is starting to drift from the written plan, so FORMA is simplifying the next steps."
+      : "Your recent training is drifting enough that the next week needs to stay simpler."
     : runtimeFidelityMode === PROGRAM_RUNTIME_FIDELITY.strict
-    ? "Recent execution is far enough off the written backbone that this no longer counts as strict in practice."
-    : "Recent execution is far enough off the backbone that the plan needs a simpler adapted week.";
+    ? "Your recent training has moved far enough from the written plan that it no longer fits as-is."
+    : "Your recent training has moved far enough from the current plan that the next week needs a simpler reset.";
 
   return {
     state,
@@ -757,15 +757,15 @@ const buildRuntimePlanBasisExplanation = ({
   const programName = programDefinition?.displayName || "";
   const styleName = styleDefinition?.displayName || "";
   const fidelityLabel = formatRuntimeFidelityLabel(runtimeFidelityMode);
-  const sourceBasisLabel = PROGRAM_SOURCE_BASIS_LABELS[programDefinition?.sourceBasis || styleDefinition?.sourceBasis || "evidence_informed_default"] || "Evidence-informed default";
-  const sourceConfidenceLabel = SOURCE_CONFIDENCE_LABELS[programDefinition?.sourceConfidence || styleDefinition?.sourceConfidence || "high"] || "High confidence";
+  const sourceBasisLabel = PROGRAM_SOURCE_BASIS_LABELS[programDefinition?.sourceBasis || styleDefinition?.sourceBasis || "evidence_informed_default"] || "Built for your goals";
+  const sourceConfidenceLabel = SOURCE_CONFIDENCE_LABELS[programDefinition?.sourceConfidence || styleDefinition?.sourceConfidence || "high"] || "Well supported";
 
   if (basisMode === "program_suspended_fallback" && programDefinition) {
     return {
       ...base,
       basisType: "program_suspended_fallback",
       basisSummary: `${programName} is selected, but FORMA is not running it literally right now.`,
-      personalizationSummary: `${compromiseLine || "Current safety or setup realities make the template a poor literal fit, so this week shifts back to FORMA's built-for-you plan."} ${adherence?.summary || ""}`.trim(),
+      personalizationSummary: `${compromiseLine || "Current safety or setup realities make the template a poor fit, so this week shifts back to FORMA's built-for-you plan."} ${adherence?.summary || ""}`.trim(),
       caveats: uniqueStrings([compromiseLine, ...(programCompatibility?.blockedConstraints || []), adherence?.summary]),
       sourceBasisLabel,
       sourceConfidenceLabel,
@@ -790,8 +790,8 @@ const buildRuntimePlanBasisExplanation = ({
     caveats: uniqueStrings([
       ...(base?.caveats || []),
       compromiseLine,
-      fidelityStatus === PROGRAM_FIDELITY_STATUS.downgradedForDrift ? "Strict mode has been downgraded because recent execution drifted too far from the written backbone." : "",
-      fidelityStatus === PROGRAM_FIDELITY_STATUS.downgradedForConstraints ? "Strict mode has been downgraded because current constraints require visible adaptation." : "",
+      fidelityStatus === PROGRAM_FIDELITY_STATUS.downgradedForDrift ? "FORMA shifted this plan into a simpler fit because your recent training drifted too far from the written version." : "",
+      fidelityStatus === PROGRAM_FIDELITY_STATUS.downgradedForConstraints ? "FORMA shifted this plan into a simpler fit because your current setup needs visible adjustments." : "",
     ]),
     personalizationSummary: uniqueStrings([
       base?.personalizationSummary || "",
@@ -880,7 +880,7 @@ export const deriveLiveProgramPlanningBasis = ({
   if (usesProgramBackbone && requestedRuntimeFidelityMode === PROGRAM_RUNTIME_FIDELITY.strict && adherence?.state === "off_program") {
     effectiveRuntimeFidelityMode = PROGRAM_RUNTIME_FIDELITY.adapted;
     fidelityStatus = PROGRAM_FIDELITY_STATUS.downgradedForDrift;
-    compromiseLine = adherence?.summary || "Recent execution drifted too far from the written backbone to keep calling this strict.";
+    compromiseLine = adherence?.summary || "Your recent training drifted too far from the written plan to keep following it closely.";
   }
 
   let architectureOverride = defaultArchitecture;

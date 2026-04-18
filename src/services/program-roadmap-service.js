@@ -97,6 +97,12 @@ const isStrengthSession = (session = null) => {
   return Boolean(session?.strSess) || /strength/.test(type);
 };
 
+const isRunSession = (session = null) => {
+  const type = String(session?.type || "").toLowerCase();
+  const text = `${session?.label || ""} ${session?.run?.t || ""}`.toLowerCase();
+  return Boolean(session?.run) || /(easy-run|hard-run|long-run|run\+strength)/.test(type) || /\brun\b/.test(text);
+};
+
 const resolveLongRunDescriptor = (weekRow = null, sessions = []) => {
   const longRunSession = sessions.find((session) => {
     const type = String(session?.type || "").toLowerCase();
@@ -169,6 +175,7 @@ export const buildProgramRoadmapRows = ({
       sessions.filter((session) => isStrengthSession(session)).length,
       weekRow?.template?.str ? 1 : 0
     );
+    const runCount = sessions.filter((session) => isRunSession(session)).length;
     const row = {
       absoluteWeek,
       weekLabel: sanitizeText(weekRow?.weekLabel || weekRow?.planWeek?.label || `Week ${absoluteWeek}`, 100),
@@ -181,8 +188,10 @@ export const buildProgramRoadmapRows = ({
       longRunUnit: longRunProgress?.unit || "",
       qualityCount,
       qualityLabel: qualityCount === 1 ? "1 quality session" : `${qualityCount} quality sessions`,
+      runCount,
+      runLabel: runCount > 0 ? `${runCount} run day${runCount === 1 ? "" : "s"}` : "No run day",
       strengthCount,
-      strengthLabel: strengthCount > 0 ? `${strengthCount} strength touch${strengthCount === 1 ? "" : "es"}` : "No strength touch",
+      strengthLabel: strengthCount > 0 ? `${strengthCount} strength day${strengthCount === 1 ? "" : "s"}` : "No strength day",
       cutback: Boolean(weekRow?.cutback || weekRow?.planWeek?.cutback),
       isCurrentWeek: absoluteWeek === currentWeekNumber,
     };
@@ -213,6 +222,7 @@ const buildGridCellFromSession = (session = null, { dayKey = 1, isToday = false 
     session?.run?.d
     || session?.strengthDose
     || session?.strengthDuration
+    || session?.fallback
     || session?.success
     || "Planned session",
     100

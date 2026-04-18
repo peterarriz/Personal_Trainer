@@ -230,8 +230,9 @@ async function saveTodayQuickLog(page, {
   feelLabel = "",
   note = "",
 } = {}) {
-  const quickLog = page.getByTestId("today-quick-log");
   await domClick(page.getByTestId("app-tab-today"));
+  await domClick(page.getByTestId("today-primary-cta"));
+  const quickLog = page.getByTestId("today-quick-log");
   await expect(quickLog).toBeVisible();
   await domClick(quickLog.getByRole("button", { name: new RegExp(`^${escapeRegExp(statusLabel)}$`, "i") }));
   if (feelLabel) {
@@ -284,6 +285,7 @@ async function signInFromSettings(page, {
 
 async function expectTodayQuickLogNote(page, expectedValue) {
   await domClick(page.getByTestId("app-tab-today"));
+  await domClick(page.getByTestId("today-primary-cta"));
   await expect(page.getByTestId("today-quick-log").getByPlaceholder("Optional note")).toHaveValue(expectedValue);
 }
 

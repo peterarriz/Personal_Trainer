@@ -172,21 +172,51 @@ const formatNumericToken = (value = 0, unit = "") => {
   return `${normalized} ${unit}`.trim();
 };
 
+const formatNumericValue = (value = 0) => {
+  if (!Number.isFinite(Number(value)) || Number(value) <= 0) return "";
+  const numeric = Number(value);
+  return Number.isInteger(numeric) ? String(numeric) : String(Number(numeric.toFixed(2)));
+};
+
+const estimateStructuredRunMinutes = (detail = "") => {
+  const normalized = sanitizeText(detail).toLowerCase();
+  if (!normalized) return 0;
+  let total = 0;
+  let remaining = normalized.replace(
+    /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*min\s*\/\s*(\d+(?:\.\d+)?)\s*min/gi,
+    (_, repeats, workMinutes, recoveryMinutes) => {
+      total += Number(repeats) * (Number(workMinutes) + Number(recoveryMinutes));
+      return " ";
+    }
+  );
+  remaining = remaining.replace(
+    /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*min\b/gi,
+    (_, repeats, minutes) => {
+      total += Number(repeats) * Number(minutes);
+      return " ";
+    }
+  );
+  total += sumPatternNumbers(remaining, /(\d+(?:\.\d+)?)\s*min\b/gi);
+  return total;
+};
+
 const buildRunPrescriptionHints = (training = null) => {
   const detail = buildRunStructure(training);
-  if (!detail) return { durationHint: "", distanceHint: "", paceHint: "" };
-  const minuteTotal = sumPatternNumbers(detail, /(\d+(?:\.\d+)?)\s*min\b/gi);
+  if (!detail) return { durationHint: "", distanceHint: "", paceHint: "", durationValue: "", distanceValue: "", paceValue: "" };
+  const minuteTotal = estimateStructuredRunMinutes(detail);
   const mileTotal = sumPatternNumbers(detail, /(\d+(?:\.\d+)?)\s*(?:mi|mile|miles)\b/gi);
-  const hasMinutes = minuteTotal > 0;
-  const hasMiles = mileTotal > 0;
-  const intervalStyle = /\d+\s*x\s*\d+(?:\.\d+)?\s*min|\/\s*\d+(?:\.\d+)?\s*min/i.test(detail);
-  const mixedStructure = hasMinutes && hasMiles;
+  const durationValue = formatNumericValue(minuteTotal);
+  const distanceValue = formatNumericValue(Number(mileTotal.toFixed(2)));
   const paceMatch = detail.match(/(?:@|\bpace\b[: ]?)\s*(\d{1,2}:\d{2})/i)
     || detail.match(/\b(\d{1,2}:\d{2})\s*(?:\/\s*(?:mi|mile)|pace)\b/i);
+  const paceValue = paceMatch?.[1] || "";
   return {
-    durationHint: hasMinutes && !intervalStyle && !mixedStructure ? formatNumericToken(minuteTotal, "min") : "",
-    distanceHint: hasMiles && !mixedStructure ? formatNumericToken(Number(mileTotal.toFixed(2)), "mi") : "",
-    paceHint: paceMatch?.[1] ? `${paceMatch[1]} /mi` : "",
+    durationHint: durationValue ? formatNumericToken(durationValue, "min") : "",
+    distanceHint: distanceValue ? formatNumericToken(distanceValue, "mi") : "",
+    paceHint: paceValue ? `${paceValue} /mi` : "",
+    durationValue,
+    distanceValue,
+    paceValue,
   };
 };
 
@@ -198,18 +228,24 @@ const normalizeRunField = (value = "") => {
 const buildRunDraft = ({ training = null, logEntry = {}, sessionRecord = null } = {}) => ({
   ...(() => {
     const hints = buildRunPrescriptionHints(training);
+    const distance = normalizeRunField(sessionRecord?.actual?.distanceMiles ?? logEntry?.miles ?? hints.distanceValue ?? "");
+    const duration = normalizeRunField(sessionRecord?.actual?.durationMinutes ?? logEntry?.runTime ?? hints.durationValue ?? "");
+    const pace = sanitizeText(sessionRecord?.actual?.paceText || logEntry?.pace || hints.paceValue || "");
     return {
       enabled: Boolean(training?.run)
         || sessionRecord?.sessionFamily === WORKOUT_LOG_FAMILIES.run
         || Boolean(String(logEntry?.miles || "").trim() || String(logEntry?.pace || "").trim() || String(logEntry?.runTime || "").trim()),
-      distance: normalizeRunField(sessionRecord?.actual?.distanceMiles ?? logEntry?.miles ?? ""),
-      duration: normalizeRunField(sessionRecord?.actual?.durationMinutes ?? logEntry?.runTime ?? ""),
-      pace: sanitizeText(sessionRecord?.actual?.paceText || logEntry?.pace || ""),
+      distance,
+      duration,
+      pace,
       purpose: buildRunPurpose(training),
       structure: buildRunStructure(training),
       plannedDistanceHint: hints.distanceHint,
       plannedDurationHint: hints.durationHint,
       plannedPaceHint: hints.paceHint,
+      plannedDistanceValue: hints.distanceValue,
+      plannedDurationValue: hints.durationValue,
+      plannedPaceValue: hints.paceValue,
     };
   })(),
 });
@@ -529,13 +565,43 @@ const hasValidStrengthQuickRow = (row = {}) => (
   && Math.max(0, Number(row?.actualReps || 0) || 0) > 0
 );
 
-export const hasWorkoutQuickCaptureValues = ({ draft = {} } = {}) => {
-  const hasRunValue = Boolean(
-    normalizeRunField(draft?.run?.duration || "")
-    || normalizeRunField(draft?.run?.distance || "")
-    || sanitizeText(draft?.run?.pace || "")
+const hasRunQuickChange = (draft = {}) => {
+  if (!draft?.sections?.run?.enabled) return false;
+  return (
+    normalizeRunField(draft?.run?.duration || "") !== normalizeRunField(draft?.run?.plannedDurationValue || "")
+    || normalizeRunField(draft?.run?.distance || "") !== normalizeRunField(draft?.run?.plannedDistanceValue || "")
+    || sanitizeText(draft?.run?.pace || "") !== sanitizeText(draft?.run?.plannedPaceValue || "")
   );
-  const hasStrengthValue = (draft?.strength?.rows || []).some((row) => hasValidStrengthQuickRow(row));
+};
+
+const hasStrengthRowQuickChange = (row = {}) => {
+  const actualExercise = sanitizeText(row?.exercise || "");
+  const prescribedExercise = sanitizeText(row?.prescribedExercise || "");
+  const actualSets = normalizeNumericText(row?.actualSets || "");
+  const actualReps = normalizeNumericText(row?.actualReps || "");
+  const actualWeight = normalizeNumericText(row?.actualWeight || "");
+  const actualBandTension = sanitizeText(row?.bandTension || "");
+  if (!prescribedExercise) {
+    return Boolean(actualExercise || actualSets || actualReps || actualWeight || actualBandTension);
+  }
+  const prescribedSets = normalizeNumericText(row?.prescribedSets ?? parseSetCount(row?.prescribedSetsText || ""));
+  const prescribedReps = normalizeNumericText(row?.prescribedReps ?? parseRepTarget(row?.prescribedRepsText || ""));
+  const prescribedWeight = row?.bodyweightOnly || row?.mode === "band"
+    ? ""
+    : normalizeNumericText(row?.prescribedWeight ?? "");
+  const prescribedBandTension = sanitizeText(row?.bandTension || "");
+  return (
+    actualExercise !== prescribedExercise
+    || actualSets !== prescribedSets
+    || actualReps !== prescribedReps
+    || actualWeight !== prescribedWeight
+    || actualBandTension !== prescribedBandTension
+  );
+};
+
+export const hasWorkoutQuickCaptureValues = ({ draft = {} } = {}) => {
+  const hasRunValue = hasRunQuickChange(draft);
+  const hasStrengthValue = (draft?.strength?.rows || []).some((row) => hasStrengthRowQuickChange(row));
   const hasGenericValue = Boolean(
     normalizeNumericText(draft?.generic?.reps || "")
     || normalizeNumericText(draft?.generic?.weight || "")
@@ -574,19 +640,19 @@ export const buildWorkoutQuickCaptureModel = ({ draft = {} } = {}) => {
       : family === WORKOUT_LOG_FAMILIES.strength
         ? "Add quick sets and reps"
         : family === WORKOUT_LOG_FAMILIES.mixed
-          ? "Add quick actual details"
+          ? "Add quick details"
           : "Add quick details",
     saveActionLabel: family === WORKOUT_LOG_FAMILIES.run
-      ? "Save quick run log"
+      ? "Save run"
       : family === WORKOUT_LOG_FAMILIES.strength
-        ? "Save quick strength log"
+        ? "Save strength"
         : family === WORKOUT_LOG_FAMILIES.mixed
-          ? "Save quick workout log"
-          : "Save quick log",
+          ? "Save workout"
+          : "Save log",
     helperLine: prescribedLabel
       ? `Planned today: ${prescribedLabel}.`
       : `Logging: ${sessionLabel}.`,
-    supportLine: "Actual details stay separate from what was prescribed.",
+    supportLine: "Full details are optional.",
     run: {
       enabled: Boolean(draft?.sections?.run?.enabled),
       fields: [

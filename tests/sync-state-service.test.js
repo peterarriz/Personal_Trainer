@@ -93,8 +93,8 @@ test("signed-out local resume path resolves to offline-local instead of fake syn
 
   assert.equal(model.id, SYNC_STATE_IDS.offlineLocal);
   assert.equal(model.reasonKey, "signed_out");
-  assert.match(model.detail, /sign back in/i);
-  assert.match(model.assurance, /local/i);
+  assert.match(model.detail, /signed out/i);
+  assert.match(model.assurance, /keep using this device/i);
 });
 
 test("setup-deferred signed-in intake stays in device-only mode with explicit local-first copy", () => {
@@ -118,7 +118,7 @@ test("setup-deferred signed-in intake stays in device-only mode with explicit lo
   assert.equal(model.id, SYNC_STATE_IDS.offlineLocal);
   assert.equal(model.reasonKey, "setup_incomplete_local");
   assert.match(model.detail, /onboarding finishes/i);
-  assert.match(model.nextStep, /finish onboarding/i);
+  assert.match(model.nextStep, /finish setup/i);
 });
 
 test("realtime interruption surfaces stale-cloud while preserving local assurance", () => {
@@ -146,8 +146,8 @@ test("realtime interruption surfaces stale-cloud while preserving local assuranc
   });
 
   assert.equal(model.id, SYNC_STATE_IDS.staleCloud);
-  assert.match(model.detail, /little behind/i);
-  assert.equal(model.assurance, "");
+  assert.match(model.detail, /step behind/i);
+  assert.match(model.assurance, /catches up/i);
 });
 
 test("retry-eligible sync stays in retrying state even if a fresh cloud attempt starts", () => {
@@ -185,8 +185,8 @@ test("retry-eligible sync stays in retrying state even if a fresh cloud attempt 
   });
 
   assert.equal(model.id, SYNC_STATE_IDS.retrying);
-  assert.equal(model.chipLabel, "Retrying");
-  assert.equal(model.detail, "Cloud sync is retrying in the background.");
+  assert.equal(model.chipLabel, "Saved here");
+  assert.equal(model.detail, "We are still sending the latest changes to your account.");
 });
 
 test("surface models keep settings persistent while today stays quiet when synced", () => {
@@ -217,7 +217,7 @@ test("surface models keep settings persistent while today stays quiet when synce
   assert.equal(todaySurface.showFullCard, false);
   assert.equal(todaySurface.showInline, false);
   assert.equal(todaySurface.showCompactChip, true);
-  assert.equal(todaySurface.compactMessage, syncedState.headline);
+  assert.equal(todaySurface.compactMessage, "Everything saved.");
   assert.equal(settingsSurface.showFullCard, true);
   assert.equal(settingsSurface.title, syncedState.headline);
 });
@@ -250,7 +250,7 @@ test("compact workout surfaces use the passive chip for transient sync states", 
 
   assert.equal(todaySurface.showFullCard, false);
   assert.equal(todaySurface.showCompactChip, true);
-  assert.equal(todaySurface.compactMessage, "Cloud sync is retrying in the background.");
+  assert.equal(todaySurface.compactMessage, "Saved here. We are still sending the latest changes to your account.");
   assert.equal(programSurface.showFullCard, false);
   assert.equal(programSurface.showCompactChip, true);
 });
@@ -414,6 +414,6 @@ test("realtime recovery returns stale-cloud surfaces to synced once cloud update
   });
 
   assert.equal(model.id, SYNC_STATE_IDS.synced);
-  assert.equal(model.chipLabel, "Synced");
+  assert.equal(model.chipLabel, "Up to date");
   assert.match(model.detail, /working normally|local copy/i);
 });

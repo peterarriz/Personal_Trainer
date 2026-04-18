@@ -39,3 +39,31 @@ test("resolveProgramDisplayHorizon extends a shorter canonical horizon up to the
   assert.equal(rows[14].absoluteWeek, 15);
   assert.match(rows[14].weekLabel || "", /week 15/i);
 });
+
+test("resolveProgramDisplayHorizon replaces a stale current-week horizon row with the live plan week", () => {
+  const rollingHorizon = Array.from({ length: 4 }, (_, index) => buildRollingRow(index + 1));
+  const liveCurrentPlanWeek = {
+    label: "Strength block - Week 2",
+    sessionsByDay: {
+      1: { type: "strength+prehab", label: "Strength A", strSess: "A", strengthDose: "45 min strength" },
+      3: { type: "conditioning", label: "Supportive Conditioning", fallback: "20-30 min bike or incline walk" },
+      5: { type: "strength+prehab", label: "Strength B", strSess: "B", strengthDose: "40 min strength" },
+    },
+  };
+
+  const rows = resolveProgramDisplayHorizon({
+    rollingHorizon,
+    currentWeek: 2,
+    currentPlanWeek: liveCurrentPlanWeek,
+    weekTemplates: rollingHorizon.map((row) => row.template),
+    goals: [{ id: "goal_1", name: "Bench 225", category: "strength", active: true, priority: 1 }],
+    planComposer: {},
+    weeklyCheckins: {},
+    previewLength: 4,
+  });
+
+  assert.equal(rows[1].absoluteWeek, 2);
+  assert.equal(rows[1].weekLabel, "Strength block - Week 2");
+  assert.equal(rows[1].planWeek, liveCurrentPlanWeek);
+  assert.equal(rows[1].planWeek?.sessionsByDay?.[1]?.type, "strength+prehab");
+});

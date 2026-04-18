@@ -625,6 +625,34 @@ async function completeGoalLibraryIntakeStep(page, {
   }
 }
 
+async function completeStructuredIntakeOnOneScreen(page, {
+  goalType = "running",
+  templateId = "",
+  quickMetrics = {},
+  ...planningOverrides
+} = {}) {
+  const normalizedGoalType = GOAL_TYPE_ALIASES[goalType] || goalType;
+  const templateAlias = TEMPLATE_ID_ALIASES[templateId] || null;
+  const normalizedTemplateId = templateAlias?.templateId || templateId;
+  const normalizedQuickMetrics = normalizeLegacyQuickMetrics(normalizedTemplateId, {
+    ...(templateAlias?.metricDefaults || {}),
+    ...(quickMetrics || {}),
+  });
+
+  await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+  await page.getByTestId(`intake-goal-type-${normalizedGoalType}`).click();
+  if (normalizedTemplateId) {
+    await page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`).click();
+  }
+  await fillStarterMetricInputs(page, normalizedQuickMetrics);
+  await fillPlanningRealityInputs(page, planningOverrides);
+  await expect(page.getByTestId("intake-goal-lock-toggle")).toBeEnabled();
+  await page.getByTestId("intake-goal-lock-toggle").click();
+  await expect(page.getByTestId("intake-goal-lock-toggle")).toContainText(/locked/i);
+  await page.getByTestId("intake-footer-continue").click();
+  await waitForPostOnboarding(page);
+}
+
 const MONTH_NUMBER_BY_NAME = {
   january: "01",
   february: "02",
@@ -925,7 +953,10 @@ module.exports = {
   completeAnchors,
   completeGoalLibraryIntakeStep,
   completeIntroQuestionnaire,
+  completeStructuredIntakeOnOneScreen,
   enterLocalIntakeIfNeeded,
+  fillPlanningRealityInputs,
+  fillStarterMetricInputs,
   getAppEvents,
   getConfirmationStatus,
   getCurrentFieldId,

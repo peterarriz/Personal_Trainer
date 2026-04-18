@@ -59,7 +59,7 @@ test("half-marathon roadmap keeps 15 weeks of visible progression and long-run g
   assert.equal(rows[5].qualityLabel, "1 quality session");
 });
 
-test("hybrid roadmap keeps strength touches legible instead of reading like pure race prep", () => {
+test("hybrid roadmap keeps strength days legible instead of reading like pure race prep", () => {
   const displayHorizon = [
     {
       absoluteWeek: 9,
@@ -82,8 +82,10 @@ test("hybrid roadmap keeps strength touches legible instead of reading like pure
 
   assert.equal(row.isCurrentWeek, true);
   assert.equal(row.qualityCount, 1);
+  assert.equal(row.runCount, 3);
+  assert.equal(row.runLabel, "3 run days");
   assert.equal(row.strengthCount, 2);
-  assert.equal(row.strengthLabel, "2 strength touches");
+  assert.equal(row.strengthLabel, "2 strength days");
   assert.match(row.longRunLabel, /80 min/i);
   assert.match(row.focus, /two upper-body strength touches/i);
 });

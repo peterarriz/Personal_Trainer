@@ -13,17 +13,17 @@ export const PROGRAM_SELECTION_MODES = Object.freeze({
 });
 
 export const PROGRAM_SOURCE_BASIS_LABELS = Object.freeze({
-  evidence_informed_default: "Evidence-informed default",
-  coach_published_public_template: "Coach-published public template",
-  public_named_methodology: "Public methodology",
-  multi_source_public_reconstruction: "Public reconstruction",
-  cultural_inspiration: "Inspired by a public training archetype",
+  evidence_informed_default: "Built for your goals",
+  coach_published_public_template: "Coach-built template",
+  public_named_methodology: "Named training method",
+  multi_source_public_reconstruction: "Classic training pattern",
+  cultural_inspiration: "Inspired training style",
 });
 
 export const SOURCE_CONFIDENCE_LABELS = Object.freeze({
-  high: "High confidence",
-  medium: "Medium confidence",
-  low: "Low confidence",
+  high: "Well supported",
+  medium: "Solid fit",
+  low: "Needs more context",
 });
 
 const cloneValue = (value = null) => {
@@ -90,8 +90,8 @@ const buildProgramCardModel = ({
     displayName: program.displayName,
     summary: program.summary,
     categoryLabel: PROGRAM_CATEGORY_LABELS[program.category] || "Program",
-    sourceBasisLabel: PROGRAM_SOURCE_BASIS_LABELS[program.sourceBasis] || "Source-backed",
-    sourceConfidenceLabel: SOURCE_CONFIDENCE_LABELS[program.sourceConfidence] || "Confidence set",
+    sourceBasisLabel: PROGRAM_SOURCE_BASIS_LABELS[program.sourceBasis] || "Built for your goals",
+    sourceConfidenceLabel: SOURCE_CONFIDENCE_LABELS[program.sourceConfidence] || "Fit noted",
     commitmentLine: `${program.typicalSessionsPerWeek.typical} sessions/week for about ${program.typicalDurationWeeks} weeks`,
     sessionTypes: [...(program.sessionTypes || [])],
     tags: [...(program.tags || [])],
@@ -111,8 +111,8 @@ const buildStyleCardModel = ({
     displayName: style.displayName,
     summary: style.summary,
     categoryLabel: STYLE_CATEGORY_LABELS[style.category] || "Style",
-    sourceBasisLabel: PROGRAM_SOURCE_BASIS_LABELS[style.sourceBasis] || "Source-backed",
-    sourceConfidenceLabel: SOURCE_CONFIDENCE_LABELS[style.sourceConfidence] || "Confidence set",
+    sourceBasisLabel: PROGRAM_SOURCE_BASIS_LABELS[style.sourceBasis] || "Built for your goals",
+    sourceConfidenceLabel: SOURCE_CONFIDENCE_LABELS[style.sourceConfidence] || "Fit noted",
     emphasisLine: [style.volumeBias, style.intensityBias, style.cardioBias].filter(Boolean).join(" • "),
     tags: [...(style.tags || [])],
     isActive: activeStyleId === style.id,

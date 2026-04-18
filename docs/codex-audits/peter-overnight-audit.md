@@ -978,7 +978,7 @@ Fixture source:
 
 ### Commands Run
 
-- `rg -n "[—âÂÃ]" src api tests -g '!src/services/text-format-service.js'`
+- `rg -n "[\\u2014\\u00e2\\u00c2\\u00c3]" src api tests`
 - `Get-Content src/services/text-format-service.js -TotalCount 220`
 - `Get-Content src/services/workout-log-form-service.js -TotalCount 80`
 - `Get-Content src/data/goal-intents/index.js | Select-Object -Skip 632 -First 8`
@@ -986,7 +986,7 @@ Fixture source:
 - `node -r sucrase/register --test tests/text-format-service.test.js tests/intake-flow-service.test.js tests/day-prescription-display-service.test.js`
 - `node scripts/check-repo-hygiene.cjs`
 - `node scripts/build.js`
-- `rg -n "[—âÂÃ]" . -g '!node_modules' -g '!dist' -g '!artifacts' -g '!playwright-report' -g '!test-results' -g '!src/services/text-format-service.js'`
+- `rg -n "[\\u2014\\u00e2\\u00c2\\u00c3]" . -g '!node_modules' -g '!dist' -g '!artifacts' -g '!playwright-report' -g '!test-results'`
 
 ### Passing Tests
 
@@ -997,15 +997,15 @@ Fixture source:
 ### Evidence Gathered
 
 - User-facing copy in `src/`, `api/`, and `tests/` is clean of the targeted mojibake patterns and raw em dash characters after the cleanup sweep.
-- `src/services/text-format-service.js` now normalizes common single-pass mojibake like `Â·`, `â€“`, `â€¦`, and `Ã—` into plain ASCII display output.
+- `src/services/text-format-service.js` now normalizes common single-pass mojibake like `\u00c2\u00b7`, `\u00e2\u20ac\u201c`, `\u00e2\u20ac\u00a6`, and `\u00c3\u00d7` into plain ASCII display output.
 - `src/services/workout-log-form-service.js` no longer carries raw mojibake or raw em dash characters in parser regexes or quick-summary separators.
 - `src/data/goal-intents/index.js` no longer carries mojibake in the restart-intent regex.
-- `scripts/check-repo-hygiene.cjs` now fails on banned text sequences in tracked `src/`, `api/`, and `tests/` files, excluding only the dedicated mojibake repair map.
+- `scripts/check-repo-hygiene.cjs` now fails on banned text sequences in tracked `src/`, `api/`, `tests/`, and `e2e/` files.
 - `scripts/build.js` now runs repo hygiene first, so banned text regressions fail the build instead of slipping through until manual review.
 
 ### Open Risks
 
-- The repair map in `src/services/text-format-service.js` is intentionally excluded from the hard scanner because it stores broken-text patterns by design.
+- The repair map in `src/services/text-format-service.js` now stores mojibake patterns with escaped code points so the hard scanner can cover it too.
 - The cleanup intentionally targeted app/user-facing text scope, not every historical markdown artifact under `docs/codex-audits/`.
 
 ### Next Smallest Step

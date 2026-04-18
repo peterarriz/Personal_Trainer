@@ -150,16 +150,16 @@ const buildCoachPacketSummary = ({
  headline: "Tighten the food decision that matters most today.",
  recommendedAction: leadingRecommendation || "Use the simplest meal structure that still supports training.",
  whyNow: nutritionComparison?.hasActual
- ? "Actual intake is more useful than assumptions, so nutrition adjustments should answer the real logged gap."
- : "When logging is light, the safest move is a low-friction default instead of fake precision.",
+ ? "Logged food is more useful than guesses, so today's adjustment follows what you actually ate."
+ : "When logging is light, the safest move is a simple default instead of guesswork.",
  watchFor: "Missed protein, missed carbs around training, or hydration lag.",
  };
  }
  return {
  promptKind,
- headline: basisLabel ? `${basisLabel}: current coach status.` : "Current coach status.",
- recommendedAction: leadingRecommendation || `Execute ${sessionLabel} as planned and log the actual result.`,
- whyNow: leadingEffect || `Momentum is ${sanitizeText(momentum?.momentumState || "unknown", 60)} and the coach is staying inside deterministic plan boundaries.`,
+ headline: basisLabel ? `${basisLabel}: coach update.` : "Coach update.",
+ recommendedAction: leadingRecommendation || `Do ${sessionLabel} as planned and log what you did.`,
+ whyNow: leadingEffect || `Momentum is ${sanitizeText(momentum?.momentumState || "mixed", 60)}, so today's plan stays focused and manageable.`,
  watchFor: "Consistency, recovery, and whether today's session stays repeatable.",
  };
 };

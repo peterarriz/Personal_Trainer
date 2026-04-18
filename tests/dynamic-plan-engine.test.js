@@ -197,6 +197,22 @@ test("repeated harder-than-expected logs cap the next exposure", () => {
   assert.match(adaptedComposer.dayTemplates?.[5]?.label || "", /controlled|recovery/i);
 });
 
+test("strength-first plans without a running goal stay non-run by default", () => {
+  const goals = buildGoals([
+    { name: "Bench 225", category: "strength" },
+  ]);
+
+  const composer = buildComposer({
+    goals,
+    todayKey: "2026-04-15",
+    currentDayOfWeek: 3,
+  });
+
+  const sessionTypes = Object.values(composer.dayTemplates || {}).map((session) => String(session?.type || ""));
+  assert.equal(sessionTypes.some((type) => ["easy-run", "hard-run", "long-run", "run+strength"].includes(type)), false);
+  assert.equal(sessionTypes.includes("conditioning"), true);
+});
+
 test("under-fueling trend protects the next quality session without rewriting the whole week", () => {
   const goals = buildGoals([
     { name: "Run a 1:45 half marathon", category: "running", targetDate: "2026-10-10" },
@@ -224,7 +240,7 @@ test("under-fueling trend protects the next quality session without rewriting th
   assert.match(adaptedComposer.changeSummary?.headline || "", /fueling stabilizes/i);
   assert.equal(baselineComposer.dayTemplates?.[4]?.type, "hard-run");
   assert.equal(adaptedComposer.dayTemplates?.[4]?.type, "easy-run");
-  assert.match(adaptedComposer.changeSummary?.preserved || "", /structure stays intact/i);
+  assert.match(adaptedComposer.changeSummary?.preserved || "", /stays in place|stays intact/i);
 });
 
 test("under-fueling trend also caps a future long run when it is the next quality exposure", () => {

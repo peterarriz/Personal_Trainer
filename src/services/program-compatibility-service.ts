@@ -79,7 +79,7 @@ const evaluateSchedule = ({
       mismatch: "Your weekly availability still needs to be confirmed before this can be activated with confidence.",
       blocked: fidelityMode === PROGRAM_FIDELITY_MODES.runAsWritten,
       scorePenalty: 18,
-      changes: ["Confirm realistic days per week before locking the template in."],
+      changes: ["Set a realistic number of training days before you lock this in."],
     };
   }
   if (fidelityMode === PROGRAM_FIDELITY_MODES.runAsWritten && availableDaysPerWeek < typical) {
@@ -87,7 +87,7 @@ const evaluateSchedule = ({
       mismatch: `This template expects about ${typical} sessions each week, and your current setup looks closer to ${availableDaysPerWeek}.`,
       blocked: true,
       scorePenalty: 34,
-      changes: [`Use Adapt to me mode or pick a program built for ${availableDaysPerWeek} days per week.`],
+      changes: [`Use Fit it to me mode or pick a program built for ${availableDaysPerWeek} days per week.`],
     };
   }
   if (availableDaysPerWeek < minForAdapted) {
@@ -103,7 +103,7 @@ const evaluateSchedule = ({
       mismatch: `Your current schedule is lighter than the template's ideal weekly shape.`,
       blocked: false,
       scorePenalty: 12,
-      changes: [`Trim the weekly structure to ${availableDaysPerWeek} core sessions in Adapt to me mode.`],
+      changes: [`Trim the weekly structure to ${availableDaysPerWeek} core sessions in Fit it to me mode.`],
     };
   }
   return { mismatch: null, blocked: false, scorePenalty: 0, changes: [] };
@@ -130,7 +130,7 @@ const evaluateEquipment = ({
       mismatch: "This program is built around a full gym setup.",
       blocked: blockedStrict && programDefinition?.adaptationPolicy?.equipmentFlexibility === "low",
       scorePenalty: 26,
-      changes: ["Use Adapt to me mode or choose a program built for dumbbells, bodyweight, or hotel equipment."],
+      changes: ["Use Fit it to me mode or choose a program built for dumbbells, bodyweight, or hotel equipment."],
     };
   }
   if (needsDumbbells && !hasDumbbells && !hasFullGym) {
@@ -138,7 +138,7 @@ const evaluateEquipment = ({
       mismatch: "This program expects at least dumbbells or a simple loading option.",
       blocked: blockedStrict,
       scorePenalty: 18,
-      changes: ["Confirm available equipment or switch to a minimal-equipment option."],
+      changes: ["Set your available equipment or switch to a minimal-equipment option."],
     };
   }
   if (needsRunningAccess && !hasRunningAccess) {
@@ -163,7 +163,7 @@ const evaluateExperience = ({
     mismatch: `This template assumes at least a ${String(programDefinition?.minimumExperience || "beginner").replaceAll("_", " ")} baseline.`,
     blocked: required >= EXPERIENCE_ORDER.intermediate,
     scorePenalty: 20,
-    changes: ["Use a foundation option first or run this only in Adapt to me mode if the template allows it."],
+    changes: ["Use a foundation option first or run this only in Fit it to me mode if the template allows it."],
   };
 };
 
@@ -231,7 +231,7 @@ const evaluateInjury = ({
     mismatch: `${injuryProfile.area} symptoms call for movement-specific substitutions, not a literal copy of the template.`,
     blocked: false,
     scorePenalty: 12,
-    changes: ["Use Adapt to me mode and keep substitutions focused on the unaffected movement lanes."],
+    changes: ["Use Fit it to me mode and keep substitutions focused on the unaffected movement lanes."],
   };
 };
 

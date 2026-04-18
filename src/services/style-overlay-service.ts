@@ -18,7 +18,7 @@ export const resolveStyleOverlayImpact = ({
     : "The overlay should be felt clearly, but it should never break the core plan.";
 
   const lockedRules = [
-    programDefinition?.displayName ? `Keep the core backbone of ${programDefinition.displayName}.` : "",
+    programDefinition?.displayName ? `Keep the core structure of ${programDefinition.displayName}.` : "",
     "Hard safety, injury, schedule, and equipment rules still win first.",
   ].filter(Boolean);
 

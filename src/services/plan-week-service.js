@@ -236,6 +236,39 @@ export const buildFallbackProgramPreviewWeeks = ({
   });
 };
 
+export const mergeCurrentPlanWeekIntoHorizon = ({
+  rollingHorizon = [],
+  currentWeek = 1,
+  currentPlanWeek = null,
+} = {}) => {
+  const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon.filter(Boolean) : [];
+  if (!currentPlanWeek) return safeRollingHorizon;
+  const currentWeekNumber = Number(currentWeek || 0) || 1;
+  const currentWeekRow = {
+    ...(safeRollingHorizon.find((row) => Number(row?.absoluteWeek || 0) === currentWeekNumber) || {}),
+    kind: "plan",
+    absoluteWeek: currentWeekNumber,
+    weekLabel: currentPlanWeek?.label || `Week ${currentWeekNumber}`,
+    planWeek: currentPlanWeek,
+  };
+  const nextHorizon = [];
+  let insertedCurrentWeek = false;
+  safeRollingHorizon.forEach((row) => {
+    if (Number(row?.absoluteWeek || 0) === currentWeekNumber) {
+      if (!insertedCurrentWeek) {
+        nextHorizon.push(currentWeekRow);
+        insertedCurrentWeek = true;
+      }
+      return;
+    }
+    nextHorizon.push(row);
+  });
+  if (!insertedCurrentWeek) {
+    nextHorizon.unshift(currentWeekRow);
+  }
+  return nextHorizon;
+};
+
 // FALLBACK_ONLY: prefer canonical horizon rows. This template-derived preview
 // keeps Program usable while older data and in-flight migrations still lack
 // durable horizon rows.
@@ -253,7 +286,11 @@ export const resolveProgramDisplayHorizon = ({
   environmentSelection = null,
   previewLength = 4,
 } = {}) => {
-  const safeRollingHorizon = Array.isArray(rollingHorizon) ? rollingHorizon : [];
+  const safeRollingHorizon = mergeCurrentPlanWeekIntoHorizon({
+    rollingHorizon,
+    currentWeek,
+    currentPlanWeek,
+  });
   if (safeRollingHorizon.length >= previewLength) return safeRollingHorizon.slice(0, previewLength);
   if (safeRollingHorizon.length > 0) {
     const seenWeeks = new Set(safeRollingHorizon.map((row) => Number(row?.absoluteWeek || 0)).filter((week) => week > 0));

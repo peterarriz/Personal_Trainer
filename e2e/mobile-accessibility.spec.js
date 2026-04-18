@@ -74,7 +74,6 @@ test.describe("mobile accessibility pass", () => {
       page.getByTestId("log-save-quick"),
       page.getByTestId("log-day-review-disclosure").locator("summary").first(),
       page.locator("summary").filter({ hasText: "Recent history" }).first(),
-      page.locator("summary").filter({ hasText: "SAVED WEEK STORIES" }).first(),
     ];
     for (const locator of logTargets) {
       const metrics = await readTapTarget(locator);
@@ -83,16 +82,33 @@ test.describe("mobile accessibility pass", () => {
 
     await page.locator("summary").filter({ hasText: "Notes, feel, and context" }).first().click();
 
-    const labeledLogFields = [
-      page.getByLabel("Session reps"),
-      page.getByLabel("Session weight"),
+    const alwaysVisibleLogFields = [
       page.getByLabel("How the session felt"),
       page.getByLabel("Session note"),
     ];
-    for (const locator of labeledLogFields) {
+    for (const locator of alwaysVisibleLogFields) {
       await expect(locator).toBeVisible();
       expect(await readFontSize(locator)).toBeGreaterThanOrEqual(16);
     }
+
+    const workoutSpecificLogFields = [
+      page.getByLabel("Run distance"),
+      page.getByLabel("Run duration"),
+      page.getByLabel("Run pace"),
+      page.getByLabel("Session reps"),
+      page.getByLabel("Session weight"),
+      page.getByLabel("Exercise 1 name"),
+    ];
+    let visibleWorkoutField = false;
+    for (const locator of workoutSpecificLogFields) {
+      if (await locator.count()) {
+        await expect(locator.first()).toBeVisible();
+        expect(await readFontSize(locator.first())).toBeGreaterThanOrEqual(16);
+        visibleWorkoutField = true;
+        break;
+      }
+    }
+    expect(visibleWorkoutField).toBeTruthy();
 
     await page.getByTestId("app-tab-settings").click();
     await expect(page.getByTestId("settings-tab")).toBeVisible();

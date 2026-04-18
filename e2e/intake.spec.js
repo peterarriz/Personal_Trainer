@@ -23,7 +23,6 @@ const expectNoFakeTranscript = async (page) => {
 const expectStructuredSetupCopy = async (page) => {
   await expect(page.getByTestId("intake-shell-title")).toContainText(/intake|getting started/i);
   await expect(page.getByTestId("intake-shell-subtitle")).toContainText(/saves as you go/i);
-  await expect(page.getByTestId("intake-shell-helper")).toContainText(/first week/i);
 };
 
 const expectNoFauxChatCopy = async (page) => {
@@ -35,12 +34,7 @@ const expectNoFauxChatCopy = async (page) => {
 };
 
 const expectSummaryRail = async (page) => {
-  await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
-  await expect(page.getByTestId("intake-summary-section-your-words")).toBeVisible();
-  await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toBeVisible();
-  await expect(page.getByTestId("intake-summary-section-what-we-track")).toBeVisible();
-  await expect(page.getByTestId("intake-summary-section-what-is-fuzzy")).toBeVisible();
-  await expect(page.getByTestId("intake-summary-section-tradeoffs")).toBeVisible();
+  await expect(page.getByTestId("intake-summary-rail")).toHaveCount(0);
 };
 
 const expectNoLaneTheater = async (page) => {

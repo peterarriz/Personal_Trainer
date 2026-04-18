@@ -636,7 +636,7 @@ const GOAL_REVIEW_LANE_META = {
 const GOAL_REVIEW_ACTIONS = {
   confirm: {
     key: "confirm_and_build",
-    label: "Confirm and build my plan",
+    label: "Build my plan",
   },
   changePriority: {
     key: "change_priority",
@@ -922,7 +922,7 @@ const buildGoalConfirmationReadiness = ({
     blockingIssues.push("Set the order so Priority 1 is clear.");
   }
   if (maintainedGoals.length > 0 && !maintainedGoalsConfirmed) {
-    blockingIssues.push("Confirm the order of the top goals before building.");
+    blockingIssues.push("Set the order of your top goals before building.");
   }
   return {
     leadGoalConfirmed,

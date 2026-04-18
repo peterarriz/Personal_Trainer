@@ -30,6 +30,8 @@ test("run day builds run-focused logging fields first", () => {
 
   assert.equal(draft.family, WORKOUT_LOG_FAMILIES.run);
   assert.equal(draft.run.enabled, true);
+  assert.equal(draft.run.duration, "28");
+  assert.equal(draft.run.distance, "2");
   assert.match(draft.run.purpose, /quality run/i);
   assert.match(draft.run.structure, /4 x 5 min/i);
   assert.equal(draft.strength.enabled, false);
@@ -69,13 +71,14 @@ test("quick capture model keeps the default logging path compact for run days", 
 
   assert.equal(quickCapture.completeActionLabel, "Quick complete");
   assert.equal(quickCapture.detailToggleLabel, "Add quick run details");
-  assert.equal(quickCapture.saveActionLabel, "Save quick run log");
+  assert.equal(quickCapture.saveActionLabel, "Save run");
   assert.equal(quickCapture.run.enabled, true);
   assert.deepEqual(
     quickCapture.run.fields.map((field) => field.id),
     ["duration", "distance", "pace"]
   );
-  assert.match(quickCapture.supportLine, /actual details stay separate/i);
+  assert.equal(quickCapture.run.fields[0].value, "40");
+  assert.match(quickCapture.supportLine, /full details are optional/i);
   assert.equal(hasWorkoutQuickCaptureValues({ draft }), false);
 });
 
@@ -105,7 +108,7 @@ test("strength day prefills prescribed exercise logging path", () => {
   assert.equal(draft.strength.rows[0].substitutionAllowed, true);
   assert.equal(draft.strength.rows[0].substitutionState, "prescribed");
   assert.equal(draft.strength.rows[0].canResetToPrescribed, false);
-  assert.equal(hasWorkoutQuickCaptureValues({ draft }), true);
+  assert.equal(hasWorkoutQuickCaptureValues({ draft }), false);
   assert.equal(draft.substitutionSupport.allowed, true);
 });
 
@@ -188,7 +191,7 @@ test("quick capture model limits strength rows while keeping prescribed context 
   const quickCapture = buildWorkoutQuickCaptureModel({ draft });
 
   assert.equal(quickCapture.detailToggleLabel, "Add quick sets and reps");
-  assert.equal(quickCapture.saveActionLabel, "Save quick strength log");
+  assert.equal(quickCapture.saveActionLabel, "Save strength");
   assert.equal(quickCapture.strength.rows.length, 3);
   assert.equal(quickCapture.strength.hiddenRowCount, 1);
   assert.match(quickCapture.strength.rows[0].prescribedSummary, /4 sets/i);
@@ -273,7 +276,7 @@ test("minimal quick run input can be saved without the full detail form", () => 
 
   assert.equal(hasWorkoutQuickCaptureValues({ draft }), true);
   assert.equal(entry.runTime, "42");
-  assert.equal(entry.miles, "");
+  assert.equal(entry.miles, "2");
   assert.equal(entry.actualSession.sessionFamily, WORKOUT_LOG_FAMILIES.run);
 });
 
@@ -377,6 +380,7 @@ test("mixed session builds split run and strength logging paths", () => {
 
   assert.equal(draft.family, WORKOUT_LOG_FAMILIES.mixed);
   assert.equal(draft.run.enabled, true);
+  assert.equal(draft.run.duration, "40");
   assert.equal(draft.strength.enabled, true);
   assert.equal(draft.strength.rows.length, 1);
   assert.equal(draft.strength.rows[0].actualSets, "3");
@@ -391,7 +395,7 @@ test("mixed session builds split run and strength logging paths", () => {
   );
 });
 
-test("run-only draft stays empty until the user adds an actual run value", () => {
+test("run-only draft prefills planned values without counting them as user changes", () => {
   const draft = buildWorkoutLogDraft({
     dateKey: "2026-04-11",
     plannedDayRecord: buildPlannedDayRecord({
@@ -403,6 +407,7 @@ test("run-only draft stays empty until the user adds an actual run value", () =>
   });
 
   assert.equal(draft.family, WORKOUT_LOG_FAMILIES.run);
+  assert.equal(draft.run.duration, "40");
   assert.equal(hasWorkoutQuickCaptureValues({ draft }), false);
 });
 

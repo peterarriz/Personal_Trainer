@@ -1098,18 +1098,18 @@ export const compareNutritionPrescriptionToActual = ({ nutritionPrescription = n
  ? "medium"
  : "medium";
  const summary = !nutritionPrescription
- ? "Nutrition prescription unavailable."
+ ? "Nutrition plan is not ready yet."
  : !hasActual
- ? "Actual nutrition has not been logged yet."
+ ? "Food has not been logged yet."
  : deviationKind === "followed"
- ? "Nutrition broadly matched the prescribed day."
+ ? "Food broadly matched today's plan."
  : deviationKind === "partial"
- ? "Nutrition was mostly on plan, with some drift."
+ ? "Food was mostly on plan, with some drift."
  : deviationKind === "under_fueled"
- ? "Nutrition came in under plan and may have limited recovery or performance."
+ ? "Food came in short and may have limited recovery or performance."
  : deviationKind === "over_indulged"
- ? "Nutrition overshot the intended plan."
- : "Nutrition deviated from the intended plan.";
+ ? "Food ran higher than the plan."
+ : "Food drifted from today's plan.";
 
  return {
  hasPrescription: Boolean(nutritionPrescription),
@@ -1788,7 +1788,7 @@ export const deriveGroceryExecutionSupport = ({
  : "No strong weekly grocery friction showed up.";
  const honestyLine = travelConstraint
  ? "This is a convenience-first basket. It does not assume exact hotel, airport, or store inventory."
- : "This basket is a deterministic planning aid, not an inventory or price claim.";
+ : "This basket is a simple planning list, not a live inventory or price check.";
  const anchorPrompt = convenienceConstraint
  ? "Pick one breakfast anchor and one lunch anchor so the rest of the day needs fewer decisions."
  : "Use these as meal anchors, then fill the remaining meal with the same protein + carb + produce pattern.";
@@ -1809,7 +1809,7 @@ export const deriveGroceryExecutionSupport = ({
  weeklyExecutionLine,
  honestyLine,
  anchorPrompt,
- optionalityLine: "Optional support only. Keep today's prescription primary and use this helper only if it reduces friction.",
+ optionalityLine: "Optional support only. Keep today's plan first and use this helper only if it helps.",
  };
 };
 

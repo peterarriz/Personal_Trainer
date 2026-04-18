@@ -134,6 +134,35 @@ test.describe("intake reliability", () => {
     await expect.poll(async () => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toBe("clarify");
   });
 
+  test("mobile intake lets the user remove a mistaken first goal, switch cleanly, and keep sensible defaults", async ({ page }) => {
+    await gotoIntakeInLocalMode(page);
+
+    await page.getByTestId("intake-goal-type-strength").click();
+    await page.getByTestId("intake-featured-goal-get_stronger").click();
+    await expect(page.getByTestId("intake-selected-goals")).toContainText(/get stronger/i);
+
+    await page.getByTestId("intake-selected-goal-remove-get-stronger").click();
+    await expect(page.getByTestId("intake-selected-goals")).not.toContainText(/get stronger/i);
+
+    await page.getByTestId("intake-featured-goal-improve_big_lifts").click();
+    await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
+    await expect(page.getByTestId("intake-selected-goals")).not.toContainText(/get stronger/i);
+
+    await expect(page.getByTestId("intake-goals-option-experience-level-beginner")).toHaveClass(/btn-primary/);
+    await expect(page.getByTestId("intake-goals-option-training-days-3")).toHaveClass(/btn-primary/);
+    await expect(page.getByTestId("intake-goals-option-session-length-30")).toHaveClass(/btn-primary/);
+    await expect(page.getByTestId("intake-goals-option-coaching-style-balanced-coaching")).toHaveClass(/btn-primary/);
+
+    await page.getByTestId("intake-goals-option-training-location-gym").click();
+
+    const continueButton = page.getByTestId("intake-footer-continue");
+    await expect(continueButton).toBeEnabled();
+    await continueButton.click();
+
+    await expect.poll(async () => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toBe("clarify");
+    await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/big lift|bench|squat|deadlift|press|pull-up/i);
+  });
+
   test("signed-in intake still reaches clarify and does not depend on cloud writes before onboarding finishes", async ({ page }) => {
     const runtime = await installSignedInIntakeRuntime(page);
 

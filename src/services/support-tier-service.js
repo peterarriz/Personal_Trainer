@@ -12,26 +12,26 @@ export const SUPPORT_TIER_META = Object.freeze({
   [SUPPORT_TIER_LEVELS.tier1]: {
     id: SUPPORT_TIER_LEVELS.tier1,
     label: "Tier 1",
-    shortLabel: "First-class",
-    headline: "First-class support",
-    detail: "This goal family has a stronger deterministic backbone, clearer metrics, and tighter adaptation rules.",
-    coachLine: "This is a first-class lane, so the plan can be more specific and adaptation rules can be more confident.",
+    shortLabel: "High clarity",
+    headline: "This plan can get specific",
+    detail: "This goal has enough signal for clearer day-to-day guidance and faster adjustments.",
+    coachLine: "The plan can be more specific here because the goal, anchors, and progress signals are already strong enough.",
   },
   [SUPPORT_TIER_LEVELS.tier2]: {
     id: SUPPORT_TIER_LEVELS.tier2,
     label: "Tier 2",
-    shortLabel: "Bounded",
-    headline: "Bounded but meaningful support",
-    detail: "This goal family is supported through shared planning rules with a narrower adapter and more guardrails.",
-    coachLine: "This lane is supported well enough to be useful, but the app stays more conservative about edge-case specificity.",
+    shortLabel: "Good guidance",
+    headline: "This plan can guide this well",
+    detail: "The app can support this reliably, but it keeps a little more guardrail and asks for better anchors as you go.",
+    coachLine: "This goal is supported well enough to be useful, but the app stays a bit more conservative at the edges.",
   },
   [SUPPORT_TIER_LEVELS.tier3]: {
     id: SUPPORT_TIER_LEVELS.tier3,
     label: "Tier 3",
-    shortLabel: "Exploratory",
-    headline: "Exploratory fallback support",
-    detail: "The app can map this goal into a safe shared training mode, but it should stay honest about uncertainty and missing metrics.",
-    coachLine: "This lane uses the nearest safe shared support mode instead of pretending the app has sport-specific mastery.",
+    shortLabel: "Simple start",
+    headline: "This plan will start simple",
+    detail: "The app can get you moving safely here, then sharpen the plan as you add more signal.",
+    coachLine: "This goal starts with a simpler version so the app can stay honest while it learns more from your setup and logs.",
   },
 });
 
@@ -157,23 +157,23 @@ export const buildSupportTierModel = ({
   const meta = SUPPORT_TIER_META[id] || SUPPORT_TIER_META[SUPPORT_TIER_LEVELS.tier3];
   const signals = collectGoalSignals(goals);
   const honestyLine = id === SUPPORT_TIER_LEVELS.tier1
-    ? "The planner can be more specific here because the adapter, metrics, and adaptation rules are stronger."
+    ? "The plan can be more specific here because your goal and inputs already give it a strong signal."
     : id === SUPPORT_TIER_LEVELS.tier2
-    ? "The planner can support this credibly, but it keeps more guardrails and relies on cleaner anchors."
-    : "The planner will stay useful by falling back to safer shared rules and by surfacing uncertainty instead of bluffing.";
+    ? "The plan can support this credibly, but it will stay a little more conservative until the signal gets cleaner."
+    : "The plan will stay useful by starting simple and getting sharper as you add more detail.";
   const basisLine = signals.activeGoals.length === 0
-    ? "No explicit goal is required. Foundation mode is still a supported Tier 1 entry path."
+    ? "You do not need a formal goal to start. FORMA can still build a strong first week from your routine."
     : signals.hasTriathlon
-    ? "Triathlon is handled through a bounded multisport adapter that keeps interference and missing anchors explicit."
+    ? "Triathlon starts with a balanced multisport build, then gets sharper as you confirm more swim, bike, and run anchors."
     : signals.hasCycling
-    ? "Cycling now has a dedicated endurance lane instead of being folded into generic cardio."
+    ? "Cycling gets its own endurance lane, so the plan can build around real riding instead of generic cardio."
     : signals.hasSwim
-    ? "Swimming is handled through the shared planner with a narrower adapter and more explicit metric honesty."
+    ? "Swimming is supported, but it gets better once you add a benchmark and confirm your swim access."
     : signals.hasPower
-    ? "Vertical and power goals are handled through the shared power adapter instead of a one-off planner."
+    ? "Power goals are supported through a shared speed-and-power build rather than a one-off template."
     : signals.hasAppearance && !signals.hasBodyComp
-    ? "Appearance language is handled through repeatable proxies like waist and bodyweight instead of pretending the app can verify a mirror outcome directly."
-    : "Support tier follows the dominant goal family and the active domain adapter.";
+    ? "Appearance goals work best when you pair them with trackable markers like waist, bodyweight, or photos."
+    : "The plan follows your main goal first and keeps the rest in support.";
 
   return {
     ...meta,

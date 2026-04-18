@@ -114,17 +114,17 @@ test.describe("shared sync state rendering", () => {
     await domClick(page.getByRole("button", { name: "Save profile" }));
     await domClick(page.getByTestId("settings-surface-account"));
 
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Retrying");
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Cloud sync is retrying in the background");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Saved here");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("sending");
 
     await domClick(page.getByTestId("app-tab-today"));
-    await expect(page.getByTestId("today-sync-status")).toContainText("Retrying");
-    await expect(page.getByTestId("today-sync-status")).toContainText("Cloud sync is retrying in the background");
+    await expect(page.getByTestId("today-sync-status")).toContainText("Saved here");
+    await expect(page.getByTestId("today-sync-status")).toContainText("sending");
 
     await domClick(page.getByTestId("app-tab-program"));
     await expect(page.getByTestId("program-tab")).toBeVisible();
-    await expect(page.getByTestId("program-sync-status")).toContainText("Retrying");
-    await expect(page.getByTestId("program-sync-status")).toContainText("Cloud sync is retrying in the background");
+    await expect(page.getByTestId("program-sync-status")).toContainText("Saved here");
+    await expect(page.getByTestId("program-sync-status")).toContainText("sending");
   });
 
   test("developer diagnostics expose the exact trainer_data retry failure behind the generic sync state", async ({ page }) => {
@@ -159,7 +159,7 @@ test.describe("shared sync state rendering", () => {
     await domClick(page.getByRole("button", { name: "Save profile" }));
     await domClick(page.getByTestId("settings-surface-account"));
 
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Retrying");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Saved here");
     await page.getByTestId("settings-account-advanced").evaluate((node) => {
       node.open = true;
     });
@@ -181,8 +181,8 @@ test.describe("shared sync state rendering", () => {
     await bootAppWithSupabaseSeeds(page, { session: null, payload });
 
     await expect(page.getByTestId("today-tab")).toBeVisible();
-    await expect(page.getByTestId("today-sync-status")).toContainText("Device-only");
-    await expect(page.getByTestId("today-sync-status")).toContainText("running locally without cloud sync");
+    await expect(page.getByTestId("today-sync-status")).toContainText("This device only");
+    await expect(page.getByTestId("today-sync-status")).toContainText("saved local copy");
 
     await openSettingsAccountSurface(page);
     await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
@@ -206,11 +206,11 @@ test.describe("shared sync state rendering", () => {
     await page.goto("/");
 
     await expect(page.getByTestId("today-tab")).toBeVisible();
-    await expect(page.getByTestId("today-sync-status")).toContainText("Cloud sync is unavailable");
-    await expect(page.getByTestId("today-sync-status")).toContainText("Local training data remains usable on this device");
+    await expect(page.getByTestId("today-sync-status")).toContainText("Account sync is unavailable");
+    await expect(page.getByTestId("today-sync-status")).toContainText("local training copy is still usable here");
 
     await openSettingsAccountSurface(page);
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Cloud sync is unavailable");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Account sync is unavailable");
     await expect(page.getByTestId("settings-sync-status")).toContainText("Keep using this device locally for now");
   });
 
@@ -230,9 +230,9 @@ test.describe("shared sync state rendering", () => {
       anchorTestId,
     }) => {
       await openSurface();
-      await applySyncPreset(page, "synced", 900);
-      await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("synced");
-      await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
+      await applySyncPreset(page, "retrying", 900);
+      await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("retrying");
+      await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("retrying");
       await expect(page.getByTestId(statusTestId)).toBeVisible();
       await expectSingleCompactStatus(page, statusTestId);
       const metrics = [];
@@ -266,10 +266,7 @@ test.describe("shared sync state rendering", () => {
       await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("synced");
       await reconcileSyncPresentation(page, 21_000);
       await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
-      await expect(page.getByTestId(statusTestId)).toContainText("Synced");
-      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
-
-      await expectSingleCompactStatus(page, statusTestId);
+      await expect(page.getByTestId(statusTestId)).toHaveCount(0);
       expectStableCompactMetrics(metrics[0], metrics.slice(1));
     };
 
@@ -303,8 +300,8 @@ test.describe("shared sync state rendering", () => {
     await domClick(page.getByTestId("app-tab-today"));
     await expect(page.getByTestId("today-tab")).toBeVisible();
 
-    await applySyncPreset(page, "synced", 1000);
-    await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
+    await applySyncPreset(page, "retrying", 1000);
+    await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("retrying");
     const metrics = [
       await readCompactSurfaceMetrics(page, {
         statusTestId: "today-sync-status",
@@ -332,12 +329,7 @@ test.describe("shared sync state rendering", () => {
     await applySyncPreset(page, "synced", 1700);
     await reconcileSyncPresentation(page, 21_000);
     await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
-    await expect(page.getByTestId("today-sync-status")).toContainText("Synced");
-    await expectSingleCompactStatus(page, "today-sync-status");
-    metrics.push(await readCompactSurfaceMetrics(page, {
-      statusTestId: "today-sync-status",
-      anchorTestId: "today-canonical-session-label",
-    }));
+    await expect(page.getByTestId("today-sync-status")).toHaveCount(0);
 
     expectStableCompactMetrics(metrics[0], metrics.slice(1));
   });
@@ -364,9 +356,9 @@ test.describe("shared sync state rendering", () => {
     await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("synced");
     await reconcileSyncPresentation(page, 21_000);
     await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Cloud and device are aligned");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Everything is saved");
 
     const statusText = await page.getByTestId("settings-sync-status").innerText();
-    expect(statusText).not.toMatch(/slightly behind|retrying/i);
+    expect(statusText).not.toMatch(/step behind|saved here/i);
   });
 });

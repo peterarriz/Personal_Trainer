@@ -177,7 +177,7 @@ async function readSavedLog(page) {
 }
 
 test.describe("log prescribed workflow", () => {
-  test("run-only day keeps a single visible logging form with no extra-exercise panel", async ({ page }) => {
+  test("quick log keeps one planned workout card and one obvious save path", async ({ page }) => {
     await openSeededLog(page, { mode: "run" });
 
     const logTab = page.getByTestId("log-tab");
@@ -185,12 +185,20 @@ test.describe("log prescribed workflow", () => {
     await expect(logTab.getByTestId("planned-session-plan")).toHaveCount(1);
     await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
     await expect(page.getByTestId("log-run-duration")).toBeVisible();
+    await expect(page.getByTestId("log-run-duration")).toHaveValue("40");
     await expect(page.getByTestId("log-strength-row-0")).toHaveCount(0);
     await expect(page.getByTestId("log-extra-exercises")).toHaveCount(0);
     await expect(page.getByTestId("log-save-quick")).toBeEnabled();
+    await expect(page.getByTestId("log-save-detailed")).toBeVisible();
+
+    await page.getByTestId("log-save-quick").click();
+    await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
+
+    const logs = await readSavedLog(page);
+    expect(logs["2026-04-17"]?.checkin?.status).toBe("completed_as_planned");
   });
 
-  test("strength-only day prefills prescribed strength actuals and saves them without duplicate workout presentation", async ({ page }) => {
+  test("full detail log saves the prefilled planned lifts without duplicate workout cards", async ({ page }) => {
     await openSeededLog(page, { mode: "strength" });
 
     const logTab = page.getByTestId("log-tab");
@@ -203,10 +211,10 @@ test.describe("log prescribed workflow", () => {
     await expect(page.getByTestId("log-strength-row-sets-0")).toHaveValue("4");
     await expect(page.getByTestId("log-strength-row-reps-0")).toHaveValue("6");
     await expect(page.getByTestId("log-strength-row-weight-0")).toHaveValue("185");
-    await expect(page.getByTestId("log-save-quick")).toBeEnabled();
+    await expect(page.getByTestId("log-save-detailed")).toBeVisible();
     await expect(page.getByTestId("log-extra-exercises")).toBeVisible();
 
-    await page.getByTestId("log-save-quick").click();
+    await page.getByTestId("log-save-detailed").click();
     await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
 
     const logs = await readSavedLog(page);
@@ -215,12 +223,13 @@ test.describe("log prescribed workflow", () => {
     expect(logs["2026-04-17"]?.strengthPerformance?.[0]?.actualWeight).toBe(185);
   });
 
-  test("run-plus-strength day shows both sections and keeps extra exercises as a bottom advanced action", async ({ page }) => {
+  test("modified workout log saves changed run and strength details from the same screen", async ({ page }) => {
     await openSeededLog(page, { mode: "mixed" });
 
     const logTab = page.getByTestId("log-tab");
     await expect(logTab.getByTestId("planned-session-plan")).toHaveCount(1);
     await expect(page.getByTestId("log-run-duration")).toBeVisible();
+    await expect(page.getByTestId("log-run-duration")).toHaveValue("35");
     await expect(page.getByTestId("log-strength-row-0")).toBeHidden();
     await page.getByTestId("log-strength-actuals").locator("summary").click();
     await expect(page.getByTestId("log-strength-row-0")).toBeVisible();
@@ -229,12 +238,13 @@ test.describe("log prescribed workflow", () => {
     await expect(page.getByTestId("log-extra-exercises")).toBeVisible();
 
     await page.getByTestId("log-run-duration").fill("42");
+    await page.getByTestId("log-strength-row-reps-0").fill("8");
     await page.getByTestId("log-save-quick").click();
     await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
 
     const logs = await readSavedLog(page);
     expect(logs["2026-04-17"]?.runTime).toBe("42");
     expect(logs["2026-04-17"]?.strengthPerformance?.[0]?.actualSets).toBe(3);
-    expect(logs["2026-04-17"]?.strengthPerformance?.[0]?.actualReps).toBe(10);
+    expect(logs["2026-04-17"]?.strengthPerformance?.[0]?.actualReps).toBe(8);
   });
 });

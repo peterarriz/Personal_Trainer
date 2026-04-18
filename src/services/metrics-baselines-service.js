@@ -366,7 +366,7 @@ export const buildMetricsBaselinesModel = ({
       value: latestSwimReality?.label || latestSwimReality?.value?.replaceAll("_", " ") || "Missing",
       detail: latestSwimReality?.date
         ? `Last captured ${toDateLabel(latestSwimReality.date)}`
-        : "Confirm whether the goal is mostly pool, open water, or both right now.",
+        : "Tell us whether the goal is mostly pool, open water, or both right now.",
       source: latestSwimReality?.source || (latestSwimReality?.value ? "user_override" : "placeholder"),
       planningImpact: "Can change session structure, technique emphasis, and realism of the first swim block.",
       missing: !latestSwimReality?.value,
@@ -603,7 +603,7 @@ export const applyPlanningBaselineInfluence = ({
     if (String(session?.type || "").toLowerCase() === "strength+prehab" && influence?.strength?.level) {
       if (influence.strength.level === "foundation") {
         session.label = /foundation/i.test(String(session.label || "")) ? session.label : `Foundation ${session.label || "Strength"}`;
-        session.strengthDose = "30-40 min repeatable technique-first strength";
+        session.strengthDose = "30-40 min base strength";
         session.intensityGuidance = "Own clean reps and leave room in reserve until the baseline sharpens.";
       } else if (influence.strength.level === "progression") {
         session.label = /progression|top-set/i.test(String(session.label || "")) ? session.label : `Progression ${session.label || "Strength"}`;

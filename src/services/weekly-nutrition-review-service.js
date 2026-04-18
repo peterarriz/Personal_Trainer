@@ -177,8 +177,8 @@ export const deriveWeeklyNutritionAdaptation = ({ summary = null } = {}) => {
       shouldAdapt: true,
       summary: "Protect fueling before and after key sessions next week.",
       support: hardPrescriptionDays >= 1
-        ? "Repeated under-fueling showed up against performance-relevant days, so the safest deterministic move is to bias consistency around those sessions."
-        : "Repeated under-fueling with a clear hunger pattern is strong enough to protect upcoming key sessions even when recent prescription history is still sparse.",
+        ? "Repeated under-fueling showed up around your important sessions, so next week should keep fueling steadier around those days."
+        : "Repeated under-fueling plus a clear hunger pattern is enough to protect your next key sessions with steadier fueling.",
       reasons: ["repeated_under_fueling", hardPrescriptionDays >= 1 ? "hard_training_days_present" : "strong_hunger_signal"],
       actions: [
         "Anchor one pre-session carb and one post-session protein default on quality days.",
@@ -192,7 +192,7 @@ export const deriveWeeklyNutritionAdaptation = ({ summary = null } = {}) => {
       mode: "reinforce_hydration",
       shouldAdapt: true,
       summary: "Reinforce hydration defaults before making bigger nutrition changes.",
-      support: "Hydration missed target on multiple days, so the cleanest near-term adaptation is a hydration anchor rather than a broader prescription rewrite.",
+      support: "Hydration missed target on multiple days, so the next best move is a simple hydration habit before changing anything bigger.",
       reasons: ["hydration_inconsistency"],
       actions: [
         "Front-load one bottle before midday and one around training.",
@@ -220,7 +220,7 @@ export const deriveWeeklyNutritionAdaptation = ({ summary = null } = {}) => {
       mode: "anchor_supplements",
       shouldAdapt: true,
       summary: "Anchor supplements to one consistent daily routine.",
-      support: "Supplement misses are showing up more as routine friction than as a product problem, so timing consistency is the deterministic fix.",
+      support: "Supplement misses look more like routine friction than a product problem, so a steadier daily habit is the best fix.",
       reasons: ["supplement_routine_drift"],
       actions: [
         "Attach core supplements to breakfast or dinner instead of training timing.",
@@ -232,9 +232,9 @@ export const deriveWeeklyNutritionAdaptation = ({ summary = null } = {}) => {
     mode: "hold",
     shouldAdapt: false,
     summary: "Hold the current weekly nutrition structure.",
-    support: "The current signal does not justify a deterministic nutrition change beyond reinforcing existing habits.",
+    support: "The current signal does not call for a bigger nutrition change yet.",
     reasons: ["stable_signal"],
-    actions: ["Keep the same structure and continue logging planned-vs-actual intake."],
+    actions: ["Keep the same structure and continue logging what you planned and what you ate."],
   };
 };
 

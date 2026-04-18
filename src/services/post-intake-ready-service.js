@@ -34,6 +34,20 @@ const compactCellTitle = (cell = null) => {
   return sanitizeText(cell.title || "Session", 28);
 };
 
+const compactCellDetail = (cell = null) => {
+  if (!cell || cell?.isRest) return "";
+  const detail = sanitizeText(cell?.detail || "", 100);
+  if (!detail) return "";
+  if (isStrengthCell(cell)) {
+    const durationMatch = detail.match(/\d+\s*(?:-\s*\d+)?\s*min/i);
+    return durationMatch ? `${durationMatch[0]} strength` : "Strength session";
+  }
+  if (isLongRunCell(cell)) {
+    return sanitizeText(detail.replace(/^long run\s*/i, ""), 28);
+  }
+  return sanitizeText(detail, 32);
+};
+
 const buildWeekShapeSummary = (cells = []) => {
   const plannedCells = cells.filter((cell) => !cell?.isRest);
   const qualityCount = plannedCells.filter((cell) => isQualityCell(cell)).length;
@@ -42,7 +56,7 @@ const buildWeekShapeSummary = (cells = []) => {
   const parts = [
     pluralize(plannedCells.length, "session"),
     qualityCount ? pluralize(qualityCount, "key run") : null,
-    strengthCount ? pluralize(strengthCount, "strength touch") : null,
+    strengthCount ? pluralize(strengthCount, "strength day") : null,
     longRunCell?.detail ? `long run ${sanitizeText(longRunCell.detail, 40)}` : null,
   ].filter(Boolean);
   return joinDisplayParts(parts) || "Your first week is set.";
@@ -58,15 +72,15 @@ const buildRoadmapSecondaryLine = (row = null) => {
 };
 
 const buildRoadmapSummary = (rows = []) => {
-  if (!rows.length) return "The next few weeks stay visible so you can see what is building.";
+  if (!rows.length) return "The next few weeks are already in view.";
   const hasCutback = rows.some((row) => row?.cutback);
   const hasPhaseChange = rows.some((row) => row?.isPhaseStart && !row?.isCurrentWeek);
   if (hasCutback && hasPhaseChange) {
     return "You can already see the build, the lighter week, and the next block.";
   }
-  if (hasCutback) return "You can already see the build and where the week eases to keep it believable.";
-  if (hasPhaseChange) return "You can already see what this block is building toward next.";
-  return "You can already see the next few weeks instead of guessing where the plan is headed.";
+  if (hasCutback) return "You can already see the build and the lighter week.";
+  if (hasPhaseChange) return "You can already see what this block builds toward.";
+  return "You can already see the next few weeks.";
 };
 
 const findActionCells = (cells = []) => {
@@ -98,12 +112,11 @@ const buildAdaptationLines = ({ roadmapRows = [], hasLogged = false } = {}) => {
   const nextRow = roadmapRows.find((row) => !row?.isCurrentWeek) || null;
   return [
     hasLogged
-      ? "Your latest log is already helping the next sessions stay matched to real life."
-      : "After each log, the next sessions tighten around what actually happened, not what was supposed to happen.",
-    "If a day runs short, feels harder than expected, or gets skipped, the week can rebalance without losing the point of the block.",
+      ? "Your latest log is already shaping the next sessions."
+      : "Each log helps the next sessions match what actually happened.",
     nextRow?.phaseLabel
-      ? `As you log more, guidance gets sharper while the bigger build toward ${sanitizeText(nextRow.phaseLabel, 48)} stays clear.`
-      : "As you log more, pace, load, and recovery guidance get more personal.",
+      ? `The bigger build toward ${sanitizeText(nextRow.phaseLabel, 40)} stays in view.`
+      : "The bigger build stays in view while the details sharpen.",
   ].map((line) => sanitizeText(line, 170));
 };
 
@@ -136,11 +149,6 @@ const buildChecklistItems = ({
       label: protectWeekLabel,
       done: false,
     },
-    {
-      id: "roadmap",
-      label: "Glance at the next few weeks once so the build feels clear before you start.",
-      done: false,
-    },
   ];
 };
 
@@ -165,9 +173,25 @@ export const buildPostIntakeReadyModel = ({
       },
     };
   const horizonRows = Array.isArray(rollingHorizon) ? rollingHorizon.filter(Boolean) : [];
-  const normalizedHorizon = horizonRows.some((row) => Number(row?.absoluteWeek || 0) === Number(currentWeek || 0))
-    ? horizonRows
-    : [safeWeekRow, ...horizonRows];
+  const currentWeekNumber = Number(currentWeek || 0);
+  const normalizedHorizon = (() => {
+    const nextRows = [];
+    let insertedCurrentWeek = false;
+    horizonRows.forEach((row) => {
+      if (Number(row?.absoluteWeek || 0) === currentWeekNumber) {
+        if (!insertedCurrentWeek) {
+          nextRows.push(safeWeekRow);
+          insertedCurrentWeek = true;
+        }
+        return;
+      }
+      nextRows.push(row);
+    });
+    if (!insertedCurrentWeek) {
+      nextRows.unshift(safeWeekRow);
+    }
+    return nextRows;
+  })();
   const weekShapeCells = buildProgramWeekGridCells({
     weekRow: safeWeekRow,
     currentWeek,
@@ -222,7 +246,7 @@ export const buildPostIntakeReadyModel = ({
       : "Your first week is set and today has a clear start.",
     credibilityLine: sanitizeText(
       joinDisplayParts([
-        "Built around your goal and current routine",
+        "Built around your goal and routine",
         buildRoadmapSummary(roadmapRows),
       ]),
       180,
@@ -232,14 +256,14 @@ export const buildPostIntakeReadyModel = ({
       title: firstActionTitle,
       detail: firstActionDetail,
       meta: firstActionMeta || "Planned today",
-      support: firstActionSupport,
+      support: sanitizeText(firstActionSupport, 88),
     },
     weekShape: {
       summary: buildWeekShapeSummary(weekShapeCells),
       cells: weekShapeCells.map((cell) => ({
         ...cell,
         shortTitle: compactCellTitle(cell),
-        shortDetail: sanitizeText(cell?.detail || "", 32),
+        shortDetail: compactCellDetail(cell),
         tone: cell?.isRest
           ? "rest"
           : isLongRunCell(cell)

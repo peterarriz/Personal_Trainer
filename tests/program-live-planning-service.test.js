@@ -603,7 +603,7 @@ test("strict program mode downgrades when recent execution drifts too far from t
 
   assert.equal(liveBasis.runtimeFidelityMode, PROGRAM_RUNTIME_FIDELITY.adapted);
   assert.equal(liveBasis.planningBasis.fidelityStatus, PROGRAM_FIDELITY_STATUS.downgradedForDrift);
-  assert.match(liveBasis.planningBasis.adherence.summary, /no longer counts as strict|drift/i);
+  assert.match(liveBasis.planningBasis.adherence.summary, /moved far enough|drift/i);
 });
 
 test("hard schedule reality can suspend a strict advanced template", () => {

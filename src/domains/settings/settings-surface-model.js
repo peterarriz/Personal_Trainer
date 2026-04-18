@@ -3,13 +3,13 @@ import {
 } from "../../services/internal-access-policy-service.js";
 
 const SETTINGS_SURFACES = Object.freeze([
-  { key: "account", label: "Account", helper: "Sign-in, backup, and reset" },
-  { key: "profile", label: "Profile", helper: "Body, units, and athlete basics" },
-  { key: "goals", label: "Goals", helper: "Edit priorities and timelines" },
-  { key: "baselines", label: "Plan inputs", helper: "Current essentials, nice-to-add details, better accuracy later" },
-  { key: "programs", label: "Plan style", helper: "Built-for-you plan, named plans, and training feel" },
-  { key: "preferences", label: "Preferences", helper: "Defaults, appearance, and reminder status" },
-  { key: "advanced", label: "Devices", helper: "Apple Health, Garmin, and location" },
+  { key: "account", label: "Account", helper: "Sign-in and backup" },
+  { key: "profile", label: "Profile", helper: "Basics and units" },
+  { key: "goals", label: "Goals", helper: "Priorities and timing" },
+  { key: "baselines", label: "Plan inputs", helper: "Current inputs" },
+  { key: "programs", label: "Plan style", helper: "Plan feel" },
+  { key: "preferences", label: "Preferences", helper: "Defaults and reminders" },
+  { key: "advanced", label: "Devices", helper: "Connections" },
 ]);
 
 const FOCUS_TO_SURFACE = {

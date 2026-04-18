@@ -88,7 +88,7 @@ test("actual log omits nutrition when no real nutrition entry was saved", () => 
       actualSummary: { label: "Skipped" },
     },
     nutritionComparison: {
-      summary: "Actual nutrition has not been logged yet.",
+      summary: "Food has not been logged yet.",
     },
     revisions: [{}],
   });

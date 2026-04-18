@@ -61,7 +61,7 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
     await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible({ timeout: 1000 });
     expect(Date.now() - startedAt).toBeLessThan(1200);
     await expect(page.getByTestId("auth-gate")).toHaveCount(0);
-    await expect(page.getByTestId("settings-sync-status")).toContainText("running locally without cloud sync");
+    await expect(page.getByTestId("settings-sync-status")).toContainText(/saved local copy|This device only/i);
     await expect(page.getByTestId("settings-account-action-message")).toContainText("Local data stays on this device");
     await expect.poll(() => page.evaluate(() => ({
       auth: localStorage.getItem("trainer_auth_session_v1"),

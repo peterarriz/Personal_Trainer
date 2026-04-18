@@ -105,7 +105,7 @@ test.describe("mobile surface simplification", () => {
     await page.setViewportSize({ width: 390, height: 844 });
   });
 
-  test("mobile intake keeps the staged shell, summary rail, and footer actions usable", async ({ page }) => {
+  test("mobile intake keeps the staged shell focused and footer actions usable", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await completeIntroQuestionnaire(page, {
       goalText: "Bench 225 and get leaner by summer",
@@ -118,7 +118,7 @@ test.describe("mobile surface simplification", () => {
     });
 
     await expect.poll(async () => await page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toBe("clarify");
-    await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
+    await expect(page.getByTestId("intake-summary-rail")).toHaveCount(0);
     await expect(page.getByTestId("intake-footer-continue")).toBeVisible();
     await expect(page.getByTestId("intake-transcript")).toHaveCount(0);
     await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(4);
@@ -131,17 +131,19 @@ test.describe("mobile surface simplification", () => {
 
     await expect(page.getByTestId("today-tab")).toBeVisible();
     await expect(page.getByTestId("today-session-card")).toBeVisible();
+    await expect(page.getByTestId("today-adaptation-note")).toBeVisible();
     await expect(page.getByTestId("today-full-workout")).toBeVisible();
-    await expect(page.getByTestId("today-quick-log")).toBeVisible();
-    await expect(page.getByTestId("today-save-log")).toBeVisible();
+    await expect(page.getByTestId("today-primary-cta")).toBeVisible();
+    await expect(page.getByTestId("today-secondary-cta")).toBeVisible();
+    await expect(page.getByTestId("today-quick-log")).toHaveCount(0);
     await expect(page.getByTestId("today-tab").getByTestId("planned-session-plan")).toHaveCount(1);
-    await expect(page.getByTestId("today-tab").getByText("LOG TODAY", { exact: true })).toHaveCount(1);
+    await expect(page.getByText("LOG TODAY", { exact: true })).toHaveCount(0);
 
     await page.getByTestId("app-tab-program").click();
     await expect(page.getByTestId("program-tab")).toBeVisible();
     await expect(page.getByTestId("program-this-week")).toBeVisible();
     await expect(page.getByTestId("program-future-weeks")).toBeVisible();
-    await expect(page.getByText("Edit goals and plan")).toBeVisible();
+    await expect(page.getByText("Edit goals and plan")).toHaveCount(0);
     await expect(page.getByText("PROGRAMS + STYLES").first()).not.toBeVisible();
     await expect(page.getByText("Refine Current Goal").first()).not.toBeVisible();
     await expect(page.getByText("Start New Goal Arc").first()).not.toBeVisible();
@@ -219,12 +221,25 @@ test.describe("mobile surface simplification", () => {
     await page.setViewportSize({ width: 320, height: 844 });
     await bootSignedInTodaySurface(page);
 
+    const headerMetrics = await page.getByTestId("app-header-bar").evaluate((node) => {
+      const brand = node.querySelector("[data-testid='app-brand-lockup']");
+      const settings = node.querySelector("[data-testid='app-tab-settings']");
+      const brandRect = brand.getBoundingClientRect();
+      const settingsRect = settings.getBoundingClientRect();
+      return {
+        brandBottom: brandRect.bottom,
+        settingsTop: settingsRect.top,
+      };
+    });
+    expect(headerMetrics.settingsTop).toBeLessThan(headerMetrics.brandBottom - 4);
+
     await page.getByTestId("app-tab-settings").click();
     await page.getByTestId("settings-surface-preferences").click();
     await page.getByRole("button", { name: /Aggressive/i }).first().click();
 
     await page.getByTestId("app-tab-today").click();
 
+    await page.getByTestId("today-primary-cta").click();
     const quickLog = page.getByTestId("today-quick-log");
     await quickLog.getByRole("button", { name: /completed as planned/i }).click();
     await quickLog.getByRole("button", { name: /about right/i }).click();
@@ -237,7 +252,6 @@ test.describe("mobile surface simplification", () => {
       "today-canonical-session-label",
       "today-canonical-reason",
       "today-change-summary",
-      "today-plan-basis",
       "today-save-status",
     ];
     for (const testId of textTargets) {

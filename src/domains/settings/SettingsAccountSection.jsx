@@ -1,5 +1,6 @@
 import React from "react";
 import { formatSyncDiagnosticTimestamp } from "../../services/sync-diagnostics-service.js";
+import { StateFeedbackBanner } from "../../components/StateFeedbackPrimitives.jsx";
 import {
   SETTINGS_BODY_STYLE,
   SETTINGS_LABEL_STYLE,
@@ -69,6 +70,7 @@ export function SettingsAccountSection({
   syncStateCallout = null,
   lifecycleSummaryCards = [],
   accountActionMessage = "",
+  accountActionFeedbackModel = null,
   accountActionTone = "neutral",
   accountActionBusy = "",
   onReloadCloud = () => {},
@@ -142,20 +144,17 @@ export function SettingsAccountSection({
         <div style={SETTINGS_BODY_STYLE}>
           {authEmail
             ? `Signed in as ${authEmail}.`
-            : "You are currently using this device without a signed-in cloud account."}
+            : "This device is not signed in."}
         </div>
       </div>
       {syncStateCallout}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.38rem" }}>
-        {lifecycleSummaryCards.map((card) => (
-          <div key={card.id} style={LIFECYCLE_CARD_STYLE}>
-            <div style={SETTINGS_LABEL_STYLE}>{card.id.toUpperCase()}</div>
-            <div style={{ ...SETTINGS_TITLE_STYLE, fontSize:"0.56rem" }}>{card.label}</div>
-            <div style={{ ...SETTINGS_BODY_STYLE, fontSize:"0.47rem" }}>{card.detail}</div>
-          </div>
-        ))}
-      </div>
-      {!!accountActionMessage && (
+      {accountActionFeedbackModel ? (
+        <StateFeedbackBanner
+          model={accountActionFeedbackModel}
+          dataTestId="settings-account-action-message"
+          compact
+        />
+      ) : !!accountActionMessage ? (
         <div
           data-testid="settings-account-action-message"
           style={{
@@ -170,13 +169,12 @@ export function SettingsAccountSection({
         >
           {accountActionMessage}
         </div>
-      )}
+      ) : null}
       {authEmail ? (
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
           <div style={ACCOUNT_PANEL_STYLE}>
             <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>REFRESH ACCOUNT DATA</div>
-            <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Refresh this device with the latest saved version from your account.</div>
-            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>Use this when you want the latest saved state here, not when you want to sign out or clear the device.</div>
+            <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Pull the latest saved version to this device.</div>
             <button className="btn" disabled={accountActionBusy !== ""} onClick={onReloadCloud} style={{ width:"fit-content", fontSize:"0.48rem", ...brandButtonStyle }}>
               {accountActionBusy === "reload" ? "Refreshing..." : "Refresh from account"}
             </button>
@@ -184,7 +182,6 @@ export function SettingsAccountSection({
           <div style={ACCOUNT_PANEL_STYLE}>
             <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>SIGN OUT</div>
             <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Sign out without deleting your account.</div>
-            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>This signs you out here and keeps the browser in local mode unless you reset the device.</div>
             <button data-testid="settings-logout" className="btn" disabled={accountActionBusy !== ""} onClick={onLifecycleSignOut} style={{ width:"fit-content", fontSize:"0.48rem", ...neutralButtonStyle }}>
               {accountActionBusy === "logout" ? "Signing out..." : "Sign out"}
             </button>
@@ -192,7 +189,6 @@ export function SettingsAccountSection({
           <div data-testid="settings-password-reset-card" style={ACCOUNT_PANEL_STYLE}>
             <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>PASSWORD</div>
             <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Email a password reset link to your account.</div>
-            <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>Use this if you want to change your password without signing out first.</div>
             <button
               data-testid="settings-send-password-reset"
               className="btn"
@@ -212,7 +208,7 @@ export function SettingsAccountSection({
       ) : (
         <div style={{ display:"grid", gap:"0.35rem" }}>
           <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", lineHeight:1.45 }}>
-            This device is in local mode right now. Sign in when you want account sync, handoff across devices, or full account controls. Export and reset tools stay below.
+            Sign in when you want sync across devices.
           </div>
           <button
             data-testid="settings-open-auth-gate"
@@ -229,14 +225,13 @@ export function SettingsAccountSection({
           Export, restore, reset, and delete
         </summary>
         <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", lineHeight:1.5 }}>
-          Open this when you want to export your data, restore from a backup, reset this device, or permanently delete your account.
+          Open this for backup, restore, reset, or delete.
         </div>
         {authEmail && (
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:"0.4rem" }}>
             <div style={{ border:"1px solid var(--border)", borderRadius:12, background:"var(--surface-2)", padding:"0.62rem", display:"grid", gap:"0.34rem" }}>
               <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>RESET THIS DEVICE</div>
               <div style={{ fontSize:"0.54rem", color:"var(--text-strong)", lineHeight:1.45 }}>Clear this device without deleting your account.</div>
-              <div style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.5 }}>This clears saved data here, signs this browser out, and takes you back to sign-in. Your account still exists.</div>
               <button
                 data-testid="settings-reset-device"
                 className="btn"
@@ -257,7 +252,7 @@ export function SettingsAccountSection({
                     onClick={resetDeviceUi.onSubmit}
                     style={{ width:"fit-content", fontSize:"0.48rem", ...warnButtonStyle }}
                   >
-                    {accountActionBusy === "reset_device" ? "Resetting..." : "Confirm device reset"}
+                    {accountActionBusy === "reset_device" ? "Resetting..." : "Reset this device"}
                   </button>
                 </div>
               )}
@@ -265,7 +260,6 @@ export function SettingsAccountSection({
             <div data-testid="settings-delete-account-card" style={{ border:"1px solid rgba(216,93,120,0.18)", borderRadius:12, background:"rgba(44,18,28,0.28)", padding:"0.62rem", display:"grid", gap:"0.34rem" }}>
               <div style={{ fontSize:"0.47rem", color:"#c8a4b3", letterSpacing:"0.08em" }}>DELETE ACCOUNT</div>
               <div style={{ fontSize:"0.54rem", color:"#f1d4dd", lineHeight:1.45 }}>Delete your account and remove this device's saved data.</div>
-              <div style={{ fontSize:"0.47rem", color:"#c8a4b3", lineHeight:1.5 }}>This fully removes the account. It requires deletion support on the current deployment.</div>
               <div data-testid="settings-delete-account-status" style={{ fontSize:"0.47rem", color:deleteDiagnostics.loading ? "var(--text-strong)" : deleteDiagnostics.configured === true ? "#c9f1db" : "#f7d39a", lineHeight:1.5 }}>
                 {deleteDiagnostics.loading
                   ? "Checking whether full account deletion is available here..."
@@ -300,7 +294,7 @@ export function SettingsAccountSection({
                   </div>
                   {showInternalSettingsTools && (
                     <details data-testid="settings-delete-account-diagnostics">
-                      <summary style={{ cursor:"pointer", fontSize:"0.47rem", color:"#c8a4b3" }}>Developer diagnostics</summary>
+                      <summary style={{ cursor:"pointer", fontSize:"0.47rem", color:"#c8a4b3" }}>Internal details</summary>
                       <div style={{ marginTop:"0.3rem", display:"grid", gap:"0.24rem" }}>
                         <div style={{ fontSize:"0.47rem", color:"#c8a4b3", lineHeight:1.5 }}>
                           {deleteDiagnostics.detail || "This deployment cannot permanently delete auth identities yet."}
@@ -332,7 +326,7 @@ export function SettingsAccountSection({
                       <div style={{ fontSize:"0.5rem", color:"#f1d4dd", lineHeight:1.45 }}>Type <b>DELETE</b> to permanently remove the account.</div>
                       <input data-testid="settings-delete-account-confirm" value={deleteAccountUi.confirm} onChange={(e) => deleteAccountUi.onConfirmChange(e.target.value)} placeholder="DELETE" />
                       <button data-testid="settings-delete-account-submit" className="btn" disabled={deleteAccountUi.confirm !== "DELETE" || accountActionBusy !== ""} onClick={deleteAccountUi.onSubmit} style={{ width:"fit-content", fontSize:"0.48rem", ...dangerButtonStyle }}>
-                        {accountActionBusy === "delete_account" ? "Deleting..." : "Confirm delete account"}
+                        {accountActionBusy === "delete_account" ? "Deleting..." : "Delete account"}
                       </button>
                     </>
                   )}
@@ -345,7 +339,7 @@ export function SettingsAccountSection({
           <div style={{ display:"grid", gap:"0.14rem" }}>
             <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>BACKUP AND RESET</div>
             <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.5 }}>
-              Export before bigger changes. Keep a backup code if you want an offline restore option, and reset your plan only when you want a fresh training start without changing the account itself.
+              Export your data, keep a backup code, or reset your plan.
             </div>
           </div>
           <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
@@ -390,7 +384,7 @@ export function SettingsAccountSection({
         {showInternalSettingsTools && (
           <details data-testid="settings-sync-diagnostics" style={{ border:"1px solid var(--border)", borderRadius:12, background:"var(--surface-1)", padding:"0.55rem 0.6rem", display:"grid", gap:"0.4rem" }}>
             <summary style={{ cursor:"pointer", fontSize:"0.52rem", color:"var(--text-strong)", lineHeight:1.45 }}>
-              Developer sync diagnostics
+              Internal sync details
             </summary>
             <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", lineHeight:1.5 }}>
               Exact sync evidence for trainer_data save/load, auth refresh, realtime reconnect, and local-cache authority. This is debug-only and intentionally stays out of normal product copy.
@@ -401,8 +395,26 @@ export function SettingsAccountSection({
             <div data-testid="settings-sync-diagnostics-last-failure" style={{ fontSize:"0.48rem", color:"var(--text-strong)", lineHeight:1.55 }}>
               Last failing endpoint: {syncDiagnosticsModel?.lastFailingEndpoint || "none"} - {syncDiagnosticsModel?.lastFailingMethod || "no method"} - {formatHttpStatus(syncDiagnosticsModel?.lastHttpStatus)} - code {syncDiagnosticsModel?.lastSupabaseErrorCode || "none"} - retry eligible {yesNo(syncDiagnosticsModel?.retryEligible)} - pending local writes {yesNo(syncDiagnosticsModel?.pendingLocalWrites)}
             </div>
+            <div data-testid="settings-sync-diagnostics-retry-reason" style={{ fontSize:"0.48rem", color:"var(--text-strong)", lineHeight:1.55 }}>
+              Retry reason: {syncDiagnosticsModel?.retryReasonKey || "none"} - last error {syncDiagnosticsModel?.lastErrorMessage || "none"}
+            </div>
+            <div data-testid="settings-sync-diagnostics-last-write-success" style={{ fontSize:"0.48rem", color:"var(--text-strong)", lineHeight:1.55 }}>
+              Last successful cloud write: {formatSyncDiagnosticTimestamp(syncDiagnosticsModel?.trainerDataSave?.lastSuccessAt)} - {syncDiagnosticsModel?.trainerDataSave?.lastEndpoint || "rest/v1/trainer_data"} - {formatHttpStatus(syncDiagnosticsModel?.trainerDataSave?.lastHttpStatus)}
+            </div>
+            <div data-testid="settings-sync-diagnostics-last-read-success" style={{ fontSize:"0.48rem", color:"var(--text-strong)", lineHeight:1.55 }}>
+              Last successful cloud read: {formatSyncDiagnosticTimestamp(syncDiagnosticsModel?.trainerDataLoad?.lastSuccessAt)} - {syncDiagnosticsModel?.trainerDataLoad?.lastEndpoint || "rest/v1/trainer_data"} - {formatHttpStatus(syncDiagnosticsModel?.trainerDataLoad?.lastHttpStatus)}
+            </div>
             <div data-testid="settings-sync-diagnostics-auth-refresh" style={{ fontSize:"0.48rem", color:"var(--text-strong)", lineHeight:1.55 }}>
               Auth refresh: {syncDiagnosticsModel?.authRefresh?.lastStatus || "idle"} at {formatSyncDiagnosticTimestamp(syncDiagnosticsModel?.authRefresh?.lastAttemptAt)} - {syncDiagnosticsModel?.authRefresh?.lastEndpoint || "auth/v1/token?grant_type=refresh_token"} - {formatHttpStatus(syncDiagnosticsModel?.authRefresh?.lastHttpStatus)} - code {syncDiagnosticsModel?.authRefresh?.lastSupabaseErrorCode || "none"}
+            </div>
+            <div data-testid="settings-sync-diagnostics-auth-state" style={{ fontSize:"0.48rem", color:"var(--text-strong)", lineHeight:1.55 }}>
+              Auth state: session {yesNo(syncDiagnosticsModel?.authState?.hasSession)} - user {syncDiagnosticsModel?.authState?.userId || "none"} - email {syncDiagnosticsModel?.authState?.email || "none"} - refresh token {yesNo(syncDiagnosticsModel?.authState?.hasRefreshToken)} - expires {formatSyncDiagnosticTimestamp(syncDiagnosticsModel?.authState?.expiresAt)} - status {syncDiagnosticsModel?.authState?.lastEnsureStatus || "unknown"}
+            </div>
+            <div data-testid="settings-sync-diagnostics-client-config" style={{ fontSize:"0.48rem", color:"var(--text-strong)", lineHeight:1.55 }}>
+              Client cloud config: url configured {yesNo(syncDiagnosticsModel?.clientConfig?.supabaseUrlConfigured)} from {syncDiagnosticsModel?.clientConfig?.supabaseUrlSource || "missing"} - host {syncDiagnosticsModel?.clientConfig?.supabaseUrlHost || "missing"} - anon key configured {yesNo(syncDiagnosticsModel?.clientConfig?.supabaseAnonKeyConfigured)} from {syncDiagnosticsModel?.clientConfig?.supabaseAnonKeySource || "missing"}
+            </div>
+            <div data-testid="settings-sync-diagnostics-client-config-error" style={{ fontSize:"0.47rem", color:"var(--text-soft)", lineHeight:1.55 }}>
+              Client config error: {syncDiagnosticsModel?.clientConfig?.configError || "none"}
             </div>
             <div data-testid="settings-sync-diagnostics-realtime" style={{ fontSize:"0.48rem", color:"var(--text-strong)", lineHeight:1.55 }}>
               Realtime: status {syncDiagnosticsModel?.realtime?.lastStatus || "idle"} at {formatSyncDiagnosticTimestamp(syncDiagnosticsModel?.realtime?.lastStatusAt)} - reconnects {Number(syncDiagnosticsModel?.realtime?.reconnectAttempts || 0)} - last reason {syncDiagnosticsModel?.realtime?.lastReconnectReason || "none"} - last resync {syncDiagnosticsModel?.realtime?.lastResyncStatus || "idle"} at {formatSyncDiagnosticTimestamp(syncDiagnosticsModel?.realtime?.lastResyncAt)}

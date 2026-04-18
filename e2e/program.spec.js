@@ -14,6 +14,52 @@ const {
   mockSupabaseRuntime,
 } = require("./auth-runtime-test-helpers.js");
 
+function buildResolvedGoal({
+  summary,
+  planningCategory,
+  goalFamily = "",
+  primaryMetric = null,
+  proxyMetrics = [],
+  first30DaySuccessDefinition = "",
+} = {}) {
+  return {
+    id: `resolved_${String(summary || planningCategory || "goal").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`,
+    planningPriority: 1,
+    summary,
+    planningCategory,
+    goalFamily,
+    measurabilityTier: primaryMetric?.targetValue ? "fully_measurable" : proxyMetrics.length ? "proxy_measurable" : "exploratory_fuzzy",
+    primaryMetric,
+    proxyMetrics,
+    targetDate: "",
+    targetHorizonWeeks: null,
+    confidence: "medium",
+    unresolvedGaps: [],
+    tradeoffs: [],
+    reviewCadence: "weekly",
+    refinementTrigger: "block_start_or_metric_stall",
+    first30DaySuccessDefinition,
+  };
+}
+
+function buildBenchLog({ weight, reps, sets }) {
+  return {
+    checkin: { status: "completed_as_planned" },
+    performanceRecords: [
+      {
+        scope: "exercise",
+        exercise: "Bench Press",
+        actualWeight: weight,
+        actualReps: reps,
+        actualSets: sets,
+        prescribedWeight: weight,
+        prescribedReps: reps,
+        prescribedSets: sets,
+      },
+    ],
+  };
+}
+
 async function completeRunningOnboarding(page) {
   await gotoIntakeInLocalMode(page);
   await completeIntroQuestionnaire(page, {
@@ -41,15 +87,20 @@ test.describe("program inline session detail", () => {
     await page.setViewportSize({ width: 1366, height: 960 });
   });
 
-  test("program leads with a 15-week roadmap and demotes future detail to a near-term drilldown", async ({ page }) => {
+  test("program keeps the 15-week roadmap concise and shows visible future plan cards", async ({ page }) => {
     await completeRunningOnboarding(page);
     await page.getByTestId("app-tab-program").click();
 
-    await expect(page.getByTestId("program-roadmap")).toContainText("15-WEEK ROADMAP");
+    await expect(page.getByTestId("program-current-week-highlight")).toBeVisible();
+    await expect(page.getByTestId("program-current-day-highlight")).toBeVisible();
+    await expect(page.getByTestId("program-building-over-time-highlight")).toBeVisible();
+    await expect(page.getByTestId("program-roadmap")).toContainText("15-WEEK ARC");
     await expect(page.getByTestId("program-roadmap-grid").locator("[data-testid^='program-roadmap-week-']")).toHaveCount(15);
     await expect(page.getByTestId("program-future-weeks")).toContainText("COMING UP");
     await expect(page.getByTestId("program-future-weeks")).not.toContainText("LATER PHASES");
-    await expect(page.getByText(/next 15 weeks stay visible/i).first()).toBeVisible();
+    await expect(page.getByTestId("program-future-weeks").locator("[data-testid^='program-future-week-card-']").first()).toBeVisible();
+    await expect(page.getByTestId("program-future-weeks").locator("[data-testid^='program-future-week-preview-']").first()).toBeVisible();
+    await expect(page.getByTestId("program-future-weeks-toggle-all")).toContainText(/show all/i);
   });
 
   test("current week grid makes today visually obvious at a glance", async ({ page }) => {
@@ -197,7 +248,7 @@ test.describe("program inline session detail", () => {
     await expect(detailPanel).toContainText("Choose an upcoming day");
   });
 
-  test("hybrid run-plus-strength roadmap keeps strength touches visible in the zoomed-out view", async ({ page }) => {
+  test("hybrid run-plus-strength roadmap keeps strength days visible in the zoomed-out view", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     payload.goals = [
@@ -224,7 +275,62 @@ test.describe("program inline session detail", () => {
 
     const roadmap = page.getByTestId("program-roadmap");
     await expect(roadmap).toBeVisible();
-    await expect(roadmap).toContainText(/strength touch|strength touches/i);
+    await expect(roadmap).toContainText(/strength day|strength days/i);
     await expect(roadmap).toContainText(/long run/i);
+  });
+
+  test("strength-first roadmap follows the primary goal and keeps secondary-goal progress visible", async ({ page }) => {
+    const session = makeSession();
+    const payload = makeSignedInPayload();
+    payload.goals = [
+      {
+        id: "goal_1",
+        name: "Bench 225",
+        category: "strength",
+        active: true,
+        priority: 1,
+        resolvedGoal: buildResolvedGoal({
+          summary: "Bench 225",
+          planningCategory: "strength",
+          goalFamily: "strength",
+          primaryMetric: { key: "bench_press_weight", label: "Bench press", unit: "lb", targetValue: "225" },
+        }),
+      },
+      {
+        id: "goal_2",
+        name: "Run a 1:45 half marathon",
+        category: "running",
+        active: true,
+        priority: 2,
+        targetDate: "2026-10-10",
+        resolvedGoal: buildResolvedGoal({
+          summary: "Run a 1:45 half marathon",
+          planningCategory: "running",
+          goalFamily: "performance",
+          primaryMetric: { key: "half_marathon_time", label: "Half marathon time", unit: "time", targetValue: "1:45:00" },
+          proxyMetrics: [
+            { key: "weekly_run_frequency", label: "Weekly run frequency", unit: "sessions", kind: "proxy" },
+            { key: "long_run_duration", label: "Long run duration", unit: "min", kind: "proxy" },
+          ],
+        }),
+      },
+    ];
+    payload.logs = {
+      "2026-04-08": buildBenchLog({ weight: 195, reps: 3, sets: 2 }),
+      "2026-04-10": { type: "Long Run", miles: 10, runTime: "86:00", pace: "8:36", feel: 3, checkin: { status: "completed_as_planned" } },
+    };
+
+    await mockSupabaseRuntime(page, { session, payload });
+    await bootAppWithSupabaseSeeds(page, { session, payload });
+    await page.getByTestId("app-tab-program").click();
+
+    const roadmap = page.getByTestId("program-roadmap");
+    await expect(roadmap).toBeVisible();
+    await expect(roadmap).toContainText("STRENGTH BUILD");
+    await expect(roadmap).not.toContainText("Peak visible long run");
+
+    await expect(page.getByTestId("program-roadmap-goal-highlights")).toHaveCount(0);
+    await expect(page.getByTestId("program-tab").getByText("Bench 225").first()).toBeVisible();
+    await expect(page.getByTestId("program-tab").getByText("Run a 1:45 half marathon").first()).toBeVisible();
   });
 });

@@ -414,7 +414,7 @@ test.describe("skeptical user adversarial coverage", () => {
     await page.getByTestId("settings-open-auth-gate").click();
     await expect(page.getByTestId("auth-gate")).toBeVisible();
     await expect(page.getByTestId("continue-local-mode")).toBeVisible();
-    await expect(page.getByTestId("auth-sync-status")).toContainText("Device-only");
+    await expect(page.getByTestId("auth-sync-status")).toContainText(/Signed out|This device only/i);
   });
 
   test("sync timeout and retry copy stay aligned across settings, today, and program", async ({ page }) => {
@@ -454,26 +454,29 @@ test.describe("skeptical user adversarial coverage", () => {
     await page.getByRole("button", { name: "Save profile" }).click();
     await page.getByTestId("settings-surface-account").click();
 
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Retrying");
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Cloud sync is retrying in the background");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("Saved here");
+    await expect(page.getByTestId("settings-sync-status")).toContainText("sending");
     const settingsStatus = normalizeSurfaceText(await page.getByTestId("settings-sync-status").innerText());
 
     await page.getByTestId("app-tab-today").click();
-    await expect(page.getByTestId("today-sync-status")).toContainText("Retrying");
-    await expect(page.getByTestId("today-sync-status")).toContainText("Cloud sync is retrying in the background");
+    await expect(page.getByTestId("today-sync-status")).toContainText("Saved here");
+    await expect(page.getByTestId("today-sync-status")).toContainText("sending");
     const todayStatus = normalizeSurfaceText(await page.getByTestId("today-sync-status").innerText());
 
     await page.getByTestId("app-tab-program").click();
-    await expect(page.getByTestId("program-sync-status")).toContainText("Retrying");
-    await expect(page.getByTestId("program-sync-status")).toContainText("Cloud sync is retrying in the background");
+    await expect(page.getByTestId("program-sync-status")).toContainText("Saved here");
+    await expect(page.getByTestId("program-sync-status")).toContainText("sending");
     const programStatus = normalizeSurfaceText(await page.getByTestId("program-sync-status").innerText());
 
-    expect(settingsStatus).toMatch(/cloud sync is retrying in the background/i);
-    expect(todayStatus).toMatch(/cloud sync is retrying in the background/i);
-    expect(programStatus).toMatch(/cloud sync is retrying in the background/i);
-    expect(settingsStatus).not.toMatch(/cloud unavailable|device-only/i);
-    expect(todayStatus).not.toMatch(/cloud unavailable|device-only/i);
-    expect(programStatus).not.toMatch(/cloud unavailable|device-only/i);
+    expect(settingsStatus).toMatch(/saved here/i);
+    expect(todayStatus).toMatch(/saved here/i);
+    expect(programStatus).toMatch(/saved here/i);
+    expect(settingsStatus).toMatch(/sending/i);
+    expect(todayStatus).toMatch(/sending/i);
+    expect(programStatus).toMatch(/sending/i);
+    expect(settingsStatus).not.toMatch(/cloud unavailable|this device only/i);
+    expect(todayStatus).not.toMatch(/cloud unavailable|this device only/i);
+    expect(programStatus).not.toMatch(/cloud unavailable|this device only/i);
 
     await captureAdversarialScreenshot(
       page,

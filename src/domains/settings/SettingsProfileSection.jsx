@@ -24,26 +24,26 @@ export function SettingsProfileSection({
       <div style={SETTINGS_SECTION_HEADER_STYLE}>
         <div className="sect-title" style={{ color:"var(--brand-accent)", marginBottom:0 }}>PROFILE</div>
         <div style={SETTINGS_SECTION_INTRO_STYLE}>
-          Keep the athlete basics clear: identity, units, body metrics, and training age.
+          Update your basics here.
         </div>
       </div>
       <div style={{ ...SETTINGS_PANEL_STYLE, gap:"0.12rem" }}>
-        <SettingsFieldRow label="Display name" helper="Shown across the app and coach surfaces.">
+        <SettingsFieldRow label="Display name">
           <div style={{ maxWidth:360 }}>
             <input value={accountProfileDraft.name || ""} onChange={(e) => handleDraftPatch({ name: e.target.value })} placeholder="Display name" />
           </div>
         </SettingsFieldRow>
-        <SettingsFieldRow label="Timezone" helper="Used for scheduling, reminders, and daily rollovers.">
+        <SettingsFieldRow label="Timezone">
           <div style={{ maxWidth:360 }}>
             <input value={accountProfileDraft.timezone || ""} onChange={(e) => handleDraftPatch({ timezone: e.target.value })} placeholder="America/Chicago" />
           </div>
         </SettingsFieldRow>
-        <SettingsFieldRow label="Birth year" helper="Keeps age context consistent without compressing it into the main row.">
+        <SettingsFieldRow label="Birth year">
           <div style={{ maxWidth:220 }}>
             <input type="number" value={accountProfileDraft.birthYear || ""} onChange={(e) => handleDraftPatch({ birthYear: e.target.value })} placeholder="1990" />
           </div>
         </SettingsFieldRow>
-        <SettingsFieldRow label="Weight unit" helper="Choose the unit shown for bodyweight.">
+        <SettingsFieldRow label="Weight unit">
           <div style={{ maxWidth:220 }}>
             <select value={accountProfileDraft.unitsWeight || "lbs"} onChange={(e) => handleDraftPatch({ unitsWeight: e.target.value })}>
               <option value="lbs">Pounds (lb)</option>
@@ -51,12 +51,12 @@ export function SettingsProfileSection({
             </select>
           </div>
         </SettingsFieldRow>
-        <SettingsFieldRow label="Current bodyweight" helper={`Stored in ${accountProfileDraft.unitsWeight || unitSettings?.weight || "lbs"}.`}>
+        <SettingsFieldRow label="Current bodyweight">
           <div style={{ maxWidth:220 }}>
             <input type="number" step="0.1" value={accountProfileDraft.weight || ""} onChange={(e) => handleDraftPatch({ weight: e.target.value })} placeholder={`Weight (${accountProfileDraft.unitsWeight || unitSettings?.weight || "lbs"})`} />
           </div>
         </SettingsFieldRow>
-        <SettingsFieldRow label="Height unit" helper="Choose how height is entered and displayed.">
+        <SettingsFieldRow label="Height unit">
           <div style={{ maxWidth:220 }}>
             <select value={accountProfileDraft.unitsHeight || "ft_in"} onChange={(e) => handleDraftPatch({ unitsHeight: e.target.value })}>
               <option value="ft_in">Feet and inches</option>
@@ -64,7 +64,7 @@ export function SettingsProfileSection({
             </select>
           </div>
         </SettingsFieldRow>
-        <SettingsFieldRow label="Current height" helper={accountProfileDraft.unitsHeight === "cm" ? "Enter height in centimeters." : "Enter height in feet and inches, for example 5'10\"."}>
+        <SettingsFieldRow label="Current height">
           <div style={{ maxWidth:220 }}>
             {accountProfileDraft.unitsHeight === "cm" ? (
               <input type="number" value={accountProfileDraft.height || ""} onChange={(e) => handleDraftPatch({ height: e.target.value })} placeholder="178" />
@@ -73,7 +73,7 @@ export function SettingsProfileSection({
             )}
           </div>
         </SettingsFieldRow>
-        <SettingsFieldRow label="Distance unit" helper="Used for running and endurance summaries.">
+        <SettingsFieldRow label="Distance unit">
           <div style={{ maxWidth:220 }}>
             <select value={accountProfileDraft.unitsDistance || "miles"} onChange={(e) => handleDraftPatch({ unitsDistance: e.target.value })}>
               <option value="miles">Miles</option>
@@ -81,7 +81,7 @@ export function SettingsProfileSection({
             </select>
           </div>
         </SettingsFieldRow>
-        <SettingsFieldRow label="Training age" helper="Years of consistent training, not just gym exposure.">
+        <SettingsFieldRow label="Training age">
           <div style={{ maxWidth:220 }}>
             <input type="number" min="0" max="60" value={accountProfileDraft.trainingAgeYears || ""} onChange={(e) => handleDraftPatch({ trainingAgeYears: e.target.value })} placeholder="5" />
           </div>

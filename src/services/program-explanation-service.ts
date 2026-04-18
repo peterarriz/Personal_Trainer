@@ -123,8 +123,8 @@ export const buildProgramCardExplanation = ({
   return {
     title: programDefinition.displayName,
     summary: programDefinition.explanationTemplate?.cardSummary || programDefinition.summary,
-    basisLine: PROGRAM_SOURCE_BASIS_LABELS[programDefinition.sourceBasis] || "Source-backed basis",
-    confidenceLine: SOURCE_CONFIDENCE_LABELS[programDefinition.sourceConfidence] || "Confidence noted",
+    basisLine: PROGRAM_SOURCE_BASIS_LABELS[programDefinition.sourceBasis] || "Built for your goals",
+    confidenceLine: SOURCE_CONFIDENCE_LABELS[programDefinition.sourceConfidence] || "Fit noted",
     commitmentLine: `${programDefinition.typicalSessionsPerWeek.typical} sessions a week, about ${programDefinition.typicalDurationWeeks} weeks`,
     cautionLine: programDefinition?.contraindications?.[0] || "",
   };
@@ -137,8 +137,8 @@ export const buildStyleCardExplanation = ({
   return {
     title: styleDefinition.displayName,
     summary: styleDefinition.explanationTemplate?.cardSummary || styleDefinition.summary,
-    basisLine: PROGRAM_SOURCE_BASIS_LABELS[styleDefinition.sourceBasis] || "Source-backed basis",
-    confidenceLine: SOURCE_CONFIDENCE_LABELS[styleDefinition.sourceConfidence] || "Confidence noted",
+    basisLine: PROGRAM_SOURCE_BASIS_LABELS[styleDefinition.sourceBasis] || "Built for your goals",
+    confidenceLine: SOURCE_CONFIDENCE_LABELS[styleDefinition.sourceConfidence] || "Fit noted",
     emphasisLine: `${styleDefinition.volumeBias} volume, ${styleDefinition.intensityBias} intensity, ${styleDefinition.cardioBias} cardio`,
   };
 };

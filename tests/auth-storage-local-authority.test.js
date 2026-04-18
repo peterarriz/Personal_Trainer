@@ -676,6 +676,82 @@ test("ensureValidSession reports auth refresh diagnostics when the refresh token
   assert.equal(refreshFailure?.supabaseErrorCode, "invalid_grant");
 });
 
+test("ensureValidSession keeps the cached session when refresh fails transiently", async () => {
+  installLocalStorage();
+  const diagnostics = [];
+  const expiredSession = {
+    ...buildSession(),
+    expires_at: Math.floor((Date.now() - 60_000) / 1000),
+  };
+  const module = createModule({
+    reportSyncDiagnostic: (event) => diagnostics.push(event),
+    fetchImpl: async (url) => {
+      if (/\/auth\/v1\/token\?grant_type=refresh_token/.test(url)) {
+        const error = new Error("network request failed");
+        error.code = "fetch_network";
+        throw error;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  const result = await module.ensureValidSession(expiredSession, { reason: "unit_test_refresh_transient" });
+
+  assert.equal(result?.status, "transient");
+  assert.equal(result?.session?.user?.id, expiredSession.user.id);
+  const refreshFailure = diagnostics.find((event) => event?.type === SYNC_DIAGNOSTIC_EVENT_TYPES.authRefreshResult && event?.ok === false);
+  assert.equal(refreshFailure?.retryEligible, true);
+  assert.equal(refreshFailure?.supabaseErrorCode, "fetch_network");
+});
+
+test("persistAll stays in retryable local fallback when refresh fails transiently", async () => {
+  installLocalStorage();
+  const statuses = [];
+  const expiredSession = {
+    ...buildSession(),
+    expires_at: Math.floor((Date.now() - 60_000) / 1000),
+  };
+  const module = createModule({
+    fetchImpl: async (url, options = {}) => {
+      if (/\/auth\/v1\/token\?grant_type=refresh_token/.test(url)) {
+        const error = new Error("network request failed");
+        error.code = "fetch_network";
+        throw error;
+      }
+      if (/\/rest\/v1\/trainer_data$/.test(url) && (options.method || "GET") === "POST") {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ message: "JWT expired", code: "PGRST301" }),
+          text: async () => JSON.stringify({ message: "JWT expired", code: "PGRST301" }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  const result = await module.persistAll({
+    payload: buildPayload(),
+    authSession: expiredSession,
+    setStorageStatus: (status) => statuses.push(status),
+    setAuthSession: noop,
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.status?.reason, "sync_temporarily_failed");
+  assert.equal(statuses.at(-1)?.reason, "sync_temporarily_failed");
+});
+
 test("sbLoad reports when a newer pending local cache outranks the cloud row", async () => {
   const session = buildSession();
   const cloudPayload = buildPayload({

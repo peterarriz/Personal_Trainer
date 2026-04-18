@@ -111,7 +111,7 @@ export const buildGoalAnchorQuickEntryModel = ({
     anchors.push(createAnchor({
       type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.liftBenchmark,
       label: "Lift benchmark",
-      helperText: "Save one recent top set so strength goals have a real anchor even before full logging polish.",
+      helperText: "Save one recent top set so strength goals start from something real.",
       fields: ["date", "exercise", "weight", "reps", "sets"],
     }));
   }
@@ -126,7 +126,7 @@ export const buildGoalAnchorQuickEntryModel = ({
     anchors.push(createAnchor({
       type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.runBenchmark,
       label: "Recent run result",
-      helperText: "Save a recent distance, time, and pace anchor so run goals have something concrete to track.",
+      helperText: "Save a recent distance, time, and pace so run goals have a clear starting point.",
       fields: ["date", "distance", "duration", "pace"],
     }));
   }
@@ -139,7 +139,7 @@ export const buildGoalAnchorQuickEntryModel = ({
     anchors.push(createAnchor({
       type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimBenchmark,
       label: "Recent swim result",
-      helperText: "Save a recent swim distance or time so swim goals stop leaning on broad defaults.",
+      helperText: "Save a recent swim distance or time so swim goals start from something real.",
       fields: ["date", "distance", "duration", "distanceUnit"],
       surfaces: ["program"],
     }));
@@ -149,7 +149,7 @@ export const buildGoalAnchorQuickEntryModel = ({
     anchors.push(createAnchor({
       type: GOAL_ANCHOR_QUICK_ENTRY_TYPES.swimAccessReality,
       label: "Swim access reality",
-      helperText: "Confirm whether this is mostly pool, open water, or both so the plan stays realistic.",
+      helperText: "Tell us whether this is mostly pool, open water, or both so the plan stays realistic.",
       fields: ["date", "value"],
       surfaces: ["program"],
     }));
