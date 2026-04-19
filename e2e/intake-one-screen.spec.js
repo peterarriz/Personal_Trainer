@@ -23,12 +23,12 @@ test.describe("one-screen structured intake", () => {
     await clickAndCount("intake-goal-type-endurance");
     await clickAndCount("intake-featured-goal-train_for_run_race");
     await clickAndCount("intake-goal-metric-event_distance-half-marathon");
-    await commitPendingGoalSelection(page);
-    clickCount += 1;
     await page.getByTestId("intake-goal-metric-target-timeline").fill("October");
     await page.getByTestId("intake-goal-metric-current-run-frequency").fill("4");
     await page.getByTestId("intake-goal-metric-longest-recent-run-value").fill("8");
     await clickAndCount("intake-goal-metric-longest_recent_run_unit-miles");
+    await commitPendingGoalSelection(page);
+    clickCount += 1;
     await clickAndCount("intake-goals-option-experience-level-intermediate");
     await clickAndCount("intake-goals-option-training-days-4");
     await clickAndCount("intake-goals-option-session-length-45");

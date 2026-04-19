@@ -40,11 +40,15 @@ const expectSummaryRail = async (page) => {
   await expect(page.getByTestId("intake-summary-section-optimize-first")).toBeVisible();
   await expect(page.getByTestId("intake-summary-section-track-first")).toBeVisible();
   await expect(page.getByTestId("intake-summary-section-still-open")).toBeVisible();
+  await expect(page.getByText("What still needs clarity", { exact: true })).toBeVisible();
+  await expect(page.getByText(/fits the available schedule and baseline cleanly enough to plan from/i)).toHaveCount(0);
+  await expect(page.getByText(/^Appearance tracking proxy$/i)).toHaveCount(0);
 };
 
 const expectPlanPreview = async (page) => {
   await expect(page.getByTestId("intake-plan-preview")).toBeVisible();
   await expect(page.getByTestId("intake-plan-preview-week-1")).toBeVisible();
+  await expect(page.getByTestId("intake-plan-preview-week-2")).toHaveCount(0);
 };
 
 const expectNoLaneTheater = async (page) => {
@@ -205,11 +209,13 @@ test.describe("intake onboarding e2e", () => {
     await expect(page.getByTestId("intake-selected-goals")).not.toContainText(/improve a big lift/i);
     await expect(page.getByTestId("intake-goal-selection-draft")).toContainText(/improve a big lift/i);
     await page.getByTestId("intake-goal-metric-lift_focus-bench").click();
-    await commitPendingGoalSelection(page);
     await expect(page.getByTestId("intake-goal-metric-lift-target-weight")).toHaveAttribute("placeholder", "Type your target load");
     await expect(page.getByTestId("intake-goal-metric-lift-target-reps")).toHaveAttribute("placeholder", "Type target reps");
     await page.getByTestId("intake-goal-metric-lift-target-weight").fill("245");
     await page.getByTestId("intake-goal-metric-target-timeline").fill("12 weeks");
+    await page.getByTestId("intake-goal-metric-current-strength-baseline-weight").fill("205");
+    await page.getByTestId("intake-goal-metric-current-strength-baseline-reps").fill("5");
+    await commitPendingGoalSelection(page);
     const goalLibraryVisible = await page.getByTestId("intake-goal-library-grid").isVisible().catch(() => false);
     if (!goalLibraryVisible) {
       await page.getByTestId("intake-goal-library-toggle").click();
@@ -218,16 +224,14 @@ test.describe("intake onboarding e2e", () => {
     await page.getByTestId("intake-goal-template-get_leaner").click();
     await expect(page.getByTestId("intake-selected-goals")).not.toContainText("Get leaner");
     await expect(page.getByTestId("intake-goal-selection-draft")).toContainText("Get leaner");
-    await expect(page.getByTestId("intake-goal-selection-commit")).toContainText(/add as another goal/i);
+    await page.getByTestId("intake-goal-metric-body_comp_tempo-steady").click();
+    await page.getByTestId("intake-goal-metric-muscle_retention_priority-high").click();
+    await page.getByTestId("intake-goal-metric-cardio_preference-walks").click();
+    await expect(page.getByTestId("intake-goal-selection-commit")).toContainText(/save goal/i);
     await commitPendingGoalSelection(page);
 
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
     await expect(page.getByTestId("intake-selected-goals")).toContainText("Get leaner");
-    await page.getByTestId("intake-goal-metric-body_comp_tempo-steady").click();
-    await page.getByTestId("intake-goal-metric-muscle_retention_priority-high").click();
-    await page.getByTestId("intake-goal-metric-cardio_preference-walks").click();
-    await page.getByTestId("intake-goal-metric-current-strength-baseline-weight").fill("205");
-    await page.getByTestId("intake-goal-metric-current-strength-baseline-reps").fill("5");
 
     await page.getByTestId("intake-goals-option-experience-level-intermediate").click();
     await page.getByTestId("intake-goals-option-training-days-4").click();
@@ -257,10 +261,13 @@ test.describe("intake onboarding e2e", () => {
     await expect(page.getByTestId("intake-goal-specificity-options")).toHaveCount(0);
     await expect(page.getByTestId("intake-goal-metric-event_distance-half-marathon")).not.toHaveClass(/btn-primary/);
     await page.getByTestId("intake-goal-metric-event_distance-half-marathon").click();
+    await page.getByTestId("intake-goal-metric-target-timeline").fill("October");
+    await page.getByTestId("intake-goal-metric-current-run-frequency").fill("4");
+    await page.getByTestId("intake-goal-metric-longest-recent-run-value").fill("8");
+    await page.getByTestId("intake-goal-metric-longest_recent_run_unit-miles").click();
     await commitPendingGoalSelection(page);
 
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/train for a running race|running race/i);
-    await page.getByTestId("intake-goal-metric-target-timeline").fill("October");
     await expect(page.getByTestId("intake-goal-metric-event_distance-half-marathon")).toHaveClass(/btn-primary/);
     await page.getByTestId("intake-goal-metric-event_distance-10k").click();
     await expect(page.getByTestId("intake-goal-metric-event_distance-10k")).toHaveClass(/btn-primary/);

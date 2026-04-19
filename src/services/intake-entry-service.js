@@ -164,9 +164,6 @@ const createQuestion = ({
   answerValueTransform = null,
   draftValueTransform = null,
   fieldErrorMap = {},
-  pendingFieldKeys = [],
-  pendingTitle = "",
-  pendingHelper = "",
 } = {}) => ({
   key,
   source: "completeness",
@@ -179,11 +176,6 @@ const createQuestion = ({
   answerValueTransform: typeof answerValueTransform === "function" ? answerValueTransform : null,
   draftValueTransform: typeof draftValueTransform === "function" ? draftValueTransform : null,
   fieldErrorMap: fieldErrorMap && typeof fieldErrorMap === "object" ? { ...fieldErrorMap } : {},
-  pendingFieldKeys: toArray(pendingFieldKeys)
-    .map((item) => sanitizeText(item, 80))
-    .filter(Boolean),
-  pendingTitle: sanitizeText(pendingTitle, 120),
-  pendingHelper: sanitizeText(pendingHelper, 220),
 });
 
 const choiceField = (key, label, helperText, choiceOptions = [], required = false) => ({
@@ -414,34 +406,6 @@ const applyStarterPresetVisibility = (question = null, presetValues = {}) => {
   return question;
 };
 
-const filterQuestionToFieldKeys = (question = null, allowedFieldKeys = [], { forceRequired = false } = {}) => {
-  if (!question) return null;
-  const allowedKeys = new Set(
-    toArray(allowedFieldKeys)
-      .map((item) => sanitizeText(item, 80))
-      .filter(Boolean)
-  );
-  if (allowedKeys.size === 0) return null;
-  const inputFields = toArray(question?.inputFields)
-    .filter((field) => allowedKeys.has(sanitizeText(field?.key, 80)))
-    .map((field) => ({
-      ...field,
-      required: forceRequired ? true : Boolean(field?.required),
-    }));
-  if (inputFields.length === 0) return null;
-  return {
-    ...question,
-    title: question?.pendingTitle || question?.title || "",
-    helper: question?.pendingHelper || question?.helper || "",
-    prompt: question?.pendingTitle || question?.prompt || question?.title || "",
-    label: question?.pendingTitle || question?.label || question?.title || "",
-    fieldKeys: toArray(question?.fieldKeys)
-      .map((item) => sanitizeText(item, 80))
-      .filter((fieldKey) => allowedKeys.has(fieldKey)),
-    inputFields,
-  };
-};
-
 const buildQuestionsForIntent = (selection = null) => {
   const intentId = sanitizeText(selection?.intentId || selection?.templateId || "", 80).toLowerCase();
   const presetValues = resolveStarterPresetValues(selection);
@@ -453,8 +417,6 @@ const buildQuestionsForIntent = (selection = null) => {
           title: "Race setup",
           helper: "Pick the distance and timing.",
           fieldKeys: ["event_distance", "target_timeline"],
-          pendingFieldKeys: ["event_distance"],
-          pendingHelper: "Pick the race you want to train for before you save this goal.",
           inputFields: [
             choiceField("event_distance", "Race distance", "Pick the race you want to train for.", EVENT_DISTANCE_OPTIONS, true),
             textField("target_timeline", "Race date or target month", "October 12 or early October", "A target month is enough to keep moving."),
@@ -505,8 +467,6 @@ const buildQuestionsForIntent = (selection = null) => {
           title: "Endurance setup",
           helper: "Pick the mode and one recent anchor.",
           fieldKeys: ["primary_modality", "current_endurance_anchor", "longest_recent_endurance_session"],
-          pendingFieldKeys: ["primary_modality"],
-          pendingHelper: "Pick the main lane first, then save this goal.",
           inputFields: [
             choiceField("primary_modality", "Main mode", "Choose the mode you most want the plan to lean on.", ENDURANCE_MODALITY_OPTIONS, true),
             textField("current_endurance_anchor", "Recent endurance anchor", "20 min ride, 2-mile run, or similar", "One recent anchor is enough."),
@@ -534,8 +494,6 @@ const buildQuestionsForIntent = (selection = null) => {
           title: "Swim setup",
           helper: "Add one recent swim anchor and where you actually swim right now.",
           fieldKeys: ["recent_swim_anchor", "swim_access_reality", "goal_focus"],
-          pendingFieldKeys: ["goal_focus"],
-          pendingHelper: "Pick the swim focus before you save this goal.",
           inputFields: [
             numberField("recent_swim_distance_value", "Recent swim distance", "1000", "Use one recent repeatable distance.", true),
             choiceField("recent_swim_distance_unit", "Distance unit", "Choose yards or meters.", SWIM_DISTANCE_UNIT_OPTIONS, true),
@@ -595,8 +553,6 @@ const buildQuestionsForIntent = (selection = null) => {
           title: "Triathlon setup",
           helper: "Pick the race and priority lane.",
           fieldKeys: ["event_distance", "hybrid_priority", "recent_swim_anchor"],
-          pendingFieldKeys: ["event_distance", "hybrid_priority"],
-          pendingHelper: "Pick the race format and priority lane before you save this goal.",
           inputFields: [
             choiceField("event_distance", "Race format", "Sprint is the safest default if you are unsure.", [choice("sprint_triathlon", "Sprint"), choice("olympic_triathlon", "Olympic"), choice("70_3", "70.3")], true),
             choiceField("hybrid_priority", "Priority lane", "This lane gets the cleanest recovery in the plan.", [choice("swim", "Swim"), choice("bike", "Bike"), choice("run", "Run"), choice("balanced", "Balanced")], true),
@@ -628,8 +584,6 @@ const buildQuestionsForIntent = (selection = null) => {
           title: "Lift focus",
           helper: "Pick the lift, the target load, and the time horizon.",
           fieldKeys: ["lift_focus", "lift_target_weight", "lift_target_reps", "target_timeline"],
-          pendingFieldKeys: ["lift_focus"],
-          pendingHelper: "Pick the lift you want to push first, then save this goal.",
           inputFields: [
             choiceField("lift_focus", "Lift focus", "Pick the lift you want the plan to emphasize.", LIFT_FOCUS_OPTIONS, true),
             numberField("lift_target_weight", "Target load", "Type your target load", "Enter your own number here. Example: 225 lb.", true, "lb"),
@@ -714,8 +668,6 @@ const buildQuestionsForIntent = (selection = null) => {
           title: "Hybrid setup",
           helper: "Pick the lane that leads and add the minimum details that keep the split believable.",
           fieldKeys: ["hybrid_priority", "equipment_profile", "current_run_frequency", "goal_focus"],
-          pendingFieldKeys: ["hybrid_priority"],
-          pendingHelper: "Pick the lane you want to lead before you save this goal.",
           inputFields: [
             choiceField("hybrid_priority", "Priority lane", "This lane gets the cleanest recovery and progression.", HYBRID_PRIORITY_OPTIONS, true),
             choiceField("equipment_profile", "Equipment reality", "Pick the setup you can actually count on.", EQUIPMENT_OPTIONS, true),
@@ -767,16 +719,6 @@ export const buildIntakeStarterMetricQuestions = ({
   if (normalizeStarterTypeId(goalTypeId) === "custom") return [];
   return buildQuestionsForIntent(selection);
 };
-
-export const buildPendingIntakeStarterMetricQuestion = ({
-  goalTypeId = "",
-  selection = null,
-} = {}) => (
-  buildIntakeStarterMetricQuestions({ goalTypeId, selection })
-    .map((question) => filterQuestionToFieldKeys(question, question?.pendingFieldKeys, { forceRequired: true }))
-    .find(Boolean)
-    || null
-);
 
 export const buildIntakeStarterFieldSchema = ({
   goalTypeId = "",

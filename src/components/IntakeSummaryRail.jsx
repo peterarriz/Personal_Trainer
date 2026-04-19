@@ -56,7 +56,7 @@ const buildPhaseSupport = (phase = "") => {
     return "Choose the goal and the week-one realities. The draft updates in place.";
   }
   if (phase === "clarify" || phase === "confirm") {
-    return "The draft, what we will track, and what is still open stay visible while you tighten the first plan.";
+    return "The draft, what we will track, and what still needs clarity stay visible while you tighten the first plan.";
   }
   if (phase === "building") {
     return "This draft is turning into your first real week now.";
@@ -85,7 +85,7 @@ const buildSummarySections = (summaryRail = null) => [
   },
   {
     key: "still-open",
-    label: "What's still open",
+    label: "What still needs clarity",
     items: toArray(summaryRail?.fuzzyItems),
   },
 ].map((section) => ({
@@ -155,14 +155,19 @@ export function IntakeSummaryRail({
       >
         <SurfaceHeading
           eyebrow="Plan shape"
-          title={previewReady ? previewModel.heading : "First two weeks"}
-          supporting={previewReady ? previewModel.trajectoryLine : previewModel?.placeholderLine || "Pick the goal and a few real-world details to see the draft plan shape."}
+          title="Week 1 preview"
+          supporting={previewReady ? previewModel.heading : "Shows up as soon as the goal and week-one realities are clear."}
           eyebrowColor="#8fa5c8"
           titleColor="#f8fbff"
           supportingColor="#dbe7f6"
         />
         {previewReady ? (
           <>
+            {!!previewModel?.trajectoryLine && (
+              <div style={{ fontSize: "0.52rem", color: "#8fa5c8", lineHeight: 1.5 }}>
+                {previewModel.trajectoryLine}
+              </div>
+            )}
             {!!previewModel?.nextMilestoneLine && (
               <div data-testid="intake-plan-preview-milestone" style={{ fontSize: "0.52rem", color: "#8fa5c8", lineHeight: 1.5 }}>
                 {previewModel.nextMilestoneLine}

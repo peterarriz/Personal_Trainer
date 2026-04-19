@@ -188,7 +188,7 @@ test("summary rail keeps exact multi-goal intent visible before build", () => {
 
   assert.deepEqual(
     summaryRail.sections.map((section) => section.label),
-    ["Goal request", "Priority draft", "Tracking focus", "Still open", "Balancing notes"]
+    ["Goal request", "Priority draft", "Tracking focus", "What still needs clarity", "Balancing notes"]
   );
   assert.ok(summaryRail.yourWords.some((item) => /bench 225/i.test(item)));
   assert.ok(summaryRail.yourWords.some((item) => /get leaner by summer/i.test(item)));
@@ -223,6 +223,8 @@ test("summary rail gives vague users proxy tracking and a near-term win", () => 
   assert.ok(summaryRail.yourWords.some((item) => /look athletic again/i.test(item)));
   assert.ok(summaryRail.trackingItems.some((item) => /waist|bodyweight|30 days|30-day/i.test(item)));
   assert.ok(summaryRail.fuzzyItems.some((item) => /30 days|30-day|bodyweight|waist|what would make this/i.test(item)));
+  assert.ok(summaryRail.fuzzyItems.every((item) => !/fits the available schedule|proceed with a steady first block/i.test(item)));
+  assert.ok(summaryRail.fuzzyItems.every((item) => !/^appearance tracking proxy$/i.test(item)));
   assert.ok(summaryRail.tradeoffItems.length >= 1);
 });
 
@@ -806,7 +808,7 @@ test("incomplete but plausible state stays non-confirmable and surfaces the next
   assert.match(confirmationState.reason, /current bodyweight/i);
 });
 
-test("confirmation needs list prefers live anchor labels over internal requirement keys", () => {
+test("confirmation needs list prefers live anchor questions over internal requirement keys", () => {
   const needsList = buildIntakeConfirmationNeedsList({
     reviewModel: {
       completeness: {
@@ -853,9 +855,9 @@ test("confirmation needs list prefers live anchor labels over internal requireme
   });
 
   assert.deepEqual(needsList, [
-    "Runs per week",
-    "Choose your running benchmark",
-    "Longest recent run",
+    "How many times are you running in a normal week?",
+    "Which is easier right now: longest recent run or a recent race/pace?",
+    "What's your longest recent run?",
   ]);
   assert.equal(needsList.some((item) => /current_run_frequency|running_endurance_anchor_kind/i.test(item)), false);
 });

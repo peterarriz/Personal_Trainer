@@ -26,6 +26,7 @@ const sanitizeText = (value = "", maxLength = 180) => String(value || "")
   .slice(0, maxLength);
 
 const toArray = (value) => (Array.isArray(value) ? value : value == null ? [] : [value]);
+const INTAKE_PREVIEW_VISIBLE_WEEK_COUNT = 1;
 
 const parseTrainingDays = (value = "") => {
   const cleanValue = sanitizeText(value, 20);
@@ -293,7 +294,9 @@ export const buildIntakePlanPreviewModel = ({
       currentWeekLabel: runtime?.currentPlanWeek?.label || "",
       currentWeekFocus: runtime?.currentPlanWeek?.weeklyIntent?.focus || runtime?.currentPlanWeek?.summary || "",
     });
-    const weeks = displayHorizon.map((row) => buildPreviewWeekModel({
+    const weeks = displayHorizon
+      .slice(0, INTAKE_PREVIEW_VISIBLE_WEEK_COUNT)
+      .map((row) => buildPreviewWeekModel({
       row,
       currentWeek,
       currentDayOfWeek: dayOfWeek,
@@ -302,7 +305,7 @@ export const buildIntakePlanPreviewModel = ({
 
     return {
       isReady: true,
-      heading: sanitizeText(trajectoryHeader?.heading || "First two weeks", 80),
+      heading: sanitizeText(trajectoryHeader?.heading || "Week 1 preview", 80),
       trajectoryLine: sanitizeText(trajectoryHeader?.trajectoryLine || "", 160),
       nextMilestoneLine: sanitizeText(trajectoryHeader?.nextMilestoneLine || "", 140),
       arcLine: sanitizeText(trajectoryHeader?.arcLine || "", 140),
@@ -313,7 +316,7 @@ export const buildIntakePlanPreviewModel = ({
   } catch {
     return {
       isReady: false,
-      placeholderLine: "Add one more meaningful detail to see the first two weeks.",
+      placeholderLine: "Add one more meaningful detail to see week 1.",
     };
   }
 };

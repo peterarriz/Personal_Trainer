@@ -972,7 +972,9 @@ const buildPlainNeedItem = ({
 } = {}) => {
   const cleanLabel = sanitizeDisplayLine(label, 160);
   const cleanQuestion = sanitizeDisplayLine(question, 220);
-  return cleanLabel || cleanQuestion;
+  if (cleanQuestion) return cleanQuestion;
+  if (!cleanLabel) return "";
+  return sanitizeDisplayLine(`Need: ${cleanLabel.toLowerCase()}.`, 220);
 };
 
 const buildGoalReviewEntry = ({
@@ -2024,9 +2026,6 @@ export const buildIntakeGoalReviewModel = ({
     resolvedGoals: activeResolvedGoals.length ? activeResolvedGoals : resolvedGoals,
     answers,
   });
-  const gateReasonLines = sanitizeText(goalFeasibility?.primary_reason_code || "", 80).toLowerCase() === "missing_required_context"
-    ? []
-    : toArray(goalFeasibility?.reasons).map((item) => sanitizeText(item?.summary || item, 220)).filter(Boolean).slice(0, 2);
   const trackingLabels = dedupeStrings(
     (activeResolvedGoals.length ? activeResolvedGoals : resolvedGoals).flatMap((goal) => [
       goal?.primaryMetric?.label || "",
@@ -2037,9 +2036,10 @@ export const buildIntakeGoalReviewModel = ({
     ])
   ).slice(0, 6);
   const unresolvedItems = dedupeStrings([
-    ...completeness.missingRequired.map((item) => item.label),
-    ...gateReasonLines,
-    ...(goalFeasibility?.suggested_revision?.summary ? [goalFeasibility.suggested_revision.summary] : []),
+    ...completeness.missingRequired.map((item) => buildPlainNeedItem({
+      label: item?.label,
+      question: item?.question?.prompt || item?.question || "",
+    })),
     ...(goalResolution?.unresolvedGaps || []),
     ...resolvedGoals.flatMap((goal) => goal?.unresolvedGaps || []),
   ]).slice(0, 5);
@@ -2197,7 +2197,7 @@ export const buildIntakeSummaryRailModel = ({
       180
     ),
     fuzzyItems: sanitizeDisplayList(
-      fuzzyItems.length ? fuzzyItems : ["No open gaps once the stack is confirmed."],
+      fuzzyItems.length ? fuzzyItems : ["Nothing else needs clarification yet."],
       180
     ),
     tradeoffItems: sanitizeDisplayList(
@@ -2237,9 +2237,9 @@ export const buildIntakeSummaryRailModel = ({
       },
       {
         key: "what_is_fuzzy",
-        label: "Still open",
+        label: "What still needs clarity",
         items: sanitizeDisplayList(
-          fuzzyItems.length ? fuzzyItems : ["No open gaps once the stack is confirmed."],
+          fuzzyItems.length ? fuzzyItems : ["Nothing else needs clarification yet."],
           180
         ),
       },

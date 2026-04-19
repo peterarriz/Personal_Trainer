@@ -86,7 +86,7 @@ test("preview model returns a placeholder before any resolved goal exists", () =
   assert.match(preview.placeholderLine, /goal path|plan shape/i);
 });
 
-test("preview model builds a two-week draft arc for a resolved running goal", () => {
+test("preview model builds a week-one draft preview for a resolved running goal", () => {
   const preview = buildIntakePlanPreviewModel({
     orderedResolvedGoals: buildResolvedGoals(),
     answers: {
@@ -113,8 +113,8 @@ test("preview model builds a two-week draft arc for a resolved running goal", ()
   assert.equal(preview.isReady, true);
   assert.ok(preview.heading.length > 0);
   assert.ok(preview.trajectoryLine.length > 0);
-  assert.equal(preview.weeks.length, 2);
+  assert.equal(preview.weeks.length, 1);
   assert.ok(preview.weeks[0].summary.length > 0);
   assert.ok(preview.weeks[0].cells.length >= 4);
-  assert.ok(preview.weeks[1].headline.length > 0);
+  assert.match(preview.weeks[0].label, /week 1/i);
 });

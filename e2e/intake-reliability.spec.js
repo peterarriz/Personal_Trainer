@@ -18,14 +18,8 @@ async function completeSetupReality(page) {
 
 async function fillBigLiftSaveFields(page) {
   await page.getByTestId("intake-goal-metric-lift_focus-bench").click();
-}
-
-async function fillBigLiftDetails(page) {
   await page.getByTestId("intake-goal-metric-lift-target-weight").fill("245");
   await page.getByTestId("intake-goal-metric-target-timeline").fill("12 weeks");
-}
-
-async function fillBigLiftBaseline(page) {
   await page.getByTestId("intake-goal-metric-current-strength-baseline-weight").fill("205");
   await page.getByTestId("intake-goal-metric-current-strength-baseline-reps").fill("5");
 }
@@ -49,17 +43,15 @@ async function openGoalFamilyAndSelectStack(page) {
   await page.getByTestId("intake-featured-goal-improve_big_lifts").click();
   await fillBigLiftSaveFields(page);
   await commitPendingGoalSelection(page);
-  await fillBigLiftDetails(page);
   await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
 
   await page.getByTestId("intake-goal-library-toggle").click();
   await expect(page.getByTestId("intake-goal-library-grid")).toBeVisible();
   await page.getByTestId("intake-goal-category-physique").click();
   await page.getByTestId("intake-goal-template-get_leaner").click();
-  await commitPendingGoalSelection(page);
   await fillLeanerDetails(page);
+  await commitPendingGoalSelection(page);
   await expect(page.getByTestId("intake-selected-goals")).toContainText(/get leaner/i);
-  await fillBigLiftBaseline(page);
 }
 
 async function installSignedInIntakeRuntime(page) {
@@ -171,8 +163,8 @@ test.describe("intake reliability", () => {
 
     await page.getByTestId("intake-goal-type-strength").click();
     await page.getByTestId("intake-featured-goal-get_stronger").click();
-    await commitPendingGoalSelection(page);
     await fillGeneralStrengthDetails(page);
+    await commitPendingGoalSelection(page);
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/get stronger/i);
 
     await page.getByTestId("intake-selected-goal-remove-get-stronger").click();
@@ -181,10 +173,8 @@ test.describe("intake reliability", () => {
     await page.getByTestId("intake-featured-goal-improve_big_lifts").click();
     await fillBigLiftSaveFields(page);
     await commitPendingGoalSelection(page);
-    await fillBigLiftDetails(page);
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
     await expect(page.getByTestId("intake-selected-goals")).not.toContainText(/get stronger/i);
-    await fillBigLiftBaseline(page);
 
     await expect(page.getByTestId("intake-goals-option-experience-level-beginner")).toHaveClass(/btn-primary/);
     await expect(page.getByTestId("intake-goals-option-training-days-3")).toHaveClass(/btn-primary/);

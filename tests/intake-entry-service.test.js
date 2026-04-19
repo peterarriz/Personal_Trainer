@@ -3,7 +3,6 @@ const assert = require("node:assert/strict");
 
 const {
   applyIntakeStarterMetrics,
-  buildPendingIntakeStarterMetricQuestion,
   INTAKE_COPY_DECK,
   INTAKE_STAGE_CONTRACT,
   buildIntakeStarterMetricDraft,
@@ -143,29 +142,23 @@ test("structured running starter metrics convert split baseline inputs into cano
   assert.equal(outcome.answers.intake_completeness.fields.longest_recent_run.raw, "8 miles");
 });
 
-test("pending-goal save can require only the target-defining starter question", () => {
-  const pendingQuestion = buildPendingIntakeStarterMetricQuestion({
-    goalTypeId: "endurance",
-    selection: buildGoalTemplateSelection({ templateId: "train_for_run_race" }),
-  });
+test("pending-goal save now requires the full goal detail set before saving", () => {
   const outcome = applyIntakeStarterMetrics({
     answers: {},
     goalTypeId: "endurance",
     selection: buildGoalTemplateSelection({ templateId: "train_for_run_race" }),
     values: {
       event_distance: "half_marathon",
+      target_timeline: "October",
     },
-    questions: [pendingQuestion],
     requireAll: true,
   });
 
-  assert.equal(outcome.isValid, true);
-  assert.equal(outcome.answers.intake_completeness.fields.event_distance.value, "half_marathon");
-  assert.equal(outcome.answers.intake_completeness.fields.target_timeline, undefined);
-  assert.equal(outcome.answers.intake_completeness.fields.current_run_frequency, undefined);
+  assert.equal(outcome.isValid, false);
+  assert.match(outcome.fieldErrors.current_run_frequency || "", /runs you do in a normal week/i);
 });
 
-test("continuing intake can require the full starter detail set for a saved goal", () => {
+test("full pending-goal details can be validated and stored before the goal is saved", () => {
   const outcome = applyIntakeStarterMetrics({
     answers: {},
     goalTypeId: "strength",
@@ -174,36 +167,39 @@ test("continuing intake can require the full starter detail set for a saved goal
       lift_focus: "bench",
       lift_target_weight: "245",
       target_timeline: "12 weeks",
+      current_strength_baseline_weight: "205",
+      current_strength_baseline_reps: "5",
     },
     requireAll: true,
   });
 
-  assert.equal(outcome.isValid, false);
-  assert.match(outcome.fieldErrors.current_strength_baseline_weight || "", /recent weight|current load|estimated max/i);
+  assert.equal(outcome.isValid, true);
+  assert.equal(outcome.answers.intake_completeness.fields.current_strength_baseline.raw, "205 x 5");
+  assert.equal(outcome.answers.intake_completeness.fields.target_timeline.raw, "12 weeks");
 });
 
-test("only broad goals with a real specificity choice block save for one inline pick", () => {
-  const runningPending = buildPendingIntakeStarterMetricQuestion({
+test("goal detail schemas keep the whole pending form on one screen before save", () => {
+  const runningQuestions = buildIntakeStarterMetricQuestions({
     goalTypeId: "endurance",
     selection: buildGoalTemplateSelection({ templateId: "train_for_run_race" }),
   });
-  const liftPending = buildPendingIntakeStarterMetricQuestion({
+  const liftQuestions = buildIntakeStarterMetricQuestions({
     goalTypeId: "strength",
     selection: buildGoalTemplateSelection({ templateId: "improve_big_lifts" }),
   });
-  const strengthPending = buildPendingIntakeStarterMetricQuestion({
+  const strengthQuestions = buildIntakeStarterMetricQuestions({
     goalTypeId: "strength",
     selection: buildGoalTemplateSelection({ templateId: "get_stronger" }),
   });
-  const hybridPending = buildPendingIntakeStarterMetricQuestion({
+  const hybridQuestions = buildIntakeStarterMetricQuestions({
     goalTypeId: "hybrid",
     selection: buildGoalTemplateSelection({ templateId: "run_and_lift" }),
   });
 
-  assert.deepEqual(runningPending?.inputFields.map((field) => field.key), ["event_distance"]);
-  assert.deepEqual(liftPending?.inputFields.map((field) => field.key), ["lift_focus"]);
-  assert.deepEqual(hybridPending?.inputFields.map((field) => field.key), ["hybrid_priority"]);
-  assert.equal(strengthPending, null);
+  assert.equal(runningQuestions.length, 2);
+  assert.equal(liftQuestions.length, 2);
+  assert.equal(strengthQuestions.length, 1);
+  assert.equal(hybridQuestions.length, 2);
 });
 
 test("improve-big-lifts schema exposes numeric target and baseline fields on the first screen", () => {

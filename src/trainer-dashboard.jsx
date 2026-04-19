@@ -204,7 +204,6 @@ import {
 } from "./services/intake-completeness-service.js";
 import {
   applyIntakeStarterMetrics,
-  buildPendingIntakeStarterMetricQuestion,
   INTAKE_COPY_DECK,
   buildIntakeStarterGoalTypes,
   buildIntakeStarterMetricDraft,
@@ -11718,21 +11717,13 @@ if (alreadyAdded) {
 setPendingGoalSelection(null);
 return null;
 }
-const pendingSetupValues = pendingStarterSetupQuestion
-? Object.fromEntries(
-  (Array.isArray(pendingStarterSetupQuestion?.inputFields) ? pendingStarterSetupQuestion.inputFields : [])
-   .map((field) => String(field?.key || "").trim())
-   .filter(Boolean)
-   .map((fieldKey) => [fieldKey, goalMetricValues?.[fieldKey] ?? ""])
-)
-: goalMetricValues;
 const metricOutcome = applyIntakeStarterMetrics({
 answers,
 goalTypeId: pendingGoalSelection?.familyId || pendingGoalSelection?.templateCategoryId || selectedStarterGoalTypeId,
 selection: pendingGoalSelection,
-values: pendingSetupValues,
-questions: pendingStarterSetupQuestion ? [pendingStarterSetupQuestion] : [],
-requireAll: Boolean(pendingStarterSetupQuestion),
+values: goalMetricValues,
+questions: pendingGoalMetricQuestions,
+requireAll: pendingGoalMetricQuestions.length > 0,
 });
 if (!metricOutcome.isValid) {
 setGoalMetricFieldErrors(metricOutcome.fieldErrors || {});
@@ -13071,10 +13062,11 @@ const pendingGoalAlreadyAdded = normalizedPendingGoalText
 const pendingGoalSelectionSignature = pendingGoalSelection
 ? `${pendingGoalSelection?.id || ""}:${pendingGoalSelection?.templateId || ""}:${pendingGoalSelection?.goalText || ""}`
 : "";
-const pendingStarterSetupQuestion = useMemo(() => buildPendingIntakeStarterMetricQuestion({
+const pendingGoalMetricQuestions = useMemo(() => buildIntakeStarterMetricQuestions({
 goalTypeId: pendingGoalSelection?.familyId || pendingGoalSelection?.templateCategoryId || selectedStarterGoalTypeId,
 selection: pendingGoalSelection,
 }), [pendingGoalSelectionSignature, selectedStarterGoalTypeId]);
+const pendingGoalHasDetails = pendingGoalMetricQuestions.length > 0;
 const stackStarterMetricQuestionEntries = useMemo(() => {
 const seenQuestionKeys = new Set();
 return intakeGoalSelections.flatMap((selection, priorityIndex) => (
@@ -13095,7 +13087,7 @@ return intakeGoalSelections.flatMap((selection, priorityIndex) => (
  .filter(Boolean)
 ));
 }, [intakeGoalSelectionSignature, selectedStarterGoalTypeId]);
-const pendingGoalCommitLabel = intakeGoalSelections.length === 0 ? "Save as Priority 1" : "Add as another goal";
+const pendingGoalCommitLabel = "Save goal";
 const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 320);
  const intakePreviewTodayKey = new Date().toISOString().split("T")[0];
  const intakePreviewDayOfWeek = getDayOfWeek();
@@ -13644,30 +13636,28 @@ background:"rgba(6,17,31,0.82)",
 }}
 >
 <div style={{ display:"grid", gap:"0.14rem" }}>
-<div style={{ fontSize:"0.48rem", color:"#b9ecff", letterSpacing:"0.12em" }}>SELECTED PATH</div>
+<div style={{ fontSize:"0.48rem", color:"#b9ecff", letterSpacing:"0.12em" }}>GOAL DETAILS</div>
 <div style={{ fontSize:"0.62rem", color:"#f8fbff", lineHeight:1.45, fontWeight:600 }}>
 {pendingGoalSelection.summary || pendingGoalSelection.goalText}
 </div>
 <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
 {pendingGoalAlreadyAdded
 ? "This goal is already in your stack."
-: pendingStarterSetupQuestion
-? (intakeGoalSelections.length === 0
-? "Choose the exact target here, then save it as Priority 1."
-: `Choose the exact target here, then tap ${pendingGoalCommitLabel}.`)
-: (intakeGoalSelections.length === 0
-? "This goal is specific enough already. Save it as Priority 1, then finish the rest of the setup on this same screen."
-: `This goal is specific enough already. Tap ${pendingGoalCommitLabel}, then finish the rest of the setup on this same screen.`)}
+: pendingGoalHasDetails
+? "Finish the details for this goal here, then save it."
+: "No extra goal details are needed. Save this goal when it looks right."}
 </div>
 </div>
-{pendingStarterSetupQuestion ? (
+{pendingGoalHasDetails ? (
 <div style={{ display:"grid", gap:"0.45rem" }}>
 <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
-Pick the exact target before you save this goal. The rest of the setup stays on this same screen after you save it.
+Family first, then the example that fits, then the goal details, then save the goal.
 </div>
-{renderGoalMetricQuestionCard(pendingStarterSetupQuestion, {
-contextLabel: "Define this goal",
-})}
+<div style={{ display:"grid", gap:"0.6rem" }}>
+{pendingGoalMetricQuestions.map((question) => renderGoalMetricQuestionCard(question, {
+contextLabel: "Finish this goal",
+}))}
+</div>
 </div>
 ) : null}
 {goalMetricFormError ? (
@@ -14217,7 +14207,7 @@ const toggleGoalLock = () => {
 {activeStarterGoalType?.label || "Goal"} examples to help you pick the closest fit fast.
 </div>
 </div>
-<div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Tap a card, add the exact target if this path needs one, then save it to your goal stack.</div>
+<div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Tap a card, fill in the goal details, then save the goal.</div>
 </div>
 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
 {featuredStarterGoalTemplates.map((template) => {
@@ -14336,11 +14326,11 @@ opacity: added ? 0.82 : 1,
  </div>
  )}
 
-{stackStarterMetricQuestionEntries.length > 0 ? (
+{!pendingGoalSelection?.goalText && stackStarterMetricQuestionEntries.length > 0 ? (
  <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL DETAILS</div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>Everything requested for your saved goals stays here on one screen.</div>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>SAVED GOAL DETAILS</div>
+ <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>Saved goals stay editable here if you want to tweak anything before you continue.</div>
  </div>
  <div style={{ display:"grid", gap:"0.6rem" }}>
  {stackStarterMetricQuestionEntries.map(({ selection, priorityIndex, question }) => renderGoalMetricQuestionCard(question, {
@@ -14356,7 +14346,7 @@ opacity: added ? 0.82 : 1,
  <div data-testid="intake-selected-goals" style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.55)" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT GOAL STACK</div>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Reorder priorities here and build from this same intake instead of routing through a separate confirmation step.</div>
+ <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Save one goal at a time here. Then pick another example if you want to add another goal.</div>
  </div>
  {intakeGoalSelections.length > 0 ? (
  <div style={{ display:"grid", gap:"0.42rem" }}>
