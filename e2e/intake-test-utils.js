@@ -648,6 +648,10 @@ function parseSwimAnchorQuickMetric(value = "") {
 
 function normalizeLegacyQuickMetrics(templateId, quickMetrics = {}) {
   const next = { ...(quickMetrics || {}) };
+  if (next.hybrid_priority === "endurance") next.hybrid_priority = "running";
+  if (next.goal_focus === "balanced") {
+    next.goal_focus = next.hybrid_priority === "strength" ? "strength" : "endurance";
+  }
   if (next.longest_recent_run && !next.longest_recent_run_value && !next.longest_recent_run_unit) {
     const longestRun = parseDistanceOrDurationQuickMetric(next.longest_recent_run);
     next.longest_recent_run_value = next.longest_recent_run_value || longestRun.parsedValue;
@@ -671,6 +675,49 @@ function normalizeLegacyQuickMetrics(templateId, quickMetrics = {}) {
     const reps = next.current_strength_baseline_reps ? ` x ${next.current_strength_baseline_reps}` : "";
     next.current_strength_baseline = `${next.current_strength_baseline_weight}${reps}`;
   }
+  if (["train_for_run_race"].includes(templateId)) {
+    next.event_distance = next.event_distance || "half_marathon";
+    next.target_timeline = next.target_timeline || "October";
+    next.current_run_frequency = next.current_run_frequency || "4";
+    next.longest_recent_run_value = next.longest_recent_run_value || (next.event_distance === "marathon" ? "12" : next.event_distance === "half_marathon" ? "8" : "4");
+    next.longest_recent_run_unit = next.longest_recent_run_unit || "miles";
+  }
+  if (["build_endurance", "conditioning_builder"].includes(templateId)) {
+    next.primary_modality = next.primary_modality || "running";
+    next.current_endurance_anchor = next.current_endurance_anchor || "30 min run";
+  }
+  if (["return_to_running", "restart_safely", "ease_back_in", "rebuild_routine", "conservative_return", "low_impact_restart"].includes(templateId)) {
+    next.starting_capacity_anchor = next.starting_capacity_anchor || "10_easy_minutes";
+    next.progression_posture = next.progression_posture || "protective";
+  }
+  if (["swim_better"].includes(templateId)) {
+    next.goal_focus = next.goal_focus || "endurance";
+    next.recent_swim_distance_value = next.recent_swim_distance_value || "1000";
+    next.recent_swim_distance_unit = next.recent_swim_distance_unit || "yd";
+    next.recent_swim_time_minutes = next.recent_swim_time_minutes || "22";
+    next.recent_swim_time_seconds = next.recent_swim_time_seconds || "30";
+    next.swim_access_reality = next.swim_access_reality || (next.goal_focus === "open_water" ? "open_water" : "pool");
+  }
+  if (["ride_stronger"].includes(templateId)) {
+    next.primary_modality = next.primary_modality || "cycling";
+    next.current_endurance_anchor = next.current_endurance_anchor || "45 min ride";
+  }
+  if (["triathlon_multisport"].includes(templateId)) {
+    next.event_distance = next.event_distance || "sprint_triathlon";
+    next.hybrid_priority = next.hybrid_priority || "balanced";
+  }
+  if (["get_stronger", "build_muscle", "train_with_limited_equipment", "maintain_strength"].includes(templateId)) {
+    next.equipment_profile = next.equipment_profile || "full_gym";
+    next.training_age = next.training_age || "intermediate";
+    next.progression_posture = next.progression_posture || "standard";
+  }
+  if (["improve_big_lifts"].includes(templateId)) {
+    next.lift_focus = next.lift_focus || "bench";
+    next.lift_target_weight = next.lift_target_weight || "225";
+    next.target_timeline = next.target_timeline || "12 weeks";
+    next.current_strength_baseline_weight = next.current_strength_baseline_weight || "185";
+    next.current_strength_baseline_reps = next.current_strength_baseline_reps || "5";
+  }
   if (
     ["lose_body_fat", "get_leaner", "recomp", "cut_for_event", "keep_strength_while_cutting"].includes(templateId)
   ) {
@@ -681,7 +728,18 @@ function normalizeLegacyQuickMetrics(templateId, quickMetrics = {}) {
   if (
     ["get_back_in_shape", "build_consistency", "feel_more_athletic", "improve_work_capacity", "healthy_routine_fitness"].includes(templateId)
   ) {
+    next.starting_capacity_anchor = next.starting_capacity_anchor || "20_to_30_minutes";
     next.goal_focus = next.goal_focus || "consistency";
+  }
+  if (
+    ["run_and_lift", "stronger_and_fitter", "aesthetic_plus_endurance", "sport_support", "tactical_fitness"].includes(templateId)
+  ) {
+    next.hybrid_priority = next.hybrid_priority || "balanced";
+    next.equipment_profile = next.equipment_profile || "full_gym";
+    next.current_run_frequency = next.current_run_frequency || "2";
+    next.goal_focus = next.goal_focus || (next.hybrid_priority === "strength" ? "strength" : "endurance");
+    next.current_strength_baseline_weight = next.current_strength_baseline_weight || "185";
+    next.current_strength_baseline_reps = next.current_strength_baseline_reps || "5";
   }
   return next;
 }
@@ -704,6 +762,7 @@ async function completeGoalLibraryIntakeStep(page, {
   await page.getByTestId(`intake-goal-type-${normalizedGoalType}`).click();
   if (normalizedTemplateId) {
     await page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`).click();
+    await fillStarterMetricInputs(page, normalizedQuickMetrics);
     await commitPendingGoalSelection(page);
   }
   await fillStarterMetricInputs(page, normalizedQuickMetrics);
@@ -773,6 +832,7 @@ async function completeStructuredIntakeOnOneScreen(page, {
   await page.getByTestId(`intake-goal-type-${normalizedGoalType}`).click();
   if (normalizedTemplateId) {
     await page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`).click();
+    await fillStarterMetricInputs(page, normalizedQuickMetrics);
     await commitPendingGoalSelection(page);
   }
   await fillStarterMetricInputs(page, normalizedQuickMetrics);

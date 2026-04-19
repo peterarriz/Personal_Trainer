@@ -203,11 +203,12 @@ import {
  validateIntakeCompletenessAnswer,
 } from "./services/intake-completeness-service.js";
 import {
- applyIntakeStarterMetrics,
- INTAKE_COPY_DECK,
- buildIntakeStarterGoalTypes,
- buildIntakeStarterMetricDraft,
- buildIntakeStarterMetricQuestions,
+  applyIntakeStarterMetrics,
+  buildPendingIntakeStarterMetricQuestion,
+  INTAKE_COPY_DECK,
+  buildIntakeStarterGoalTypes,
+  buildIntakeStarterMetricDraft,
+  buildIntakeStarterMetricQuestions,
  getDefaultGoalLibraryCategoryForStarterType,
  inferIntakeStarterGoalTypeId,
  INTAKE_STAGE_CONTRACT,
@@ -11604,7 +11605,8 @@ answers: restoredIntakeSession?.answers || {},
  return editedState;
  };
 const syncGoalStackDraftToAnswers = ({
-  primaryGoalText = goalIntentDraftRef.current || answers?.goal_intent || "",
+  baseAnswers = answers,
+  primaryGoalText = goalIntentDraftRef.current || baseAnswers?.goal_intent || "",
   additionalGoals = secondaryGoalEntries,
   goalSelections = selectedGoalSelections,
   preserveFoundation = true,
@@ -11631,9 +11633,9 @@ const syncGoalStackDraftToAnswers = ({
  .filter((goalText) => goalText.toLowerCase() !== normalizedPrimaryGoal.toLowerCase())
  .slice(0, 7);
  const currentGoalStackSignature = JSON.stringify({
- primaryGoalText: normalizeIntakeGoalEntry(answers?.goal_intent || "", 320),
- additionalGoals: dedupeIntakeGoalEntries(answers?.additional_goals_list || []),
- templateIds: buildGoalTemplateSelectionsFromAnswers({ answers }).map((selection) => selection?.templateId || selection?.goalText || ""),
+ primaryGoalText: normalizeIntakeGoalEntry(baseAnswers?.goal_intent || "", 320),
+ additionalGoals: dedupeIntakeGoalEntries(baseAnswers?.additional_goals_list || []),
+ templateIds: buildGoalTemplateSelectionsFromAnswers({ answers: baseAnswers }).map((selection) => selection?.templateId || selection?.goalText || ""),
  });
  const nextGoalStackSignature = JSON.stringify({
  primaryGoalText: normalizedPrimaryGoal,
@@ -11642,16 +11644,16 @@ const syncGoalStackDraftToAnswers = ({
  });
  const goalStackChanged = currentGoalStackSignature !== nextGoalStackSignature;
   const nextAnswers = {
-    ...answers,
+    ...baseAnswers,
     goal_intent: normalizedPrimaryGoal,
     additional_goals_list: normalizedAdditionalGoals,
     other_goals: normalizedAdditionalGoals.join(". "),
     goal_template_stack: normalizedSelections,
-    goal_lock_confirmed: goalStackChanged ? false : answers?.goal_lock_confirmed || false,
+    goal_lock_confirmed: goalStackChanged ? false : baseAnswers?.goal_lock_confirmed || false,
     secondary_goal_prompt_answered: normalizedAdditionalGoals.length > 0,
     ...(clearCompatibilityPrimaryGoal ? { primary_goal: "" } : {}),
     ...(preserveFoundation && normalizedPrimaryGoal
-    ? { primary_goal: answers?.primary_goal || "" }
+    ? { primary_goal: baseAnswers?.primary_goal || "" }
     : {}),
   };
  goalIntentDraftRef.current = normalizedPrimaryGoal;
@@ -11660,18 +11662,19 @@ const syncGoalStackDraftToAnswers = ({
  setSelectedGoalSelections(normalizedSelections);
  return nextAnswers;
  };
- const addGoalSelectionToStack = (selection = null) => {
+ const addGoalSelectionToStack = (selection = null, { baseAnswers = answers } = {}) => {
  if (!selection?.goalText) return null;
  const baseSelections = selectedGoalSelections.length
  ? selectedGoalSelections
- : buildGoalTemplateSelectionsFromAnswers({ answers });
+ : buildGoalTemplateSelectionsFromAnswers({ answers: baseAnswers });
  const nextSelections = [
  ...baseSelections.filter((item) => String(item?.goalText || "").toLowerCase() !== String(selection.goalText || "").toLowerCase()),
  selection,
  ];
  return syncGoalStackDraftToAnswers({
+ baseAnswers,
  goalSelections: nextSelections,
- primaryGoalText: goalIntentDraftRef.current || answers?.goal_intent || "",
+ primaryGoalText: goalIntentDraftRef.current || baseAnswers?.goal_intent || "",
  additionalGoals: secondaryGoalEntries,
  });
  };
@@ -11715,7 +11718,32 @@ if (alreadyAdded) {
 setPendingGoalSelection(null);
 return null;
 }
-const nextAnswers = addGoalSelectionToStack(pendingGoalSelection);
+const pendingSetupValues = pendingStarterSetupQuestion
+? Object.fromEntries(
+  (Array.isArray(pendingStarterSetupQuestion?.inputFields) ? pendingStarterSetupQuestion.inputFields : [])
+   .map((field) => String(field?.key || "").trim())
+   .filter(Boolean)
+   .map((fieldKey) => [fieldKey, goalMetricValues?.[fieldKey] ?? ""])
+)
+: goalMetricValues;
+const metricOutcome = applyIntakeStarterMetrics({
+answers,
+goalTypeId: pendingGoalSelection?.familyId || pendingGoalSelection?.templateCategoryId || selectedStarterGoalTypeId,
+selection: pendingGoalSelection,
+values: pendingSetupValues,
+questions: pendingStarterSetupQuestion ? [pendingStarterSetupQuestion] : [],
+requireAll: Boolean(pendingStarterSetupQuestion),
+});
+if (!metricOutcome.isValid) {
+setGoalMetricFieldErrors(metricOutcome.fieldErrors || {});
+setGoalMetricFormError(metricOutcome.formErrors?.[0] || "Choose the goal details above before you save this goal.");
+return null;
+}
+setGoalMetricFieldErrors({});
+setGoalMetricFormError("");
+const nextAnswers = addGoalSelectionToStack(pendingGoalSelection, {
+baseAnswers: metricOutcome.answers,
+});
 setPendingGoalSelection(null);
 return nextAnswers;
 };
@@ -11874,22 +11902,38 @@ const removeGoalFromStack = (goalText = "") => {
  }
  };
  const submitGoalsStage = async () => {
+ if (pendingGoalSelection?.goalText) {
+ setGoalMetricFormError("Save or clear the selected goal before continuing.");
+ return;
+ }
  const stagedAnswers = syncGoalStackDraftToAnswers({
  primaryGoalText: answers?.goal_intent || "",
  additionalGoals: secondaryGoalEntries,
  });
- const metricOutcome = applyIntakeStarterMetrics({
- answers: {
+ let nextMetricAnswers = {
  ...stagedAnswers,
  coaching_style: stagedAnswers?.coaching_style || "Balanced coaching",
- },
- goalTypeId: selectedStarterGoalTypeId,
- selection: primaryIntakeGoalSelection,
+ };
+ const aggregatedFieldErrors = {};
+ let starterMetricFormError = "";
+ intakeGoalSelections.forEach((selection) => {
+ const metricOutcome = applyIntakeStarterMetrics({
+ answers: nextMetricAnswers,
+ goalTypeId: selection?.familyId || selection?.templateCategoryId || selectedStarterGoalTypeId,
+ selection,
  values: goalMetricValues,
+ requireAll: true,
  });
  if (!metricOutcome.isValid) {
- setGoalMetricFieldErrors(metricOutcome.fieldErrors || {});
- setGoalMetricFormError(metricOutcome.formErrors?.[0] || "Tighten up the highlighted field before continuing.");
+ Object.assign(aggregatedFieldErrors, metricOutcome.fieldErrors || {});
+ starterMetricFormError = starterMetricFormError || metricOutcome.formErrors?.[0] || "";
+ return;
+ }
+ nextMetricAnswers = metricOutcome.answers;
+ });
+ if (Object.keys(aggregatedFieldErrors).length > 0) {
+ setGoalMetricFieldErrors(aggregatedFieldErrors);
+ setGoalMetricFormError(starterMetricFormError || "Tighten up the highlighted field before continuing.");
  onTrackFrictionEvent({
  flow: "intake",
  action: "continue",
@@ -11903,8 +11947,8 @@ const removeGoalFromStack = (goalText = "") => {
  return;
  }
  const nextAnswers = {
- ...metricOutcome.answers,
- coaching_style: metricOutcome.answers?.coaching_style || "Balanced coaching",
+ ...nextMetricAnswers,
+ coaching_style: nextMetricAnswers?.coaching_style || "Balanced coaching",
  };
  setAnswers(nextAnswers);
  setGoalMetricFieldErrors({});
@@ -13012,17 +13056,45 @@ appendUserMessage("Create my plan");
  const featuredStarterGoalTemplates = useMemo(() => listFeaturedIntakeGoalTemplates({
  goalTypeId: selectedStarterGoalTypeId,
  }), [selectedStarterGoalTypeId]);
-const activeStarterMetricQuestions = useMemo(() => buildIntakeStarterMetricQuestions({
-goalTypeId: selectedStarterGoalTypeId,
-selection: primaryIntakeGoalSelection,
-}), [primaryIntakeGoalSelection, selectedStarterGoalTypeId]);
 const selectedGoalTextSet = useMemo(() => new Set(
 intakeGoalSelections.map((selection) => String(selection?.goalText || "").toLowerCase()).filter(Boolean)
+), [intakeGoalSelections]);
+const intakeGoalSelectionSignature = useMemo(() => (
+intakeGoalSelections
+ .map((selection) => `${selection?.id || ""}:${selection?.templateId || ""}:${selection?.goalText || ""}`)
+ .join("|")
 ), [intakeGoalSelections]);
 const normalizedPendingGoalText = normalizeIntakeGoalEntry(pendingGoalSelection?.goalText || "", 320).toLowerCase();
 const pendingGoalAlreadyAdded = normalizedPendingGoalText
 ? selectedGoalTextSet.has(normalizedPendingGoalText)
 : false;
+const pendingGoalSelectionSignature = pendingGoalSelection
+? `${pendingGoalSelection?.id || ""}:${pendingGoalSelection?.templateId || ""}:${pendingGoalSelection?.goalText || ""}`
+: "";
+const pendingStarterSetupQuestion = useMemo(() => buildPendingIntakeStarterMetricQuestion({
+goalTypeId: pendingGoalSelection?.familyId || pendingGoalSelection?.templateCategoryId || selectedStarterGoalTypeId,
+selection: pendingGoalSelection,
+}), [pendingGoalSelectionSignature, selectedStarterGoalTypeId]);
+const stackStarterMetricQuestionEntries = useMemo(() => {
+const seenQuestionKeys = new Set();
+return intakeGoalSelections.flatMap((selection, priorityIndex) => (
+ buildIntakeStarterMetricQuestions({
+ goalTypeId: selection?.familyId || selection?.templateCategoryId || selectedStarterGoalTypeId,
+ selection,
+ })
+ .map((question) => {
+ const questionKey = String(question?.key || question?.title || "").trim();
+ if (!questionKey || seenQuestionKeys.has(questionKey)) return null;
+ seenQuestionKeys.add(questionKey);
+ return {
+ selection,
+ priorityIndex,
+ question,
+ };
+ })
+ .filter(Boolean)
+));
+}, [intakeGoalSelectionSignature, selectedStarterGoalTypeId]);
 const pendingGoalCommitLabel = intakeGoalSelections.length === 0 ? "Save as Priority 1" : "Add as another goal";
 const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 320);
  const intakePreviewTodayKey = new Date().toISOString().split("T")[0];
@@ -13116,6 +13188,7 @@ const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 
  const needsHomeEquipment = trainingLocationValue === "Home" || trainingLocationValue === "Both";
  const goalLockConfirmed = answers?.goal_lock_confirmed === true || answers?.goal_lock_confirmed === "true";
  const goalsStageNeeds = [
+ pendingGoalSelection?.goalText ? "Save or clear the selected goal before continuing." : "",
  !normalizedGoalText && secondaryGoalEntries.length === 0 && String(answers?.primary_goal || "").trim() !== "general_fitness"
  ? "Choose a goal path or write a custom goal."
  : "",
@@ -13149,15 +13222,43 @@ const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 
  }
  }, [answers, primaryIntakeGoalSelection, selectedStarterGoalTypeId]);
  useEffect(() => {
- const nextDraft = buildIntakeStarterMetricDraft({
- goalTypeId: selectedStarterGoalTypeId,
- selection: primaryIntakeGoalSelection,
- answers,
+ const metricSelections = [
+ ...intakeGoalSelections,
+ ...(pendingGoalSelection?.goalText && !pendingGoalAlreadyAdded ? [pendingGoalSelection] : []),
+ ];
+ const relevantFieldKeys = new Set();
+ const nextDraft = metricSelections.reduce((draft, selection) => {
+ const selectionQuestions = buildIntakeStarterMetricQuestions({
+ goalTypeId: selection?.familyId || selection?.templateCategoryId || selectedStarterGoalTypeId,
+ selection,
  });
- setGoalMetricValues(nextDraft);
+ selectionQuestions.forEach((question) => {
+ (Array.isArray(question?.inputFields) ? question.inputFields : []).forEach((field) => {
+ const fieldKey = String(field?.key || "").trim();
+ if (fieldKey) relevantFieldKeys.add(fieldKey);
+ });
+ });
+ return {
+ ...draft,
+ ...buildIntakeStarterMetricDraft({
+ goalTypeId: selection?.familyId || selection?.templateCategoryId || selectedStarterGoalTypeId,
+ selection,
+ answers,
+ }),
+ };
+ }, {});
+ setGoalMetricValues((current) => {
+ const preservedEntries = Object.fromEntries(
+ Object.entries(current || {}).filter(([fieldKey]) => relevantFieldKeys.has(fieldKey))
+ );
+ return {
+ ...nextDraft,
+ ...preservedEntries,
+ };
+ });
  setGoalMetricFieldErrors({});
  setGoalMetricFormError("");
- }, [answers?.intake_completeness, primaryIntakeGoalSelection?.id, selectedStarterGoalTypeId]);
+ }, [answers?.intake_completeness, intakeGoalSelectionSignature, pendingGoalSelectionSignature, pendingGoalAlreadyAdded, selectedStarterGoalTypeId]);
 const stageProgressIndex = phase === INTAKE_UI_PHASES.building
 ? 2
 : phase === INTAKE_UI_PHASES.clarify || phase === INTAKE_UI_PHASES.interpretation || phase === INTAKE_UI_PHASES.adjust || phase === INTAKE_UI_PHASES.confirm
@@ -13498,7 +13599,7 @@ const stageProgressIndex = phase === INTAKE_UI_PHASES.building
  </label>
  );
  };
-const renderGoalMetricQuestionCard = (question = null) => {
+const renderGoalMetricQuestionCard = (question = null, { contextLabel = "" } = {}) => {
  if (!question) return null;
  return (
  <div
@@ -13514,6 +13615,9 @@ const renderGoalMetricQuestionCard = (question = null) => {
  }}
  >
  <div style={{ display:"grid", gap:"0.18rem" }}>
+ {contextLabel ? (
+ <div style={{ fontSize:"0.46rem", color:"#8fa5c8", letterSpacing:"0.08em" }}>{contextLabel}</div>
+ ) : null}
  <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.45, fontWeight:600 }}>{question.title || question.prompt}</div>
  {question.helper ? (
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>{question.helper}</div>
@@ -13547,11 +13651,28 @@ background:"rgba(6,17,31,0.82)",
 <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
 {pendingGoalAlreadyAdded
 ? "This goal is already in your stack."
-: intakeGoalSelections.length === 0
-? "Save this path as Priority 1, then add the details that shape the real target."
-: `Your current stack stays in place until you tap ${pendingGoalCommitLabel}.`}
+: pendingStarterSetupQuestion
+? (intakeGoalSelections.length === 0
+? "Choose the exact target here, then save it as Priority 1."
+: `Choose the exact target here, then tap ${pendingGoalCommitLabel}.`)
+: (intakeGoalSelections.length === 0
+? "This goal is specific enough already. Save it as Priority 1, then finish the rest of the setup on this same screen."
+: `This goal is specific enough already. Tap ${pendingGoalCommitLabel}, then finish the rest of the setup on this same screen.`)}
 </div>
 </div>
+{pendingStarterSetupQuestion ? (
+<div style={{ display:"grid", gap:"0.45rem" }}>
+<div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>
+Pick the exact target before you save this goal. The rest of the setup stays on this same screen after you save it.
+</div>
+{renderGoalMetricQuestionCard(pendingStarterSetupQuestion, {
+contextLabel: "Define this goal",
+})}
+</div>
+) : null}
+{goalMetricFormError ? (
+<div style={{ fontSize:"0.52rem", color:"#ffd7d7", lineHeight:1.45 }}>{goalMetricFormError}</div>
+) : null}
 <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap", alignItems:"center" }}>
 <button
 type="button"
@@ -14096,7 +14217,7 @@ const toggleGoalLock = () => {
 {activeStarterGoalType?.label || "Goal"} examples to help you pick the closest fit fast.
 </div>
 </div>
-<div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Tap a card to select it, then save it to your goal stack.</div>
+<div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Tap a card, add the exact target if this path needs one, then save it to your goal stack.</div>
 </div>
 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
 {featuredStarterGoalTemplates.map((template) => {
@@ -14215,20 +14336,22 @@ opacity: added ? 0.82 : 1,
  </div>
  )}
 
- {primaryIntakeGoalSelection && activeStarterMetricQuestions.length > 0 ? (
+{stackStarterMetricQuestionEntries.length > 0 ? (
  <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>STARTING POINT</div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>If you already know these, week one can start from a more accurate baseline.</div>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL DETAILS</div>
+ <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>Everything requested for your saved goals stays here on one screen.</div>
  </div>
  <div style={{ display:"grid", gap:"0.6rem" }}>
- {activeStarterMetricQuestions.map((question) => renderGoalMetricQuestionCard(question))}
+ {stackStarterMetricQuestionEntries.map(({ selection, priorityIndex, question }) => renderGoalMetricQuestionCard(question, {
+ contextLabel: `${priorityIndex === 0 ? "Priority 1" : `Priority ${priorityIndex + 1}`}: ${selection?.summary || selection?.goalText || "Goal"}`,
+ }))}
  </div>
- {goalMetricFormError ? (
+ {goalMetricFormError && !pendingGoalSelection?.goalText ? (
  <div style={{ fontSize:"0.52rem", color:"#ffd7d7", lineHeight:1.45 }}>{goalMetricFormError}</div>
  ) : null}
  </div>
- ) : null}
+) : null}
 
  <div data-testid="intake-selected-goals" style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.55)" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>

@@ -19,6 +19,7 @@ const {
   completeAnchors,
   completeIntroQuestionnaire,
   dismissAppleHealthPromptIfVisible,
+  fillStarterMetricInputs,
   gotoIntakeInLocalMode,
   waitForPostOnboarding,
   waitForReview,
@@ -199,12 +200,59 @@ const buildSevenGoalStackFromLibrary = async (page, { finishBuild = true } = {})
     ["swim", "swim_endurance"],
     ["health", "build_energy"],
   ];
+  const starterMetricsByTemplateId = {
+    train_for_run_race: {
+      event_distance: "half_marathon",
+      target_timeline: "October",
+      current_run_frequency: "4",
+      longest_recent_run_value: "7",
+      longest_recent_run_unit: "miles",
+    },
+    improve_big_lifts: {
+      lift_focus: "bench",
+      lift_target_weight: "225",
+      target_timeline: "12 weeks",
+      current_strength_baseline_weight: "185",
+      current_strength_baseline_reps: "5",
+    },
+    get_leaner: {
+      body_comp_tempo: "steady",
+      muscle_retention_priority: "high",
+      cardio_preference: "walks",
+    },
+    sport_support: {
+      hybrid_priority: "running",
+      equipment_profile: "full_gym",
+      current_run_frequency: "2",
+      goal_focus: "endurance",
+      current_strength_baseline_weight: "185",
+      current_strength_baseline_reps: "5",
+    },
+    healthy_routine_fitness: {
+      starting_capacity_anchor: "20_to_30_minutes",
+      goal_focus: "consistency",
+    },
+    swim_better: {
+      goal_focus: "endurance",
+      recent_swim_distance_value: "1000",
+      recent_swim_distance_unit: "yd",
+      recent_swim_time_minutes: "22",
+      recent_swim_time_seconds: "30",
+      swim_access_reality: "pool",
+    },
+    build_consistency: {
+      starting_capacity_anchor: "20_to_30_minutes",
+      goal_focus: "consistency",
+    },
+  };
   for (const [categoryId, templateId] of selections) {
     const resolvedCategoryId = categoryAliases[categoryId] || categoryId;
     const resolvedTemplateId = templateAliases[templateId] || templateId;
     await page.getByTestId(`intake-goal-category-${resolvedCategoryId}`).click();
     await page.getByTestId(`intake-goal-template-${resolvedTemplateId}`).click();
+    await fillStarterMetricInputs(page, starterMetricsByTemplateId[resolvedTemplateId] || {});
     await commitPendingGoalSelection(page);
+    await fillStarterMetricInputs(page, starterMetricsByTemplateId[resolvedTemplateId] || {});
   }
 
   await page.getByTestId("intake-goals-option-experience-level-intermediate").click();
