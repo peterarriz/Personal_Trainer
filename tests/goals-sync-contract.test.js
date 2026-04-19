@@ -319,6 +319,86 @@ test("signup confirmation flow requests a redirect and can resend the confirmati
   assert.match(nextNotice, /confirmation email resent/i);
 });
 
+test("handleSignUp surfaces a helpful message when Supabase blocks email delivery", async () => {
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        message: "Email address not authorized",
+        error_code: "email_address_not_authorized",
+      }),
+      text: async () => JSON.stringify({
+        message: "Email address not authorized",
+        error_code: "email_address_not_authorized",
+      }),
+    }),
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  let authError = "";
+  const result = await module.handleSignUp({
+    authEmail: "athlete@example.com",
+    authPassword: "secret-pass",
+    redirectTo: "https://forma.example.app/",
+    setAuthError: (value) => { authError = value; },
+    setAuthNotice: noop,
+    setAuthSession: noop,
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.error, "email_delivery_not_authorized");
+  assert.match(authError, /custom smtp|team email/i);
+});
+
+test("handleSignUp surfaces invalid public auth key misconfiguration clearly", async () => {
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({
+        message: "Invalid API key",
+      }),
+      text: async () => JSON.stringify({
+        message: "Invalid API key",
+      }),
+    }),
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  let authError = "";
+  const result = await module.handleSignUp({
+    authEmail: "athlete@example.com",
+    authPassword: "secret-pass",
+    redirectTo: "https://forma.example.app/",
+    setAuthError: (value) => { authError = value; },
+    setAuthNotice: noop,
+    setAuthSession: noop,
+  });
+
+  assert.equal(result?.ok, false);
+  assert.equal(result?.error, "invalid_api_key");
+  assert.match(authError, /public auth key/i);
+});
+
 test("persistAll keeps local cache active when no signed-in session exists", async () => {
   const localStore = new Map();
   global.window = {

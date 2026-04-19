@@ -143,6 +143,66 @@ export const classifyStorageError = (error) => {
   });
 };
 
+const buildReadableAuthActionError = ({
+  action = "auth",
+  error = null,
+} = {}) => {
+  const message = String(error?.message || error || "").trim();
+  const normalizedMessage = message.toLowerCase();
+  const normalizedCode = String(error?.supabaseErrorCode || error?.code || "").trim().toLowerCase();
+
+  if (
+    /email address not authorized|email address is invalid|email sending is disabled|smtp/i.test(message)
+    || normalizedCode === "email_address_not_authorized"
+  ) {
+    return {
+      uiMessage: "Supabase is not allowed to send to this address yet. Add custom SMTP or test with a team email address.",
+      reason: "email_delivery_not_authorized",
+    };
+  }
+
+  if (
+    /over_email_send_rate_limit|rate limit|too many requests|too many signup attempts/i.test(normalizedMessage)
+    || normalizedCode === "over_email_send_rate_limit"
+    || normalizedCode === "rate_limited"
+  ) {
+    return {
+      uiMessage: action === "resend_confirmation"
+        ? "Confirmation emails are temporarily rate limited. Wait a bit, then try resending again."
+        : "Supabase is temporarily rate limiting auth emails. Wait a bit, then try signing up again.",
+      reason: "rate_limited",
+    };
+  }
+
+  if (/invalid api key/i.test(normalizedMessage)) {
+    return {
+      uiMessage: "Supabase auth is misconfigured. The public auth key needs to be updated before sign-up can work.",
+      reason: "invalid_api_key",
+    };
+  }
+
+  if (/signup disabled/i.test(normalizedMessage) || normalizedCode === "signup_disabled") {
+    return {
+      uiMessage: "Sign-up is disabled in Supabase Auth settings right now.",
+      reason: "signup_disabled",
+    };
+  }
+
+  if (message) {
+    return {
+      uiMessage: message,
+      reason: normalizedCode || "auth_request_failed",
+    };
+  }
+
+  return {
+    uiMessage: action === "resend_confirmation"
+      ? "We couldn't resend the confirmation email right now."
+      : "Sign up failed.",
+    reason: "auth_request_failed",
+  };
+};
+
 const stableSortValue = (value) => {
   if (Array.isArray(value)) return value.map((item) => stableSortValue(item));
   if (value && typeof value === "object") {
@@ -991,8 +1051,12 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         setAuthError("Cloud auth provider is unavailable or misconfigured.");
         return { ok: false, error: AUTH_PROVIDER_UNAVAILABLE };
       }
-      setAuthError("Sign up failed.");
-      return { ok: false, error: e?.message || "signup_failed" };
+      const authError = buildReadableAuthActionError({
+        action: "sign_up",
+        error: e,
+      });
+      setAuthError(authError.uiMessage);
+      return { ok: false, error: authError.reason };
     }
   };
 
@@ -1059,8 +1123,12 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         setAuthError("Cloud auth provider is unavailable or misconfigured.");
         return { ok: false, error: AUTH_PROVIDER_UNAVAILABLE };
       }
-      setAuthError("We couldn't resend the confirmation email right now.");
-      return { ok: false, error: e?.message || "resend_confirmation_failed" };
+      const authError = buildReadableAuthActionError({
+        action: "resend_confirmation",
+        error: e,
+      });
+      setAuthError(authError.uiMessage);
+      return { ok: false, error: authError.reason };
     }
   };
 
