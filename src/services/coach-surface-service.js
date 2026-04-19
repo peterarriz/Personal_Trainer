@@ -36,6 +36,32 @@ export const COACH_SURFACE_MODES = Object.freeze({
   askAnything: "ask_coach",
 });
 
+export const buildCoachModeCards = ({
+  activeMode = COACH_SURFACE_MODES.todayWeek,
+} = {}) => ([
+  {
+    id: COACH_SURFACE_MODES.todayWeek,
+    label: "Adjust today",
+    description: "Pick the situation and see one recommended move.",
+    emphasis: "primary",
+    active: activeMode === COACH_SURFACE_MODES.todayWeek,
+  },
+  {
+    id: COACH_SURFACE_MODES.changePlan,
+    label: "Adjust this week",
+    description: "See one weekly change before it touches the plan.",
+    emphasis: "primary",
+    active: activeMode === COACH_SURFACE_MODES.changePlan,
+  },
+  {
+    id: COACH_SURFACE_MODES.askAnything,
+    label: "Ask coach",
+    description: "Get an answer first. Preview a change before you use it.",
+    emphasis: "secondary",
+    active: activeMode === COACH_SURFACE_MODES.askAnything,
+  },
+]);
+
 export const buildCoachActionLabel = (actionType = "") => {
   const normalized = sanitizeText(actionType, 80).toUpperCase();
   if (!normalized) return "Coach action";
@@ -333,6 +359,29 @@ export const buildCoachActionHistoryModel = ({
     }))
 );
 
+export const buildCoachRecentQuestionModel = ({
+  messages = [],
+  limit = 4,
+} = {}) => {
+  const entries = (Array.isArray(messages) ? messages : [])
+    .filter((message) => String(message?.role || "").toLowerCase() === "user")
+    .slice(-Math.max(1, Number(limit) || 4))
+    .reverse()
+    .map((message, index) => ({
+      id: sanitizeText(message?.id || `coach_question_${index}`, 120) || `coach_question_${index}`,
+      question: sanitizeText(message?.text || "", 180),
+      timestampLabel: formatDateTimeLabel(message?.ts || 0),
+    }))
+    .filter((entry) => entry.question);
+  return {
+    count: entries.length,
+    summary: entries.length
+      ? `${entries.length} recent question${entries.length === 1 ? "" : "s"}`
+      : "No recent questions yet.",
+    entries,
+  };
+};
+
 export const buildCoachAskAnythingStateModel = ({
   apiKey = "",
 } = {}) => {
@@ -340,7 +389,7 @@ export const buildCoachAskAnythingStateModel = ({
     aiAvailable: true,
     advisoryOnly: true,
     canMutatePlan: false,
-    headline: "Ask for a clear call",
-    detail: "Ask about training, recovery, or nutrition. Coach answers briefly and only suggests a change when it is worth accepting.",
+    headline: "Answers only",
+    detail: "Ask for a call, a tradeoff, or a next step. Chat never changes your plan. Preview a change before you use it.",
   };
 };

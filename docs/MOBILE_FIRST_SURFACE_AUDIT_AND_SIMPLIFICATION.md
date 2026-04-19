@@ -96,15 +96,15 @@ Tertiary job:
 
 Primary job:
 
-- capture what actually happened quickly and clearly
+- capture what actually happened quickly and clearly during or right after the session
 
 Secondary job:
 
-- let me inspect planned vs actual if I want it
+- let me inspect planned vs actual if I want it, without duplicating the current session card
 
 Tertiary job:
 
-- keep revision/history detail collapsed by default
+- keep notes, review, and history detail collapsed by default
 
 ### Nutrition
 
@@ -183,13 +183,14 @@ After:
 
 Before:
 
-- quick logging competed with detailed review/history
+- quick logging competed with detailed review/history and small-field data entry
 
 After:
 
-- quick logging first
-- strong save state
-- detail, comparison, and history behind disclosure
+- one planned-session reference
+- large run/lift execution controls
+- strong quiet save state
+- notes, comparison, and history behind disclosure
 
 ### Nutrition
 
@@ -264,8 +265,9 @@ Automated coverage added or updated for:
 - workout log save clarity
 - nutrition log save clarity
 - Coach cleanup of configuration clutter
+- first-load surface clarity budgets and duplicate-card guardrails for Today, Program, Log, and Coach
 
-See `e2e/mobile-surfaces.spec.js`.
+See `e2e/mobile-surfaces.spec.js` and `e2e/surface-clarity-guard.spec.js`.
 
 ## Manual Smoke Checklist
 

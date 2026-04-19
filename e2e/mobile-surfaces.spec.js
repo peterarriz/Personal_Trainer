@@ -120,7 +120,8 @@ test.describe("mobile surface simplification", () => {
     });
 
     await expect.poll(async () => await page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toBe("clarify");
-    await expect(page.getByTestId("intake-summary-rail")).toHaveCount(0);
+    await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
+    await expect(page.getByTestId("intake-plan-preview")).toBeVisible();
     await expect(page.getByTestId("intake-footer-continue")).toBeVisible();
     await expect(page.getByTestId("intake-transcript")).toHaveCount(0);
     await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(4);
@@ -129,26 +130,29 @@ test.describe("mobile surface simplification", () => {
   });
 
   test("today is action-first, program is read-first, and settings owns plan management", async ({ page }) => {
-    await completeRunningOnboarding(page);
+    await bootSignedInTodaySurface(page);
 
     await expect(page.getByTestId("today-tab")).toBeVisible();
     await expect(page.getByTestId("today-session-card")).toBeVisible();
-    await expect(page.getByTestId("today-adaptation-note")).toBeVisible();
-    await expect(page.getByTestId("today-full-workout")).toBeVisible();
+    await expect(page.getByTestId("today-session-plan")).toBeVisible();
     await expect(page.getByTestId("today-primary-cta")).toBeVisible();
     await expect(page.getByTestId("today-secondary-cta")).toBeVisible();
     await expect(page.getByTestId("today-quick-log")).toHaveCount(0);
-    await expect(page.getByTestId("today-tab").getByTestId("planned-session-plan")).toHaveCount(1);
+    await expect(page.getByTestId("today-tab").getByTestId("planned-session-plan")).not.toBeVisible();
     await expect(page.getByText("LOG TODAY", { exact: true })).toHaveCount(0);
 
     await page.getByTestId("app-tab-program").click();
     await expect(page.getByTestId("program-tab")).toBeVisible();
+    await expect(page.getByTestId("program-primary-cta")).toBeVisible();
+    await expect(page.getByTestId("program-secondary-cta")).toBeVisible();
+    await expect(page.getByTestId("program-trajectory-header")).toBeVisible();
     await expect(page.getByTestId("program-this-week")).toBeVisible();
     await expect(page.getByTestId("program-future-weeks")).toBeVisible();
     await expect(page.getByText("Edit goals and plan")).toHaveCount(0);
     await expect(page.getByText("PROGRAMS + STYLES").first()).not.toBeVisible();
     await expect(page.getByText("Refine Current Goal").first()).not.toBeVisible();
     await expect(page.getByText("Start New Goal Arc").first()).not.toBeVisible();
+    await expect(page.getByTestId("program-current-day-highlight")).toHaveCount(0);
 
     await page.getByTestId("app-tab-settings").click();
     await expect(page.getByTestId("settings-tab")).toBeVisible();
@@ -177,8 +181,9 @@ test.describe("mobile surface simplification", () => {
   });
 
   test("today, program, and log each expose planned session blocks on mobile", async ({ page }) => {
-    await completeRunningOnboarding(page);
+    await bootSignedInTodaySurface(page);
 
+    await page.getByTestId("today-session-plan").locator("summary").click();
     const todayPlan = page.getByTestId("today-full-workout").getByTestId("planned-session-plan");
     await expect(todayPlan).toBeVisible();
     const todayPlanText = (await todayPlan.innerText()).replace(/\s+/g, " ").trim();
@@ -212,6 +217,7 @@ test.describe("mobile surface simplification", () => {
 
     await page.getByTestId("app-tab-log").click();
     await expect(page.getByText("Detailed workout log")).toHaveCount(0);
+    await expect(page.getByTestId("log-save-quick")).toBeVisible();
     await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
     const logPlan = page.getByTestId("log-detailed-entry").getByTestId("planned-session-plan");
     await expect(logPlan).toBeVisible();

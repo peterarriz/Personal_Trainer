@@ -549,6 +549,7 @@ test.describe("skeptical user adversarial coverage", () => {
 
     await page.getByTestId("app-tab-today").click({ force: true });
     const todayLabel = normalizeSurfaceText(await page.getByTestId("today-canonical-session-label").innerText());
+    await page.getByTestId("today-session-plan").locator("summary").click();
     const todayPlanText = normalizeSurfaceText(await page.getByTestId("today-full-workout").getByTestId("planned-session-plan").innerText());
     await expect(page.getByTestId("today-change-summary")).toContainText("Aggressive preference");
 

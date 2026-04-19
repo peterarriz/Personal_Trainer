@@ -84,25 +84,45 @@ async function completeRunningOnboarding(page) {
   await dismissAppleHealthPromptIfVisible(page);
 }
 
+async function bootSignedInProgramSurface(page, payload = null) {
+  const session = makeSession();
+  const seededPayload = payload || makeSignedInPayload();
+  await mockSupabaseRuntime(page, { session, payload: seededPayload });
+  await bootAppWithSupabaseSeeds(page, { session, payload: seededPayload });
+  await expect(page.getByTestId("app-root")).toHaveAttribute("data-onboarding-complete", "true");
+  await expect(page.getByTestId("today-tab")).toBeVisible();
+}
+
 test.describe("program inline session detail", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1366, height: 960 });
   });
 
   test("program keeps the 15-week roadmap concise and shows visible future plan cards", async ({ page }) => {
-    await completeRunningOnboarding(page);
+    await bootSignedInProgramSurface(page);
     await page.getByTestId("app-tab-program").click({ force: true });
 
-    await expect(page.getByTestId("program-current-week-highlight")).toBeVisible();
-    await expect(page.getByTestId("program-current-day-highlight")).toBeVisible();
-    await expect(page.getByTestId("program-building-over-time-highlight")).toBeVisible();
+    await expect(page.getByTestId("program-trajectory-header")).toBeVisible();
+    await expect(page.getByTestId("program-trajectory-title")).toBeVisible();
+    await expect(page.getByTestId("program-current-day-highlight")).toHaveCount(0);
+    await expect(page.getByTestId("program-current-day-context")).toBeVisible();
     await expect(page.getByTestId("program-roadmap")).toContainText("15-WEEK ARC");
     await expect(page.getByTestId("program-roadmap-grid").locator("[data-testid^='program-roadmap-week-']")).toHaveCount(15);
-    await expect(page.getByTestId("program-future-weeks")).toContainText("COMING UP");
+    await expect(page.getByTestId("program-future-weeks")).toContainText("NEXT CHAPTERS");
     await expect(page.getByTestId("program-future-weeks")).not.toContainText("LATER PHASES");
     await expect(page.getByTestId("program-future-weeks").locator("[data-testid^='program-future-week-card-']").first()).toBeVisible();
     await expect(page.getByTestId("program-future-weeks").locator("[data-testid^='program-future-week-preview-']").first()).toBeVisible();
     await expect(page.getByTestId("program-future-weeks-toggle-all")).toContainText(/show all/i);
+  });
+
+  test("program keeps today's session as quiet context instead of a duplicate hero tile", async ({ page }) => {
+    await bootSignedInProgramSurface(page);
+    await page.getByTestId("app-tab-program").click();
+
+    await expect(page.getByTestId("program-current-day-context")).toBeVisible();
+    await expect(page.getByTestId("program-canonical-session-label")).toBeVisible();
+    await expect(page.getByTestId("program-current-day-context-line")).toContainText(/current chapter|combined run and lift|recovery slot/i);
+    await expect(page.getByTestId("program-current-day-highlight")).toHaveCount(0);
   });
 
   test("current week grid makes today visually obvious at a glance", async ({ page }) => {

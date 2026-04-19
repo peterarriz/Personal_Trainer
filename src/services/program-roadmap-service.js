@@ -260,3 +260,121 @@ export const buildProgramWeekGridCells = ({
     return buildGridCellFromSession(session, { dayKey, isToday });
   });
 };
+
+const buildNextMilestoneLine = ({
+  currentRow = null,
+  nextRow = null,
+  nextPhaseBlock = null,
+  primaryCategory = "",
+} = {}) => {
+  if (primaryCategory === "running") {
+    if (nextRow?.longRunLabel && nextRow.longRunLabel !== "No long run") {
+      return `Next milestone: ${nextRow.longRunLabel} in week ${nextRow.absoluteWeek}.`;
+    }
+    if (nextPhaseBlock?.name) {
+      return `Next milestone: ${sanitizeText(nextPhaseBlock.name, 100)} begins in week ${nextPhaseBlock.startWeek}.`;
+    }
+    if (currentRow?.longRunLabel && currentRow.longRunLabel !== "No long run") {
+      return `Current long run is ${currentRow.longRunLabel}.`;
+    }
+  }
+  if (primaryCategory === "strength") {
+    if (nextRow?.strengthCount > 0) {
+      return `Next milestone: ${nextRow.strengthLabel} in week ${nextRow.absoluteWeek}.`;
+    }
+    if (nextPhaseBlock?.name) {
+      return `Next milestone: ${sanitizeText(nextPhaseBlock.name, 100)} begins in week ${nextPhaseBlock.startWeek}.`;
+    }
+  }
+  if (primaryCategory === "hybrid") {
+    if (nextRow?.runCount > 0 || nextRow?.strengthCount > 0) {
+      return `Next milestone: ${sanitizeText(
+        [
+          nextRow?.runCount > 0 ? nextRow.runLabel : "",
+          nextRow?.strengthCount > 0 ? nextRow.strengthLabel : "",
+        ].filter(Boolean).join(" + "),
+        120
+      )} in week ${nextRow.absoluteWeek}.`;
+    }
+  }
+  if (nextRow?.focus) {
+    return `Next milestone: ${sanitizeText(nextRow.focus, 120)}`;
+  }
+  if (nextPhaseBlock?.name) {
+    return `Next milestone: ${sanitizeText(nextPhaseBlock.name, 100)} begins in week ${nextPhaseBlock.startWeek}.`;
+  }
+  return "Next milestone is still inside the current visible block.";
+};
+
+export const buildProgramTrajectoryHeaderModel = ({
+  roadmapRows = [],
+  phaseNarrative = [],
+  currentWeek = 1,
+  primaryCategory = "",
+  currentWeekLabel = "",
+  currentWeekFocus = "",
+} = {}) => {
+  const safeRows = Array.isArray(roadmapRows) ? roadmapRows.filter(Boolean) : [];
+  const currentRow = safeRows.find((row) => row.isCurrentWeek) || safeRows.find((row) => Number(row?.absoluteWeek || 0) === Number(currentWeek || 0)) || safeRows[0] || null;
+  const nextRow = safeRows.find((row) => row.isNextWeek) || safeRows.find((row) => Number(row?.absoluteWeek || 0) > Number(currentWeek || 0)) || null;
+  const activePhaseBlock = (Array.isArray(phaseNarrative) ? phaseNarrative : []).find((block) => Number(currentWeek || 0) >= Number(block?.startWeek || 0) && Number(currentWeek || 0) <= Number(block?.endWeek || 0)) || phaseNarrative?.[0] || null;
+  const nextPhaseBlock = (Array.isArray(phaseNarrative) ? phaseNarrative : []).find((block) => Number(block?.startWeek || 0) > Number(currentWeek || 0)) || null;
+
+  const chapterLabel = sanitizeText(
+    activePhaseBlock?.name
+    || currentRow?.phaseLabel
+    || currentWeekLabel
+    || "Current chapter",
+    100
+  );
+  const chapterWindow = activePhaseBlock
+    ? `Weeks ${activePhaseBlock.startWeek}-${activePhaseBlock.endWeek}`
+    : currentRow?.weekLabel
+    ? sanitizeText(currentRow.weekLabel, 100)
+    : `Week ${Number(currentWeek || currentRow?.absoluteWeek || 1)}`;
+  const trajectoryLine = sanitizeText(
+    currentWeekFocus
+    || currentRow?.focus
+    || currentWeekLabel
+    || "Current week is moving the block forward.",
+    160
+  );
+  const heading = currentRow?.cutback
+    ? "Absorbing this block"
+    : primaryCategory === "running"
+    ? "Building the next run milestone"
+    : primaryCategory === "strength"
+    ? "Building the next strength milestone"
+    : primaryCategory === "hybrid"
+    ? "Balancing both lanes on purpose"
+    : "Moving this block forward";
+
+  return {
+    heading,
+    trajectoryLine,
+    chapterLabel,
+    chapterWindow: sanitizeText(chapterWindow, 100),
+    nextMilestoneLine: buildNextMilestoneLine({
+      currentRow,
+      nextRow,
+      nextPhaseBlock,
+      primaryCategory,
+    }),
+    arcLine: sanitizeText(
+      nextPhaseBlock?.name
+        ? `${nextPhaseBlock.name} begins in week ${nextPhaseBlock.startWeek}.`
+        : `${chapterLabel} carries through the visible arc.`,
+      140
+    ),
+    progressBadge: currentRow?.cutback
+      ? "Cutback week"
+      : currentRow?.isCurrentWeek
+      ? "Current chapter"
+      : "Visible plan",
+    nextBadge: nextRow?.cutback
+      ? "Recovery ahead"
+      : nextPhaseBlock?.name
+      ? "Next chapter"
+      : "On track",
+  };
+};

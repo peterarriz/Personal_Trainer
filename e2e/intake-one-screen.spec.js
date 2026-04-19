@@ -12,6 +12,27 @@ test.describe("one-screen structured intake", () => {
     await gotoIntakeInLocalMode(page);
   });
 
+  test("featured fast path reaches a visible draft preview within seven primary taps", async ({ page }) => {
+    let clickCount = 0;
+    const clickAndCount = async (testId) => {
+      await page.getByTestId(testId).click();
+      clickCount += 1;
+    };
+
+    await clickAndCount("intake-goal-type-endurance");
+    await clickAndCount("intake-featured-goal-train_for_run_race");
+    await clickAndCount("intake-goals-option-experience-level-intermediate");
+    await clickAndCount("intake-goals-option-training-days-4");
+    await clickAndCount("intake-goals-option-session-length-45");
+    await clickAndCount("intake-goals-option-training-location-gym");
+    await clickAndCount("intake-footer-continue");
+
+    expect(clickCount).toBeLessThanOrEqual(7);
+    await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
+    await expect(page.getByTestId("intake-plan-preview")).toBeVisible();
+    await expect.poll(() => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toMatch(/clarify|confirm/);
+  });
+
   test("strength intake can lock and build from one screen", async ({ page }) => {
     await completeStructuredIntakeOnOneScreen(page, {
       goalType: "strength",

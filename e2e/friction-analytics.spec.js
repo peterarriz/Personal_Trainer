@@ -4,6 +4,7 @@ const {
   confirmIntakeBuild,
   completeAnchors,
   completeIntroQuestionnaire,
+  dismissAppleHealthPromptIfVisible,
   getAppEvents: getIntakeAppEvents,
   gotoIntakeInLocalMode,
   waitForPostOnboarding,
@@ -50,6 +51,14 @@ async function completeCoachReadyOnboarding(page) {
   await waitForReview(page);
   await confirmIntakeBuild(page);
   await waitForPostOnboarding(page);
+  await dismissAppleHealthPromptIfVisible(page);
+}
+
+async function openCoachTab(page) {
+  await expect(page.getByTestId("app-tab-coach")).toBeVisible();
+  await page.getByTestId("app-tab-coach").click({ force: true });
+  await dismissAppleHealthPromptIfVisible(page);
+  await expect(page.getByTestId("coach-tab")).toBeVisible();
 }
 
 test.describe("friction analytics smoke", () => {
@@ -154,12 +163,12 @@ test.describe("friction analytics smoke", () => {
     await installAppEventCapture(page);
     await completeCoachReadyOnboarding(page);
 
-    await expect(page.getByTestId("app-tab-coach")).toBeVisible();
-    await page.getByTestId("app-tab-coach").click();
-    await expect(page.getByTestId("coach-tab")).toBeVisible();
+    await openCoachTab(page);
     await page.getByTestId("coach-mode-button-adjust_week").click();
     const beforeCount = (await getAnalyticsNames(page)).filter((name) => name === "coach.plan_accept.success").length;
     await page.getByTestId("coach-preview-adjust-week").click();
+    await expect(page.getByTestId("coach-preview-card")).toBeVisible();
+    await page.getByTestId("coach-preview-accept").click();
 
     await expect.poll(async () => {
       const analyticsNames = await getAnalyticsNames(page);

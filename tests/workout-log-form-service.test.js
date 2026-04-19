@@ -255,6 +255,37 @@ test("exercise substitution path preserves actual exercise change", () => {
   assert.equal(entry.strengthPerformance[0].actualWeight, 80);
 });
 
+test("mixed workout draft preserves run and lift changes in one saved entry", () => {
+  const draft = buildWorkoutLogDraft({
+    dateKey: "2026-04-11",
+    plannedDayRecord: buildPlannedDayRecord({
+      type: "run+strength",
+      label: "Tempo + Strength",
+      run: { t: "Tempo", d: "10 min easy + 15 min tempo + 10 min easy" },
+      prescribedExercises: [
+        { ex: "Goblet Squat", sets: "3x10" },
+      ],
+    }),
+    logEntry: {},
+  });
+
+  draft.run.duration = "42";
+  draft.strength.rows[0].actualSets = "3";
+  draft.strength.rows[0].actualReps = "8";
+
+  const entry = buildWorkoutLogEntryFromDraft({
+    draft,
+    baseEntry: {},
+    todayKey: "2026-04-11",
+  });
+
+  assert.equal(entry.runTime, "42");
+  assert.equal(entry.strengthPerformance.length, 1);
+  assert.equal(entry.strengthPerformance[0].actualSets, 3);
+  assert.equal(entry.strengthPerformance[0].actualReps, 8);
+  assert.equal(entry.actualSession.sessionFamily, WORKOUT_LOG_FAMILIES.mixed);
+});
+
 test("minimal quick run input can be saved without the full detail form", () => {
   const draft = buildWorkoutLogDraft({
     dateKey: "2026-04-11",

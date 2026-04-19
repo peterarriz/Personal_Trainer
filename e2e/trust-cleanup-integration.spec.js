@@ -203,9 +203,11 @@ test("Coach keeps only applied-action surfaces visible", async ({ page }) => {
   await expect(page.getByText("MEMORY / SETTINGS")).toHaveCount(0);
   await expect(page.getByPlaceholder("Anthropic key (optional)")).toHaveCount(0);
 
-  await expect(page.getByTestId("coach-job-card-adjust-today")).toContainText(/Recommendation|Why|Likely effect|Accept/i);
+  await expect(page.getByTestId("coach-job-card-adjust-today")).toContainText(/Recommendation|Why|Likely effect|Preview/i);
   await page.getByTestId("coach-job-card-adjust-today-details").locator("summary").click();
   await expect(page.getByTestId("coach-job-card-adjust-today-details")).toContainText(/protective|volume|lighter|Today becomes|This week lands at/i);
+  await page.getByTestId("coach-mode-button-ask_coach").click();
+  await expect(page.getByTestId("coach-recent-questions-disclosure")).toHaveJSProperty("open", false);
 });
 
 test("Program and Log history copy stays free of internal jargon", async ({ page }) => {

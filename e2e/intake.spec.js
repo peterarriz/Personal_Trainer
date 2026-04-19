@@ -34,7 +34,16 @@ const expectNoFauxChatCopy = async (page) => {
 };
 
 const expectSummaryRail = async (page) => {
-  await expect(page.getByTestId("intake-summary-rail")).toHaveCount(0);
+  await expect(page.getByTestId("intake-summary-rail")).toBeVisible();
+  await expect(page.getByTestId("intake-summary-section-what-you-said")).toBeVisible();
+  await expect(page.getByTestId("intake-summary-section-optimize-first")).toBeVisible();
+  await expect(page.getByTestId("intake-summary-section-track-first")).toBeVisible();
+  await expect(page.getByTestId("intake-summary-section-still-open")).toBeVisible();
+};
+
+const expectPlanPreview = async (page) => {
+  await expect(page.getByTestId("intake-plan-preview")).toBeVisible();
+  await expect(page.getByTestId("intake-plan-preview-week-1")).toBeVisible();
 };
 
 const expectNoLaneTheater = async (page) => {
@@ -124,6 +133,7 @@ test.describe("intake onboarding e2e", () => {
     await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(1);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1"]);
     await expectSummaryRail(page);
+    await expectPlanPreview(page);
     await expectNoFakeTranscript(page);
     await expectNoFauxChatCopy(page);
     await expect(page.getByTestId("profile-setup-gate")).toHaveCount(0);
@@ -166,6 +176,7 @@ test.describe("intake onboarding e2e", () => {
 
     await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
     await expectSummaryRail(page);
+    await expectPlanPreview(page);
     await expectNoFakeTranscript(page);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1"]);
     await expect(page.locator("[data-testid='intake-confirm-goal-card']").first()).toContainText(/waist|bodyweight|block direction|planning focus/i);
@@ -214,6 +225,7 @@ test.describe("intake onboarding e2e", () => {
     await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(2);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2"]);
     await expectSummaryRail(page);
+    await expectPlanPreview(page);
     await expectNoFakeTranscript(page);
   });
 
@@ -296,6 +308,7 @@ test.describe("intake onboarding e2e", () => {
 
     await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
     await expectSummaryRail(page);
+    await expectPlanPreview(page);
     await expectNoFakeTranscript(page);
     await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(2);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2"]);
@@ -390,6 +403,7 @@ test.describe("intake onboarding e2e", () => {
 
     await expect.poll(() => getCurrentPhase(page), { timeout: 20_000 }).toBe("clarify");
     await expectSummaryRail(page);
+    await expectPlanPreview(page);
     await expectNoFakeTranscript(page);
     await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(4);
     await expect(page.getByTestId("intake-goal-card-priority")).toHaveText(["Priority 1", "Priority 2", "Priority 3", "Priority 4"]);

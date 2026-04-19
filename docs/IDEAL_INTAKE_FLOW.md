@@ -1,21 +1,25 @@
 # Ideal Intake Flow
 
-This document describes the current intended intake contract for the live app.
+This document describes the current shipped intake contract for the live app.
 
 Use this together with:
 
-- `docs/PLANNING_SOURCE_OF_TRUTH_OVERVIEW.md`
 - `docs/INTAKE_AI_BOUNDARY.md`
 - `docs/INTAKE_FIELD_INPUT_CONTRACT.md`
+- `docs/INTAKE_REDESIGN_EXECUTION.md`
 
 ## Current Runtime Notes
 
-- Intake is a guided setup flow, not a fake chat transcript.
-- The live entry point is goal-type-first, with custom text as a fallback rather than the default.
-- The flow is structured-first: when a required field has a primary control, that control leads.
-- The user sees ordered priorities, not lead/maintained/background lane jargon.
-- Confirmation and plan build operate only on the active ordered goal stack.
-- Open-ended goals remain valid. Not every goal needs a hard end date.
+- Intake is goal-first, structured-first, and explicitly not a fake chat transcript.
+- The visible shell is one living setup surface: a main action card, a stable summary region, and a footer action layer.
+- The first screen leads with featured goal families and featured paths. The full goal library is still available, but it is no longer the first thing a user has to browse.
+- The summary region stays visible across the flow and answers:
+  - `What you said`
+  - `What we'll optimize first`
+  - `What we'll track`
+  - `What's still open`
+- A draft plan-shape preview appears before final build so the user can see the first two weeks take shape before committing.
+- Explicit confirmation still gates the canonical handoff. The planner does not consume proposal-only state.
 
 ## Product Objective
 
@@ -24,101 +28,113 @@ By the time intake finishes, the app should have:
 - the user’s raw goal intent
 - an ordered priority stack the user understands
 - the minimum anchors required for a credible first plan
-- an honest timing shape: exact date, target horizon, or open-ended
-- enough training-context reality to avoid obviously fake prescriptions
+- enough training-context reality to avoid obviously fake week-one prescriptions
+- a visible draft plan shape
 - explicit confirmation before canonical goal state is written
 
 Intake should not:
 
 - feel like chat theater
-- bury users in schema language
-- ask optional questions before the first plan is credible
-- invent secondary goals or fake timing precision
-- strand users if AI interpretation is unavailable
+- look like a giant form
+- bury the first payoff behind logistics
+- invent fake certainty for fuzzy goals
+- write canonical planning state before the user confirms
 
-## High-Level Flow
+## Shipped Flow
 
-### 1. Goal entry
+### 1. Choose the closest goal path
 
-The user starts with:
+The opening surface should let the user move quickly in one of two ways:
 
-- a goal type selection for common paths
-- a library-backed goal choice when one exists
-- a custom goal path when the user needs it
+- tap a featured goal path
+- write a custom goal when the featured paths miss
 
-The opening should feel like premium setup, not a transcript.
+The opening should feel like premium setup, not like a transcript or a schema browser.
 
-### 2. Inline anchor collection
+### 2. Tighten only the week-one realities
 
-Once the app knows the goal direction, it asks only for anchors that materially change the first plan.
+The main card then asks only for details that materially change the first plan:
 
-Examples:
+- experience level
+- training days
+- session length
+- training environment
+- home equipment when needed
+- injury or recovery limits when they matter
 
-- running baseline
-- swim access and recent swim benchmark
-- current bodyweight or proxy metric
-- current strength baseline
-- days per week, session window, and training environment
+The flow should stop collecting once the first plan is credible.
 
-### 3. Proposal and review
+### 3. Keep the draft visible while clarifying
 
-AI or deterministic interpretation may propose structure, but the app shows that as a reviewable draft.
+The stable summary region stays visible while the user moves from goal selection into clarify.
 
-The review step should clarify:
+It should keep the user oriented around:
 
-- the ordered priority stack
-- what the app will optimize first
-- what is supportive but still intentional
-- what timing is known right now
-- what is still uncertain
+- the active goal stack
+- the first thing the plan will optimize
+- what will be tracked at the start
+- what still needs one more answer
 
-### 4. Confirmation
+### 4. Show plan shape before build
 
-Only after explicit confirmation does the app:
+Before final build, the intake surface should show a credible preview of the first 1 to 2 weeks.
+
+That preview is read-only and should help the user answer:
+
+- what week one will feel like
+- whether the current direction looks believable
+- what the next milestone is
+
+The preview is meant to create trust and payoff before the final handoff.
+
+### 5. Confirm, then build
+
+Only after explicit confirmation may the app:
 
 - finalize resolved goals
 - finalize ordered priorities
 - finalize timing shape
-- hand off canonical planner-facing state
+- write canonical planner-facing state
+- generate the first real plan
 
-## Priority Language
+## Stable Summary Region Contract
 
-User-facing intake should use:
+The summary region is the trust anchor of the intake.
 
-- `Priority 1`
-- `Priority 2`
-- `Priority 3`
-- `Later priority`
+It should always answer:
 
-Avoid older phrasing like:
+- `What you said`
+- `What we'll optimize first`
+- `What we'll track`
+- `What's still open`
 
-- `lead goal`
-- `maintained goal`
-- `background goal`
-- `deferred lane`
+If a section is still incomplete, the UI should say so plainly instead of faking precision.
 
-Internal arbitration can still use those terms, but the setup UI should not lean on them.
+## Fast Paths
 
-## Timing Rules
+### Exact-goal users
 
-Timing should be honest and minimal.
+If the user already knows the target, the flow should behave like:
 
-Supported shapes:
+1. choose the closest featured path or enter a precise custom goal
+2. fill only the missing anchors that change week one
+3. see the draft preview
+4. confirm
+5. build
 
-- `Exact date`
-- `Target horizon`
-- `Open-ended`
+This path should feel fast and intentional, not slowed down by generic follow-ups.
 
-Rules:
+### Fuzzy-goal users
 
-- race or event goals may need a real date or month window
-- body-composition or general-fitness goals do not need a fake deadline
-- open-ended goals still deserve a real first plan
-- the visible 12-week plan is not the same thing as the full goal deadline
+If the user starts broad, the flow should behave like:
 
-User-facing language should make that explicit:
+1. choose the closest family or write the broad goal
+2. see how FORMA is interpreting the direction through the live summary
+3. answer only the small number of anchors needed to make week one real
+4. see the draft preview
+5. confirm
 
-- `No fixed deadline. We will treat this as an ongoing goal and show the next phase in the visible plan.`
+This path should not pretend the user gave exact metrics they did not give.
 
 ## AI Boundary Inside Intake
 
@@ -126,18 +142,17 @@ AI is allowed to:
 
 - interpret messy wording
 - suggest structure
-- propose metrics
-- suggest a timing shape
 - surface missing clarifications
+- help produce a proposal-only draft
 
 AI is not allowed to:
 
 - write canonical goals directly
-- decide the final priority order without confirmation
 - bypass deterministic validation
-- create plan state by itself
+- finalize the goal order without confirmation
+- create planner-facing state by itself
 
-If the intake gateway fails, the local deterministic path still has to keep the user moving.
+If the intake AI path is unavailable, deterministic structured controls still need to carry the user through build.
 
 ## Structured-First Contract
 
@@ -145,41 +160,22 @@ Required fields should use one primary control each.
 
 Examples:
 
+- chips for small enumerated choices
+- numeric controls for baseline quantities
 - date or month input for time-bound goals
-- numeric input for baseline quantities
-- top-set widget for strength baseline
-- chips or buttons for small enumerated choices
+- structured strength-baseline controls
 
-Natural language is still allowed, but only through an explicit fallback like `Type instead`.
-
-## Minimum Questions
-
-Ask only what changes the first plan materially.
-
-Ask now:
-
-- primary goal direction
-- priority order when multiple goals matter
-- training frequency and session window
-- environment and equipment when they affect exercise selection
-- baseline anchors that materially change starting dose or safety
-
-Defer until later if they do not block credibility:
-
-- nice-to-have style nuance
-- optional deeper metrics
-- secondary optimization details
-- aspirational future goals that are not active priorities yet
+Natural language is still allowed, but it should be a fallback, not the default shell.
 
 ## Confirmation Copy Contract
 
-The confirmation surface should answer:
+The confirmation-ready intake state should answer:
 
-- what the planner is optimizing first
+- what the plan is optimizing first
 - what else is still being balanced
 - what the first plan is planning around
-- whether timing is exact, horizon-based, or open-ended
-- whether anything important is still unknown
+- what is still unknown
+- what the first weeks are likely to look like
 
 It should not:
 
@@ -189,9 +185,9 @@ It should not:
 
 ## Hand-Off To Planning
 
-After confirmation, the handoff is:
+The handoff remains:
 
-`raw goal intent -> interpreted proposal -> confirmed resolved goals -> ordered priorities -> planner`
+`raw goal intent -> proposal-only draft -> confirmed resolved goals -> ordered priorities -> planner`
 
 The planner then owns:
 
@@ -199,14 +195,15 @@ The planner then owns:
 - WeeklyIntent
 - PlanWeek
 - PlanDay
-- adaptation from actual behavior
+- later adaptation from actual behavior
 
 ## Verification
 
 Primary runtime and contract coverage:
 
-- `tests/intake-goal-flow-service.test.js`
 - `tests/intake-entry-service.test.js`
-- `tests/intake-transcript-service.test.js`
-- `tests/ai-boundary-regression.test.js`
+- `tests/intake-machine-service.test.js`
+- `tests/intake-plan-preview-service.test.js`
 - `e2e/intake.spec.js`
+- `e2e/intake-one-screen.spec.js`
+- `e2e/mobile-surfaces.spec.js`

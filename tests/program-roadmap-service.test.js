@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  buildProgramTrajectoryHeaderModel,
   buildProgramRoadmapRows,
   buildProgramWeekGridCells,
 } = require("../src/services/program-roadmap-service.js");
@@ -88,6 +89,34 @@ test("hybrid roadmap keeps strength days legible instead of reading like pure ra
   assert.equal(row.strengthLabel, "2 strength days");
   assert.match(row.longRunLabel, /80 min/i);
   assert.match(row.focus, /two upper-body strength touches/i);
+});
+
+test("trajectory header answers where the block is going without cloning Today", () => {
+  const roadmapRows = buildProgramRoadmapRows({
+    displayHorizon: [
+      buildWeekRow({ absoluteWeek: 9, phase: "BUILDING", label: "Build 1", longRun: "8 mi" }),
+      buildWeekRow({ absoluteWeek: 10, phase: "BUILDING", label: "Build 2", longRun: "9 mi" }),
+      buildWeekRow({ absoluteWeek: 11, phase: "PEAK", label: "Peak 1", longRun: "10 mi" }),
+    ],
+    currentWeek: 9,
+  });
+
+  const model = buildProgramTrajectoryHeaderModel({
+    roadmapRows,
+    phaseNarrative: [
+      { name: "Build", startWeek: 9, endWeek: 10 },
+      { name: "Peak", startWeek: 11, endWeek: 12 },
+    ],
+    currentWeek: 9,
+    primaryCategory: "running",
+    currentWeekLabel: "Build - Week 9",
+    currentWeekFocus: "Keep the quality session clean and the long run moving.",
+  });
+
+  assert.match(model.heading, /build|milestone/i);
+  assert.match(model.chapterLabel, /build/i);
+  assert.match(model.nextMilestoneLine, /9 mi|week 10/i);
+  assert.match(model.arcLine, /peak|week 11/i);
 });
 
 test("current-week grid marks today clearly and overlays the live session", () => {

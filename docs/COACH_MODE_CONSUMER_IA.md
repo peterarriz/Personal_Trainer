@@ -22,9 +22,14 @@ Coach is not the planner of record. It is a decision surface with explicit accep
 ### Header
 
 - `COACH`
-- supporting line: `Three jobs: adjust today, adjust this week, ask coach.`
+- hero line: `Three jobs, one clear boundary.`
+- supporting line: `Adjust today, adjust this week, or ask coach.`
 - current canonical session label and reason
 - latest accepted change, if any
+- three-card job rail:
+  - `Adjust today`
+  - `Adjust this week`
+  - `Ask coach`
 
 ### Job 1: Adjust today
 
@@ -98,6 +103,12 @@ Content:
 - audit / trust line
 - `Accept change`
 - `Cancel`
+
+## Shipped notes
+
+- The top-level tabs are still the three jobs, but the surface now uses a stronger card-style job rail rather than plain small buttons.
+- `Ask coach` remains available on first load, but it is visually secondary to `Adjust today` and `Adjust this week`.
+- Recent questions stay collapsed by default so the surface does not become a transcript wall.
 
 ## Example copy set
 

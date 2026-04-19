@@ -1,13 +1,11 @@
 const { test, expect } = require("@playwright/test");
 
 const {
-  gotoIntakeInLocalMode,
-  completeIntroQuestionnaire,
-  completeAnchors,
-  waitForReview,
-  confirmIntakeBuild,
-  waitForPostOnboarding,
-} = require("./intake-test-utils.js");
+  bootAppWithSupabaseSeeds,
+  makeSession,
+  makeSignedInPayload,
+  mockSupabaseRuntime,
+} = require("./auth-runtime-test-helpers.js");
 
 const BANNED_VISIBLE_PATTERNS = [
   /limited data/i,
@@ -42,25 +40,12 @@ test.describe("consumer copy guard", () => {
   });
 
   test("normal user flows stay free of internal tooling language", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
-    await completeIntroQuestionnaire(page, {
-      goalText: "run a stronger half marathon",
-      experienceLevel: "Intermediate",
-      trainingDays: "3",
-      sessionLength: "45 min",
-      trainingLocation: "Gym",
-      coachingStyle: "Balanced coaching",
-    });
-    await completeAnchors(page, {
-      target_timeline: { type: "date_or_month", value: "2026-10" },
-      current_run_frequency: { type: "number", value: "3" },
-      running_endurance_anchor_kind: { type: "choice", value: "longest_recent_run" },
-      longest_recent_run: { type: "number", value: "7" },
-      recent_pace_baseline: { type: "natural", value: "8:55 pace" },
-    });
-    await waitForReview(page);
-    await confirmIntakeBuild(page);
-    await waitForPostOnboarding(page);
+    const session = makeSession();
+    const payload = makeSignedInPayload();
+    await mockSupabaseRuntime(page, { session, payload });
+    await bootAppWithSupabaseSeeds(page, { session, payload });
+    await expect(page.getByTestId("app-root")).toHaveAttribute("data-onboarding-complete", "true");
+    await expect(page.getByTestId("app-tab-today")).toBeVisible();
 
     const topLevelTabs = [
       ["Today", "app-tab-today"],
@@ -71,7 +56,7 @@ test.describe("consumer copy guard", () => {
     ];
 
     for (const [label, testId] of topLevelTabs) {
-      await page.getByTestId(testId).click();
+      await page.getByTestId(testId).click({ force: true });
       await expectNoInternalTerms(page, label);
     }
 
@@ -81,7 +66,7 @@ test.describe("consumer copy guard", () => {
 
     await page.getByTestId("settings-surface-account").click();
     await expect(page.getByTestId("settings-account-section")).toBeVisible();
-    await page.getByTestId("settings-account-advanced").locator("summary").click();
+    await page.getByTestId("settings-account-advanced").locator("summary").first().click();
     await expect(page.getByTestId("settings-reviewer-report-card")).toHaveCount(0);
     await expect(page.getByTestId("settings-sync-diagnostics")).toHaveCount(0);
     await expectNoInternalTerms(page, "Settings account");

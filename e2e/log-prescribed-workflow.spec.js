@@ -9,6 +9,12 @@ const {
 } = require("../src/services/persistence-adapter-service.js");
 const { buildPlannedDayRecord } = require("../src/modules-checkins.js");
 const { createPrescribedDayHistoryEntry } = require("../src/services/prescribed-day-history-service.js");
+const { getExercisePerformanceRecordsForLog } = require("../src/services/performance-record-service.js");
+const {
+  SUPABASE_KEY,
+  SUPABASE_URL,
+  makeSession,
+} = require("./auth-runtime-test-helpers.js");
 
 const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
 const LOG_OVERRIDE_KEY = "trainer_e2e_log_plan_override_v1";
@@ -120,7 +126,8 @@ const buildSeedPayload = ({ mode = "run" } = {}) => {
 
 async function openSeededLog(page, { mode = "run" } = {}) {
   const { payload, todayHistoryEntry } = buildSeedPayload({ mode });
-  await page.addInitScript(({ fixedIsoString, localCacheKey, logOverrideKey, seedPayload, todayOverride }) => {
+  const session = makeSession();
+  await page.addInitScript(({ fixedIsoString, localCacheKey, logOverrideKey, seedPayload, todayOverride, sessionSeed, supabaseUrl, supabaseKey }) => {
     const fixedNow = new Date(fixedIsoString).getTime();
     const OriginalDate = Date;
     function MockDate(...args) {
@@ -135,9 +142,11 @@ async function openSeededLog(page, { mode = "run" } = {}) {
     MockDate.prototype = OriginalDate.prototype;
     globalThis.Date = MockDate;
     window.Date = MockDate;
+    window.__SUPABASE_URL = supabaseUrl;
+    window.__SUPABASE_ANON_KEY = supabaseKey;
 
     try {
-      window.localStorage.removeItem("trainer_auth_session_v1");
+      window.localStorage.setItem("trainer_auth_session_v1", JSON.stringify(sessionSeed));
       window.localStorage.setItem(localCacheKey, JSON.stringify(seedPayload));
       window.localStorage.setItem(logOverrideKey, JSON.stringify(todayOverride));
     } catch {}
@@ -147,6 +156,9 @@ async function openSeededLog(page, { mode = "run" } = {}) {
     logOverrideKey: LOG_OVERRIDE_KEY,
     seedPayload: payload,
     todayOverride: todayHistoryEntry,
+    sessionSeed: session,
+    supabaseUrl: SUPABASE_URL,
+    supabaseKey: SUPABASE_KEY,
   });
 
   await page.setViewportSize(VIEWPORT);
@@ -176,6 +188,17 @@ async function readSavedLog(page) {
   }, LOCAL_CACHE_KEY);
 }
 
+async function domClick(locator) {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((node) => node.click());
+}
+
+async function expectMinTouchHeight(locator, minimumHeight = 48) {
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box.height).toBeGreaterThanOrEqual(minimumHeight);
+}
+
 test.describe("log prescribed workflow", () => {
   test("quick log keeps one planned workout card and one obvious save path", async ({ page }) => {
     await openSeededLog(page, { mode: "run" });
@@ -184,15 +207,22 @@ test.describe("log prescribed workflow", () => {
     await expect(logTab.getByRole("button", { name: /open full detail entry/i })).toHaveCount(0);
     await expect(logTab.getByTestId("planned-session-plan")).toHaveCount(1);
     await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
+    await expect(page.getByTestId("log-save-support-line")).toContainText(/matches today's plan/i);
     await expect(page.getByTestId("log-run-duration")).toBeVisible();
     await expect(page.getByTestId("log-run-duration")).toHaveValue("40");
-    await expect(page.getByTestId("log-strength-row-0")).toHaveCount(0);
     await expect(page.getByTestId("log-extra-exercises")).toHaveCount(0);
+    await expect(page.getByTestId("log-advanced-fields")).toHaveJSProperty("open", false);
+    await expect(page.getByTestId("log-day-review-disclosure")).toHaveJSProperty("open", false);
+    await expect(page.getByTestId("log-recent-history-disclosure")).toHaveJSProperty("open", false);
     await expect(page.getByTestId("log-save-quick")).toBeEnabled();
     await expect(page.getByTestId("log-save-detailed")).toBeVisible();
+    await expectMinTouchHeight(page.getByTestId("log-save-quick"));
+    await expectMinTouchHeight(page.getByTestId("log-feel-chip-3"));
+    await expectMinTouchHeight(page.getByTestId("log-run-duration-stepper"));
 
-    await page.getByTestId("log-save-quick").click();
+    await domClick(page.getByTestId("log-save-quick"));
     await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
+    await expect(page.getByTestId("log-save-support-line")).toContainText(/saved/i);
 
     const logs = await readSavedLog(page);
     expect(logs["2026-04-17"]?.checkin?.status).toBe("completed_as_planned");
@@ -204,17 +234,20 @@ test.describe("log prescribed workflow", () => {
     const logTab = page.getByTestId("log-tab");
     await expect(logTab.getByRole("button", { name: /open full detail entry/i })).toHaveCount(0);
     await expect(logTab.getByTestId("planned-session-plan")).toHaveCount(1);
-    await expect(page.getByTestId("log-strength-actuals")).toBeVisible();
-    await expect(page.getByTestId("log-strength-row-0")).toBeHidden();
-    await page.getByTestId("log-strength-actuals").locator("summary").click();
-    await expect(page.getByTestId("log-strength-row-0")).toBeVisible();
+    await expect(page.getByTestId("log-strength-execution-card-0")).toBeVisible();
     await expect(page.getByTestId("log-strength-row-sets-0")).toHaveValue("4");
     await expect(page.getByTestId("log-strength-row-reps-0")).toHaveValue("6");
     await expect(page.getByTestId("log-strength-row-weight-0")).toHaveValue("185");
+    await expect(page.getByTestId("log-advanced-fields")).toHaveJSProperty("open", false);
+    await expect(page.getByTestId("log-day-review-disclosure")).toHaveJSProperty("open", false);
+    await expect(page.getByTestId("log-recent-history-disclosure")).toHaveJSProperty("open", false);
     await expect(page.getByTestId("log-save-detailed")).toBeVisible();
     await expect(page.getByTestId("log-extra-exercises")).toBeVisible();
+    await expect(page.getByTestId("log-extra-exercises")).toHaveJSProperty("open", false);
+    await expectMinTouchHeight(page.getByTestId("log-strength-complete-set-0"));
+    await expectMinTouchHeight(page.getByTestId("log-rest-start-0"));
 
-    await page.getByTestId("log-save-detailed").click();
+    await domClick(page.getByTestId("log-save-detailed"));
     await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
 
     const logs = await readSavedLog(page);
@@ -230,21 +263,36 @@ test.describe("log prescribed workflow", () => {
     await expect(logTab.getByTestId("planned-session-plan")).toHaveCount(1);
     await expect(page.getByTestId("log-run-duration")).toBeVisible();
     await expect(page.getByTestId("log-run-duration")).toHaveValue("35");
-    await expect(page.getByTestId("log-strength-row-0")).toBeHidden();
-    await page.getByTestId("log-strength-actuals").locator("summary").click();
-    await expect(page.getByTestId("log-strength-row-0")).toBeVisible();
+    await expect(page.getByTestId("log-strength-execution-card-0")).toBeVisible();
     await expect(page.getByTestId("log-strength-row-sets-0")).toHaveValue("3");
     await expect(page.getByTestId("log-strength-row-reps-0")).toHaveValue("10");
+    await expect(page.getByTestId("log-day-review-disclosure")).toHaveJSProperty("open", false);
+    await expect(page.getByTestId("log-recent-history-disclosure")).toHaveJSProperty("open", false);
     await expect(page.getByTestId("log-extra-exercises")).toBeVisible();
+    await page.getByTestId("log-rest-start-0").click();
+    await expect(page.getByTestId("log-rest-timer")).toBeVisible();
 
     await page.getByTestId("log-run-duration").fill("42");
-    await page.getByTestId("log-strength-row-reps-0").fill("8");
-    await page.getByTestId("log-save-quick").click();
+    await page.getByTestId("log-strength-row-reps-0-stepper").getByRole("button", { name: "-1" }).click();
+    await page.getByTestId("log-strength-row-reps-0-stepper").getByRole("button", { name: "-1" }).click();
+    await expect(page.getByTestId("log-run-duration")).toHaveValue("42");
+    await expect(page.getByTestId("log-strength-row-reps-0")).toHaveValue("8");
+    await page.getByTestId("log-run-duration").press("Tab");
+    await domClick(page.getByTestId("log-save-quick"));
     await expect(page.getByTestId("log-save-status")).toContainText(/saved/i);
 
-    const logs = await readSavedLog(page);
-    expect(logs["2026-04-17"]?.runTime).toBe("42");
-    expect(logs["2026-04-17"]?.strengthPerformance?.[0]?.actualSets).toBe(3);
-    expect(logs["2026-04-17"]?.strengthPerformance?.[0]?.actualReps).toBe(8);
+    await expect.poll(async () => {
+      const logs = await readSavedLog(page);
+      const strengthRecords = getExercisePerformanceRecordsForLog(logs["2026-04-17"] || {}, { dateKey: "2026-04-17" });
+      return {
+        runTime: logs["2026-04-17"]?.runTime || "",
+        actualSets: strengthRecords[0]?.actual?.sets ?? strengthRecords[0]?.actualSets ?? null,
+        actualReps: strengthRecords[0]?.actual?.reps ?? strengthRecords[0]?.actualReps ?? null,
+      };
+    }).toEqual({
+      runTime: "42",
+      actualSets: 3,
+      actualReps: 8,
+    });
   });
 });

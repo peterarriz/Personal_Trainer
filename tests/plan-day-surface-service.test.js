@@ -234,6 +234,33 @@ test("surface audit flags render-model drift when one surface diverges from the 
   assert.equal(audit.mismatches[0].actual, "Push-Up Session");
 });
 
+test("surface audit flags canonical reason drift when one surface changes the current-day story", () => {
+  const planDay = buildCanonicalPlanDayFixture();
+  const goodSurface = buildCanonicalPlanSurfaceModel({ surface: "today", planDay });
+  const baseProgramSurface = buildCanonicalPlanSurfaceModel({ surface: "program", planDay });
+  const driftedSurface = {
+    ...baseProgramSurface,
+    auditSnapshot: {
+      ...baseProgramSurface.auditSnapshot,
+      canonicalReasonLine: "This surface says the current day changed for a different reason.",
+    },
+  };
+
+  const audit = buildCanonicalPlanSurfaceAudit({
+    canonicalSurface: goodSurface,
+    surfaceModels: {
+      today: goodSurface,
+      program: driftedSurface,
+    },
+  });
+
+  assert.equal(audit.ok, false);
+  assert.equal(audit.mismatches.length, 1);
+  assert.equal(audit.mismatches[0].surface, "program");
+  assert.equal(audit.mismatches[0].field, "canonicalReasonLine");
+  assert.match(audit.mismatches[0].actual, /different reason/i);
+});
+
 test("adaptive explanation source and copy stay aligned across all major surfaces", () => {
   const planDay = {
     ...buildCanonicalPlanDayFixture(),
