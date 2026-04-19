@@ -239,21 +239,22 @@ test.describe("intake onboarding e2e", () => {
     await expectNoFakeTranscript(page);
   });
 
-  test("featured paths can drill into a specific target before the goal enters the stack", async ({ page }) => {
+  test("featured paths stay broad until starter fields capture the real target", async ({ page }) => {
     await gotoIntakeInLocalMode(page);
     await expect(page.getByTestId("intake-goals-step")).toBeVisible();
 
     await page.getByTestId("intake-goal-type-endurance").click();
     await page.getByTestId("intake-featured-goal-train_for_run_race").click();
-    await expect(page.getByTestId("intake-goal-specificity-options")).toBeVisible();
     await expect(page.getByTestId("intake-goal-selection-draft")).toContainText(/train for a running race|running race/i);
-    await page.getByTestId("intake-goal-specificity-half-marathon").click();
-    await expect(page.getByTestId("intake-goal-selection-draft")).toContainText(/half marathon/i);
-    await expect(page.getByTestId("intake-selected-goals")).not.toContainText(/half marathon/i);
+    await expect(page.getByTestId("intake-goal-specificity-options")).toHaveCount(0);
     await commitPendingGoalSelection(page);
 
-    await expect(page.getByTestId("intake-selected-goals")).toContainText(/half marathon/i);
+    await expect(page.getByTestId("intake-selected-goals")).toContainText(/train for a running race|running race/i);
+    await expect(page.getByTestId("intake-goal-metric-event_distance-half-marathon")).not.toHaveClass(/btn-primary/);
+    await page.getByTestId("intake-goal-metric-event_distance-half-marathon").click();
     await expect(page.getByTestId("intake-goal-metric-event_distance-half-marathon")).toHaveClass(/btn-primary/);
+    await page.getByTestId("intake-goal-metric-event_distance-10k").click();
+    await expect(page.getByTestId("intake-goal-metric-event_distance-10k")).toHaveClass(/btn-primary/);
   });
 
   test("swim goals gather the swim anchor inline before build", async ({ page }) => {

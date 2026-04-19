@@ -115,15 +115,14 @@ test("high-visibility goal templates keep stable copy, metrics, and legacy-speci
   assert.doesNotMatch(JSON.stringify([bench, tenK, toneUp]), /anchor confidence|placeholder|deterministic/i);
 });
 
-test("specificity presets expose exact-goal options beneath broad paths and keep distinct saved ids", () => {
+test("legacy exact-goal aliases still resolve cleanly without surfacing intake preset rows", () => {
   const runRacePresets = listGoalSpecificityPresets({ templateId: "train_for_run_race" });
   const bigLiftPresets = listGoalSpecificityPresets({ templateId: "improve_big_lifts" });
   const halfMarathonSelection = buildGoalTemplateSelection({ templateId: "half_marathon" });
   const broadRunSelection = buildGoalTemplateSelection({ templateId: "train_for_run_race" });
 
-  assert.ok(runRacePresets.some((preset) => preset.id === "half_marathon"));
-  assert.ok(runRacePresets.some((preset) => preset.id === "marathon"));
-  assert.ok(bigLiftPresets.some((preset) => preset.id === "bench_225"));
+  assert.deepEqual(runRacePresets, []);
+  assert.deepEqual(bigLiftPresets, []);
   assert.equal(halfMarathonSelection?.legacyTemplateId, "half_marathon");
   assert.notEqual(halfMarathonSelection?.id, broadRunSelection?.id);
 });

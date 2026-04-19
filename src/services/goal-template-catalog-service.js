@@ -224,28 +224,9 @@ export const listGoalTemplates = ({
 
 export const findGoalTemplateById = (templateId = "") => cloneValue(resolveTemplate(templateId) || null);
 
-export const listGoalSpecificityPresets = ({
-  templateId = "",
-} = {}) => {
-  const canonicalTemplateId = resolveStructuredGoalIntentId(
-    resolveTemplate(templateId)?.templateId || templateId
-  );
-  if (!canonicalTemplateId) return [];
-  return Object.keys(LEGACY_PRESET_DEFAULTS)
-    .map((presetId) => {
-      const preset = LEGACY_PRESET_DEFAULTS[presetId];
-      if (resolveStructuredGoalIntentId(preset?.templateId || "") !== canonicalTemplateId) return null;
-      const selection = buildGoalTemplateSelection({ templateId: presetId });
-      if (!selection) return null;
-      return {
-        id: presetId,
-        label: sanitizeText(selection.summary || selection.goalText || presetId, 120),
-        goalText: sanitizeText(selection.goalText || selection.summary || "", 220),
-        selection: cloneValue(selection),
-      };
-    })
-    .filter(Boolean);
-};
+// Legacy exact-goal aliases still resolve for saved data and tests, but intake should
+// no longer surface a pre-selection preset row ahead of the structured starter fields.
+export const listGoalSpecificityPresets = () => [];
 
 export const buildGoalTemplateSelection = ({
   templateId = "",
