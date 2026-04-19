@@ -2,14 +2,14 @@
 
 ## Purpose
 
-This workflow turns adaptive analysis and shadow evaluation outputs into a reviewable promotion bundle.
-
-It does not apply changes to the live app by itself.
+This workflow turns adaptive analysis and shadow evaluation outputs into a reviewable promotion bundle, then lets an operator apply that bundle into the canonical config path without manual file copying.
 
 Primary implementation:
 
 - `src/services/adaptive-policy-operator-service.js`
+- `src/services/adaptive-policy-config-service.js`
 - `scripts/run-adaptive-policy-promotion.js`
+- `scripts/run-adaptive-policy-apply-bundle.js`
 - `scripts/run-adaptive-policy-launch-readiness.js`
 
 ## Commands
@@ -18,6 +18,12 @@ Generate a promotion bundle from the current artifact directories:
 
 ```bash
 npm run qa:adaptive-policy:promote
+```
+
+Apply the generated bundle into the operator-managed config path:
+
+```bash
+npm run qa:adaptive-policy:apply-bundle -- --bundle artifacts/adaptive-policy-promotion --mode shadow
 ```
 
 Run the launch-readiness gate against current shadow-eval artifacts:
@@ -69,6 +75,15 @@ Launch-readiness gate:
 - `artifacts/adaptive-launch-readiness/results.json`
 - `artifacts/adaptive-launch-readiness/launch-readiness-report.md`
 
+Applied operator config path:
+
+- `config/adaptive-learning/adaptive-policy-evidence.json`
+- `config/adaptive-learning/adaptive-learning-config.shadow.json`
+- `config/adaptive-learning/adaptive-learning-config.active.json`
+- `config/adaptive-learning/adaptive-learning-config.applied.json`
+- `config/adaptive-learning/applied-bundle-manifest.json`
+- `config/adaptive-learning/applied-bundle-report.md`
+
 ## Safe Rollout Path
 
 Recommended path:
@@ -80,8 +95,9 @@ Recommended path:
 5. Run adaptive launch readiness.
 6. Generate a promotion bundle.
 7. Review harmful cohorts and blocked reasons.
-8. If a point is still eligible, apply the `shadow` config first.
-9. Only after another review pass should an operator consider the generated `active` config.
+8. If a point is still eligible, apply the bundle into the canonical config path in `shadow` mode first.
+9. Run the real staging evaluation workflow against exported data.
+10. Only after another review pass should an operator consider re-applying that same bundle in `active` mode.
 
 ## What This Does Not Do
 

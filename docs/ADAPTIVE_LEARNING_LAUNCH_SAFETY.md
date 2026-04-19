@@ -21,6 +21,7 @@ Primary implementation:
 - `src/services/adaptive-policy-service.js`
 - `src/services/adaptive-policy-shadow-evaluation-service.js`
 - `src/services/adaptive-learning-analysis-service.js`
+- `src/services/adaptive-policy-config-service.js`
 
 ## Launch-Safe Defaults
 
@@ -36,6 +37,18 @@ The planner still stays deterministic unless one of these is true:
 1. an explicit `adaptivePolicyConfig` override is passed for tests, replay, or operator evaluation
 2. `personalization.settings.adaptiveLearning` explicitly enables adaptive behavior
 3. legacy `personalization.settings.adaptivePolicy` is still used for backward-compatible non-launch paths
+
+Operator-managed reviewed config now lives under:
+
+```text
+config/adaptive-learning/
+```
+
+That path is updated by:
+
+```bash
+npm run qa:adaptive-policy:apply-bundle -- --bundle artifacts/adaptive-policy-promotion --mode shadow
+```
 
 ## Feature Flags
 
@@ -161,6 +174,13 @@ npm run qa:adaptive-policy:promote
 npm run qa:adaptive-policy:promote:fixture
 ```
 
+Bundle application and real staging evaluation:
+
+```bash
+npm run qa:adaptive-policy:apply-bundle -- --bundle artifacts/adaptive-policy-promotion --mode shadow
+npm run qa:adaptive-policy:staging-eval
+```
+
 Outputs:
 
 - `artifacts/adaptive-learning-analysis/*`
@@ -246,5 +266,5 @@ This scaffold does not yet do the following by default:
 ## Follow-Up Backlog
 
 - Expand the trusted-local diagnostics surface once real staging shadow data exists, so it can show rollout evidence instead of fixture-only readiness.
-- Harden the new server-side ingestion and export path so adaptive events can eventually stop depending on client payload persistence.
+- Live-verify the new server-side ingestion and export path so adaptive events can eventually stop depending on client payload persistence.
 - Add live staging adaptive rollout evidence to the launch dashboard once real shadow coverage exists.

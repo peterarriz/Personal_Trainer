@@ -1,10 +1,13 @@
 const fs = require("fs");
 const path = require("path");
+const { loadLocalEnv } = require("./_lib/load-local-env.cjs");
 
 const {
   buildAdaptiveLearningExportArtifacts,
   normalizeAdaptiveLearningSinkRowsForExtraction,
 } = require("../src/services/adaptive-learning-export-service.js");
+
+loadLocalEnv();
 
 const DEFAULT_OUTPUT_DIR = path.join(process.cwd(), "artifacts", "adaptive-learning-export");
 const DEFAULT_PAGE_SIZE = 1000;
@@ -58,7 +61,8 @@ async function fetchPagedRows({
   const rows = [];
   let offset = 0;
   while (true) {
-    const query = `${urlRoot}/rest/v1/${encodeURIComponent(table)}?select=${encodeURIComponent(select)}${filters}${filters ? "&" : ""}limit=${pageSize}&offset=${offset}`;
+    const filterSegment = filters ? `${filters}&` : "";
+    const query = `${urlRoot}/rest/v1/${encodeURIComponent(table)}?select=${encodeURIComponent(select)}&${filterSegment}limit=${pageSize}&offset=${offset}`;
     const { res, data, text } = await fetchJson(query, {
       headers: {
         apikey: serviceRoleKey,
@@ -76,6 +80,10 @@ async function fetchPagedRows({
     offset += pageSize;
   }
   return rows;
+}
+
+function formatErrorMessage(error) {
+  return sanitizeText(error?.message || String(error || ""), 320);
 }
 
 function groupSinkRowsAsSources(rows = []) {
@@ -118,18 +126,27 @@ async function loadSources({ source = "auto", userId = "", pageSize = DEFAULT_PA
   const sinkEnabled = ["1", "true", "yes", "enabled", "on"].includes(
     sanitizeText(getEnv("ENABLE_ADAPTIVE_EVENT_SINK", "ADAPTIVE_LEARNING_EVENT_SINK_ENABLED"), 20).toLowerCase()
   );
+  const warnings = [];
   if ((source === "auto" || source === "sink") && sinkEnabled) {
     const filters = userId ? `user_id=eq.${encodeURIComponent(userId)}&` : "";
-    const rows = await fetchPagedRows({
-      table: sinkTable,
-      select: "*",
-      filters,
-      pageSize,
-    });
-    return {
-      sourceKind: "event_sink",
-      rawSources: groupSinkRowsAsSources(rows),
-    };
+    try {
+      const rows = await fetchPagedRows({
+        table: sinkTable,
+        select: "*",
+        filters,
+        pageSize,
+      });
+      return {
+        sourceKind: "event_sink",
+        rawSources: groupSinkRowsAsSources(rows),
+        warnings,
+      };
+    } catch (error) {
+      if (source === "sink") {
+        throw error;
+      }
+      warnings.push(`Dedicated adaptive event sink unavailable. Falling back to trainer_data. ${formatErrorMessage(error)}`);
+    }
   }
 
   const filters = userId ? `user_id=eq.${encodeURIComponent(userId)}&` : "";
@@ -146,6 +163,7 @@ async function loadSources({ source = "auto", userId = "", pageSize = DEFAULT_PA
       userId: sanitizeText(row?.user_id || "", 120),
       data: row?.data || {},
     })),
+    warnings,
   };
 }
 
@@ -166,11 +184,18 @@ function buildReport(artifacts = {}) {
     "# Adaptive Learning Export",
     "",
     `- Source: ${artifacts?.sourceKind || "unknown"}`,
+    `- Requested source: ${artifacts?.requestedSource || artifacts?.sourceKind || "unknown"}`,
     `- Label: ${artifacts?.label || "adaptive_learning_export"}`,
     `- Event count: ${artifacts?.summary?.eventCount || 0}`,
     `- Actor count: ${artifacts?.summary?.actorCount || 0}`,
     `- Source envelopes: ${artifacts?.summary?.sourceCount || 0}`,
     `- Discarded during extraction: ${artifacts?.summary?.discardedCount || 0}`,
+    "",
+    "## Warnings",
+    "",
+    ...(Array.isArray(artifacts?.warnings) && artifacts.warnings.length
+      ? artifacts.warnings.map((warning) => `- ${warning}`)
+      : ["- None."]),
     "",
     "## Event Counts",
     "",
@@ -186,23 +211,30 @@ async function main() {
   const label = sanitizeText(getArgValue("--label", `adaptive_learning_export_${source}`), 160);
   const pageSize = Math.max(1, Math.min(5000, Number(getArgValue("--page-size", DEFAULT_PAGE_SIZE)) || DEFAULT_PAGE_SIZE));
 
-  const { sourceKind, rawSources } = await loadSources({ source, userId, pageSize });
-  const artifacts = buildAdaptiveLearningExportArtifacts({
+  const { sourceKind, rawSources, warnings = [] } = await loadSources({ source, userId, pageSize });
+  const baseArtifacts = buildAdaptiveLearningExportArtifacts({
     rawSources,
     sourceKind,
     exportedAt: Date.now(),
     label,
   });
+  const artifacts = {
+    ...baseArtifacts,
+    requestedSource: source,
+    warnings,
+  };
 
   ensureDir(outputDir);
   writeJson(path.join(outputDir, "adaptive-learning-export.json"), artifacts);
   writeJson(path.join(outputDir, "summary.json"), artifacts.summary);
   writeJson(path.join(outputDir, "normalized-events.json"), artifacts.normalizedEvents);
   writeJson(path.join(outputDir, "raw-sources.json"), artifacts.rawSources);
+  writeJson(path.join(outputDir, "warnings.json"), warnings);
   writeText(path.join(outputDir, "report.md"), buildReport(artifacts));
 
   console.log("Adaptive learning export complete.");
   console.log(`Source: ${sourceKind}`);
+  warnings.forEach((warning) => console.warn(`Warning: ${warning}`));
   console.log(`Events: ${artifacts.summary.eventCount}`);
   console.log(`Artifacts written to: ${outputDir}`);
 }

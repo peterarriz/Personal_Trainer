@@ -5113,8 +5113,10 @@ export default function TrainerDashboard() {
  const [authTimezone, setAuthTimezone] = useState(DEFAULT_TIMEZONE);
  const [authError, setAuthError] = useState("");
  const [authNotice, setAuthNotice] = useState("");
+ const [authPendingConfirmationEmail, setAuthPendingConfirmationEmail] = useState("");
  const [authRecoverySession, setAuthRecoverySession] = useState(null);
  const [authPasswordResetBusy, setAuthPasswordResetBusy] = useState(false);
+ const [authConfirmationResendBusy, setAuthConfirmationResendBusy] = useState(false);
  const [authRecoveryBusy, setAuthRecoveryBusy] = useState(false);
  const [authInitializing, setAuthInitializing] = useState(true);
  const [startupLocalResumeAvailable, setStartupLocalResumeAvailable] = useState(false);
@@ -6680,7 +6682,9 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  timezone: authTimezone,
  },
  setAuthError,
+ setAuthNotice,
  setAuthSession,
+ redirectTo: buildAuthReturnRedirectUrl(),
  });
  if (result?.ok) {
  setPersonalization((current) => mergePersonalization(current, {
@@ -6698,12 +6702,16 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  },
  }));
  if (result?.needsEmailConfirmation) {
+ setAuthPendingConfirmationEmail(String(result?.pendingConfirmationEmail || authEmail || "").trim());
  setAuthMode("signin");
+ setAuthPassword("");
+ } else {
+ setAuthPendingConfirmationEmail("");
  }
  }
  };
 
- const buildPasswordResetRedirectUrl = () => {
+ const buildAuthReturnRedirectUrl = () => {
  if (typeof window === "undefined") return "";
  return `${window.location.origin}${window.location.pathname}`;
  };
@@ -6734,10 +6742,37 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  authEmail: emailOverride || authEmail,
  setAuthError,
  setAuthNotice,
- redirectTo: buildPasswordResetRedirectUrl(),
+ redirectTo: buildAuthReturnRedirectUrl(),
  });
  } finally {
  setAuthPasswordResetBusy(false);
+ }
+ };
+
+ const handleResendSignupConfirmation = async ({ source = "auth_gate" } = {}) => {
+ if (authConfirmationResendBusy) return;
+ setAuthConfirmationResendBusy(true);
+ const pendingEmail = String(authPendingConfirmationEmail || authEmail || "").trim();
+ trackFrictionEvent({
+ flow: "auth",
+ action: "resend_confirmation",
+ outcome: "requested",
+ props: {
+ source,
+ },
+ });
+ try {
+ const result = await authStorage.handleResendSignupConfirmation({
+ authEmail: pendingEmail,
+ setAuthError,
+ setAuthNotice,
+ redirectTo: buildAuthReturnRedirectUrl(),
+ });
+ if (result?.ok) {
+ setAuthPendingConfirmationEmail(pendingEmail);
+ }
+ } finally {
+ setAuthConfirmationResendBusy(false);
  }
  };
 
@@ -8931,6 +8966,9 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  setAuthPasswordConfirm("");
  }
  setAuthNotice("");
+ if (option.id !== "signin") {
+ setAuthPendingConfirmationEmail("");
+ }
  setAuthMode(option.id);
  }}
  >
@@ -9051,6 +9089,20 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  onClick={() => handleForgotPassword({ source: "auth_gate" })}
  >
  {authPasswordResetBusy ? "Sending reset link..." : "Forgot password?"}
+ </button>
+ </div>
+ )}
+ {authMode === "signin" && authPendingConfirmationEmail && (
+ <div className="auth-inline-links">
+ <button
+ type="button"
+ data-testid="auth-resend-confirmation"
+ data-auth-variant="tertiary"
+ className="auth-action"
+ disabled={authConfirmationResendBusy}
+ onClick={() => handleResendSignupConfirmation({ source: "auth_gate" })}
+ >
+ {authConfirmationResendBusy ? "Resending confirmation..." : "Resend confirmation email"}
  </button>
  </div>
  )}

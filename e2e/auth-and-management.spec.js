@@ -66,6 +66,45 @@ test.describe("auth and management hardening", () => {
     await expect(page.getByTestId("intake-goals-step")).toBeVisible();
   });
 
+  test("signup confirmation flow keeps the user oriented and can resend the email", async ({ page }) => {
+    const stats = await mockSupabaseRuntime(page, {
+      signUpBody: {
+        user: {
+          id: "33333333-3333-4333-8333-333333333333",
+          email: "confirm-athlete@example.com",
+        },
+      },
+      trainerDataRows: [],
+    });
+
+    await bootAppWithSupabaseSeeds(page);
+    await expect(page.getByTestId("auth-gate")).toBeVisible();
+    await page.getByTestId("auth-mode-signup").click();
+    await page.getByTestId("auth-signup-name").fill("Taylor");
+    await page.getByTestId("auth-signup-units").selectOption("imperial");
+    await page.getByTestId("auth-signup-timezone").fill("America/Chicago");
+    await page.getByTestId("auth-email").fill("confirm-athlete@example.com");
+    await page.getByTestId("auth-password").fill("correct horse battery");
+    await page.getByTestId("auth-submit").click();
+
+    await expect(page.getByTestId("auth-notice")).toContainText(/check your email to confirm/i);
+    await expect(page.getByTestId("auth-resend-confirmation")).toBeVisible();
+    await page.getByTestId("auth-resend-confirmation").click();
+
+    await expect.poll(() => stats.resendConfirmationRequests).toBe(1);
+    await expect.poll(() => stats.lastResendConfirmationBody?.email || "").toBe("confirm-athlete@example.com");
+    await expect.poll(() => {
+      const redirectTo = String(stats.lastResendConfirmationBody?.redirect_to || "");
+      if (!redirectTo) return "";
+      try {
+        return new URL(redirectTo).pathname;
+      } catch {
+        return "";
+      }
+    }).toBe("/");
+    await expect(page.getByTestId("auth-notice")).toContainText(/confirmation email resent/i);
+  });
+
   test("logout keeps the device in local mode until the user explicitly reopens sign-in", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();

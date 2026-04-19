@@ -1,0 +1,12 @@
+{
+  "appliedAt": 0,
+  "applyMode": "shadow",
+  "blockedDecisionPointCount": 0,
+  "eligibleDecisionPointCount": 0,
+  "promotedDecisionPointIds": [],
+  "promotedRuleCount": 0,
+  "recommendation": "keep_in_shadow",
+  "sourceDir": "",
+  "sourceLabel": "not_applied",
+  "version": 1
+}

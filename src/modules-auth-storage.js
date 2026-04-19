@@ -889,9 +889,13 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     authPassword,
     authProfile = {},
     setAuthError,
+    setAuthNotice = () => {},
     setAuthSession,
+    redirectTo = "",
   }) => {
+    const email = String(authEmail || "").trim();
     setAuthError("");
+    if (typeof setAuthNotice === "function") setAuthNotice("");
     const startedAt = Date.now();
     try {
       const profilePayload = {
@@ -899,13 +903,15 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         preferred_units: String(authProfile?.units || "").trim().toLowerCase(),
         timezone: String(authProfile?.timezone || "").trim(),
       };
+      const requestBody = {
+        email,
+        password: authPassword,
+        data: Object.fromEntries(Object.entries(profilePayload).filter(([, value]) => value)),
+      };
+      if (String(redirectTo || "").trim()) requestBody.redirect_to = String(redirectTo).trim();
       const data = await authRequest("signup", {
         method: "POST",
-        body: JSON.stringify({
-          email: authEmail,
-          password: authPassword,
-          data: Object.fromEntries(Object.entries(profilePayload).filter(([, value]) => value)),
-        }),
+        body: JSON.stringify(requestBody),
       });
       if (data?.access_token && data?.user) {
         const session = normalizeSession(data);
@@ -936,12 +942,14 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         });
         return { ok: true, session, needsEmailConfirmation: false };
       } else {
-        setAuthError("Account created. Confirm email, then sign in.");
+        if (typeof setAuthNotice === "function") {
+          setAuthNotice("Account created. Check your email to confirm, then sign in.");
+        }
         recordAdaptiveEvent({
           eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
           userId: "",
           occurredAt: Date.now(),
-          dedupeKey: `auth_sign_up_confirmation_${String(authEmail || "").trim().toLowerCase()}`,
+          dedupeKey: `auth_sign_up_confirmation_${email.toLowerCase()}`,
           payload: buildAuthLifecycleEventInput({
             authEvent: "sign_up",
             status: "confirmation_required",
@@ -959,7 +967,12 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             auto_signed_in: false,
           },
         });
-        return { ok: true, session: null, needsEmailConfirmation: true };
+        return {
+          ok: true,
+          session: null,
+          needsEmailConfirmation: true,
+          pendingConfirmationEmail: email,
+        };
       }
     } catch (e) {
       trackAnalytics({
@@ -977,6 +990,74 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       }
       setAuthError("Sign up failed.");
       return { ok: false, error: e?.message || "signup_failed" };
+    }
+  };
+
+  const handleResendSignupConfirmation = async ({
+    authEmail,
+    setAuthError,
+    setAuthNotice,
+    redirectTo = "",
+  }) => {
+    const email = String(authEmail || "").trim();
+    setAuthError("");
+    if (typeof setAuthNotice === "function") setAuthNotice("");
+    if (!email) {
+      setAuthError("Enter your email first so we know where to resend the confirmation.");
+      return { ok: false, error: "missing_email" };
+    }
+    const startedAt = Date.now();
+    try {
+      const body = {
+        email,
+        type: "signup",
+      };
+      if (String(redirectTo || "").trim()) body.redirect_to = String(redirectTo).trim();
+      await authRequest("resend", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      if (typeof setAuthNotice === "function") {
+        setAuthNotice("Confirmation email resent. Check your inbox and spam folder.");
+      }
+      recordAdaptiveEvent({
+        eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+        userId: "",
+        occurredAt: Date.now(),
+        dedupeKey: `auth_resend_confirmation_${email.toLowerCase()}_${Math.floor(Date.now() / 1000)}`,
+        payload: buildAuthLifecycleEventInput({
+          authEvent: "sign_up_confirmation",
+          status: "resent",
+          source: "auth_gate",
+          hadCloudSession: false,
+          detail: "A new signup confirmation email was requested.",
+        }),
+      });
+      trackAnalytics({
+        flow: "auth",
+        action: "resend_confirmation",
+        outcome: "success",
+        props: {
+          duration_ms: Date.now() - startedAt,
+        },
+      });
+      return { ok: true };
+    } catch (e) {
+      trackAnalytics({
+        flow: "auth",
+        action: "resend_confirmation",
+        outcome: "error",
+        props: {
+          duration_ms: Date.now() - startedAt,
+          error_code: classifyAnalyticsErrorCode(e),
+        },
+      });
+      if (e?.message === AUTH_PROVIDER_UNAVAILABLE) {
+        setAuthError("Cloud auth provider is unavailable or misconfigured.");
+        return { ok: false, error: AUTH_PROVIDER_UNAVAILABLE };
+      }
+      setAuthError("We couldn't resend the confirmation email right now.");
+      return { ok: false, error: e?.message || "resend_confirmation_failed" };
     }
   };
 
@@ -2379,6 +2460,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     resolvePasswordRecoverySession,
     handleSignIn,
     handleSignUp,
+    handleResendSignupConfirmation,
     handleForgotPassword,
     handlePasswordRecoveryUpdate,
     handleSignOut,

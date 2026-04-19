@@ -52,7 +52,7 @@ This backlog translates the adversarial audit into the minimum engineering work 
 
 - [ ] Generate non-fixture shadow artifacts and publish them in the launch dashboard.
   Owner area:
-  `scripts/run-adaptive-policy-shadow-evaluation.js`, `scripts/run-adaptive-policy-launch-readiness.js`, `docs/LAUNCH_READINESS_DASHBOARD.md`
+  `scripts/run-adaptive-policy-staging-evaluation.js`, `scripts/run-adaptive-policy-launch-readiness.js`, `docs/LAUNCH_READINESS_DASHBOARD.md`
   Why:
   Fixture-only safety signals are useful, but not enough to justify rollout.
 
@@ -60,8 +60,8 @@ This backlog translates the adversarial audit into the minimum engineering work 
 
 - [ ] Move more adaptive emitters out of `trainer-dashboard.jsx` into narrower domain services.
 - [ ] Add diagnostics for join rate, duplicate rate, pruning, and replay lag.
-- [ ] Add CI gates for adaptive shadow evaluation and launch-readiness.
 - [ ] Reduce client payload growth from adaptive persistence.
+- [ ] Decide whether real staging adaptive evaluation should run on a schedule once secrets are provisioned.
 
 ## Test Backlog
 

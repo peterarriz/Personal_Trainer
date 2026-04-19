@@ -262,8 +262,8 @@ export const ADAPTIVE_ANALYSIS_MANIFEST = Object.freeze({
 });
 
 export const ADAPTIVE_FOLLOW_UP_BACKLOG = Object.freeze([
-  "Promote reviewed evidence snapshots from offline analysis into an operator-managed config path.",
-  "Harden the new server-side adaptive event sink, then reduce long-term dependence on the main trainer payload for adaptive history.",
+  "Live-verify the dedicated adaptive event sink against a real Supabase environment, then reduce long-term dependence on the main trainer payload for adaptive history.",
+  "Run the real staging adaptive evaluation workflow on exported non-fixture data and archive the first operator-reviewed launch-readiness report.",
   "Add rollout metrics to launch dashboards once a real shadow dataset exists in staging or production.",
   "Expand the trusted-local adaptive diagnostics panel once real staging shadow data exists, so it shows rollout evidence instead of fixture-only readiness.",
 ]);

@@ -230,7 +230,9 @@ test("handleSignUp sends initial profile metadata with the auth request", async 
       units: "imperial",
       timezone: "America/Chicago",
     },
+    redirectTo: "https://forma.example.app/",
     setAuthError: noop,
+    setAuthNotice: noop,
     setAuthSession: (value) => { nextSession = value; },
   });
 
@@ -240,8 +242,81 @@ test("handleSignUp sends initial profile metadata with the auth request", async 
   assert.equal(signUpRequest?.body?.data?.display_name, "Peter");
   assert.equal(signUpRequest?.body?.data?.preferred_units, "imperial");
   assert.equal(signUpRequest?.body?.data?.timezone, "America/Chicago");
+  assert.equal(signUpRequest?.body?.redirect_to, "https://forma.example.app/");
   assert.equal(result?.ok, true);
   assert.equal(nextSession?.user?.email, "athlete@example.com");
+});
+
+test("signup confirmation flow requests a redirect and can resend the confirmation email", async () => {
+  const requests = [];
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+        body: options.body ? JSON.parse(options.body) : null,
+      });
+      if (/\/auth\/v1\/signup$/.test(url)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            user: {
+              id: "00000000-0000-0000-0000-000000000099",
+              email: "confirm-me@example.com",
+            },
+          }),
+          text: async () => "",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => "",
+      };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  let nextNotice = "";
+  const signUpResult = await module.handleSignUp({
+    authEmail: "confirm-me@example.com",
+    authPassword: "secret-pass",
+    redirectTo: "https://forma.example.app/",
+    setAuthError: noop,
+    setAuthNotice: (value) => { nextNotice = value; },
+    setAuthSession: noop,
+  });
+
+  assert.equal(signUpResult?.ok, true);
+  assert.equal(signUpResult?.needsEmailConfirmation, true);
+  assert.equal(signUpResult?.pendingConfirmationEmail, "confirm-me@example.com");
+  assert.match(nextNotice, /check your email/i);
+
+  const resendResult = await module.handleResendSignupConfirmation({
+    authEmail: "confirm-me@example.com",
+    redirectTo: "https://forma.example.app/",
+    setAuthError: noop,
+    setAuthNotice: (value) => { nextNotice = value; },
+  });
+
+  const resendRequest = requests.find((request) => /\/auth\/v1\/resend$/.test(request.url));
+  assert.equal(resendResult?.ok, true);
+  assert.equal(resendRequest?.method, "POST");
+  assert.equal(resendRequest?.body?.email, "confirm-me@example.com");
+  assert.equal(resendRequest?.body?.type, "signup");
+  assert.equal(resendRequest?.body?.redirect_to, "https://forma.example.app/");
+  assert.match(nextNotice, /confirmation email resent/i);
 });
 
 test("persistAll keeps local cache active when no signed-in session exists", async () => {
@@ -296,7 +371,10 @@ test("persistAll keeps local cache active when no signed-in session exists", asy
 
   assert.equal(nextStorageStatus?.reason, "not_signed_in");
   const cachedPayload = JSON.parse(localStorage.getItem(LOCAL_CACHE_KEY));
-  assert.deepEqual({ ...cachedPayload, syncMeta: undefined }, { ...payload, syncMeta: undefined });
+  assert.deepEqual(
+    { ...cachedPayload, syncMeta: undefined, adaptiveLearning: undefined },
+    { ...payload, syncMeta: undefined, adaptiveLearning: undefined }
+  );
   assert.equal(cachedPayload?.syncMeta?.pendingCloudWrite, false);
 });
 

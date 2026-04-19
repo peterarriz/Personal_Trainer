@@ -103,6 +103,7 @@ const mockSupabaseRuntime = async (page, {
   signInStatus = 200,
   signInBody = null,
   signUpStatus = 200,
+  signUpBody = null,
   trainerDataRows = null,
   logoutDelayMs = 0,
   deleteDiagnosticsStatus = 200,
@@ -116,6 +117,8 @@ const mockSupabaseRuntime = async (page, {
     logoutRequests: 0,
     recoverRequests: 0,
     lastRecoverBody: null,
+    resendConfirmationRequests: 0,
+    lastResendConfirmationBody: null,
     passwordUpdateRequests: 0,
     lastPasswordUpdateBody: null,
   };
@@ -133,7 +136,17 @@ const mockSupabaseRuntime = async (page, {
       await route.fulfill({ status: signUpStatus, contentType: "application/json", body: JSON.stringify({ message: "signup failed" }) });
       return;
     }
-    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(session) });
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(signUpBody || session) });
+  });
+
+  await page.route("**/auth/v1/resend**", async (route) => {
+    stats.resendConfirmationRequests += 1;
+    try {
+      stats.lastResendConfirmationBody = JSON.parse(route.request().postData() || "{}");
+    } catch {
+      stats.lastResendConfirmationBody = null;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });
   });
 
   await page.route("**/auth/v1/token**", async (route) => {

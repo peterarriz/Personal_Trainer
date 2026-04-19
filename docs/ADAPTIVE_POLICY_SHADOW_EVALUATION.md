@@ -61,6 +61,12 @@ Generate the adaptive rollout gate from the latest shadow evaluation:
 npm run qa:adaptive-policy:launch-readiness
 ```
 
+Run the real staging workflow when Supabase export credentials are present:
+
+```bash
+npm run qa:adaptive-policy:staging-eval
+```
+
 Generate a reviewed promotion bundle from offline analysis plus shadow artifacts:
 
 ```bash
@@ -150,7 +156,9 @@ If any of those fail, the decision point stays in shadow.
 5. Review the harmful and underpowered cohort lists first.
 6. Review the promotion checklist for the specific decision point.
 7. Generate a promotion bundle only for points that stay eligible.
-8. Only move that point to `active` if the checklist is green and the operator agrees with the explanation quality.
+8. Apply the resulting bundle into the operator-managed config path in `shadow` mode.
+9. Run the real staging evaluation workflow and archive the launch-readiness report.
+10. Only move that point to `active` if the checklist is green and the operator agrees with the explanation quality.
 
 ## Notes
 

@@ -9,7 +9,7 @@ on:
 jobs:
   quality-gates:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Check out repository
@@ -33,6 +33,12 @@ jobs:
       - name: Run focused quality unit pack
         run: npm run test:quality:unit
 
+      - name: Run adaptive shadow evaluation fixture gate
+        run: npm run qa:adaptive-policy:shadow-eval:fixture
+
+      - name: Run adaptive launch-readiness fixture gate
+        run: npm run qa:adaptive-policy:launch-readiness:fixture
+
       - name: Install Playwright browser
         run: npx playwright install chromium
 
@@ -41,3 +47,12 @@ jobs:
 
       - name: Build dist output
         run: npm run build
+
+      - name: Upload adaptive rollout artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-rollout-artifacts
+          path: |
+            artifacts/adaptive-policy-shadow-evaluation/**
+            artifacts/adaptive-launch-readiness/**

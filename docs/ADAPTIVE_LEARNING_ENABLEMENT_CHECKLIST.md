@@ -20,6 +20,7 @@ All of these should be true before shadow mode is enabled outside fixtures:
 - [ ] No-log / missed-session events exist without relying on weekly text summaries.
 - [ ] Real shadow artifacts can be generated from staging or production-like data, not fixtures only.
 - [ ] Trusted-local diagnostics surface shows real shadow data, not fixture-only data.
+- [ ] Reviewed evidence is applied through `qa:adaptive-policy:apply-bundle`, not by copying files by hand.
 - [ ] Shadow mode does not change any user-facing prescription.
 - [ ] Consumer UI does not mention adaptive learning when the layer is only in shadow.
 
@@ -39,6 +40,7 @@ All shadow-mode criteria must already be green, plus:
 - [ ] Per-decision-point kill switch works.
 - [ ] Human operator review signed off on the exact evidence snapshot being promoted.
 - [ ] Rollout starts limited and reversible.
+- [ ] The applied config under `config/adaptive-learning/` matches the reviewed bundle being promoted.
 
 ## Priority Backlog
 
