@@ -1,6 +1,8 @@
 node_modules/
 .DS_Store
 .env
+.env.local
+.env.*.local
 *.log
 *.bak
 *.orig
@@ -14,3 +16,4 @@ test-results/
 tmp/
 /tmp-*.png
 coverage/
+supabase/.temp/

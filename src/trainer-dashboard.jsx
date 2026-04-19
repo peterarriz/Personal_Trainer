@@ -6912,7 +6912,7 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  mode: "local",
  label: "DEVICE RESET",
  reason: STORAGE_STATUS_REASONS.deviceReset,
- detail: "Local data was cleared from this device. Sign in to reload cloud data or continue with a blank local start.",
+ detail: "Local data was cleared from this device. Sign in to reload cloud data or create an account to start again.",
  }));
  return { ok: true };
  };

@@ -11,6 +11,7 @@ const allowedRootEntries = new Set([
   "api",
   "bundlesize.config.js",
   "CLAUDE.md",
+  "config",
   "docs",
   "e2e",
   "fonts",
@@ -34,6 +35,7 @@ const blockedTrackedPatterns = [
   /^artifacts\//,
   /^dist\//,
   /^playwright-report\//,
+  /^supabase\/\.temp\//,
   /^test-results\//,
   /^[^/]+\.patch$/i,
   /(^|\/)[^/]+\.(bak|orig|rej|tmp)$/i,
@@ -73,6 +75,60 @@ const getTrackedFiles = (root = ROOT) => {
     .map((entry) => entry.trim())
     .filter(Boolean)
     .filter((filePath) => fs.existsSync(path.join(root, filePath)));
+};
+
+const isBlockedTrackedEnvFile = (filePath = "") => {
+  const normalizedPath = String(filePath || "").trim();
+  if (!normalizedPath) return false;
+  if (normalizedPath === ".env.example") return false;
+  return /(^|\/)\.env(?:\.[^/]+)?(?:\.local)?$/i.test(normalizedPath);
+};
+
+const decodeJwtPayload = (token = "") => {
+  const [, payload = ""] = String(token || "").split(".");
+  if (!payload) return null;
+  try {
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    return JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+  } catch {
+    return null;
+  }
+};
+
+const collectSecretTokenHits = ({ root = ROOT, trackedFiles = [] } = {}) => {
+  const hits = [];
+  const jwtPattern = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
+
+  trackedFiles.forEach((filePath) => {
+    const absolutePath = path.join(root, filePath);
+    let source = "";
+    try {
+      source = fs.readFileSync(absolutePath, "utf8");
+    } catch {
+      return;
+    }
+    let match = jwtPattern.exec(source);
+    while (match) {
+      const token = String(match[0] || "");
+      const payload = decodeJwtPayload(token);
+      if (payload?.iss === "supabase" && payload?.role === "service_role") {
+        const { line, column } = computeLineAndColumn(source, match.index);
+        const lineText = source.split("\n")[line - 1] || "";
+        hits.push({
+          filePath,
+          label: "supabase service role token",
+          line,
+          column,
+          excerpt: lineText.trim(),
+        });
+      }
+      match = jwtPattern.exec(source);
+    }
+    jwtPattern.lastIndex = 0;
+  });
+
+  return hits;
 };
 
 const collectBannedTextHits = ({ root = ROOT, trackedFiles = [] } = {}) => {
@@ -117,9 +173,11 @@ const runRepoHygieneCheck = ({ root = ROOT } = {}) => {
 
   const blockedTrackedFiles = trackedFiles.filter((filePath) => (
     blockedTrackedPatterns.some((pattern) => pattern.test(filePath))
+    || isBlockedTrackedEnvFile(filePath)
   ));
 
   const bannedTextHits = collectBannedTextHits({ root, trackedFiles });
+  const secretTokenHits = collectSecretTokenHits({ root, trackedFiles });
 
   return {
     root,
@@ -127,7 +185,8 @@ const runRepoHygieneCheck = ({ root = ROOT } = {}) => {
     unexpectedRootEntries,
     blockedTrackedFiles,
     bannedTextHits,
-    passed: !unexpectedRootEntries.length && !blockedTrackedFiles.length && !bannedTextHits.length,
+    secretTokenHits,
+    passed: !unexpectedRootEntries.length && !blockedTrackedFiles.length && !bannedTextHits.length && !secretTokenHits.length,
   };
 };
 
@@ -140,6 +199,12 @@ const printRepoHygieneFailure = (result) => {
   if (result.blockedTrackedFiles.length) {
     console.error("\nBlocked tracked generated/debris files:");
     result.blockedTrackedFiles.forEach((filePath) => console.error(`- ${filePath}`));
+  }
+  if (result.secretTokenHits.length) {
+    console.error("\nTracked secret token hits:");
+    result.secretTokenHits.forEach(({ filePath, label, line, column, excerpt }) => {
+      console.error(`- ${filePath}:${line}:${column} [${label}] ${excerpt}`);
+    });
   }
   if (result.bannedTextHits.length) {
     console.error("\nBanned text encoding or punctuation hits:");
@@ -160,5 +225,8 @@ if (require.main === module) {
 
 module.exports = {
   bannedTextRules,
+  collectSecretTokenHits,
+  decodeJwtPayload,
+  isBlockedTrackedEnvFile,
   runRepoHygieneCheck,
 };
