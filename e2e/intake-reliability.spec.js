@@ -1,6 +1,6 @@
 const { test, expect } = require("@playwright/test");
 
-const { gotoIntakeInLocalMode } = require("./intake-test-utils.js");
+const { commitPendingGoalSelection, gotoIntakeInLocalMode } = require("./intake-test-utils.js");
 const {
   SUPABASE_KEY,
   SUPABASE_URL,
@@ -21,12 +21,14 @@ async function openGoalFamilyAndSelectStack(page) {
 
   await page.getByTestId("intake-goal-type-strength").click();
   await page.getByTestId("intake-featured-goal-improve_big_lifts").click();
+  await commitPendingGoalSelection(page);
   await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
 
   await page.getByTestId("intake-goal-library-toggle").click();
   await expect(page.getByTestId("intake-goal-library-grid")).toBeVisible();
   await page.getByTestId("intake-goal-category-physique").click();
   await page.getByTestId("intake-goal-template-get_leaner").click();
+  await commitPendingGoalSelection(page);
   await expect(page.getByTestId("intake-selected-goals")).toContainText(/get leaner/i);
 }
 
@@ -139,12 +141,14 @@ test.describe("intake reliability", () => {
 
     await page.getByTestId("intake-goal-type-strength").click();
     await page.getByTestId("intake-featured-goal-get_stronger").click();
+    await commitPendingGoalSelection(page);
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/get stronger/i);
 
     await page.getByTestId("intake-selected-goal-remove-get-stronger").click();
     await expect(page.getByTestId("intake-selected-goals")).not.toContainText(/get stronger/i);
 
     await page.getByTestId("intake-featured-goal-improve_big_lifts").click();
+    await commitPendingGoalSelection(page);
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
     await expect(page.getByTestId("intake-selected-goals")).not.toContainText(/get stronger/i);
 

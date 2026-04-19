@@ -573,6 +573,13 @@ async function fillStarterMetricInputs(page, quickMetrics = {}) {
   }
 }
 
+async function commitPendingGoalSelection(page) {
+  const commitButton = page.getByTestId("intake-goal-selection-commit");
+  await expect(commitButton).toBeVisible();
+  await expect(commitButton).toBeEnabled();
+  await commitButton.click();
+}
+
 const GOAL_TYPE_ALIASES = Object.freeze({
   running: "endurance",
   swim: "endurance",
@@ -697,6 +704,7 @@ async function completeGoalLibraryIntakeStep(page, {
   await page.getByTestId(`intake-goal-type-${normalizedGoalType}`).click();
   if (normalizedTemplateId) {
     await page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`).click();
+    await commitPendingGoalSelection(page);
   }
   await fillStarterMetricInputs(page, normalizedQuickMetrics);
   await fillPlanningRealityInputs(page, planningOverrides);
@@ -765,6 +773,7 @@ async function completeStructuredIntakeOnOneScreen(page, {
   await page.getByTestId(`intake-goal-type-${normalizedGoalType}`).click();
   if (normalizedTemplateId) {
     await page.getByTestId(`intake-featured-goal-${normalizedTemplateId}`).click();
+    await commitPendingGoalSelection(page);
   }
   await fillStarterMetricInputs(page, normalizedQuickMetrics);
   await fillPlanningRealityInputs(page, planningOverrides);
@@ -1082,6 +1091,7 @@ module.exports = {
   INTAKE_SESSION_STORAGE_KEY,
   LOCAL_CACHE_KEY,
   answerCurrentAnchor,
+  commitPendingGoalSelection,
   confirmIntakeBuild,
   completeAnchors,
   completeGoalLibraryIntakeStep,

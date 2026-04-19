@@ -10775,15 +10775,16 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
  const [messages, setMessages] = useState(() => restoredIntakeSession?.messages || []);
  const [answers, setAnswers] = useState(() => seededInitialAnswers);
  const [stepIndex, setStepIndex] = useState(() => Math.max(0, Number(restoredIntakeSession?.stepIndex) || 0));
- const [draft, setDraft] = useState(() => String(restoredIntakeSession?.draft || ""));
- const [extraGoalDraft, setExtraGoalDraft] = useState("");
- const [selectedGoalSelections, setSelectedGoalSelections] = useState(() => buildGoalTemplateSelectionsFromAnswers({
- answers: restoredIntakeSession?.answers || {},
- }));
- const [selectedStarterGoalTypeId, setSelectedStarterGoalTypeId] = useState(() => inferIntakeStarterGoalTypeId({
- selection: buildGoalTemplateSelectionsFromAnswers({ answers: restoredIntakeSession?.answers || {} })[0] || null,
- answers: restoredIntakeSession?.answers || {},
- }));
+const [draft, setDraft] = useState(() => String(restoredIntakeSession?.draft || ""));
+const [extraGoalDraft, setExtraGoalDraft] = useState("");
+const [selectedGoalSelections, setSelectedGoalSelections] = useState(() => buildGoalTemplateSelectionsFromAnswers({
+answers: restoredIntakeSession?.answers || {},
+}));
+const [pendingGoalSelection, setPendingGoalSelection] = useState(null);
+const [selectedStarterGoalTypeId, setSelectedStarterGoalTypeId] = useState(() => inferIntakeStarterGoalTypeId({
+selection: buildGoalTemplateSelectionsFromAnswers({ answers: restoredIntakeSession?.answers || {} })[0] || null,
+answers: restoredIntakeSession?.answers || {},
+}));
  const [goalLibraryCategory, setGoalLibraryCategory] = useState(() => getDefaultGoalLibraryCategoryForStarterType(inferIntakeStarterGoalTypeId({
  selection: buildGoalTemplateSelectionsFromAnswers({ answers: restoredIntakeSession?.answers || {} })[0] || null,
  answers: restoredIntakeSession?.answers || {},
@@ -11692,23 +11693,44 @@ const setPrimaryGoalSelection = (selection = null) => {
  setGoalMetricFormError("");
  return nextAnswers;
  };
- const addPresetGoalToStack = (templateId = "") => {
- const selection = buildGoalTemplateSelection({ templateId });
- if (!selection) return null;
- setShowCustomGoalComposer(false);
- return addGoalSelectionToStack(selection);
- };
- const selectStarterGoalType = (goalTypeId = "") => {
- const normalizedGoalTypeId = String(goalTypeId || "").trim() || "running";
- setSelectedStarterGoalTypeId(normalizedGoalTypeId);
- setGoalLibraryCategory(getDefaultGoalLibraryCategoryForStarterType(normalizedGoalTypeId));
- setGoalLibrarySearch("");
- setShowGoalLibraryBrowser(false);
- setGoalMetricFieldErrors({});
- setGoalMetricFormError("");
- setAnswers((prev) => (
- prev?.goal_lock_confirmed
- ? { ...prev, goal_lock_confirmed: false }
+const addPresetGoalToStack = (templateId = "") => {
+const selection = buildGoalTemplateSelection({ templateId });
+if (!selection) return null;
+setShowCustomGoalComposer(false);
+return addGoalSelectionToStack(selection);
+};
+const queueGoalSelection = (selection = null) => {
+if (!selection?.goalText) return null;
+setPendingGoalSelection(selection);
+setGoalMetricFieldErrors({});
+setGoalMetricFormError("");
+return selection;
+};
+const commitPendingGoalSelection = () => {
+if (!pendingGoalSelection?.goalText) return null;
+const pendingGoalText = normalizeIntakeGoalEntry(pendingGoalSelection.goalText, 320).toLowerCase();
+if (!pendingGoalText) return null;
+const alreadyAdded = intakeGoalSelections.some((selection) => normalizeIntakeGoalEntry(selection?.goalText || "", 320).toLowerCase() === pendingGoalText);
+if (alreadyAdded) {
+setPendingGoalSelection(null);
+return null;
+}
+const nextAnswers = addGoalSelectionToStack(pendingGoalSelection);
+setPendingGoalSelection(null);
+return nextAnswers;
+};
+const selectStarterGoalType = (goalTypeId = "") => {
+const normalizedGoalTypeId = String(goalTypeId || "").trim() || "running";
+setSelectedStarterGoalTypeId(normalizedGoalTypeId);
+setGoalLibraryCategory(getDefaultGoalLibraryCategoryForStarterType(normalizedGoalTypeId));
+setGoalLibrarySearch("");
+setShowGoalLibraryBrowser(false);
+setPendingGoalSelection(null);
+setGoalMetricFieldErrors({});
+setGoalMetricFormError("");
+setAnswers((prev) => (
+prev?.goal_lock_confirmed
+? { ...prev, goal_lock_confirmed: false }
  : prev
  ));
  if (normalizedGoalTypeId === "custom") {
@@ -12997,6 +13019,11 @@ selection: primaryIntakeGoalSelection,
 const selectedGoalTextSet = useMemo(() => new Set(
 intakeGoalSelections.map((selection) => String(selection?.goalText || "").toLowerCase()).filter(Boolean)
 ), [intakeGoalSelections]);
+const normalizedPendingGoalText = normalizeIntakeGoalEntry(pendingGoalSelection?.goalText || "", 320).toLowerCase();
+const pendingGoalAlreadyAdded = normalizedPendingGoalText
+? selectedGoalTextSet.has(normalizedPendingGoalText)
+: false;
+const pendingGoalCommitLabel = intakeGoalSelections.length === 0 ? "Save as Priority 1" : "Add as another goal";
 const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 320);
  const intakePreviewTodayKey = new Date().toISOString().split("T")[0];
  const intakePreviewDayOfWeek = getDayOfWeek();
@@ -13471,7 +13498,7 @@ const stageProgressIndex = phase === INTAKE_UI_PHASES.building
  </label>
  );
  };
- const renderGoalMetricQuestionCard = (question = null) => {
+const renderGoalMetricQuestionCard = (question = null) => {
  if (!question) return null;
  return (
  <div
@@ -13496,9 +13523,60 @@ const stageProgressIndex = phase === INTAKE_UI_PHASES.building
  {(Array.isArray(question?.inputFields) ? question.inputFields : []).map((field) => renderGoalMetricField(field))}
  </div>
  </div>
- );
- };
- const toggleGoalLock = () => {
+);
+};
+const renderPendingGoalSelectionCard = () => {
+if (!pendingGoalSelection?.goalText) return null;
+return (
+<div
+data-testid="intake-goal-selection-draft"
+style={{
+display:"grid",
+gap:"0.45rem",
+border:"1px solid rgba(0,194,255,0.2)",
+borderRadius:18,
+padding:"0.85rem",
+background:"rgba(6,17,31,0.82)",
+}}
+>
+<div style={{ display:"grid", gap:"0.14rem" }}>
+<div style={{ fontSize:"0.48rem", color:"#b9ecff", letterSpacing:"0.12em" }}>SELECTED GOAL</div>
+<div style={{ fontSize:"0.62rem", color:"#f8fbff", lineHeight:1.45, fontWeight:600 }}>
+{pendingGoalSelection.summary || pendingGoalSelection.goalText}
+</div>
+<div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
+{pendingGoalAlreadyAdded
+? "This goal is already in your stack."
+: intakeGoalSelections.length === 0
+? "This will not become Priority 1 until you save it."
+: `Your current stack stays in place until you tap ${pendingGoalCommitLabel}.`}
+</div>
+</div>
+<div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap", alignItems:"center" }}>
+<button
+type="button"
+className={pendingGoalAlreadyAdded ? "btn" : "btn btn-primary"}
+data-testid="intake-goal-selection-commit"
+onClick={commitPendingGoalSelection}
+disabled={pendingGoalAlreadyAdded}
+style={pendingGoalAlreadyAdded ? { color:"#9fb4d3", borderColor:"#324961" } : {}}
+>
+{pendingGoalAlreadyAdded ? "Already added" : pendingGoalCommitLabel}
+</button>
+<button
+type="button"
+className="btn"
+data-testid="intake-goal-selection-clear"
+onClick={() => setPendingGoalSelection(null)}
+style={{ color:"#dbe7f6", borderColor:"#324961" }}
+>
+Clear
+</button>
+</div>
+</div>
+);
+};
+const toggleGoalLock = () => {
  setAnswers((prev) => ({
  ...prev,
  goal_lock_confirmed: !(prev?.goal_lock_confirmed === true || prev?.goal_lock_confirmed === "true"),
@@ -14011,49 +14089,57 @@ const stageProgressIndex = phase === INTAKE_UI_PHASES.building
 
  {selectedStarterGoalTypeId !== "custom" ? (
  <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXAMPLES THAT FIT</div>
- <div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>
- {activeStarterGoalType?.label || "Goal"} examples to help you pick the closest fit fast.
- </div>
- </div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Tap a card to make it Priority 1.</div>
- </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
- {featuredStarterGoalTemplates.map((template) => {
- const selectedPrimary = String(primaryIntakeGoalSelection?.templateId || "").trim() === template.id;
- return (
- <button
- key={template.id}
- type="button"
- className="btn"
- data-testid={`intake-featured-goal-${template.id}`}
- onClick={() => setPrimaryGoalSelection(buildGoalTemplateSelection({ templateId: template.id }))}
- style={{
- textAlign:"left",
- borderColor:selectedPrimary ? "rgba(0,194,255,0.38)" : "#22324a",
- background:selectedPrimary ? "linear-gradient(180deg, rgba(0,194,255,0.12), rgba(9,16,29,0.92))" : "rgba(11,18,32,0.8)",
- padding:"0.82rem",
- borderRadius:18,
- display:"grid",
- gap:"0.24rem",
- }}
- >
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
- <div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
- <div style={{ fontSize:"0.44rem", color:selectedPrimary ? "#b9ecff" : "#8fa5c8" }}>{selectedPrimary ? "Primary" : "Select"}</div>
- </div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
- </button>
- );
- })}
- </div>
- </div>
- ) : null}
+<div style={{ display:"flex", justifyContent:"space-between", gap:"0.45rem", alignItems:"center", flexWrap:"wrap" }}>
+<div style={{ display:"grid", gap:"0.14rem" }}>
+<div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXAMPLES THAT FIT</div>
+<div style={{ fontSize:"0.56rem", color:"#dbe7f6", lineHeight:1.5 }}>
+{activeStarterGoalType?.label || "Goal"} examples to help you pick the closest fit fast.
+</div>
+</div>
+<div style={{ fontSize:"0.48rem", color:"#8fa5c8" }}>Tap a card to select it, then save it to your goal stack.</div>
+</div>
+<div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem" }}>
+{featuredStarterGoalTemplates.map((template) => {
+const selectedPrimary = String(primaryIntakeGoalSelection?.templateId || "").trim() === template.id;
+const added = selectedGoalTextSet.has(String(template.goalText || "").toLowerCase());
+const selectedForDraft = String(pendingGoalSelection?.templateId || "").trim() === template.id;
+return (
+<button
+key={template.id}
+type="button"
+className="btn"
+data-testid={`intake-featured-goal-${template.id}`}
+onClick={() => queueGoalSelection(buildGoalTemplateSelection({ templateId: template.id }))}
+disabled={added}
+style={{
+textAlign:"left",
+borderColor:selectedPrimary || selectedForDraft ? "rgba(0,194,255,0.38)" : added ? "rgba(147,197,253,0.55)" : "#22324a",
+background:selectedPrimary || selectedForDraft ? "linear-gradient(180deg, rgba(0,194,255,0.12), rgba(9,16,29,0.92))" : added ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.8)",
+padding:"0.82rem",
+borderRadius:18,
+display:"grid",
+gap:"0.24rem",
+opacity: added ? 0.82 : 1,
+}}
+>
+<div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
+<div style={{ fontSize:"0.6rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
+<div style={{ fontSize:"0.44rem", color:selectedPrimary || selectedForDraft ? "#b9ecff" : added ? "#bfdbfe" : "#8fa5c8" }}>
+{selectedPrimary ? "Priority 1" : added ? "Added" : selectedForDraft ? "Selected" : "Select"}
+</div>
+</div>
+<div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
+</button>
+);
+})}
+</div>
+</div>
+) : null}
 
- {showCustomGoalComposer || selectedStarterGoalTypeId === "custom" ? (
- <div style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+{pendingGoalSelection ? renderPendingGoalSelectionCard() : null}
+
+{showCustomGoalComposer || selectedStarterGoalTypeId === "custom" ? (
+<div style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CUSTOM GOAL</div>
@@ -14209,10 +14295,10 @@ const stageProgressIndex = phase === INTAKE_UI_PHASES.building
 
  <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
  <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
- <div style={{ display:"grid", gap:"0.14rem" }}>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>FULL GOAL LIBRARY</div>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Use this for additional priorities or when the featured paths are close but not quite right.</div>
- </div>
+<div style={{ display:"grid", gap:"0.14rem" }}>
+<div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>FULL GOAL LIBRARY</div>
+<div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Use this for additional priorities or when the featured paths are close but not quite right.</div>
+</div>
  <button
  type="button"
  className="btn"
@@ -14254,32 +14340,35 @@ const stageProgressIndex = phase === INTAKE_UI_PHASES.building
  placeholder="Search goal paths"
  />
  <div data-testid="intake-goal-library-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem", maxHeight:320, overflowY:"auto", paddingRight:"0.12rem", alignContent:"start" }}>
- {visibleGoalTemplates.map((template) => {
- const added = selectedGoalTextSet.has(String(template.goalText || "").toLowerCase());
- return (
- <button
- key={template.id}
- type="button"
- className="btn"
- data-testid={`intake-goal-template-${template.id}`}
- onClick={() => addPresetGoalToStack(template.id)}
- style={{
- textAlign:"left",
- borderColor: added ? "rgba(147,197,253,0.55)" : "#22324a",
- background: added ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.8)",
- padding:"0.75rem",
- display:"grid",
- gap:"0.18rem",
- }}
- >
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
- <div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
- <div style={{ fontSize:"0.44rem", color:added ? "#bfdbfe" : "#8fa5c8" }}>{added ? "Added" : "Add"}</div>
- </div>
- <div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
- </button>
- );
- })}
+{visibleGoalTemplates.map((template) => {
+const added = selectedGoalTextSet.has(String(template.goalText || "").toLowerCase());
+const selectedForDraft = String(pendingGoalSelection?.templateId || "").trim() === template.id;
+return (
+<button
+key={template.id}
+type="button"
+className="btn"
+data-testid={`intake-goal-template-${template.id}`}
+onClick={() => queueGoalSelection(buildGoalTemplateSelection({ templateId: template.id }))}
+disabled={added}
+style={{
+textAlign:"left",
+borderColor: selectedForDraft ? "rgba(0,194,255,0.38)" : added ? "rgba(147,197,253,0.55)" : "#22324a",
+background: selectedForDraft ? "linear-gradient(180deg, rgba(0,194,255,0.1), rgba(11,18,32,0.9))" : added ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.8)",
+padding:"0.75rem",
+display:"grid",
+gap:"0.18rem",
+opacity: added ? 0.82 : 1,
+}}
+>
+<div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
+<div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
+<div style={{ fontSize:"0.44rem", color:selectedForDraft ? "#b9ecff" : added ? "#bfdbfe" : "#8fa5c8" }}>{added ? "Added" : selectedForDraft ? "Selected" : "Select"}</div>
+</div>
+<div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
+</button>
+);
+})}
  {visibleGoalTemplates.length === 0 ? (
  <div style={{ border:"1px dashed rgba(111,148,198,0.18)", borderRadius:14, padding:"0.8rem", fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>
  No goal path matched that search yet. Write a custom goal only if none of these fit.

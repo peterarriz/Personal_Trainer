@@ -158,6 +158,22 @@ test("improve-big-lifts schema exposes numeric target and baseline fields on the
   );
 });
 
+test("improve-big-lifts starter metrics frame target numbers as user-entered inputs, not fake prefilled values", () => {
+  const questions = buildIntakeStarterMetricQuestions({
+    goalTypeId: "strength",
+    selection: buildGoalTemplateSelection({ templateId: "improve_big_lifts" }),
+  });
+
+  const targetQuestion = questions[0];
+  const targetLoadField = targetQuestion.inputFields.find((field) => field.key === "lift_target_weight");
+  const targetRepField = targetQuestion.inputFields.find((field) => field.key === "lift_target_reps");
+
+  assert.equal(targetLoadField?.placeholder, "Type your target load");
+  assert.match(targetLoadField?.helperText || "", /enter your own number here\. example: 225 lb\./i);
+  assert.equal(targetRepField?.placeholder, "Type target reps");
+  assert.match(targetRepField?.helperText || "", /enter your own rep target here\. example: 1 or 5\./i);
+});
+
 test("swim schema exposes structured distance, time, and access fields instead of one required free-text anchor", () => {
   const schema = buildIntakeStarterFieldSchema({
     goalTypeId: "endurance",

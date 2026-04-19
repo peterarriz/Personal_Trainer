@@ -558,8 +558,8 @@ const buildQuestionsForIntent = (selection = null) => {
           fieldKeys: ["lift_focus", "lift_target_weight", "lift_target_reps", "target_timeline"],
           inputFields: [
             choiceField("lift_focus", "Lift focus", "Pick the lift you want the plan to emphasize.", LIFT_FOCUS_OPTIONS, true),
-            numberField("lift_target_weight", "Target load", "225", "Use the number you want to reach for this lift.", true, "lb"),
-            numberField("lift_target_reps", "Target reps", "1", "Optional if the goal is a single.", false),
+            numberField("lift_target_weight", "Target load", "Type your target load", "Enter your own number here. Example: 225 lb.", true, "lb"),
+            numberField("lift_target_reps", "Target reps", "Type target reps", "Enter your own rep target here. Example: 1 or 5. Leave it blank only if the target is truly a single.", false),
             textField("target_timeline", "Time horizon", "July or in 12 weeks", "A rough horizon is enough.", true),
           ],
         }),

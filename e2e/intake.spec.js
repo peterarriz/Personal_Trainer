@@ -1,6 +1,7 @@
 const { test, expect } = require("@playwright/test");
 const {
   answerCurrentAnchor,
+  commitPendingGoalSelection,
   confirmIntakeBuild,
   completeAnchors,
   completeIntroQuestionnaire,
@@ -201,12 +202,21 @@ test.describe("intake onboarding e2e", () => {
 
     await page.getByTestId("intake-goal-type-strength").click();
     await page.getByTestId("intake-featured-goal-improve_big_lifts").click();
+    await expect(page.getByTestId("intake-selected-goals")).not.toContainText(/improve a big lift/i);
+    await expect(page.getByTestId("intake-goal-selection-draft")).toContainText(/improve a big lift/i);
+    await commitPendingGoalSelection(page);
+    await expect(page.getByTestId("intake-goal-metric-lift-target-weight")).toHaveAttribute("placeholder", "Type your target load");
+    await expect(page.getByTestId("intake-goal-metric-lift-target-reps")).toHaveAttribute("placeholder", "Type target reps");
     const goalLibraryVisible = await page.getByTestId("intake-goal-library-grid").isVisible().catch(() => false);
     if (!goalLibraryVisible) {
       await page.getByTestId("intake-goal-library-toggle").click();
     }
     await page.getByTestId("intake-goal-category-physique").click();
     await page.getByTestId("intake-goal-template-get_leaner").click();
+    await expect(page.getByTestId("intake-selected-goals")).not.toContainText("Get leaner");
+    await expect(page.getByTestId("intake-goal-selection-draft")).toContainText("Get leaner");
+    await expect(page.getByTestId("intake-goal-selection-commit")).toContainText(/add as another goal/i);
+    await commitPendingGoalSelection(page);
 
     await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
     await expect(page.getByTestId("intake-selected-goals")).toContainText("Get leaner");

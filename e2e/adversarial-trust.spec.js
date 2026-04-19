@@ -14,6 +14,7 @@ const {
   mockSupabaseRuntime,
 } = require("./auth-runtime-test-helpers.js");
 const {
+  commitPendingGoalSelection,
   confirmIntakeBuild,
   completeAnchors,
   completeIntroQuestionnaire,
@@ -169,6 +170,11 @@ const completeSwimOnboarding = async (page) => {
 const buildSevenGoalStackFromLibrary = async (page, { finishBuild = true } = {}) => {
   await gotoIntakeInLocalMode(page);
   await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+  const fullLibraryToggle = page.getByTestId("intake-goal-library-toggle");
+  if (await fullLibraryToggle.count()) {
+    await fullLibraryToggle.click();
+    await expect(page.getByTestId("intake-goal-library-grid")).toBeVisible();
+  }
 
   const categoryAliases = {
     running: "endurance",
@@ -198,6 +204,7 @@ const buildSevenGoalStackFromLibrary = async (page, { finishBuild = true } = {})
     const resolvedTemplateId = templateAliases[templateId] || templateId;
     await page.getByTestId(`intake-goal-category-${resolvedCategoryId}`).click();
     await page.getByTestId(`intake-goal-template-${resolvedTemplateId}`).click();
+    await commitPendingGoalSelection(page);
   }
 
   await page.getByTestId("intake-goals-option-experience-level-intermediate").click();
