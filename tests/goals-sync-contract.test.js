@@ -319,6 +319,55 @@ test("signup confirmation flow requests a redirect and can resend the confirmati
   assert.match(nextNotice, /confirmation email resent/i);
 });
 
+test("handleSignUp detects Supabase's already-registered obfuscated response and avoids the misleading check-your-email notice", async () => {
+  global.window = {
+    __SUPABASE_URL: "https://example.supabase.co",
+    __SUPABASE_ANON_KEY: "anon-key",
+  };
+
+  const module = createAuthStorageModule({
+    safeFetchWithTimeout: async (url) => {
+      if (/\/auth\/v1\/signup$/.test(url)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            user: {
+              id: "00000000-0000-0000-0000-000000000099",
+              email: "already@example.com",
+              identities: [],
+            },
+          }),
+          text: async () => "",
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => "" };
+    },
+    logDiag: noop,
+    mergePersonalization: (base, patch) => ({ ...(base || {}), ...(patch || {}) }),
+    normalizeGoals: (goals) => goals,
+    DEFAULT_PERSONALIZATION: {},
+    DEFAULT_MULTI_GOALS: [],
+  });
+
+  let nextNotice = "";
+  const result = await module.handleSignUp({
+    authEmail: "already@example.com",
+    authPassword: "secret-pass",
+    redirectTo: "https://forma.example.app/",
+    setAuthError: noop,
+    setAuthNotice: (value) => { nextNotice = value; },
+    setAuthSession: noop,
+  });
+
+  assert.equal(result?.ok, true);
+  assert.equal(result?.alreadyRegistered, true);
+  assert.equal(result?.needsEmailConfirmation, false);
+  assert.equal(result?.pendingConfirmationEmail, "");
+  assert.match(nextNotice, /already registered/i);
+  assert.doesNotMatch(nextNotice, /check your email/i);
+});
+
 test("handleSignUp surfaces a helpful message when Supabase blocks email delivery", async () => {
   global.window = {
     __SUPABASE_URL: "https://example.supabase.co",
