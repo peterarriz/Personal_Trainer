@@ -3,6 +3,7 @@ const {
   confirmIntakeBuild,
   completeAnchors,
   completeIntroQuestionnaire,
+  dismissAppleHealthPromptIfVisible,
   gotoIntakeInLocalMode,
   waitForReview,
   waitForPostOnboarding,
@@ -34,6 +35,7 @@ async function completeRunningOnboarding(page) {
   await waitForReview(page);
   await confirmIntakeBuild(page);
   await waitForPostOnboarding(page);
+  await dismissAppleHealthPromptIfVisible(page);
 }
 
 async function bootSignedInTodaySurface(page, {
@@ -273,6 +275,16 @@ test.describe("mobile surface simplification", () => {
     });
   });
 
+  test("today can force an outdoor session without leaving the screen", async ({ page }) => {
+    await bootSignedInTodaySurface(page);
+
+    await page.getByText("Adjust today", { exact: true }).click();
+    await page.getByRole("button", { name: "Make today outdoor" }).click();
+
+    await expect(page.getByRole("button", { name: "Outdoor session active" })).toBeVisible();
+    await expect(page.getByTestId("today-change-summary")).toContainText(/outdoor/i);
+  });
+
   test("canonical session label stays aligned across today, program, log, nutrition, and coach", async ({ page }) => {
     await completeRunningOnboarding(page);
 
@@ -366,6 +378,6 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("program-inline-repair")).toBeVisible();
     await expect(page.getByTestId("metrics-baselines-section")).toBeVisible();
     await expect(page.getByTestId("metrics-editor-environment")).toBeVisible();
-    await expect(page.getByText("Save missing inputs and carry-over details without leaving Program.")).toBeVisible();
+    await expect(page.getByText("Fix small plan gaps without leaving Program.")).toBeVisible();
   });
 });

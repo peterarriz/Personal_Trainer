@@ -48,10 +48,20 @@ import {
 } from "./services/nutrition-day-taxonomy-service.js";
 import { buildPlanArchetypeOverlay } from "./services/plan-generation/archetype-plan-generation-service.js";
 import {
- auditPlanArchetypeContract,
- enforcePlanArchetypeContract,
- resolvePlanArchetypeContract,
+  auditPlanArchetypeContract,
+  enforcePlanArchetypeContract,
+  resolvePlanArchetypeContract,
 } from "./services/plan-archetype-contract-service.js";
+import {
+  ADAPTIVE_POLICY_DECISION_POINTS,
+  scoreAdaptiveDecision,
+} from "./services/adaptive-policy-service.js";
+import {
+  resolveAdaptiveLearningScaffolding,
+} from "./services/adaptive-learning-scaffolding-service.js";
+import {
+  buildHybridAdaptiveContext,
+} from "./services/hybrid-adaptive-service.js";
 import { dedupeStrings } from "./utils/collection-utils.js";
 
 export { daysUntil, deriveCanonicalGoalProfileState, getActiveTimeBoundGoal, getGoalBuckets, inferGoalType, normalizeGoalObject, normalizeGoals };
@@ -411,6 +421,392 @@ const normalizeSessionEntryLabel = (session = null) => {
  ...session,
  label: resolveFriendlySessionLabel(session?.label || "", session),
  };
+};
+
+const getAdaptiveDecisionPointId = (entry = null) => entry?.id || "";
+
+const buildAdaptiveScheduleReliability = (inconsistencyRisk = "medium") => (
+  inconsistencyRisk === "high"
+    ? "fragile"
+    : inconsistencyRisk === "low"
+    ? "stable"
+    : "variable"
+);
+
+const buildAdaptiveWeeklyStressState = ({
+  lowEnergy = false,
+  highStress = false,
+  lowConfidence = false,
+} = {}) => (
+  lowEnergy || highStress || lowConfidence
+    ? "strained"
+    : "stable"
+);
+
+const buildAdaptivePolicyContext = ({
+  goals = [],
+  primary = null,
+  architecture = "",
+  planArchetypeOverlay = null,
+  trainingContext = null,
+  trainingDaysPerWeek = 0,
+  inconsistencyRisk = "medium",
+  activeIssueContext = null,
+  runningGoalActive = false,
+  strengthGoalActive = false,
+  strengthPriority = false,
+  hybridAthlete = false,
+  timeCrunched = false,
+  travelHeavy = false,
+  outdoorPreferred = false,
+  lowEnergy = false,
+  highStress = false,
+  lowConfidence = false,
+  reEntry = false,
+  cutbackWeek = false,
+  dayTemplates = {},
+  currentPhase = "",
+} = {}) => ({
+  ...(() => {
+    const safeGoals = Array.isArray(goals) ? goals : [];
+    const scheduleReliability = buildAdaptiveScheduleReliability(inconsistencyRisk);
+    const weeklyStressState = buildAdaptiveWeeklyStressState({ lowEnergy, highStress, lowConfidence });
+    const secondaryGoalCategories = safeGoals
+      .filter((goal) => goal?.active !== false)
+      .slice(1)
+      .map((goal) => String(goal?.category || "").trim())
+      .filter(Boolean);
+    const physiqueGoalActive = Boolean(
+      safeGoals.some((goal) => ["body_comp", "fat_loss", "appearance", "physique"].includes(String(goal?.category || "").toLowerCase()))
+    );
+    const hybridContext = buildHybridAdaptiveContext({
+      goals: safeGoals,
+      primaryGoalCategory: primary?.category || "",
+      secondaryGoalCategories,
+      architecture,
+      planArchetypeId: planArchetypeOverlay?.planArchetypeId || primary?.resolvedGoal?.planArchetypeId || "",
+      experienceLevel: trainingContext?.experienceLevel?.value || "",
+      scheduleReliability,
+      runningGoalActive,
+      strengthGoalActive,
+      physiqueGoalActive,
+      travelHeavy,
+      timeCrunched,
+      painSensitive: Boolean(activeIssueContext?.activeConstraints?.length),
+      weeklyStressState,
+      currentPhase,
+      dayTemplates,
+    });
+    return {
+      primaryGoalCategory: primary?.category || "general_fitness",
+      architecture,
+      planArchetypeId: planArchetypeOverlay?.planArchetypeId || primary?.resolvedGoal?.planArchetypeId || "",
+      experienceLevel: trainingContext?.experienceLevel?.value || "",
+      scheduleReliability,
+      environmentMode: trainingContext?.environment?.value || "",
+      equipmentAccess: trainingContext?.equipmentAccess?.value || "",
+      sessionDuration: trainingContext?.sessionDuration?.value || "",
+      trainingDaysPerWeek,
+      hybridAthlete,
+      travelHeavy,
+      timeCrunched,
+      painSensitive: Boolean(activeIssueContext?.activeConstraints?.length),
+      runningGoalActive,
+      strengthGoalActive,
+      physiqueGoalActive,
+      strengthOrPhysiqueGoalActive: Boolean(strengthGoalActive || physiqueGoalActive),
+      strengthPriority,
+      outdoorPreferred,
+      weeklyStressState,
+      reEntry,
+      cutbackWeek,
+      ...hybridContext,
+    };
+  })(),
+});
+
+const appendAdaptiveTrace = (collection = [], trace = null) => {
+  if (!trace) return Array.isArray(collection) ? collection : [];
+  return [...(Array.isArray(collection) ? collection : []), clonePlainValue(trace)];
+};
+
+const applyAdaptiveProgressionBand = ({
+  intent = {},
+  actionId = "",
+  architecture = "",
+} = {}) => {
+  const next = clonePlainValue(intent || {});
+  if (actionId === "conservative_band") {
+    if (next.aggressionLevel !== "rebuild") next.aggressionLevel = "controlled";
+    if (next.recoveryBias === "low") next.recoveryBias = "moderate";
+    if (next.volumeBias === "expanded") next.volumeBias = "baseline";
+    if (next.performanceBias === "high") next.performanceBias = "moderate";
+    return next;
+  }
+  if (actionId === "progressive_band") {
+    if (next.aggressionLevel !== "rebuild") next.aggressionLevel = "progressive";
+    if (next.recoveryBias === "moderate") next.recoveryBias = "low";
+    if (next.volumeBias === "baseline") next.volumeBias = "expanded";
+    if (["race_prep_dominant", "strength_dominant", "event_prep_upper_body_maintenance"].includes(architecture) && next.performanceBias !== "low") {
+      next.performanceBias = "high";
+    } else if (next.performanceBias === "low") {
+      next.performanceBias = "moderate";
+    }
+  }
+  return next;
+};
+
+const applyAdaptiveDeloadWindow = ({
+  intent = {},
+  actionId = "",
+} = {}) => {
+  const next = clonePlainValue(intent || {});
+  if (actionId !== "pull_forward_deload") return next;
+  next.adjusted = true;
+  next.status = "adjusted";
+  next.aggressionLevel = next.aggressionLevel === "rebuild" ? "rebuild" : "controlled";
+  next.recoveryBias = "high";
+  next.volumeBias = "reduced";
+  next.performanceBias = "low";
+  next.weeklyConstraints = dedupeStrings([
+    ...(next.weeklyConstraints || []),
+    "Recovery was pulled forward to protect adherence and consistency.",
+  ]);
+  return next;
+};
+
+const applyShortSeparateSessionFormat = (dayTemplates = {}) => Object.fromEntries(
+  Object.entries(dayTemplates || {}).map(([dayKey, session]) => {
+    if (!session || session?.type === "rest") return [dayKey, session];
+    const next = { ...session };
+    if (["run+strength", "strength+prehab"].includes(next.type)) {
+      next.strengthDose = "20-30 min concise strength";
+      next.optionalSecondary = "Optional: stop after the main work if the day is busy.";
+    } else if (next.type === "conditioning") {
+      next.label = "Low-Friction Conditioning";
+      next.fallback = "15-20 min simple conditioning, brisk walk, or bike";
+    }
+    return [dayKey, normalizeSessionEntryLabel(next)];
+  })
+);
+
+const applyHybridSessionFormatChoice = ({
+  dayTemplates = {},
+  actionId = "",
+  runningGoalActive = false,
+} = {}) => {
+  if (actionId === "favor_mixed_sessions") {
+    return applyStackedMixedSessions({
+      dayTemplates,
+      runningGoalActive,
+    });
+  }
+  if (actionId === "favor_short_split_sessions") {
+    return applyShortSeparateSessionFormat(dayTemplates);
+  }
+  return clonePlainValue(dayTemplates || {});
+};
+
+const buildAdaptiveRecoveryBuffer = (label = "Recovery / schedule buffer") => ({
+  type: "rest",
+  label,
+  nutri: NUTRITION_DAY_TYPES.recovery,
+  isRecoverySlot: true,
+});
+
+const applyStackedMixedSessions = ({
+  dayTemplates = {},
+  runningGoalActive = false,
+} = {}) => {
+  const next = clonePlainValue(dayTemplates || {});
+  const entries = Object.entries(next)
+    .map(([dayKey, session]) => ({ dayKey, session }))
+    .filter((entry) => entry.session && entry.session.type !== "rest");
+  const existingHybrid = entries.find((entry) => entry.session?.type === "run+strength");
+  const supportDay = entries.find((entry) => ["conditioning", "easy-run"].includes(String(entry.session?.type || "")) && entry.dayKey !== existingHybrid?.dayKey);
+  if (existingHybrid && supportDay) {
+    next[existingHybrid.dayKey] = normalizeSessionEntryLabel({
+      ...existingHybrid.session,
+      label: "Condensed Hybrid Session",
+      strengthDose: "20-30 min concise strength",
+      optionalSecondary: "Optional: end the session after the main work if time is tight.",
+    });
+    next[supportDay.dayKey] = buildAdaptiveRecoveryBuffer();
+    return next;
+  }
+  const strengthDay = entries.find((entry) => entry.session?.type === "strength+prehab");
+  const enduranceDay = entries.find((entry) => ["easy-run", "conditioning"].includes(String(entry.session?.type || "")) && entry.dayKey !== strengthDay?.dayKey);
+  if (!strengthDay || !enduranceDay) return next;
+  if (runningGoalActive && enduranceDay.session?.type === "easy-run") {
+    next[strengthDay.dayKey] = normalizeSessionEntryLabel({
+      ...strengthDay.session,
+      type: "run+strength",
+      label: "Condensed Run + Strength",
+      run: clonePlainValue(enduranceDay.session?.run || { t: "Easy", d: "20-25 min" }),
+      nutri: NUTRITION_DAY_TYPES.hybridSupport,
+      strengthDose: "20-30 min concise strength",
+      optionalSecondary: "Optional: finish after the main lifts if the day is packed.",
+    });
+  } else {
+    next[strengthDay.dayKey] = normalizeSessionEntryLabel({
+      ...strengthDay.session,
+      label: "Condensed Strength + Conditioning",
+      strengthDose: "20-30 min concise strength",
+      optionalSecondary: "Finish with 10-15 min easy conditioning only if time allows.",
+    });
+  }
+  next[enduranceDay.dayKey] = buildAdaptiveRecoveryBuffer();
+  return next;
+};
+
+const applyTravelSubstitutionSet = ({
+  dayTemplates = {},
+  actionId = "",
+} = {}) => Object.fromEntries(
+  Object.entries(dayTemplates || {}).map(([dayKey, session]) => {
+    if (!session || session?.type === "rest" || actionId === "default_substitutions") {
+      return [dayKey, session];
+    }
+    const next = { ...session };
+    if (actionId === "hotel_gym_substitutions") {
+      if (isRunSessionType(next?.type) || next?.type === "conditioning") {
+        return [dayKey, buildConditioningSession({
+          label: "Hotel Gym Conditioning",
+          detail: "20-30 min treadmill, bike, rower, or incline walk",
+          lowImpact: !/hard-run/.test(String(next?.type || "")),
+        })];
+      }
+      if (/strength/.test(String(next?.type || ""))) {
+        next.label = "Hotel Gym Strength";
+        next.strengthDose = "25-35 min dumbbell or machine strength";
+      }
+      return [dayKey, normalizeSessionEntryLabel(next)];
+    }
+    if (actionId === "outdoor_endurance_substitutions") {
+      if (isRunSessionType(next?.type)) {
+        next.label = `Outdoor ${sanitizeText(next.label || "Endurance session", 120)}`;
+        next.optionalSecondary = "Take this outside for an easy walk, run, or hill session.";
+        return [dayKey, normalizeSessionEntryLabel(next)];
+      }
+      if (/strength/.test(String(next?.type || ""))) {
+        next.label = "Outdoor Strength Circuit";
+        next.strengthDose = "20-30 min bodyweight, band, or park-bench circuit";
+        next.optionalSecondary = "Use a walk or easy jog as the warm-up and cooldown.";
+        return [dayKey, normalizeSessionEntryLabel(next)];
+      }
+      return [dayKey, buildConditioningSession({
+        label: "Outdoor Conditioning",
+        detail: "20-30 min brisk walk, easy run, hill walk, or outdoor circuit",
+        lowImpact: true,
+      })];
+    }
+    if (actionId === "minimal_equipment_substitutions") {
+      if (/strength/.test(String(next?.type || ""))) {
+        next.label = "Minimal-Equipment Strength Circuit";
+        next.strengthDose = "20-30 min bodyweight, band, or single-dumbbell work";
+        next.optionalSecondary = "Keep transitions tight and stop at the minimum effective work.";
+        return [dayKey, normalizeSessionEntryLabel(next)];
+      }
+      if (next?.type === "conditioning") {
+        return [dayKey, buildConditioningSession({
+          label: "Minimal-Equipment Conditioning",
+          detail: "15-25 min walk, jog, jump-rope, or simple interval circuit",
+          lowImpact: true,
+        })];
+      }
+      return [dayKey, normalizeSessionEntryLabel(next)];
+    }
+    return [dayKey, normalizeSessionEntryLabel(next)];
+  })
+);
+
+const applyHybridBalanceTemplate = ({
+  dayTemplates = {},
+  actionId = "",
+} = {}) => {
+  const next = clonePlainValue(dayTemplates || {});
+  if (actionId === "run_supportive_hybrid") {
+    if (next[1] && next[1].type === "run+strength") {
+      next[1] = normalizeSessionEntryLabel({
+        ...next[1],
+        label: "Key Run + Light Strength Finish",
+        strengthDose: "15-20 min upper-body and trunk strength",
+        optionalSecondary: "Keep lower-body load light so the key run still lands cleanly.",
+      });
+    }
+    if (next[3] && /strength/.test(String(next[3]?.type || ""))) {
+      next[3] = normalizeSessionEntryLabel({
+        ...next[3],
+        label: "Strength Support (Upper-Body Bias)",
+        strengthDose: "20-30 min upper-body and trunk strength",
+        optionalSecondary: "Keep lower-body work light before the next key run.",
+      });
+    }
+    if (next[2] && next[2].type === "conditioning") {
+      next[2] = normalizeSessionEntryLabel({
+        type: "easy-run",
+        label: "Easy Endurance Support",
+        run: { t: "Easy", d: "20-30 min zone-2" },
+        nutri: NUTRITION_DAY_TYPES.runEasy,
+        optionalSecondary: "Optional: 5 min mobility reset after the run.",
+      });
+    }
+    if (next[5] && /strength/.test(String(next[5]?.type || ""))) {
+      next[5] = normalizeSessionEntryLabel({
+        ...next[5],
+        label: "Strength Maintenance",
+        strengthDose: "20-30 min maintenance strength",
+      });
+    }
+    return next;
+  }
+  if (actionId === "strength_supportive_hybrid") {
+    if (next[2]) {
+      next[2] = normalizeSessionEntryLabel({
+        type: "strength+prehab",
+        label: "Strength + Conditioning Primer",
+        strSess: "A",
+        nutri: NUTRITION_DAY_TYPES.hybridSupport,
+        strengthDose: "25-35 min strength",
+        optionalSecondary: "Optional: 10 min easy aerobic finish.",
+      });
+    }
+    if (next[4] && next[4].type === "hard-run") {
+      next[4] = normalizeSessionEntryLabel({
+        ...next[4],
+        label: "Supportive Quality Run",
+        run: { ...(next[4].run || {}), d: "15-20 min controlled quality" },
+        optionalSecondary: "Keep the run crisp without turning it into a second weekly peak.",
+      });
+    }
+    if (next[6] && isRunSessionType(next[6]?.type)) {
+      next[6] = normalizeSessionEntryLabel({
+        ...next[6],
+        label: "Supportive Endurance (Short)",
+        run: { ...(next[6].run || {}), d: "15-20 min easy" },
+      });
+    }
+  }
+  return next;
+};
+
+const applyHybridDeloadWindow = ({
+  intent = {},
+  actionId = "",
+} = {}) => {
+  const next = clonePlainValue(intent || {});
+  if (actionId !== "pull_forward_hybrid_deload") return next;
+  next.adjusted = true;
+  next.status = "adjusted";
+  next.aggressionLevel = next.aggressionLevel === "rebuild" ? "rebuild" : "controlled";
+  next.recoveryBias = "high";
+  next.volumeBias = "reduced";
+  next.performanceBias = "low";
+  next.weeklyConstraints = dedupeStrings([
+    ...(next.weeklyConstraints || []),
+    "Hybrid load is stepping down early so the run and lift peaks do not stack at the same time.",
+  ]);
+  return next;
 };
 
 const resolveResolvedGoalDescriptor = ({ goal = null, resolvedGoal = null, fallbackCategory = "" } = {}) => {
@@ -1412,6 +1808,7 @@ export const deriveWeeklyIntent = ({
  failureMode = {},
  environmentSelection = null,
  constraints = [],
+  adaptivePolicy = null,
 } = {}) => {
  const { active } = getGoalBuckets(goals);
  const primaryGoal = active[0] || null;
@@ -1492,6 +1889,79 @@ export const deriveWeeklyIntent = ({
  else if (["race_prep_dominant", "strength_dominant", "event_prep_upper_body_maintenance"].includes(architecture) && aggressionLevel === "progressive") performanceBias = "high";
  if (adaptationHints?.performanceBiasHint) performanceBias = adaptationHints.performanceBiasHint;
 
+  const adaptivePolicyTraces = [];
+  const adaptivePolicyRuntime = adaptivePolicy?.runtime || programContext?.adaptivePolicyRuntime || null;
+  const adaptivePolicyContext = {
+    ...(adaptivePolicy?.context || programContext?.adaptivePolicyContext || {}),
+    weeklyStressState: buildAdaptiveWeeklyStressState({ lowEnergy, highStress, lowConfidence }),
+    reEntry,
+    cutbackWeek: cutback,
+  };
+  const progressionDecision = scoreAdaptiveDecision({
+    decisionPointId: getAdaptiveDecisionPointId(ADAPTIVE_POLICY_DECISION_POINTS.progressionAggressivenessBand),
+    defaultActionId: aggressionLevel === "progressive"
+      ? "progressive_band"
+      : aggressionLevel === "steady"
+      ? "default_band"
+      : "conservative_band",
+    candidateActionIds: ["default_band", "conservative_band", "progressive_band"],
+    context: adaptivePolicyContext,
+    runtime: adaptivePolicyRuntime,
+    excludedCandidates: {
+      progressive_band: chaotic
+        || reEntry
+        || cutback
+        || lowEnergy
+        || highStress
+        || lowConfidence
+        || normalizedProgramBlock?.recoveryPosture?.level === "protective"
+        ? "safety_constraints_active"
+        : "",
+    },
+  });
+  adaptivePolicyTraces.push(progressionDecision);
+  ({ aggressionLevel, recoveryBias, volumeBias, performanceBias } = applyAdaptiveProgressionBand({
+    intent: { aggressionLevel, recoveryBias, volumeBias, performanceBias },
+    actionId: progressionDecision.chosenActionId,
+    architecture,
+  }));
+  const deloadDecision = scoreAdaptiveDecision({
+    decisionPointId: getAdaptiveDecisionPointId(ADAPTIVE_POLICY_DECISION_POINTS.deloadTimingWindow),
+    defaultActionId: "keep_current_window",
+    candidateActionIds: ["keep_current_window", "pull_forward_deload"],
+    context: adaptivePolicyContext,
+    runtime: adaptivePolicyRuntime,
+    excludedCandidates: {
+      pull_forward_deload: cutback || reEntry || recoveryBias === "high" || volumeBias === "reduced"
+        ? "already_in_protective_window"
+        : "",
+    },
+  });
+  adaptivePolicyTraces.push(deloadDecision);
+  const deloadAdjustedIntent = applyAdaptiveDeloadWindow({
+    intent: { aggressionLevel, recoveryBias, volumeBias, performanceBias, weeklyConstraints: [] },
+    actionId: deloadDecision.chosenActionId,
+  });
+  ({ aggressionLevel, recoveryBias, volumeBias, performanceBias } = deloadAdjustedIntent);
+  const hybridDeloadDecision = scoreAdaptiveDecision({
+    decisionPointId: getAdaptiveDecisionPointId(ADAPTIVE_POLICY_DECISION_POINTS.hybridDeloadTimingWindow),
+    defaultActionId: "keep_current_window",
+    candidateActionIds: ["keep_current_window", "pull_forward_hybrid_deload"],
+    context: adaptivePolicyContext,
+    runtime: adaptivePolicyRuntime,
+    excludedCandidates: {
+      pull_forward_hybrid_deload: !adaptivePolicyContext?.hybridMeaningful || cutback || reEntry || recoveryBias === "high" || volumeBias === "reduced"
+        ? "hybrid_context_required"
+        : "",
+    },
+  });
+  adaptivePolicyTraces.push(hybridDeloadDecision);
+  const hybridDeloadAdjustedIntent = applyHybridDeloadWindow({
+    intent: { aggressionLevel, recoveryBias, volumeBias, performanceBias, weeklyConstraints: deloadAdjustedIntent?.weeklyConstraints || [] },
+    actionId: hybridDeloadDecision.chosenActionId,
+  });
+  ({ aggressionLevel, recoveryBias, volumeBias, performanceBias } = hybridDeloadAdjustedIntent);
+
  const focus = resolveWeeklyFocusLabel({
  architecture,
  dominantCategory: normalizedProgramBlock?.dominantEmphasis?.category || primaryGoal?.category || "",
@@ -1506,17 +1976,18 @@ export const deriveWeeklyIntent = ({
  || weekTemplate?.label
  || "Consistency and execution";
  const primaryCategory = primaryGoal?.category || "general_fitness";
- const weeklyConstraints = dedupeStrings([
+  const weeklyConstraints = dedupeStrings([
  ...(normalizedProgramBlock?.constraints || []),
- ...(normalizedProgramBlock?.tradeoffs || []),
- ...(constraints || []),
- weekTemplate?.cutback ? "Cutback week" : "",
+  ...(normalizedProgramBlock?.tradeoffs || []),
+  ...(constraints || []),
+  weekTemplate?.cutback ? "Cutback week" : "",
  chaotic ? "Salvage mode is active this week" : "",
  reEntry ? "Re-entry week: protect momentum first" : "",
  weeklyCheckin?.blocker ? `Weekly blocker: ${String(weeklyCheckin.blocker).replace(/_/g, " ")}` : "",
  environmentSelection?.scope === "week" ? `${String(environmentSelection?.mode || "custom").replace(/_/g, " ")} environment this week` : "",
- volumePct !== 100 ? `Volume set to ${volumePct}%` : "",
- ...(adaptationHints?.weeklyConstraints || []),
+  volumePct !== 100 ? `Volume set to ${volumePct}%` : "",
+  ...(hybridDeloadAdjustedIntent?.weeklyConstraints || deloadAdjustedIntent?.weeklyConstraints || []),
+  ...(adaptationHints?.weeklyConstraints || []),
  preferenceAdjusted ? buildPreferenceEffectLine(trainingPreferencePolicy) : "",
  ]);
  const nutritionEmphasis = recoveryBias === "high"
@@ -1567,11 +2038,14 @@ export const deriveWeeklyIntent = ({
  : planningBasis?.activeStyleName
  ? `${planningBasis.activeStyleName} is shaping the feel of the week.`
  : "";
- const rationaleWithBasis = [basisLead, rationaleWithPriorityExplanation].filter(Boolean).join(" ").trim();
- const changeSummary = clonePlainValue(adaptationState?.changeSummary || null);
- const rationaleWithChange = [rationaleWithBasis, changeSummary?.headline, changeSummary?.preserved].filter(Boolean).join(" ").trim();
+  const rationaleWithBasis = [basisLead, rationaleWithPriorityExplanation].filter(Boolean).join(" ").trim();
+  const changeSummary = clonePlainValue(adaptationState?.changeSummary || null);
+  const rationaleWithChange = [rationaleWithBasis, changeSummary?.headline, changeSummary?.preserved].filter(Boolean).join(" ").trim();
+  const adaptivePolicySummary = adaptivePolicyTraces.find((trace) => trace?.usedAdaptiveChoice)?.explanation
+    || adaptivePolicyTraces.find((trace) => trace?.fallbackReason === "shadow_mode")?.explanation
+    || "";
 
- return {
+  return {
  id: `weekly_intent_${weekNumber}`,
  weekNumber,
  programBlockId: normalizedProgramBlock?.id || "",
@@ -1607,10 +2081,12 @@ export const deriveWeeklyIntent = ({
  preferenceAdjusted ? sanitizeText(trainingPreferencePolicy?.label || "", 60) : "",
  ]),
  blockTradeoffs: clonePlainValue(normalizedProgramBlock?.tradeoffs || []),
- rationale: rationaleWithChange,
- changeSummary,
- trainingPreferencePolicy: clonePlainValue(trainingPreferencePolicy || null),
- };
+  rationale: rationaleWithChange,
+  changeSummary,
+  trainingPreferencePolicy: clonePlainValue(trainingPreferencePolicy || null),
+  adaptivePolicySummary,
+  adaptivePolicyTraces: clonePlainValue(adaptivePolicyTraces),
+  };
 };
 
 export const buildPlanWeek = ({
@@ -1637,6 +2113,7 @@ export const buildPlanWeek = ({
  failureMode = {},
  environmentSelection = null,
  constraints = [],
+  adaptivePolicy = null,
 } = {}) => {
  const hasCanonicalSessionPattern = Boolean(sessionsByDay && Object.keys(sessionsByDay || {}).length);
  const planningBasis = clonePlainValue(programContext?.planningBasis || null);
@@ -1668,8 +2145,16 @@ export const buildPlanWeek = ({
  blockIntent,
  constraints,
  });
- const compatibilityBlockIntent = blockIntent || buildProgramBlockCompatibilityIntent(normalizedProgramBlock);
- const weeklyIntent = deriveWeeklyIntent({
+  const resolvedAdaptivePolicy = adaptivePolicy || (
+    programContext?.adaptivePolicyRuntime || programContext?.adaptivePolicyContext
+      ? {
+        runtime: clonePlainValue(programContext?.adaptivePolicyRuntime || null),
+        context: clonePlainValue(programContext?.adaptivePolicyContext || null),
+      }
+      : null
+  );
+  const compatibilityBlockIntent = blockIntent || buildProgramBlockCompatibilityIntent(normalizedProgramBlock);
+  const weeklyIntent = deriveWeeklyIntent({
  weekNumber,
  weekTemplate: template,
  weekTemplates,
@@ -1682,10 +2167,11 @@ export const buildPlanWeek = ({
  learningLayer,
  weeklyCheckin,
  coachPlanAdjustments,
- failureMode,
- environmentSelection,
- constraints,
- });
+  failureMode,
+  environmentSelection,
+  constraints,
+  adaptivePolicy: resolvedAdaptivePolicy,
+  });
  const sessionSource = hasCanonicalSessionPattern
  ? normalizeRunSignature(referenceTemplate?.mon || null) === normalizeRunSignature(template?.mon || null)
  && normalizeRunSignature(referenceTemplate?.thu || null) === normalizeRunSignature(template?.thu || null)
@@ -1723,8 +2209,10 @@ export const buildPlanWeek = ({
  changeSummary: clonePlainValue(weeklyIntent.changeSummary || null),
  planningBasis,
  drivers: clonePlainValue(weeklyIntent.drivers || []),
- rationale: weeklyIntent.rationale,
- sessionsByDay: normalizedSessions,
+  rationale: weeklyIntent.rationale,
+  adaptivePolicySummary: weeklyIntent.adaptivePolicySummary || "",
+  adaptivePolicyTraces: clonePlainValue(weeklyIntent.adaptivePolicyTraces || []),
+  sessionsByDay: normalizedSessions,
  template: clonePlainValue(template || {}),
  summary: weeklyIntent.rationale,
  constraints: clonePlainValue(weeklyIntent.weeklyConstraints || []),
@@ -2175,6 +2663,8 @@ export const composeGoalNativePlan = ({
  currentDayOfWeek = null,
  plannedDayRecords = {},
  planWeekRecords = {},
+  adaptivePolicyConfig = null,
+  adaptivePolicyEvidence = null,
 }) => {
  const { active } = getGoalBuckets(goals);
  const primary = active[0] || null;
@@ -2190,9 +2680,19 @@ export const composeGoalNativePlan = ({
  const strengthGoal = active.find(g => g.category === "strength");
  const bodyCompGoal = active.find(g => g.category === "body_comp");
  const hasRunningGoal = Boolean(runningGoal);
- const raceNear = daysUntil(runningGoal?.targetDate) <= 56;
- const inconsistencyRisk = momentum?.inconsistencyRisk || "medium";
- const lowBandwidth = inconsistencyRisk === "high" || learningLayer?.adjustmentBias === "simplify";
+ const primaryResolvedGoal = primary?.resolvedGoal || null;
+ const preservesRunLaneDespiteStrengthPriority = Boolean(
+  primaryResolvedGoal
+  && (
+   String(primaryResolvedGoal?.goalFamily || "").toLowerCase() === "hybrid"
+   || String(primaryResolvedGoal?.goalDiscoveryFamilyId || "").toLowerCase() === "hybrid"
+   || String(primaryResolvedGoal?.planArchetypeFamily || "").toLowerCase() === "hybrid"
+   || /run_lift|strength_conditioning_balanced|aesthetic_endurance|sport_support/i.test(String(primaryResolvedGoal?.planArchetypeId || ""))
+  )
+ );
+  const raceNear = daysUntil(runningGoal?.targetDate) <= 56;
+  const inconsistencyRisk = momentum?.inconsistencyRisk || "medium";
+  const lowBandwidth = inconsistencyRisk === "high" || learningLayer?.adjustmentBias === "simplify";
  const strengthPriority = primary?.category === "strength" && !lowBandwidth;
  const bodyCompActive = !!bodyCompGoal;
  const resolvedGoals = active.map((goal) => goal?.resolvedGoal).filter(Boolean);
@@ -2202,11 +2702,31 @@ export const composeGoalNativePlan = ({
  secondaryGoals: secondary,
  baseWeek,
  });
- const trainingPreferencePolicy = resolveTrainingPreferencePolicy({
- trainingContext,
- personalization,
- });
- const safeTodayKey = sanitizeText(todayKey || new Date().toISOString().split("T")[0], 24);
+  const trainingPreferencePolicy = resolveTrainingPreferencePolicy({
+  trainingContext,
+  personalization,
+  });
+  const trainingDaysPerWeek = Number(personalization?.userGoalProfile?.days_per_week || personalization?.canonicalAthlete?.userProfile?.daysPerWeek || 0);
+  const sessionDurationValue = trainingContext?.sessionDuration?.confirmed ? trainingContext.sessionDuration.value : "";
+  const timeCrunched = lowBandwidth || ["20", "30", TRAINING_SESSION_DURATION_VALUES.min20, TRAINING_SESSION_DURATION_VALUES.min30].includes(String(sessionDurationValue || "")) || (trainingDaysPerWeek > 0 && trainingDaysPerWeek <= 3);
+  const travelState = personalization?.travelState || {};
+  const travelHeavy = Boolean(travelState?.isTravelWeek) || ["travel", "variable"].includes(String(env || "").toLowerCase());
+  const outdoorPreferred = String(env || "").toLowerCase() === "outdoor" || String(travelState?.environmentMode || "").toLowerCase() === "outdoor";
+  const hybridAthlete = Boolean(
+    (primaryResolvedGoal && (
+      String(primaryResolvedGoal?.goalFamily || "").toLowerCase() === "hybrid"
+      || String(primaryResolvedGoal?.goalDiscoveryFamilyId || "").toLowerCase() === "hybrid"
+      || String(primaryResolvedGoal?.planArchetypeFamily || "").toLowerCase() === "hybrid"
+    ))
+    || (hasRunningGoal && Boolean(strengthGoal))
+  );
+  const adaptivePolicyRuntime = resolveAdaptiveLearningScaffolding({
+    personalization,
+    adaptiveLearningConfig: personalization?.settings?.adaptiveLearning || personalization?.adaptiveLearning || null,
+    adaptivePolicyConfig,
+    adaptivePolicyEvidence,
+  }).policyRuntime;
+  const safeTodayKey = sanitizeText(todayKey || new Date().toISOString().split("T")[0], 24);
  const safeCurrentDayOfWeek = Number.isInteger(currentDayOfWeek)
  ? currentDayOfWeek
  : new Date(`${safeTodayKey}T12:00:00`).getDay();
@@ -2451,13 +2971,112 @@ export const composeGoalNativePlan = ({
  bodyweights,
  logs,
  });
- const baselineOverlay = applyPlanningBaselineInfluence({
- dayTemplates: annotatedTemplates,
- influence: baselineInfluence,
- });
- annotatedTemplates = baselineOverlay?.dayTemplates || annotatedTemplates;
- const adaptationState = buildDynamicAdaptationState({
- dayTemplates: annotatedTemplates,
+  const baselineOverlay = applyPlanningBaselineInfluence({
+  dayTemplates: annotatedTemplates,
+  influence: baselineInfluence,
+  });
+  annotatedTemplates = baselineOverlay?.dayTemplates || annotatedTemplates;
+  const adaptivePolicyContext = buildAdaptivePolicyContext({
+    goals: active,
+    primary,
+    architecture: effectiveArchitecture,
+    planArchetypeOverlay,
+    trainingContext,
+    trainingDaysPerWeek,
+    inconsistencyRisk,
+    activeIssueContext,
+    runningGoalActive: hasRunningGoal,
+    strengthGoalActive: Boolean(strengthGoal),
+    strengthPriority,
+    hybridAthlete,
+    timeCrunched,
+    travelHeavy,
+    outdoorPreferred,
+    dayTemplates: annotatedTemplates,
+    currentPhase: baseWeek?.phase || "",
+  });
+  const adaptivePolicyTraces = [];
+  const timeCrunchedDecision = scoreAdaptiveDecision({
+    decisionPointId: getAdaptiveDecisionPointId(ADAPTIVE_POLICY_DECISION_POINTS.timeCrunchedSessionFormatChoice),
+    defaultActionId: "default_structure",
+    candidateActionIds: ["default_structure", "stacked_mixed_sessions", "short_separate_sessions"],
+    context: adaptivePolicyContext,
+    runtime: adaptivePolicyRuntime,
+    excludedCandidates: {
+      stacked_mixed_sessions: !timeCrunched ? "time_crunched_context_required" : "",
+      short_separate_sessions: !timeCrunched ? "time_crunched_context_required" : "",
+    },
+  });
+  adaptivePolicyTraces.push(timeCrunchedDecision);
+  if (timeCrunchedDecision.chosenActionId === "stacked_mixed_sessions") {
+    annotatedTemplates = applyStackedMixedSessions({
+      dayTemplates: annotatedTemplates,
+      runningGoalActive: hasRunningGoal,
+    });
+  } else if (timeCrunchedDecision.chosenActionId === "short_separate_sessions") {
+    annotatedTemplates = applyShortSeparateSessionFormat(annotatedTemplates);
+  }
+  const hybridSessionFormatDecision = scoreAdaptiveDecision({
+    decisionPointId: getAdaptiveDecisionPointId(ADAPTIVE_POLICY_DECISION_POINTS.hybridSessionFormatChoice),
+    defaultActionId: "keep_current_structure",
+    candidateActionIds: ["keep_current_structure", "favor_mixed_sessions", "favor_short_split_sessions"],
+    context: adaptivePolicyContext,
+    runtime: adaptivePolicyRuntime,
+    excludedCandidates: {
+      favor_mixed_sessions: !adaptivePolicyContext.hybridMeaningful || (!timeCrunched && trainingDaysPerWeek > 4)
+        ? "hybrid_context_required"
+        : "",
+      favor_short_split_sessions: !adaptivePolicyContext.hybridMeaningful
+        || (!timeCrunched && !adaptivePolicyContext.hybridInconsistentSchedule && !adaptivePolicyContext.hybridTravelHeavy)
+        ? "hybrid_context_required"
+        : "",
+    },
+  });
+  adaptivePolicyTraces.push(hybridSessionFormatDecision);
+  if (adaptivePolicyContext.hybridMeaningful) {
+    annotatedTemplates = applyHybridSessionFormatChoice({
+      dayTemplates: annotatedTemplates,
+      actionId: hybridSessionFormatDecision.chosenActionId,
+      runningGoalActive: hasRunningGoal,
+    });
+  }
+  const travelSubstitutionDecision = scoreAdaptiveDecision({
+    decisionPointId: getAdaptiveDecisionPointId(ADAPTIVE_POLICY_DECISION_POINTS.travelSubstitutionSet),
+    defaultActionId: "default_substitutions",
+    candidateActionIds: ["default_substitutions", "hotel_gym_substitutions", "outdoor_endurance_substitutions", "minimal_equipment_substitutions"],
+    context: adaptivePolicyContext,
+    runtime: adaptivePolicyRuntime,
+    excludedCandidates: {
+      hotel_gym_substitutions: !travelHeavy || !hasGym ? "hotel_gym_context_required" : "",
+      outdoor_endurance_substitutions: !travelHeavy && !outdoorPreferred ? "outdoor_context_required" : "",
+      minimal_equipment_substitutions: !travelHeavy || hasGym ? "minimal_equipment_context_required" : "",
+    },
+  });
+  adaptivePolicyTraces.push(travelSubstitutionDecision);
+  annotatedTemplates = applyTravelSubstitutionSet({
+    dayTemplates: annotatedTemplates,
+    actionId: travelSubstitutionDecision.chosenActionId,
+  });
+  const hybridBalanceDecision = scoreAdaptiveDecision({
+    decisionPointId: getAdaptiveDecisionPointId(ADAPTIVE_POLICY_DECISION_POINTS.hybridRunLiftBalanceTemplate),
+    defaultActionId: "balanced_hybrid",
+    candidateActionIds: ["balanced_hybrid", "run_supportive_hybrid", "strength_supportive_hybrid"],
+    context: adaptivePolicyContext,
+    runtime: adaptivePolicyRuntime,
+    excludedCandidates: {
+      run_supportive_hybrid: effectiveArchitecture !== "hybrid_performance" || !adaptivePolicyContext.hybridMeaningful || !hasRunningGoal || !adaptivePolicyContext.strengthOrPhysiqueGoalActive ? "hybrid_context_required" : "",
+      strength_supportive_hybrid: effectiveArchitecture !== "hybrid_performance" || !adaptivePolicyContext.hybridMeaningful || !hasRunningGoal || !adaptivePolicyContext.strengthOrPhysiqueGoalActive ? "hybrid_context_required" : "",
+    },
+  });
+  adaptivePolicyTraces.push(hybridBalanceDecision);
+  if (effectiveArchitecture === "hybrid_performance") {
+    annotatedTemplates = applyHybridBalanceTemplate({
+      dayTemplates: annotatedTemplates,
+      actionId: hybridBalanceDecision.chosenActionId,
+    });
+  }
+  const adaptationState = buildDynamicAdaptationState({
+  dayTemplates: annotatedTemplates,
  todayKey: safeTodayKey,
  currentDayOfWeek: safeCurrentDayOfWeek,
  logs,
@@ -2474,7 +3093,7 @@ annotatedTemplates = adaptationState?.adaptedDayTemplates || annotatedTemplates;
 annotatedTemplates = Object.fromEntries(
   Object.entries(annotatedTemplates || {}).map(([day, session]) => [day, session ? normalizeSessionEntryLabel(session) : session])
 );
-if (!hasRunningGoal && primary?.category === "strength") {
+if (!hasRunningGoal && primary?.category === "strength" && !preservesRunLaneDespiteStrengthPriority) {
   annotatedTemplates = Object.fromEntries(
     Object.entries(annotatedTemplates || {}).map(([day, session]) => [day, convertRunSessionForStrengthFirstPlan(session)])
   );
@@ -2572,13 +3191,16 @@ const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
  goalCapabilityStack: clonePlainValue(domainSelection?.capabilityStack || null),
  domainAdapter: clonePlainValue(domainAdapter || null),
  trainingPreferencePolicy: clonePlainValue(trainingPreferencePolicy || null),
- adaptationState: clonePlainValue(adaptationState || null),
- supportTier: clonePlainValue(supportTier || null),
- baselineInfluence: clonePlainValue(baselineInfluence || null),
- planArchetypeOverlay: clonePlainValue(planArchetypeOverlay || null),
- planContract: clonePlainValue(planContract || null),
- planContractAudit: clonePlainValue(planContractAudit || null),
- };
+  adaptationState: clonePlainValue(adaptationState || null),
+  supportTier: clonePlainValue(supportTier || null),
+  baselineInfluence: clonePlainValue(baselineInfluence || null),
+  planArchetypeOverlay: clonePlainValue(planArchetypeOverlay || null),
+  planContract: clonePlainValue(planContract || null),
+  planContractAudit: clonePlainValue(planContractAudit || null),
+  adaptivePolicyRuntime: clonePlainValue(adaptivePolicyRuntime || null),
+  adaptivePolicyContext: clonePlainValue(adaptivePolicyContext || null),
+  adaptivePolicyTraces: clonePlainValue(adaptivePolicyTraces || []),
+  };
  const programBlock = buildProgramBlock({
  weekNumber: currentWeek,
  weekTemplate: baseWeek,
@@ -2614,11 +3236,14 @@ const scheduleLimitedTemplates = limitDayTemplatesToScheduleReality({
  supportTier: clonePlainValue(supportTier || null),
  baselineInfluence: clonePlainValue(baselineInfluence || null),
  trainingPreferencePolicy: clonePlainValue(trainingPreferencePolicy || null),
- adaptationState: clonePlainValue(adaptationState || null),
- planArchetypeOverlay: clonePlainValue(planArchetypeOverlay || null),
- planContract: clonePlainValue(planContract || null),
- planContractAudit: clonePlainValue(planContractAudit || null),
- changeSummary: clonePlainValue(adaptationState?.changeSummary || null),
+  adaptationState: clonePlainValue(adaptationState || null),
+  planArchetypeOverlay: clonePlainValue(planArchetypeOverlay || null),
+  planContract: clonePlainValue(planContract || null),
+  planContractAudit: clonePlainValue(planContractAudit || null),
+  adaptivePolicyRuntime: clonePlainValue(adaptivePolicyRuntime || null),
+  adaptivePolicyContext: clonePlainValue(adaptivePolicyContext || null),
+  adaptivePolicyTraces: clonePlainValue(adaptivePolicyTraces || []),
+  changeSummary: clonePlainValue(adaptationState?.changeSummary || null),
  activeProgramInstance: liveProgramPlanning?.activeProgramInstance || null,
  activeStyleSelection: liveProgramPlanning?.activeStyleSelection || null,
  programDefinition: liveProgramPlanning?.programDefinition || null,

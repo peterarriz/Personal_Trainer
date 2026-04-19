@@ -47,6 +47,8 @@ const pdfDir = path.join(outputDir, "pdf");
 const notesPath = path.join(outputDir, "notes.md");
 const worksheetPath = path.join(outputDir, "manual-qa-run.md");
 const packDocPath = path.resolve(repoRoot, "docs", "MANUAL_QA_RELEASE_PACK.md");
+const adaptiveShadowArtifactsDir = path.resolve(repoRoot, "artifacts", "adaptive-policy-shadow-evaluation");
+const adaptiveLaunchArtifactsDir = path.resolve(repoRoot, "artifacts", "adaptive-launch-readiness");
 
 fs.mkdirSync(screenshotsDir, { recursive: true });
 fs.mkdirSync(videosDir, { recursive: true });
@@ -160,6 +162,23 @@ ${renderTable(["Scenario", "User story", "Status", "Artifacts", "Notes"], matrix
 
 ${renderTable(["Gate", "Requirement", "Evidence type", "Status", "Notes"], releaseGateRows)}
 
+## Adaptive Rollout Safety
+
+Use this as a launch-safety check only. It is acceptable for consumer launch if adaptive remains off or shadow-only and the gate recommends \`keep_in_shadow\`.
+
+- Last shadow-eval artifacts: ${adaptiveShadowArtifactsDir}
+- Last adaptive launch-readiness artifacts: ${adaptiveLaunchArtifactsDir}
+- Recommended commands:
+  1. npm run qa:adaptive-policy:shadow-eval
+  2. npm run qa:adaptive-policy:launch-readiness
+  3. npm run qa:adaptive-policy:promote
+
+${renderTable(["Adaptive check", "Expected safe launch result", "Status", "Artifacts", "Notes"], [
+  ["Shadow evaluation", "Completed on current data or fixture pack", "", "", ""],
+  ["Launch-readiness gate", "Recommendation is `keep_in_shadow` unless an intentional rollout is planned", "", "", ""],
+  ["Promotion bundle", "Optional. Only needed when reviewing a future rollout.", "", "", ""],
+])}
+
 ## Case Results
 
 ${renderTable(["Case", "Area", "Status", "Severity", "Artifacts", "Notes"], caseRows.map(([id, area]) => [id, area, "", "", "", ""]))}
@@ -207,4 +226,5 @@ console.log(`PDFs: ${pdfDir}`);
 console.log(`Suggested next steps:`);
 console.log(`  1. npm run build`);
 console.log(`  2. npm run dev`);
-console.log(`  3. Open the worksheet and fill results as you go.`);
+console.log(`  3. npm run qa:adaptive-policy:launch-readiness`);
+console.log(`  4. Open the worksheet and fill results as you go.`);

@@ -58,11 +58,11 @@ export const buildAnchorCollectionViewModel = ({
       ? "Add the details that still change week one."
       : "Add the last detail that still changes week one.", 160),
     progressLabel: sanitizeDisplayLine(totalRemaining > 0
-      ? `${totalRemaining} required ${totalRemaining === 1 ? "detail" : "details"} left`
+      ? `${totalRemaining} ${totalRemaining === 1 ? "detail" : "details"} still shape week one`
       : "All required details are covered.", 120),
     helperText: sanitizeDisplayLine(totalRemaining > 1
-      ? "Answer the details that are visible now. If anything new becomes necessary, it will appear here."
-      : "This is the last required detail before build.", 220),
+      ? "Answer the details that are visible now so the first week matches your real baseline. If anything else becomes necessary, it will appear here."
+      : "This is the last detail that still changes week one before build.", 220),
     goalSummary: sanitizeDisplayLine(goalSummary, 160),
     activeFieldId: sanitizeText(currentAnchor?.field_id || "", 80),
     totalRemaining,
@@ -70,7 +70,7 @@ export const buildAnchorCollectionViewModel = ({
       ...anchor,
       stack_position: index + 1,
       is_active: index === 0,
-      status_label: index === 0 ? "REQUIRED NOW" : "ALSO REQUIRED",
+      status_label: index === 0 ? "Needed for week one" : "Up next",
     }, index)),
   };
 };

@@ -1,6 +1,8 @@
 const { expect } = require("@playwright/test");
 
 const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
+const AUTH_CACHE_KEY = "trainer_auth_session_v1";
+const AUTH_RECOVERY_CACHE_KEY = "trainer_auth_recovery_v1";
 const INTAKE_SESSION_STORAGE_KEY = "intake_session_v1";
 
 const toTestIdFragment = (value = "") => String(value || "")
@@ -377,19 +379,33 @@ async function enterLocalIntakeIfNeeded(page) {
   await waitForIntakeSurface();
 }
 
-async function gotoIntakeInLocalMode(page, handlers = {}) {
+async function gotoIntakeInLocalMode(page, handlers = {}, {
+  freshStart = false,
+} = {}) {
   await installStorageInstrumentation(page);
   await installIntakeAiMocks(page, handlers);
-  await page.addInitScript((localCacheKey) => {
+  await page.addInitScript((storageKeys) => {
     try {
-      if (!window.localStorage.getItem(localCacheKey)) {
-        window.localStorage.setItem(localCacheKey, JSON.stringify({
+      if (storageKeys.freshStart) {
+        window.localStorage.removeItem(storageKeys.localCacheKey);
+        window.localStorage.removeItem(storageKeys.authCacheKey);
+        window.localStorage.removeItem(storageKeys.authRecoveryCacheKey);
+        window.sessionStorage.clear();
+      }
+      window.localStorage.setItem("trainer_debug", "1");
+      if (!window.localStorage.getItem(storageKeys.localCacheKey)) {
+        window.localStorage.setItem(storageKeys.localCacheKey, JSON.stringify({
           goals: [],
           personalization: null,
         }));
       }
     } catch {}
-  }, LOCAL_CACHE_KEY);
+  }, {
+    localCacheKey: LOCAL_CACHE_KEY,
+    authCacheKey: AUTH_CACHE_KEY,
+    authRecoveryCacheKey: AUTH_RECOVERY_CACHE_KEY,
+    freshStart,
+  });
   await page.goto("/");
   await enterLocalIntakeIfNeeded(page);
 }
@@ -508,16 +524,23 @@ async function fillPlanningRealityInputs(page, {
 } = {}) {
   const experienceLevelValue = normalizeExperienceLevelValue(experienceLevel);
   const sessionLengthValue = normalizeSessionLengthValue(sessionLength);
+  const normalizedHomeEquipment = Array.isArray(homeEquipment) ? homeEquipment : [homeEquipment].filter(Boolean);
+  const resolvedHomeEquipment = (
+    (trainingLocation === "Home" || trainingLocation === "Both") &&
+    normalizedHomeEquipment.length === 0
+  )
+    ? ["Bodyweight only"]
+    : normalizedHomeEquipment;
   await page.getByTestId(`intake-goals-option-experience-level-${toTestIdFragment(experienceLevelValue)}`).click();
   await page.getByTestId(`intake-goals-option-training-days-${toTestIdFragment(trainingDays)}`).click();
   await page.getByTestId(`intake-goals-option-session-length-${toTestIdFragment(sessionLengthValue)}`).click();
   await page.getByTestId(`intake-goals-option-training-location-${toTestIdFragment(trainingLocation)}`).click();
 
   if (trainingLocation === "Home" || trainingLocation === "Both") {
-    for (const option of homeEquipment) {
+    for (const option of resolvedHomeEquipment) {
       await page.getByTestId(`intake-goals-option-home-equipment-${toTestIdFragment(option)}`).click();
     }
-    if (homeEquipment.includes("Other") && homeEquipmentOther) {
+    if (resolvedHomeEquipment.includes("Other") && homeEquipmentOther) {
       await page.getByTestId("intake-goals-input-home-equipment-other").fill(homeEquipmentOther);
     }
   }
@@ -562,7 +585,7 @@ const TEMPLATE_ID_ALIASES = Object.freeze({
   run_10k: { templateId: "train_for_run_race", metricDefaults: { event_distance: "10k" } },
   half_marathon: { templateId: "train_for_run_race", metricDefaults: { event_distance: "half_marathon" } },
   marathon: { templateId: "train_for_run_race", metricDefaults: { event_distance: "marathon" } },
-  bench_225: { templateId: "improve_big_lifts", metricDefaults: { lift_focus: "bench" } },
+  bench_225: { templateId: "improve_big_lifts", metricDefaults: { lift_focus: "bench", lift_target_weight: 225 } },
   open_water_swim: { templateId: "swim_better", metricDefaults: { goal_focus: "open_water" } },
   swim_faster_mile: { templateId: "swim_better", metricDefaults: { goal_focus: "endurance" } },
   lose_10_lb: { templateId: "lose_body_fat" },
@@ -571,8 +594,72 @@ const TEMPLATE_ID_ALIASES = Object.freeze({
   look_athletic_again: { templateId: "get_leaner" },
 });
 
+function parseDistanceOrDurationQuickMetric(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return { parsedValue: "", parsedUnit: "" };
+  const milesMatch = raw.match(/(\d+(?:\.\d+)?)\s*(?:mi|mile|miles)\b/i);
+  if (milesMatch?.[1]) {
+    return {
+      parsedValue: String(milesMatch[1]).trim(),
+      parsedUnit: "miles",
+    };
+  }
+  const minutesMatch = raw.match(/(\d+(?:\.\d+)?)\s*(?:min|mins|minute|minutes)\b/i);
+  if (minutesMatch?.[1]) {
+    return {
+      parsedValue: String(minutesMatch[1]).trim(),
+      parsedUnit: "minutes",
+    };
+  }
+  return { parsedValue: "", parsedUnit: "" };
+}
+
+function parseSwimAnchorQuickMetric(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return {
+      distanceValue: "",
+      distanceUnit: "",
+      timeMinutes: "",
+      timeSeconds: "",
+    };
+  }
+  const distanceMatch = raw.match(/(\d+(?:\.\d+)?)\s*(yd|yard|yards|m|meter|meters|metre|metres)\b/i);
+  const clockMatch = raw.match(/\b(\d{1,2}):(\d{2})(?::\d{2})?\b/);
+  const minuteMatch = raw.match(/(\d+(?:\.\d+)?)\s*(?:min|mins|minute|minutes)\b/i);
+  return {
+    distanceValue: distanceMatch?.[1] ? String(distanceMatch[1]).trim() : "",
+    distanceUnit: distanceMatch?.[2] && /yd|yard/i.test(distanceMatch[2]) ? "yd" : distanceMatch?.[2] ? "m" : "",
+    timeMinutes: clockMatch?.[1]
+      ? String(Number(clockMatch[1]))
+      : minuteMatch?.[1]
+      ? String(Number(minuteMatch[1]))
+      : "",
+    timeSeconds: clockMatch?.[2] ? String(clockMatch[2]).padStart(2, "0") : "",
+  };
+}
+
 function normalizeLegacyQuickMetrics(templateId, quickMetrics = {}) {
   const next = { ...(quickMetrics || {}) };
+  if (next.longest_recent_run && !next.longest_recent_run_value && !next.longest_recent_run_unit) {
+    const longestRun = parseDistanceOrDurationQuickMetric(next.longest_recent_run);
+    next.longest_recent_run_value = next.longest_recent_run_value || longestRun.parsedValue;
+    next.longest_recent_run_unit = next.longest_recent_run_unit || longestRun.parsedUnit;
+  }
+  if (next.recent_swim_anchor && !next.recent_swim_distance_value && !next.recent_swim_time_minutes) {
+    const swimAnchor = parseSwimAnchorQuickMetric(next.recent_swim_anchor);
+    next.recent_swim_distance_value = next.recent_swim_distance_value || swimAnchor.distanceValue;
+    next.recent_swim_distance_unit = next.recent_swim_distance_unit || swimAnchor.distanceUnit || "yd";
+    next.recent_swim_time_minutes = next.recent_swim_time_minutes || swimAnchor.timeMinutes;
+    next.recent_swim_time_seconds = next.recent_swim_time_seconds || swimAnchor.timeSeconds;
+  }
+  if (next.current_strength_baseline && !next.current_strength_baseline_weight) {
+    const baselineMatch = String(next.current_strength_baseline || "").match(/(\d+(?:\.\d+)?)\s*(?:x\s*(\d+))?/i);
+    if (baselineMatch?.[1]) {
+      next.current_strength_baseline_weight = next.current_strength_baseline_weight || String(baselineMatch[1]).trim();
+      if (baselineMatch?.[2]) next.current_strength_baseline_reps = next.current_strength_baseline_reps || String(baselineMatch[2]).trim();
+    }
+  }
   if (!next.current_strength_baseline && next.current_strength_baseline_weight) {
     const reps = next.current_strength_baseline_reps ? ` x ${next.current_strength_baseline_reps}` : "";
     next.current_strength_baseline = `${next.current_strength_baseline_weight}${reps}`;
@@ -613,16 +700,51 @@ async function completeGoalLibraryIntakeStep(page, {
   }
   await fillStarterMetricInputs(page, normalizedQuickMetrics);
   await fillPlanningRealityInputs(page, planningOverrides);
+  const goalLockToggle = page.getByTestId("intake-goal-lock-toggle");
+  if (await goalLockToggle.isVisible().catch(() => false)) {
+    await expect(goalLockToggle).toBeEnabled();
+    if (!/locked/i.test(await goalLockToggle.innerText().catch(() => ""))) {
+      await goalLockToggle.click();
+      await expect(goalLockToggle).toContainText(/locked/i);
+    }
+  }
   await page.getByTestId("intake-footer-continue").click();
-  await expect.poll(async () => await getCurrentPhase(page), { timeout: 20_000 }).toMatch(/clarify|confirm/);
-  if (stopAtReview) return;
-  const phase = await getCurrentPhase(page);
+  let phaseState = "";
+  await expect.poll(async () => {
+    const phase = await getCurrentPhase(page);
+    if (/clarify|confirm|building/.test(String(phase || ""))) {
+      phaseState = phase;
+      return phase;
+    }
+    const onboardingComplete = await page.getByTestId("app-root").getAttribute("data-onboarding-complete").catch(() => "");
+    const todayVisible = await page.getByTestId("today-session-card").isVisible().catch(() => false);
+    if (onboardingComplete === "true" || todayVisible) {
+      phaseState = "completed";
+      return "completed";
+    }
+    phaseState = phase || "pending";
+    return phaseState;
+  }, { timeout: 20_000 }).toMatch(/clarify|confirm|building|completed/);
+  if (stopAtReview) return phaseState;
+  let phase = phaseState || await getCurrentPhase(page);
+  if (phase === "building") {
+    await expect.poll(async () => {
+      const onboardingComplete = await page.getByTestId("app-root").getAttribute("data-onboarding-complete").catch(() => "");
+      const todayVisible = await page.getByTestId("today-session-card").isVisible().catch(() => false);
+      return onboardingComplete === "true" || todayVisible ? "completed" : "building";
+    }, { timeout: 30_000 }).toBe("completed");
+    phase = "completed";
+  }
   if (phase === "clarify") {
     await expect(page.getByTestId("intake-clarify-step")).toBeVisible();
   }
   if (phase === "confirm") {
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
   }
+  if (phase === "completed") {
+    await expect(page.getByTestId("today-session-card")).toBeVisible();
+  }
+  return phase;
 }
 
 async function completeStructuredIntakeOnOneScreen(page, {
@@ -895,9 +1017,20 @@ async function waitForPostOnboarding(page) {
     timeout: 75_000,
     message: "Expected onboarding to finish after confirming the intake stack.",
   }).toBe("success");
-  await expect(page.getByTestId("app-tab-today")).toBeVisible();
-  await page.getByTestId("app-tab-today").click();
+  const todayCard = page.getByTestId("today-session-card");
+  if (await todayCard.isVisible().catch(() => false)) return;
+  const readyStart = page.getByTestId("post-intake-ready-start");
+  if (await readyStart.isVisible().catch(() => false)) {
+    await readyStart.click();
+  } else {
+    await expect(page.getByTestId("app-tab-today")).toBeVisible();
+    await page.getByTestId("app-tab-today").click();
+  }
   await expect(page.getByTestId("today-session-card")).toBeVisible();
+}
+
+async function dismissAppleHealthPromptIfVisible(page) {
+  await page.getByRole("button", { name: "Skip for now" }).click({ force: true, timeout: 1_000 }).catch(() => {});
 }
 
 async function confirmIntakeBuild(page, { rapidRepeat = false } = {}) {
@@ -954,6 +1087,7 @@ module.exports = {
   completeGoalLibraryIntakeStep,
   completeIntroQuestionnaire,
   completeStructuredIntakeOnOneScreen,
+  dismissAppleHealthPromptIfVisible,
   enterLocalIntakeIfNeeded,
   fillPlanningRealityInputs,
   fillStarterMetricInputs,

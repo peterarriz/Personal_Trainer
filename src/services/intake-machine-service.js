@@ -487,7 +487,7 @@ const buildConfirmedArbitrationInputs = ({
     ? resolveGoalTranslation({
         rawUserGoalIntent: primaryGoalText,
         typedIntakePacket: buildDeterministicTypedIntakePacket({
-          typedIntakePacket: buildArbitrationIntakePacket({
+          typedIntakePacket: buildFocusedArbitrationIntakePacket({
             typedIntakePacket,
             rawGoalText: primaryGoalText,
             goalTemplateSelection: primaryGoalTemplateSelection,
@@ -2335,14 +2335,30 @@ const buildDeterministicIntakeDraft = ({
     : { version: "2026-04-v1", intent: "intake_interpretation", intake: {} };
   const intakeContext = normalizedPacket?.intake || normalizedPacket?.intakeContext || {};
   const rawGoalText = sanitizeText(intakeContext?.rawGoalText || answers?.goal_intent || "", 320);
+  const primaryGoalTemplateSelectionCandidate = findGoalTemplateSelectionForGoalText({
+    answers,
+    goalText: rawGoalText,
+    index: 0,
+  });
+  const primaryGoalTemplateSelection = primaryGoalTemplateSelectionCandidate?.templateId
+    ? primaryGoalTemplateSelectionCandidate
+    : null;
   const typedPacket = buildDeterministicTypedIntakePacket({
     typedIntakePacket: normalizedPacket,
     rawGoalText,
   });
   const resolvedIntakeContext = typedPacket?.intake || typedPacket?.intakeContext || {};
+  const focusedPrimaryTypedPacket = buildDeterministicTypedIntakePacket({
+    typedIntakePacket: buildFocusedArbitrationIntakePacket({
+      typedIntakePacket: typedPacket,
+      rawGoalText,
+      goalTemplateSelection: primaryGoalTemplateSelection,
+    }),
+    rawGoalText,
+  });
   const goalResolution = resolveGoalTranslation({
     rawUserGoalIntent: rawGoalText,
-    typedIntakePacket: typedPacket,
+    typedIntakePacket: focusedPrimaryTypedPacket,
     aiInterpretationProposal,
     explicitUserConfirmation: buildIntakeMachineGoalConfirmation({
       answers,

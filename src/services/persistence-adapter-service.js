@@ -1,4 +1,5 @@
 import { resolveNutritionActualLogStoreCompat } from "../modules-nutrition.js";
+import { sanitizeAdaptiveLearningSnapshotForPersistence } from "./adaptive-learning-store-service.js";
 import {
   sanitizePersistedGoalsCollection,
   sanitizePersistedLogsCollection,
@@ -74,6 +75,7 @@ export const buildCanonicalRuntimeState = ({
 export const buildPersistedTrainerPayload = ({
   runtimeState = {},
   transformPersonalization = null,
+  adaptiveLearningSnapshot = null,
   timestamp = Date.now(),
 } = {}) => {
   // This is the anti-drift boundary: runtime state in, storage blob out.
@@ -98,6 +100,7 @@ export const buildPersistedTrainerPayload = ({
     weeklyCheckins: state.weeklyCheckins,
     nutritionFavorites: state.nutritionFavorites,
     nutritionActualLogs: state.nutritionActualLogs,
+    adaptiveLearning: sanitizeAdaptiveLearningSnapshotForPersistence(adaptiveLearningSnapshot || null),
     v: PERSISTED_TRAINER_DATA_VERSION,
     contractVersion: PERSISTENCE_CONTRACT_VERSION,
     ts: Number(timestamp) || Date.now(),

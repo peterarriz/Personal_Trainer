@@ -233,3 +233,93 @@ test("surface audit flags render-model drift when one surface diverges from the 
   assert.equal(audit.mismatches[0].field, "sessionLabel");
   assert.equal(audit.mismatches[0].actual, "Push-Up Session");
 });
+
+test("adaptive explanation source and copy stay aligned across all major surfaces", () => {
+  const planDay = {
+    ...buildCanonicalPlanDayFixture(),
+    week: {
+      ...buildCanonicalPlanDayFixture().week,
+      adaptivePolicyTraces: [
+        {
+          decisionPointId: "time_crunched_session_format_choice",
+          chosenActionId: "short_separate_sessions",
+          usedAdaptiveChoice: true,
+          decisionMode: "active",
+          candidateScores: [
+            {
+              actionId: "default_structure",
+              confidenceScore: 0,
+              sampleSize: 0,
+            },
+            {
+              actionId: "short_separate_sessions",
+              confidenceScore: 86,
+              sampleSize: 14,
+            },
+          ],
+          contextSnapshot: {
+            timeCrunched: true,
+            scheduleReliability: "busy",
+          },
+        },
+      ],
+    },
+  };
+  const plannedDayRecord = buildPlannedDayRecord(planDay);
+  const models = [
+    buildCanonicalPlanSurfaceModel({ surface: "today", planDay }),
+    buildCanonicalPlanSurfaceModel({ surface: "program", planDay }),
+    buildCanonicalPlanSurfaceModel({ surface: "log", plannedDayRecord }),
+    buildCanonicalPlanSurfaceModel({ surface: "nutrition", planDay }),
+    buildCanonicalPlanSurfaceModel({ surface: "coach", planDay }),
+  ];
+
+  models.forEach((model) => {
+    assert.equal(model.explanationSourceLabel, "Based on your recent training");
+    assert.match(model.canonicalReasonLine, /shorter blocks|busy weeks/i);
+    assert.doesNotMatch(model.canonicalReasonLine, /time_crunched_session_format_choice|short_separate_sessions|confidenceScore|sampleSize/i);
+  });
+  assert.equal(new Set(models.map((model) => model.canonicalReasonLine)).size, 1);
+  assert.equal(new Set(models.map((model) => model.explanationSourceLabel)).size, 1);
+});
+
+test("hybrid tradeoff explanations stay aligned across Today, Program, Log, Nutrition, and Coach", () => {
+  const baseFixture = buildCanonicalPlanDayFixture();
+  const planDay = {
+    ...baseFixture,
+    week: {
+      ...baseFixture.week,
+      adaptivePolicyTraces: [
+        {
+          decisionPointId: "hybrid_run_lift_balance_template",
+          chosenActionId: "run_supportive_hybrid",
+          usedAdaptiveChoice: true,
+          decisionMode: "active",
+          candidateScores: [
+            { actionId: "balanced_hybrid", confidenceScore: 0, sampleSize: 0 },
+            { actionId: "run_supportive_hybrid", confidenceScore: 82, sampleSize: 12 },
+          ],
+          contextSnapshot: {
+            hybridMeaningful: true,
+            hybridCohort: "performance_hybrid",
+          },
+        },
+      ],
+    },
+  };
+  const plannedDayRecord = buildPlannedDayRecord(planDay);
+  const models = [
+    buildCanonicalPlanSurfaceModel({ surface: "today", planDay }),
+    buildCanonicalPlanSurfaceModel({ surface: "program", planDay }),
+    buildCanonicalPlanSurfaceModel({ surface: "log", plannedDayRecord }),
+    buildCanonicalPlanSurfaceModel({ surface: "nutrition", planDay }),
+    buildCanonicalPlanSurfaceModel({ surface: "coach", planDay }),
+  ];
+
+  models.forEach((model) => {
+    assert.equal(model.explanationSourceLabel, "Based on your recent training");
+    assert.match(model.canonicalReasonLine, /key run lane|lower-body lift load|peaks do not stack/i);
+    assert.doesNotMatch(model.canonicalReasonLine, /hybrid_run_lift_balance_template|run_supportive_hybrid|confidenceScore|sampleSize/i);
+  });
+  assert.equal(new Set(models.map((model) => model.canonicalReasonLine)).size, 1);
+});

@@ -17,6 +17,7 @@ const {
   confirmIntakeBuild,
   completeAnchors,
   completeIntroQuestionnaire,
+  dismissAppleHealthPromptIfVisible,
   gotoIntakeInLocalMode,
   waitForPostOnboarding,
   waitForReview,
@@ -142,6 +143,7 @@ const completeRunningOnboarding = async (page) => {
   await waitForReview(page);
   await confirmIntakeBuild(page);
   await waitForPostOnboarding(page);
+  await dismissAppleHealthPromptIfVisible(page);
 };
 
 const completeSwimOnboarding = async (page) => {
@@ -161,6 +163,7 @@ const completeSwimOnboarding = async (page) => {
   await waitForReview(page);
   await confirmIntakeBuild(page);
   await waitForPostOnboarding(page);
+  await dismissAppleHealthPromptIfVisible(page);
 };
 
 const buildSevenGoalStackFromLibrary = async (page, { finishBuild = true } = {}) => {
@@ -225,6 +228,7 @@ const buildSevenGoalStackFromLibrary = async (page, { finishBuild = true } = {})
   if (!finishBuild) return;
   await confirmIntakeBuild(page);
   await waitForPostOnboarding(page);
+  await dismissAppleHealthPromptIfVisible(page);
 };
 
 const openDetailedWorkoutLog = async (page) => {
@@ -302,10 +306,10 @@ test.describe("skeptical user adversarial coverage", () => {
       await bootAuthEntry(page, scenario);
       await page.getByTestId("auth-mode-signup").click();
       await expect(page.getByTestId("auth-submit")).toBeVisible();
-      await expect(page.getByTestId("continue-local-mode")).toBeVisible();
+      await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
 
       await expectReadableAction(page.getByTestId("auth-submit"));
-      await expectReadableAction(page.getByTestId("continue-local-mode"));
+      await expectReadableAction(page.getByTestId("auth-mode-signin"));
 
       await captureAdversarialScreenshot(
         page,
@@ -418,6 +422,7 @@ test.describe("skeptical user adversarial coverage", () => {
   });
 
   test("sync timeout and retry copy stay aligned across settings, today, and program", async ({ page }) => {
+    test.slow();
     const testInfo = test.info();
     await registerAdversarialCase(testInfo, {
       classification: FAILURE_CLASSIFICATIONS.contradiction,
@@ -449,7 +454,7 @@ test.describe("skeptical user adversarial coverage", () => {
       });
     });
 
-    await page.getByTestId("app-tab-settings").click();
+    await page.getByTestId("app-tab-settings").click({ force: true });
     await page.getByTestId("settings-surface-profile").click();
     await page.getByRole("button", { name: "Save profile" }).click();
     await page.getByTestId("settings-surface-account").click();
@@ -458,12 +463,12 @@ test.describe("skeptical user adversarial coverage", () => {
     await expect(page.getByTestId("settings-sync-status")).toContainText("sending");
     const settingsStatus = normalizeSurfaceText(await page.getByTestId("settings-sync-status").innerText());
 
-    await page.getByTestId("app-tab-today").click();
+    await page.getByTestId("app-tab-today").click({ force: true });
     await expect(page.getByTestId("today-sync-status")).toContainText("Saved here");
     await expect(page.getByTestId("today-sync-status")).toContainText("sending");
     const todayStatus = normalizeSurfaceText(await page.getByTestId("today-sync-status").innerText());
 
-    await page.getByTestId("app-tab-program").click();
+    await page.getByTestId("app-tab-program").click({ force: true });
     await expect(page.getByTestId("program-sync-status")).toContainText("Saved here");
     await expect(page.getByTestId("program-sync-status")).toContainText("sending");
     const programStatus = normalizeSurfaceText(await page.getByTestId("program-sync-status").innerText());
@@ -481,12 +486,12 @@ test.describe("skeptical user adversarial coverage", () => {
     await captureAdversarialScreenshot(
       page,
       testInfo,
-      "program-sync-retrying",
-      page.getByTestId("program-tab")
+      "program-sync-retrying"
     );
   });
 
   test("seven-goal intake keeps later priorities visible without collapsing into hidden extras", async ({ page }) => {
+    test.slow();
     const testInfo = test.info();
     await registerAdversarialCase(testInfo, {
       classification: FAILURE_CLASSIFICATIONS.trustBreak,
@@ -507,7 +512,8 @@ test.describe("skeptical user adversarial coverage", () => {
 
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
-    await page.getByTestId("app-tab-settings").click();
+    await dismissAppleHealthPromptIfVisible(page);
+    await page.getByTestId("app-tab-settings").click({ force: true });
     await expect(page.getByTestId("settings-tab")).toBeVisible();
     await page.getByTestId("settings-surface-goals").click();
     await expect(page.getByTestId("settings-goals-section")).toBeVisible();
@@ -535,20 +541,20 @@ test.describe("skeptical user adversarial coverage", () => {
 
     await completeRunningOnboarding(page);
 
-    await page.getByTestId("app-tab-program").click();
+    await page.getByTestId("app-tab-program").click({ force: true });
     await expect(page.getByTestId("program-tab")).toBeVisible();
     await expect(page.getByTestId("program-this-week")).toContainText(/strength|mobility/i);
 
-    await page.getByTestId("app-tab-settings").click();
+    await page.getByTestId("app-tab-settings").click({ force: true });
     await page.getByTestId("settings-surface-preferences").click();
     await page.getByRole("button", { name: /Aggressive/i }).first().click();
 
-    await page.getByTestId("app-tab-today").click();
+    await page.getByTestId("app-tab-today").click({ force: true });
     const todayLabel = normalizeSurfaceText(await page.getByTestId("today-canonical-session-label").innerText());
     const todayPlanText = normalizeSurfaceText(await page.getByTestId("today-full-workout").getByTestId("planned-session-plan").innerText());
     await expect(page.getByTestId("today-change-summary")).toContainText("Aggressive preference");
 
-    await page.getByTestId("app-tab-program").click();
+    await page.getByTestId("app-tab-program").click({ force: true });
     const programLabel = normalizeSurfaceText(await page.getByTestId("program-canonical-session-label").innerText());
     await expect(page.getByTestId("program-change-summary")).toContainText("Aggressive preference");
 
@@ -556,11 +562,11 @@ test.describe("skeptical user adversarial coverage", () => {
     const logLabel = normalizeSurfaceText(await page.getByTestId("log-canonical-session-label").innerText());
     const logPlanText = normalizeSurfaceText(await page.getByTestId("log-detailed-entry").getByTestId("planned-session-plan").innerText());
 
-    await page.getByTestId("app-tab-nutrition").click();
+    await page.getByTestId("app-tab-nutrition").click({ force: true });
     const nutritionLabel = normalizeSurfaceText(await page.getByTestId("nutrition-canonical-session-label").innerText());
     await expect(page.getByTestId("nutrition-canonical-reason")).toContainText("Aggressive preference");
 
-    await page.getByTestId("app-tab-coach").click();
+    await page.getByTestId("app-tab-coach").click({ force: true });
     const coachLabel = normalizeSurfaceText(await page.getByTestId("coach-canonical-session-label").innerText());
     await expect(page.getByTestId("coach-canonical-reason")).toContainText("Aggressive preference");
 
@@ -593,19 +599,19 @@ test.describe("skeptical user adversarial coverage", () => {
 
     const surfaces = [];
 
-    await page.getByTestId("app-tab-today").click();
+    await page.getByTestId("app-tab-today").click({ force: true });
     surfaces.push(normalizeSurfaceText(await page.getByTestId("today-tab").innerText()));
 
-    await page.getByTestId("app-tab-program").click();
+    await page.getByTestId("app-tab-program").click({ force: true });
     await expect(page.getByTestId("program-tab")).toBeVisible();
     const programWeekText = normalizeSurfaceText(await page.getByTestId("program-this-week").innerText());
     surfaces.push(programWeekText);
     expect(programWeekText).toMatch(/strength|mobility|dryland/i);
 
-    await page.getByTestId("app-tab-nutrition").click();
+    await page.getByTestId("app-tab-nutrition").click({ force: true });
     surfaces.push(normalizeSurfaceText(await page.getByTestId("nutrition-tab").innerText()));
 
-    await page.getByTestId("app-tab-coach").click();
+    await page.getByTestId("app-tab-coach").click({ force: true });
     surfaces.push(normalizeSurfaceText(await page.getByTestId("coach-tab").innerText()));
 
     const combinedSurfaceText = surfaces.join(" ");

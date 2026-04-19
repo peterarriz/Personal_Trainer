@@ -13,6 +13,7 @@ const {
   deriveTrainingContextFromPersonalization,
   buildTrainingContextFromAnswers,
   TRAINING_CONTEXT_SOURCES,
+  trainingEnvironmentToDisplayMode,
 } = require("../src/services/training-context-service.js");
 
 const BASE_WEEK = {
@@ -204,6 +205,34 @@ test("user-edited context persists as environment-editor input and updates plann
   assert.equal(context.equipmentAccess.value, "basic_gym");
   assert.deepEqual(context.equipmentAccess.items, ["dumbbells", "cable stack"]);
   assert.equal(context.sessionDuration.value, "45");
+});
+
+test("outdoor environment stays explicit instead of collapsing back to home or unknown", () => {
+  const outdoorAnswers = buildTrainingContextFromAnswers({
+    answers: {
+      training_location: "Outdoor",
+      session_length: "45",
+      coaching_style: "Balanced coaching",
+    },
+  });
+
+  assert.equal(outdoorAnswers.environment.value, "outdoor");
+  assert.equal(outdoorAnswers.environment.confirmed, true);
+  assert.equal(outdoorAnswers.equipmentAccess.value, "none");
+  assert.equal(outdoorAnswers.equipmentAccess.confirmed, true);
+  assert.equal(trainingEnvironmentToDisplayMode(outdoorAnswers.environment.value), "Outdoor");
+
+  const outdoorEditor = buildTrainingContextFromEditor({
+    mode: "Outdoor",
+    equipment: "unknown",
+    equipmentItems: [],
+    time: "30",
+  });
+
+  assert.equal(outdoorEditor.environment.value, "outdoor");
+  assert.equal(outdoorEditor.environment.confirmed, true);
+  assert.equal(outdoorEditor.equipmentAccess.value, "none");
+  assert.equal(outdoorEditor.equipmentAccess.confirmed, true);
 });
 
 test("generateTodayPlan uses confirmed training context and calls out unknown duration neutrally when missing", () => {

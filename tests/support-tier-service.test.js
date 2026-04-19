@@ -138,3 +138,55 @@ test("numeric weight-loss goals remain tier 1 on the body-comp adapter", () => {
 
   assert.equal(tier.id, "tier_1");
 });
+
+test("hybrid support-tier copy stays honest about tradeoffs instead of sounding fully symmetric", () => {
+  const tier = buildSupportTierModel({
+    goals: [{
+      active: true,
+      category: "strength",
+      name: "Run and lift with strength priority",
+      resolvedGoal: {
+        goalFamily: "hybrid",
+        planningCategory: "strength",
+        summary: "Run and lift with strength priority",
+      },
+    }],
+    domainAdapterId: DOMAIN_ADAPTER_IDS.hybrid,
+    goalCapabilityStack: {
+      primary: {
+        primaryDomain: DOMAIN_ADAPTER_IDS.hybrid,
+        fallbackPlanningMode: "run_lift_strength_priority",
+      },
+    },
+  });
+
+  assert.equal(tier.id, "tier_2");
+  assert.match(tier.honestyLine, /one lane leads|supportive/i);
+  assert.match(tier.basisLine, /tradeoff|lead lane|support/i);
+});
+
+test("triathlon support-tier copy makes the anchor requirement explicit", () => {
+  const tier = buildSupportTierModel({
+    goals: [{
+      active: true,
+      category: "general_fitness",
+      name: "Train for triathlon or multisport",
+      resolvedGoal: {
+        goalFamily: "performance",
+        planningCategory: "general_fitness",
+        summary: "Train for triathlon or multisport",
+      },
+    }],
+    domainAdapterId: DOMAIN_ADAPTER_IDS.triathlon,
+    goalCapabilityStack: {
+      primary: {
+        primaryDomain: DOMAIN_ADAPTER_IDS.triathlon,
+        fallbackPlanningMode: "triathlon_beginner",
+      },
+    },
+  });
+
+  assert.equal(tier.id, "tier_2");
+  assert.match(tier.honestyLine, /swim, bike, and run anchors|conservative multisport build/i);
+  assert.match(tier.basisLine, /swim, bike, and run|conservative/i);
+});

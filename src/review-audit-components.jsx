@@ -134,7 +134,27 @@ export function HistoryAuditDayReviewCard({
             {sanitizeDisplayText(story.auditSummary)}
           </span>
         )}
+        {story?.explanationSourceLabel && (
+          <span
+            style={{
+              fontSize: "0.46rem",
+              color: "var(--consumer-text-muted)",
+              background: "var(--consumer-subpanel)",
+              border: "1px solid var(--consumer-border)",
+              padding: "0.12rem 0.36rem",
+              borderRadius: 999,
+            }}
+          >
+            {sanitizeDisplayText(story.explanationSourceLabel)}
+          </span>
+        )}
       </div>
+
+      {story?.explanationLine && (
+        <div style={{ ...primaryContextStyle, marginBottom: "0.55rem", color: "var(--consumer-text-soft)" }}>
+          {sanitizeDisplayText(story.explanationLine)}
+        </div>
+      )}
 
       <div data-testid="history-day-review-primary" style={{ display: "grid", gap: "0.55rem" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: "0.45rem" }}>

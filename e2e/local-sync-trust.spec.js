@@ -5,6 +5,7 @@ const {
   confirmIntakeBuild,
   completeAnchors,
   completeIntroQuestionnaire,
+  dismissAppleHealthPromptIfVisible,
   gotoIntakeInLocalMode,
   readLocalCache,
   waitForPostOnboarding,
@@ -223,6 +224,7 @@ async function completeRunningOnboarding(page) {
   await waitForReview(page);
   await confirmIntakeBuild(page);
   await waitForPostOnboarding(page);
+  await dismissAppleHealthPromptIfVisible(page);
 }
 
 async function saveTodayQuickLog(page, {

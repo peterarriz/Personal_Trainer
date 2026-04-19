@@ -12,6 +12,13 @@ import {
 } from "./services/persistence-contract-service.js";
 import { buildLegacyStrengthPerformanceFromRecords, getExercisePerformanceRecordsForLog } from "./services/performance-record-service.js";
 import { SYNC_DIAGNOSTIC_EVENT_TYPES } from "./services/sync-diagnostics-service.js";
+import { ADAPTIVE_LEARNING_EVENT_NAMES } from "./services/adaptive-learning-event-service.js";
+import { ingestAdaptiveLearningEvents } from "./services/adaptive-learning-sink-service.js";
+import {
+  buildAdaptiveLearningIdentityFromSession,
+  buildAuthLifecycleEventInput,
+  buildSyncLifecycleEventInput,
+} from "./services/adaptive-learning-domain-service.js";
 
 export const SB_ROW = "trainer_v1";
 export const LOCAL_CACHE_KEY = "trainer_local_cache_v4";
@@ -276,7 +283,7 @@ export const normalizeSession = (session, fallback = null) => {
   };
 };
 
-export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePersonalization, normalizeGoals, DEFAULT_PERSONALIZATION, DEFAULT_MULTI_GOALS, analytics = null, reportSyncDiagnostic = null }) {
+export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePersonalization, normalizeGoals, DEFAULT_PERSONALIZATION, DEFAULT_MULTI_GOALS, analytics = null, reportSyncDiagnostic = null, adaptiveLearningStore = null }) {
   const rawSupabaseUrl = (typeof window !== "undefined" ? (window.__SUPABASE_URL || "") : "").trim();
   const SB_URL = rawSupabaseUrl.replace(/\/+$/, "");
   const SB_KEY = (typeof window !== "undefined" ? (window.__SUPABASE_ANON_KEY || "") : "").trim();
@@ -307,6 +314,86 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     try {
       analytics?.track?.({ flow, action, outcome, props });
     } catch {}
+  };
+  const getAdaptiveLocalActorId = () => String(adaptiveLearningStore?.getSnapshot?.()?.actorId || "").trim();
+  const syncAdaptiveIdentity = ({ authSession = null, userId = "" } = {}) => {
+    try {
+      adaptiveLearningStore?.setUserIdentity?.({
+        userId: String(userId || authSession?.user?.id || "").trim(),
+        localActorId: getAdaptiveLocalActorId(),
+      });
+    } catch {}
+  };
+  const recordAdaptiveEvent = ({
+    eventName = "",
+    payload = {},
+    authSession = null,
+    userId = "",
+    occurredAt = Date.now(),
+    dedupeKey = "",
+  } = {}) => {
+    try {
+      const identity = buildAdaptiveLearningIdentityFromSession({
+        authSession,
+        localActorId: getAdaptiveLocalActorId(),
+      });
+      adaptiveLearningStore?.recordEvent?.({
+        eventName,
+        payload,
+        actorId: identity.actorId || String(userId || "").trim() || getAdaptiveLocalActorId(),
+        userId: String(userId || identity.userId || "").trim(),
+        localActorId: identity.localActorId || getAdaptiveLocalActorId(),
+        occurredAt,
+        dedupeKey,
+      });
+    } catch {}
+  };
+  const buildPayloadWithAdaptiveLearning = (payload = {}) => ({
+    ...(payload || {}),
+    adaptiveLearning: adaptiveLearningStore?.buildPersistenceSnapshot?.() || payload?.adaptiveLearning || null,
+  });
+  const replayAdaptiveLearningEventSink = async ({
+    authSession = null,
+    source = "client_replay",
+    suppressErrors = true,
+  } = {}) => {
+    try {
+      const pendingServerEvents = adaptiveLearningStore?.getPendingServerEvents?.() || [];
+      if (!authSession?.access_token || !pendingServerEvents.length) {
+        return {
+          ok: true,
+          skipped: true,
+          reason: !authSession?.access_token ? "missing_auth" : "no_events",
+          ingestedEventIds: [],
+        };
+      }
+      const snapshotBeforeReplay = adaptiveLearningStore?.buildPersistenceSnapshot?.() || null;
+      const result = await ingestAdaptiveLearningEvents({
+        safeFetchWithTimeout,
+        authSession,
+        events: pendingServerEvents,
+        snapshot: snapshotBeforeReplay,
+        source,
+      });
+      adaptiveLearningStore?.markEventsIngested?.({
+        eventIds: result?.ingestedEventIds || [],
+        at: Date.now(),
+      });
+      return result;
+    } catch (error) {
+      adaptiveLearningStore?.markServerIngestFailed?.({
+        at: Date.now(),
+        errorCode: error?.code || "adaptive_event_ingest_failed",
+      });
+      logDiag?.("adaptive_learning.sink_replay_failed", error?.message || "Adaptive event replay failed.");
+      if (!suppressErrors) throw error;
+      return {
+        ok: false,
+        error,
+        ingestedEventIds: error?.ingestedEventIds || [],
+        pendingEventIds: error?.pendingEventIds || [],
+      };
+    }
   };
   const classifyAnalyticsErrorCode = (error = null) => {
     const code = String(error?.code || "").trim();
@@ -755,6 +842,20 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       if (!session?.access_token || !session?.user?.id) throw new Error("Invalid auth response");
       setAuthSession(session);
       saveAuthSession(session);
+      syncAdaptiveIdentity({ authSession: session });
+      recordAdaptiveEvent({
+        eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+        authSession: session,
+        occurredAt: Date.now(),
+        dedupeKey: `auth_sign_in_${String(session?.user?.id || "")}_${Math.floor(Date.now() / 1000)}`,
+        payload: buildAuthLifecycleEventInput({
+          authEvent: "sign_in",
+          status: "success",
+          source: "auth_gate",
+          hadCloudSession: Boolean(loadAuthSession()?.access_token),
+          detail: "Sign in completed and a cloud-backed session is now active.",
+        }),
+      });
       logDiag("auth.signin.success", session.user.id);
       trackAnalytics({
         flow: "auth",
@@ -810,6 +911,20 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         const session = normalizeSession(data);
         setAuthSession(session);
         saveAuthSession(session);
+        syncAdaptiveIdentity({ authSession: session });
+        recordAdaptiveEvent({
+          eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+          authSession: session,
+          occurredAt: Date.now(),
+          dedupeKey: `auth_sign_up_${String(session?.user?.id || "")}_${Math.floor(Date.now() / 1000)}`,
+          payload: buildAuthLifecycleEventInput({
+            authEvent: "sign_up",
+            status: "success",
+            source: "auth_gate",
+            hadCloudSession: false,
+            detail: "Account creation completed and the session was opened immediately.",
+          }),
+        });
         trackAnalytics({
           flow: "auth",
           action: "sign_up",
@@ -822,6 +937,19 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         return { ok: true, session, needsEmailConfirmation: false };
       } else {
         setAuthError("Account created. Confirm email, then sign in.");
+        recordAdaptiveEvent({
+          eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+          userId: "",
+          occurredAt: Date.now(),
+          dedupeKey: `auth_sign_up_confirmation_${String(authEmail || "").trim().toLowerCase()}`,
+          payload: buildAuthLifecycleEventInput({
+            authEvent: "sign_up",
+            status: "confirmation_required",
+            source: "auth_gate",
+            hadCloudSession: false,
+            detail: "Account creation succeeded, but email confirmation is still required.",
+          }),
+        });
         trackAnalytics({
           flow: "auth",
           action: "sign_up",
@@ -992,12 +1120,14 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
 
   const handleSignOut = async ({ authSession, setAuthSession, setStorageStatus }) => {
     const startedAt = Date.now();
+    const existingUserId = String(authSession?.user?.id || "").trim();
     setAuthSession(null);
     lastSyncedGoalsFingerprint = "";
     lastSyncedCoachMemoryFingerprint = "";
     lastPersistedPayloadFingerprint = "";
     lastPersistedUserId = "";
     saveAuthSession(null);
+    syncAdaptiveIdentity({ userId: "" });
     setStorageStatus(buildStorageStatus({
       mode: "local",
       label: "SIGNED OUT",
@@ -1017,6 +1147,19 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           had_remote_session: Boolean(authSession?.access_token),
         },
       });
+      recordAdaptiveEvent({
+        eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+        userId: existingUserId,
+        occurredAt: Date.now(),
+        dedupeKey: `auth_sign_out_${existingUserId}_${Math.floor(Date.now() / 1000)}`,
+        payload: buildAuthLifecycleEventInput({
+          authEvent: "sign_out",
+          status: "success",
+          source: "settings",
+          hadCloudSession: Boolean(authSession?.access_token),
+          detail: "Sign out completed and the device returned to local mode.",
+        }),
+      });
     } catch (error) {
       trackAnalytics({
         flow: "auth",
@@ -1027,6 +1170,19 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           had_remote_session: Boolean(authSession?.access_token),
           error_code: classifyAnalyticsErrorCode(error),
         },
+      });
+      recordAdaptiveEvent({
+        eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+        userId: existingUserId,
+        occurredAt: Date.now(),
+        dedupeKey: `auth_sign_out_error_${existingUserId}_${Math.floor(Date.now() / 1000)}`,
+        payload: buildAuthLifecycleEventInput({
+          authEvent: "sign_out",
+          status: "error",
+          source: "settings",
+          hadCloudSession: Boolean(authSession?.access_token),
+          detail: String(error?.message || "Sign out returned a remote error after local sign-out completed.").trim(),
+        }),
       });
     }
   };
@@ -1559,6 +1715,23 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         pendingLocalWrites: Boolean(localLoad()?.syncMeta?.pendingCloudWrite),
         at: Date.now(),
       });
+      recordAdaptiveEvent({
+        eventName: ADAPTIVE_LEARNING_EVENT_NAMES.syncLifecycleChanged,
+        authSession,
+        userId,
+        occurredAt: Date.now(),
+        dedupeKey: `sync_load_error_${String(userId || "")}_${Math.floor(Date.now() / 1000)}_${String(error?.httpStatus || error?.code || "unknown")}`,
+        payload: buildSyncLifecycleEventInput({
+          syncEvent: "cloud_load",
+          status: "error",
+          reason: error?.message || "load_failed",
+          endpoint,
+          httpStatus: error?.httpStatus || null,
+          pendingLocalWrites: Boolean(localLoad()?.syncMeta?.pendingCloudWrite),
+          retryEligible: classifyStorageError(error)?.reason === STORAGE_STATUS_REASONS.transient,
+          detail: String(error?.message || "Cloud load failed."),
+        }),
+      });
       throw error;
     }
     const rows = await res.json();
@@ -1582,6 +1755,12 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       });
       const effectivePayload = preferPendingLocalCache ? cache : cloudPayload;
       try {
+        syncAdaptiveIdentity({ authSession: sessionUsed || normalized, userId });
+        adaptiveLearningStore?.importPersistedSnapshot?.({
+          persistedSnapshot: effectivePayload?.adaptiveLearning || null,
+          source: preferPendingLocalCache ? "local_cache" : "cloud",
+          at: Date.now(),
+        });
         lastSyncedGoalsFingerprint = createStableFingerprint(effectivePayload?.goals || []);
         lastSyncedCoachMemoryFingerprint = createStableFingerprint(effectivePayload?.personalization?.coachMemory || {});
         resetTransientPersistCooldown();
@@ -1598,7 +1777,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         });
         if (!preferPendingLocalCache) {
           localSave(buildLocalCachePayload({
-            payload: effectivePayload,
+            payload: buildPayloadWithAdaptiveLearning(effectivePayload),
             pendingCloudWrite: false,
             syncedAt: Date.now(),
             previousSyncMeta: cache?.syncMeta || null,
@@ -1609,37 +1788,73 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         throw new Error(AUTH_DATA_INCOMPATIBLE);
       }
       if (preferPendingLocalCache) {
+        recordAdaptiveEvent({
+          eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+          authSession: sessionUsed || normalized,
+          userId,
+          occurredAt: Date.now(),
+          dedupeKey: `local_cloud_merge_prefer_pending_${String(userId || "").trim()}_${normalizeSyncMetaNumber(effectivePayload?.ts) || Date.now()}`,
+          payload: buildAuthLifecycleEventInput({
+            authEvent: "local_cloud_merge",
+            status: "local_preferred",
+            source: "sb_load",
+            hadCloudSession: true,
+            mergedLocalCache: true,
+            detail: "Pending local data stayed authoritative because it was newer than the cloud copy.",
+          }),
+        });
         if (shouldDeferCloudWrite(effectivePayload)) {
           localSave(buildLocalCachePayload({
-            payload: effectivePayload,
+            payload: buildPayloadWithAdaptiveLearning(effectivePayload),
             pendingCloudWrite: true,
             previousSyncMeta: effectivePayload?.syncMeta || null,
           }));
         } else {
           try {
           await sbSave({
-            payload: stripSyncMeta(effectivePayload),
+            payload: stripSyncMeta(buildPayloadWithAdaptiveLearning(effectivePayload)),
             authSession: sessionUsed || normalized,
             setAuthSession,
           });
           resetTransientPersistCooldown();
           lastPersistedPayloadFingerprint = createPersistedPayloadFingerprint(effectivePayload);
           lastPersistedUserId = String(userId || "");
+          const adaptiveSnapshot = adaptiveLearningStore?.buildPersistenceSnapshot?.();
+          adaptiveLearningStore?.markEventsSynced?.({
+            eventIds: adaptiveSnapshot?.pendingEventIds || [],
+            at: Date.now(),
+          });
           localSave(buildLocalCachePayload({
-            payload: effectivePayload,
+            payload: buildPayloadWithAdaptiveLearning(effectivePayload),
             pendingCloudWrite: false,
               syncedAt: Date.now(),
               previousSyncMeta: effectivePayload?.syncMeta || null,
             }));
           } catch (e) {
             localSave(buildLocalCachePayload({
-              payload: effectivePayload,
+              payload: buildPayloadWithAdaptiveLearning(effectivePayload),
               pendingCloudWrite: true,
             previousSyncMeta: effectivePayload?.syncMeta || null,
           }));
             throw e;
           }
         }
+      } else {
+        recordAdaptiveEvent({
+          eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+          authSession: sessionUsed || normalized,
+          userId,
+          occurredAt: Date.now(),
+          dedupeKey: `local_cloud_merge_cloud_authoritative_${String(userId || "").trim()}_${normalizeSyncMetaNumber(cloudPayload?.ts) || Date.now()}`,
+          payload: buildAuthLifecycleEventInput({
+            authEvent: "local_cloud_merge",
+            status: "cloud_authoritative",
+            source: "sb_load",
+            hadCloudSession: true,
+            mergedLocalCache: false,
+            detail: "Cloud state stayed authoritative during load.",
+          }),
+        });
       }
       pushSyncDiagnostic({
         type: SYNC_DIAGNOSTIC_EVENT_TYPES.trainerDataLoadResult,
@@ -1651,8 +1866,33 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         pendingLocalWrites: Boolean(localLoad()?.syncMeta?.pendingCloudWrite),
         at: Date.now(),
       });
+      recordAdaptiveEvent({
+        eventName: ADAPTIVE_LEARNING_EVENT_NAMES.syncLifecycleChanged,
+        authSession: sessionUsed || normalized,
+        userId,
+        occurredAt: Date.now(),
+        dedupeKey: `sync_load_success_${String(userId || "")}_${Math.floor(Date.now() / 1000)}_${normalizeSyncMetaNumber(effectivePayload?.ts) || "na"}`,
+        payload: buildSyncLifecycleEventInput({
+          syncEvent: "cloud_load",
+          status: "success",
+          reason: preferPendingLocalCache ? "local_preferred" : "cloud_authoritative",
+          endpoint,
+          httpStatus: res.status,
+          pendingLocalWrites: Boolean(localLoad()?.syncMeta?.pendingCloudWrite),
+          retryEligible: false,
+          mergedLocalCache: Boolean(preferPendingLocalCache),
+          detail: preferPendingLocalCache
+            ? "Cloud load completed, but pending local data stayed authoritative."
+            : "Cloud load completed and cloud data was applied.",
+        }),
+      });
     } else {
       if (cache && typeof cache === "object") {
+          adaptiveLearningStore?.importPersistedSnapshot?.({
+            persistedSnapshot: cache?.adaptiveLearning || null,
+            source: "local_cache",
+            at: Date.now(),
+          });
           pushSyncDiagnostic({
             type: SYNC_DIAGNOSTIC_EVENT_TYPES.localCacheDecision,
             decision: "seed_cloud_from_local_cache",
@@ -1672,18 +1912,41 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         });
         if (shouldDeferCloudWrite(cache)) {
           localSave(buildLocalCachePayload({
-            payload: cache,
+            payload: buildPayloadWithAdaptiveLearning(cache),
             pendingCloudWrite: true,
             previousSyncMeta: cache?.syncMeta || null,
           }));
         } else {
           await sbSave({
-            payload: buildPersistedTrainerPayload({ runtimeState: cachedRuntimeState }),
+            payload: buildPersistedTrainerPayload({
+              runtimeState: cachedRuntimeState,
+              adaptiveLearningSnapshot: adaptiveLearningStore?.buildPersistenceSnapshot?.(),
+            }),
             authSession: sessionUsed || normalized,
             setAuthSession,
           });
           resetTransientPersistCooldown();
+          const adaptiveSnapshot = adaptiveLearningStore?.buildPersistenceSnapshot?.();
+          adaptiveLearningStore?.markEventsSynced?.({
+            eventIds: adaptiveSnapshot?.pendingEventIds || [],
+            at: Date.now(),
+          });
         }
+        recordAdaptiveEvent({
+          eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+          authSession: sessionUsed || normalized,
+          userId,
+          occurredAt: Date.now(),
+          dedupeKey: `local_cloud_merge_seed_cloud_${String(userId || "").trim()}_${normalizeSyncMetaNumber(cache?.ts) || Date.now()}`,
+          payload: buildAuthLifecycleEventInput({
+            authEvent: "local_cloud_merge",
+            status: "seed_cloud_from_local",
+            source: "sb_load",
+            hadCloudSession: true,
+            mergedLocalCache: true,
+            detail: "Cloud was empty, so the existing local payload was promoted.",
+          }),
+        });
       } else {
         await persistAll(
           {},
@@ -1712,7 +1975,32 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         pendingLocalWrites: Boolean(localLoad()?.syncMeta?.pendingCloudWrite),
         at: Date.now(),
       });
+      recordAdaptiveEvent({
+        eventName: ADAPTIVE_LEARNING_EVENT_NAMES.syncLifecycleChanged,
+        authSession: sessionUsed || normalized,
+        userId,
+        occurredAt: Date.now(),
+        dedupeKey: `sync_load_seed_${String(userId || "")}_${Math.floor(Date.now() / 1000)}`,
+        payload: buildSyncLifecycleEventInput({
+          syncEvent: "cloud_load",
+          status: "success",
+          reason: cache && typeof cache === "object" ? "seed_cloud_from_local" : "bootstrap_empty_cloud",
+          endpoint,
+          httpStatus: res.status,
+          pendingLocalWrites: Boolean(localLoad()?.syncMeta?.pendingCloudWrite),
+          retryEligible: false,
+          mergedLocalCache: Boolean(cache && typeof cache === "object"),
+          detail: cache && typeof cache === "object"
+            ? "Cloud load found no row, so local data seeded the account."
+            : "Cloud load found no row, so the app initialized a blank payload.",
+        }),
+      });
     }
+    await replayAdaptiveLearningEventSink({
+      authSession: sessionUsed || normalized,
+      source: "sb_load",
+      suppressErrors: true,
+    });
     return {
       ok: true,
       synced: true,
@@ -1727,9 +2015,10 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     setAuthSession,
   }) => {
     const startedAt = Date.now();
+    const payloadWithAdaptiveLearning = buildPayloadWithAdaptiveLearning(payload || {});
     const previousLocalPayload = localLoad();
     const localPayload = buildLocalCachePayload({
-      payload,
+      payload: payloadWithAdaptiveLearning,
       pendingCloudWrite: Boolean(authSession?.user?.id),
       previousSyncMeta: previousLocalPayload?.syncMeta || null,
     });
@@ -1762,6 +2051,19 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           duration_ms: Date.now() - startedAt,
         },
       });
+      recordAdaptiveEvent({
+        eventName: ADAPTIVE_LEARNING_EVENT_NAMES.syncLifecycleChanged,
+        occurredAt: Date.now(),
+        dedupeKey: `sync_local_only_${Math.floor(Date.now() / 1000)}_${SB_CONFIG_ERROR ? "provider" : "signed_out"}`,
+        payload: buildSyncLifecycleEventInput({
+          syncEvent: "persist_all",
+          status: "skipped",
+          reason: SB_CONFIG_ERROR ? "provider_unavailable" : "not_signed_in",
+          pendingLocalWrites: true,
+          retryEligible: false,
+          detail: localOnlyStatus.detail,
+        }),
+      });
       return {
         ok: true,
         synced: false,
@@ -1790,6 +2092,20 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           duration_ms: Date.now() - startedAt,
         },
       });
+      recordAdaptiveEvent({
+        eventName: ADAPTIVE_LEARNING_EVENT_NAMES.syncLifecycleChanged,
+        authSession,
+        occurredAt: Date.now(),
+        dedupeKey: `sync_setup_deferred_${String(authSession?.user?.id || "")}_${Math.floor(Date.now() / 1000)}`,
+        payload: buildSyncLifecycleEventInput({
+          syncEvent: "persist_all",
+          status: "skipped",
+          reason: "setup_deferred",
+          pendingLocalWrites: true,
+          retryEligible: false,
+          detail: deferredStatus.detail,
+        }),
+      });
       return {
         ok: true,
         synced: false,
@@ -1800,7 +2116,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       };
     }
     try {
-      const payloadFingerprint = createPersistedPayloadFingerprint(payload || {});
+      const payloadFingerprint = createPersistedPayloadFingerprint(payloadWithAdaptiveLearning || {});
       const currentUserId = String(authSession?.user?.id || "");
       while (activePersistPromise && currentUserId === activePersistUserId) {
         try {
@@ -1828,6 +2144,20 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
               duration_ms: Date.now() - startedAt,
             },
           });
+          recordAdaptiveEvent({
+            eventName: ADAPTIVE_LEARNING_EVENT_NAMES.syncLifecycleChanged,
+            authSession,
+            occurredAt: Date.now(),
+            dedupeKey: `sync_retry_cooldown_${currentUserId}_${Math.floor(Date.now() / 1000)}`,
+            payload: buildSyncLifecycleEventInput({
+              syncEvent: "persist_all",
+              status: "retrying",
+              reason: "retry_cooldown",
+              pendingLocalWrites: true,
+              retryEligible: true,
+              detail: cooldownStatus.detail,
+            }),
+          });
           return {
             ok: false,
             synced: false,
@@ -1846,7 +2176,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             detail: "Cloud state is already current.",
           });
           localSave(buildLocalCachePayload({
-            payload,
+            payload: buildPayloadWithAdaptiveLearning(payloadWithAdaptiveLearning),
             pendingCloudWrite: false,
             syncedAt: Date.now(),
             previousSyncMeta: localPayload?.syncMeta || null,
@@ -1862,6 +2192,31 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
               duration_ms: Date.now() - startedAt,
             },
           });
+          const adaptiveSnapshot = adaptiveLearningStore?.buildPersistenceSnapshot?.();
+          adaptiveLearningStore?.markEventsSynced?.({
+            eventIds: adaptiveSnapshot?.pendingEventIds || [],
+            at: Date.now(),
+          });
+          recordAdaptiveEvent({
+            eventName: ADAPTIVE_LEARNING_EVENT_NAMES.syncLifecycleChanged,
+            authSession,
+            occurredAt: Date.now(),
+            dedupeKey: `sync_already_current_${currentUserId}_${Math.floor(Date.now() / 1000)}`,
+            payload: buildSyncLifecycleEventInput({
+              syncEvent: "persist_all",
+              status: "success",
+              reason: "already_current",
+              endpoint: "rest/v1/trainer_data",
+              pendingLocalWrites: false,
+              retryEligible: false,
+              detail: alreadyCurrentStatus.detail,
+            }),
+          });
+          await replayAdaptiveLearningEventSink({
+            authSession,
+            source: "persist_all_already_current",
+            suppressErrors: true,
+          });
           return {
             ok: true,
             synced: true,
@@ -1869,21 +2224,26 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             reason: "already_current",
           };
         }
-        await sbSave({ payload, authSession, setAuthSession });
+        const adaptiveSnapshotBeforeSave = adaptiveLearningStore?.buildPersistenceSnapshot?.();
+        await sbSave({ payload: payloadWithAdaptiveLearning, authSession, setAuthSession });
         lastPersistedPayloadFingerprint = payloadFingerprint;
         lastPersistedUserId = currentUserId;
         resetTransientPersistCooldown();
+        adaptiveLearningStore?.markEventsSynced?.({
+          eventIds: adaptiveSnapshotBeforeSave?.pendingEventIds || [],
+          at: Date.now(),
+        });
         localSave(buildLocalCachePayload({
-          payload,
+          payload: buildPayloadWithAdaptiveLearning(payloadWithAdaptiveLearning),
           pendingCloudWrite: false,
           syncedAt: Date.now(),
           previousSyncMeta: localPayload?.syncMeta || null,
         }));
-        const nextGoalsFingerprint = createStableFingerprint(payload?.goals || []);
-        const nextCoachMemoryFingerprint = createStableFingerprint((payload?.personalization || DEFAULT_PERSONALIZATION)?.coachMemory || {});
+        const nextGoalsFingerprint = createStableFingerprint(payloadWithAdaptiveLearning?.goals || []);
+        const nextCoachMemoryFingerprint = createStableFingerprint((payloadWithAdaptiveLearning?.personalization || DEFAULT_PERSONALIZATION)?.coachMemory || {});
         try {
           if (nextGoalsFingerprint !== lastSyncedGoalsFingerprint) {
-            await syncGoals({ goals: payload?.goals || [], authSession, setAuthSession });
+            await syncGoals({ goals: payloadWithAdaptiveLearning?.goals || [], authSession, setAuthSession });
             lastSyncedGoalsFingerprint = nextGoalsFingerprint;
           }
         } catch (e) {
@@ -1891,7 +2251,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         }
         try {
           if (nextCoachMemoryFingerprint !== lastSyncedCoachMemoryFingerprint) {
-            await syncCoachMemory({ personalization: payload?.personalization || DEFAULT_PERSONALIZATION, authSession, setAuthSession });
+            await syncCoachMemory({ personalization: payloadWithAdaptiveLearning?.personalization || DEFAULT_PERSONALIZATION, authSession, setAuthSession });
             lastSyncedCoachMemoryFingerprint = nextCoachMemoryFingerprint;
           }
         } catch (e) {
@@ -1913,6 +2273,26 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             reason: "synced",
             duration_ms: Date.now() - startedAt,
           },
+        });
+        recordAdaptiveEvent({
+          eventName: ADAPTIVE_LEARNING_EVENT_NAMES.syncLifecycleChanged,
+          authSession,
+          occurredAt: Date.now(),
+          dedupeKey: `sync_success_${currentUserId}_${Math.floor(Date.now() / 1000)}`,
+          payload: buildSyncLifecycleEventInput({
+            syncEvent: "persist_all",
+            status: "success",
+            reason: "synced",
+            endpoint: "rest/v1/trainer_data",
+            pendingLocalWrites: false,
+            retryEligible: false,
+            detail: syncedStatus.detail,
+          }),
+        });
+        await replayAdaptiveLearningEventSink({
+          authSession,
+          source: "persist_all_synced",
+          suppressErrors: true,
         });
         return {
           ok: true,
@@ -1953,6 +2333,22 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           reason: classifyAnalyticsErrorCode(e),
           duration_ms: Date.now() - startedAt,
         },
+      });
+      recordAdaptiveEvent({
+        eventName: ADAPTIVE_LEARNING_EVENT_NAMES.syncLifecycleChanged,
+        authSession,
+        occurredAt: Date.now(),
+        dedupeKey: `sync_error_${String(authSession?.user?.id || "")}_${Math.floor(Date.now() / 1000)}_${String(fallbackStatus?.reason || "unknown")}`,
+        payload: buildSyncLifecycleEventInput({
+          syncEvent: "persist_all",
+          status: "error",
+          reason: fallbackStatus?.reason || "unknown",
+          endpoint: e?.endpoint || "rest/v1/trainer_data",
+          httpStatus: e?.httpStatus || null,
+          pendingLocalWrites: true,
+          retryEligible: fallbackStatus?.reason === STORAGE_STATUS_REASONS.transient,
+          detail: fallbackStatus?.detail || String(e?.message || "Cloud sync failed."),
+        }),
       });
       return {
         ok: false,

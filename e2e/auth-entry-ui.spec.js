@@ -43,19 +43,29 @@ async function bootAuthEntry(page, {
   height = 844,
   colorScheme = "dark",
   forcedColors = "none",
+  seedLocalCache = true,
+  debugMode = false,
 } = {}) {
   await page.emulateMedia({ colorScheme, forcedColors });
   await page.setViewportSize({ width, height });
-  await page.addInitScript(({ payloadSeed, supabaseUrl, supabaseKey }) => {
+  await page.addInitScript(({ payloadSeed, supabaseUrl, supabaseKey, shouldSeedLocalCache, shouldEnableDebug }) => {
     window.__SUPABASE_URL = supabaseUrl;
     window.__SUPABASE_ANON_KEY = supabaseKey;
     localStorage.removeItem("trainer_auth_session_v1");
     localStorage.removeItem("trainer_local_cache_v4");
-    localStorage.setItem("trainer_local_cache_v4", JSON.stringify(payloadSeed));
+    localStorage.removeItem("trainer_debug");
+    if (shouldEnableDebug) {
+      localStorage.setItem("trainer_debug", "1");
+    }
+    if (shouldSeedLocalCache) {
+      localStorage.setItem("trainer_local_cache_v4", JSON.stringify(payloadSeed));
+    }
   }, {
     payloadSeed: makeLocalPayload({ theme, mode }),
     supabaseUrl: SUPABASE_URL,
     supabaseKey: SUPABASE_KEY,
+    shouldSeedLocalCache: seedLocalCache,
+    shouldEnableDebug: debugMode,
   });
   await page.goto("/");
   await expect(page.getByTestId("auth-gate")).toBeVisible();
@@ -64,6 +74,20 @@ async function bootAuthEntry(page, {
 }
 
 test.describe("auth entry UI", () => {
+  test("first-time consumer auth entry does not expose local fallback", async ({ page }) => {
+    await bootAuthEntry(page, {
+      theme: "Atlas",
+      mode: "Dark",
+      width: 390,
+      height: 844,
+      colorScheme: "dark",
+      seedLocalCache: false,
+    });
+
+    await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
+    await expect(page.getByText(/create your account before you start/i)).toBeVisible();
+  });
+
   test("auth entry preserves action hierarchy and stacks cleanly on mobile", async ({ page }) => {
     await bootAuthEntry(page, {
       theme: "Atlas",
@@ -71,6 +95,7 @@ test.describe("auth entry UI", () => {
       width: 390,
       height: 844,
       colorScheme: "dark",
+      debugMode: true,
     });
 
     await expect(page.getByTestId("auth-submit")).toHaveAttribute("data-auth-variant", "primary");
@@ -98,6 +123,7 @@ test.describe("auth entry UI", () => {
       width: 1280,
       height: 900,
       colorScheme: "dark",
+      debugMode: true,
     });
 
     const railBox = await page.getByTestId("auth-entry-rail").boundingBox();
@@ -118,6 +144,7 @@ test.describe("auth entry UI", () => {
       width: 430,
       height: 932,
       colorScheme: "light",
+      debugMode: true,
     });
 
     const styles = await page.getByTestId("continue-local-mode").evaluate((node) => {
@@ -148,6 +175,7 @@ test.describe("auth entry UI", () => {
       height: 932,
       colorScheme: "dark",
       forcedColors: "active",
+      debugMode: true,
     });
 
     await page.getByTestId("auth-mode-signup").click();

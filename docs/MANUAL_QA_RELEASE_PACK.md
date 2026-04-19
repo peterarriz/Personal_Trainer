@@ -13,8 +13,9 @@ Run this pack together with [ADVERSARIAL_USER_TEST_MATRIX_AND_RELEASE_GATE.md](<
 1. Run `npm run build`.
 2. Launch the app locally with `npm run dev` or pick the staging URL you want to certify.
 3. Generate a worksheet with `npm run qa:manual-pack -- --env local --url http://localhost:3000`.
-4. Store screenshots, PDFs, and notes in the generated artifact folder.
-5. Mark every case as `Pass`, `Pass with notes`, `Fail`, `Blocked`, or `N/A`.
+4. Run `npm run qa:adaptive-policy:launch-readiness` if you are reviewing any adaptive-learning rollout posture.
+5. Store screenshots, PDFs, and notes in the generated artifact folder.
+6. Mark every case as `Pass`, `Pass with notes`, `Fail`, `Blocked`, or `N/A`.
 
 ## Pass / Fail Rubric
 
@@ -106,6 +107,23 @@ Prepare these before the full run:
 - one intentionally unconfigured delete-account environment if you want to validate diagnostics
 - one backup code generated from `Settings`
 - one logged workout day and one nutrition actual entry
+- the latest adaptive shadow and launch-readiness artifacts if you are checking rollout safety
+
+## Adaptive Rollout Safety
+
+Adaptive rollout is not a required consumer-facing feature for launch. It is a safety gate.
+
+Use these commands when the release touches adaptive scaffolding, shadow evaluation, promotion tooling, or trusted-local diagnostics:
+
+1. `npm run qa:adaptive-policy:shadow-eval`
+2. `npm run qa:adaptive-policy:launch-readiness`
+3. `npm run qa:adaptive-policy:promote`
+
+Safe launch interpretation:
+
+- `keep_in_shadow` is acceptable when adaptive remains off or shadow-only
+- `eligible_for_limited_active_rollout` only matters if an operator is intentionally preparing a bounded rollout
+- do not activate any decision point when harmful cohorts are still flagged
 
 ## Adversarial Matrix Rule
 

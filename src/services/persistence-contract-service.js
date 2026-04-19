@@ -4,6 +4,7 @@ import {
   getCurrentPrescribedDayRecord,
   normalizePrescribedDayHistoryEntry,
 } from "./prescribed-day-history-service.js";
+import { sanitizeAdaptiveLearningSnapshotForPersistence } from "./adaptive-learning-store-service.js";
 
 const clonePersistenceContractValue = (value) => {
   if (value == null) return value;
@@ -262,6 +263,7 @@ export const sanitizeTrainerDataPayloadForRest = ({ payload = {}, warningSink = 
     goals: sanitizePersistedGoalsCollection({ goals: safePayload?.goals || [], warningSink }),
     plannedDayRecords: sanitizePersistedPlannedDayRecords({ plannedDayRecords: safePayload?.plannedDayRecords || {}, warningSink }),
     planWeekRecords: sanitizePersistedPlanWeekRecords({ planWeekRecords: safePayload?.planWeekRecords || {}, warningSink }),
+    adaptiveLearning: sanitizeAdaptiveLearningSnapshotForPersistence(safePayload?.adaptiveLearning || null),
   };
 };
 

@@ -2,6 +2,9 @@ import { comparePlannedDayToActual } from "../modules-checkins.js";
 import { normalizeActualNutritionLog, compareNutritionPrescriptionToActual } from "../modules-nutrition.js";
 import { describeProvenanceRecord, normalizeStructuredProvenance } from "./provenance-service.js";
 import { normalizeActualRecoveryLog } from "./recovery-supplement-service.js";
+import { buildAdaptiveOutcomeExplanation } from "./adaptive-explanation-service.js";
+
+const sanitizeText = (value = "", maxLength = 220) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 
 const getNutritionPrescriptionForRecord = (record = null) => (
   record?.resolved?.nutrition?.prescription
@@ -269,12 +272,17 @@ const buildDayReviewStory = ({
   nutritionComparison = {},
 } = {}) => {
   const classification = classifyDayReviewStory(comparison);
+  const explanation = buildAdaptiveOutcomeExplanation({ comparison, actualCheckin });
   return {
     ...classification,
     plannedSummary: summarizeTrainingForReview(latestPrescription, comparison?.expectedSession ? "Planned session unavailable" : "Recovery / rest"),
     actualSummary: buildActualOutcomeSummary({ actualLog, actualCheckin, comparison }),
     mainLesson: buildDayReviewLesson({ comparison, nutritionComparison, actualCheckin }),
     nextEffect: buildDayReviewNextEffect({ comparison, nutritionComparison, actualCheckin }),
+    explanationSourceLabel: sanitizeText(explanation?.sourceLabel || "", 80),
+    explanationLine: sanitizeText(explanation?.line || "", 220),
+    explanationDetailLine: sanitizeText(explanation?.detailLine || "", 220),
+    explanation,
     auditSummary: buildDayReviewPrimarySummary({
       revisions,
       latestPrescription,

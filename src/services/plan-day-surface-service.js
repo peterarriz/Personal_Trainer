@@ -1,4 +1,5 @@
 import { buildDayPrescriptionDisplay } from "./day-prescription-display-service.js";
+import { buildAdaptivePrescriptionExplanation } from "./adaptive-explanation-service.js";
 import { dedupeStrings } from "../utils/collection-utils.js";
 
 const sanitizeText = (value = "", maxLength = 240) => String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
@@ -60,16 +61,17 @@ export const buildCanonicalSurfaceMessaging = ({
   display = null,
   week = null,
   provenance = null,
+  decision = null,
 } = {}) => {
   const planningBasis = week?.planningBasis || week?.planWeek?.planningBasis || null;
   const changeSummary = week?.changeSummary || week?.weeklyIntent?.changeSummary || week?.planWeek?.changeSummary || null;
-  const changeSummaryLine = sanitizeText(
+  const rawChangeSummaryLine = sanitizeText(
     changeSummary?.surfaceLine
     || [changeSummary?.headline, changeSummary?.preserved].filter(Boolean).join(" ")
     || "",
     220
   );
-  const planningBasisLine = sanitizeText(
+  const rawPlanningBasisLine = sanitizeText(
     planningBasis?.todayLine
     || planningBasis?.planBasisExplanation?.todayLine
     || planningBasis?.compromiseLine
@@ -77,13 +79,39 @@ export const buildCanonicalSurfaceMessaging = ({
     || "",
     220
   );
-  const provenanceLine = sanitizeText(
+  const rawProvenanceLine = sanitizeText(
     provenance?.summary
     || "",
     220
   );
   const displayWhy = sanitizeText(display?.why || "", 220);
-  const canonicalReasonLine = changeSummaryLine || planningBasisLine || provenanceLine || displayWhy;
+  const explanationModel = buildAdaptivePrescriptionExplanation({
+    week,
+    provenance,
+    decision,
+    changeSummary,
+    planningBasis,
+    displayWhy,
+    changeSummaryLine: rawChangeSummaryLine,
+    planningBasisLine: rawPlanningBasisLine,
+    provenanceLine: rawProvenanceLine,
+  });
+  const changeSummaryLine = sanitizeText(
+    explanationModel?.category === "user_driven_modification" && explanationModel?.line
+      ? explanationModel.line
+      : rawChangeSummaryLine,
+    220
+  );
+  const planningBasisLine = rawPlanningBasisLine;
+  const provenanceLine = rawProvenanceLine;
+  const canonicalReasonLine = sanitizeText(
+    explanationModel?.line
+    || rawChangeSummaryLine
+    || rawPlanningBasisLine
+    || rawProvenanceLine
+    || displayWhy,
+    220
+  );
   const preferenceAndAdaptationLine = canonicalReasonLine || displayWhy;
   const statusBits = dedupeStrings([
     changeSummary?.inputType === "training_preference" ? "training preference" : "",
@@ -99,6 +127,11 @@ export const buildCanonicalSurfaceMessaging = ({
     changeSummaryLine,
     planningBasisLine,
     provenanceLine,
+    explanationSourceLabel: sanitizeText(explanationModel?.sourceLabel || "", 80),
+    explanationLine: sanitizeText(explanationModel?.line || canonicalReasonLine, 220),
+    explanationDetailLine: sanitizeText(explanationModel?.detailLine || "", 220),
+    explanationCategory: sanitizeText(explanationModel?.category || "", 60),
+    explanationModel,
     statusBits,
   };
 };
@@ -146,6 +179,7 @@ export const buildCanonicalPlanSurfaceModel = ({
     display,
     week: context.week || null,
     provenance: context.provenance || null,
+    decision: context.decision || null,
   });
 
   return {
@@ -169,6 +203,8 @@ export const buildCanonicalPlanSurfaceModel = ({
       expectedDuration: display?.expectedDuration || "",
       canonicalReasonLine: messaging.canonicalReasonLine || "",
       preferenceAndAdaptationLine: messaging.preferenceAndAdaptationLine || "",
+      explanationSourceLabel: messaging.explanationSourceLabel || "",
+      explanationLine: messaging.explanationLine || "",
       changeSummaryLine: messaging.changeSummaryLine || "",
       planningBasisLine: messaging.planningBasisLine || "",
       decisionMode: context.decision?.mode || "",
@@ -204,6 +240,7 @@ export const buildCanonicalPlanSurfaceAudit = ({
     "purpose",
     "structure",
     "expectedDuration",
+    "explanationSourceLabel",
     "canonicalReasonLine",
     "preferenceAndAdaptationLine",
   ];

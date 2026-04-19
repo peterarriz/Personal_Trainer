@@ -254,8 +254,8 @@ const detectSignals = (text = "") => {
     bodyCompMentionIndex,
     hasBodyFatPercentageTarget,
     hasMalformedBmiPercent: /(?:\bbmi\b[\s\S]{0,18}\b\d{1,2}(?:\.\d+)?\s*%)|(?:\b\d{1,2}(?:\.\d+)?\s*%\b[\s\S]{0,18}\bbmi\b)/i.test(corpus),
-    hasReEntry: /(back in shape|get back in shape|get back into shape|again|feel like myself again|return to form|return to training|re-entry|re entry)/i.test(corpus),
-    hasSafeRebuild: /(postpartum|after having a baby|after baby|pelvic floor|rebuild[\s\S]{0,24}safely|safe rebuild|without getting hurt|stop hurting|without making .* worse|recover|recovery)/i.test(corpus),
+    hasReEntry: /(back in shape|get back in shape|get back into shape|feel like myself again|return to form|return to training|start training again|train again|work out again|re-entry|re entry)/i.test(corpus),
+    hasSafeRebuild: /(postpartum|after having a baby|after baby|pelvic floor|rebuild[\s\S]{0,24}safely|safe rebuild|without getting hurt|stop hurting|without making .* worse|recover(?:ing)? from|recovery after|after injury|after surgery)/i.test(corpus),
     raw: corpus,
   };
 };
@@ -1347,25 +1347,31 @@ const shouldPreferLegacyMixedGoalResolution = ({
   structuredResolution = null,
 } = {}) => {
   const normalizedText = sanitizeText(rawIntentText, 420).toLowerCase();
-  const canonicalRunLiftPhrase = /\b(run and lift|running and strength|keep running but get stronger|stronger first,? but i still want (?:a bit of )?running)\b/i.test(normalizedText);
-  const canonicalBalancedHybridPhrase = /\b(stronger and fitter|strength and conditioning together|aesthetic plus endurance|look athletic and keep my endurance)\b/i.test(normalizedText);
+  const rawSignals = detectSignals(rawIntentText);
+  const canonicalRunLiftPhrase = /\b(run and lift|running and strength|keep running but get stronger|stronger first,? but i still want (?:a bit of )?running|lift while training for (?:a )?(5k|10k|half marathon|marathon))\b/i.test(normalizedText);
+  const canonicalBalancedHybridPhrase = /\b(stronger and fitter|strength and conditioning together|aesthetic plus endurance|look athletic and keep my endurance|lose fat while preserving my running)\b/i.test(normalizedText);
   const canonicalStrengthCutPhrase = /\b(keep strength while cutting|maintain strength while losing fat)\b/i.test(normalizedText);
+  const canonicalRecompPhrase = /\b(recomp|recomposition|lose fat and gain muscle|lose fat while gaining muscle)\b/i.test(normalizedText);
+  const canonicalSwimTechniquePhrase = /\b(swim (?:better|faster)|improve my swim|swim endurance and technique)\b/i.test(normalizedText);
   const canonicalStructuredHybridPhrase = canonicalRunLiftPhrase || canonicalBalancedHybridPhrase || canonicalStrengthCutPhrase;
+  const explicitReEntryCue = /\b(back in shape|get back in shape|get back into shape|feel like myself again|return to form|return to training|start training again|train again|work out again|re-entry|re entry)\b/i.test(normalizedText);
+  const explicitSafeRebuildCue = /\b(postpartum|after having a baby|after baby|pelvic floor|rebuild[\s\S]{0,24}safely|safe rebuild|without getting hurt|stop hurting|without making .* worse|recover(?:ing)? from|recovery after|after injury|after surgery)\b/i.test(normalizedText);
   const structuredDiscoveryFamily = sanitizeText(structuredResolution?.resolvedGoal?.goalDiscoveryFamilyId || "", 40).toLowerCase();
   const structuredIntentId = sanitizeText(structuredResolution?.resolvedGoal?.structuredIntentId || "", 80).toLowerCase();
   const hasSeparatedGoalPhrases = /[.;\n]/.test(String(rawIntentText || ""));
   const hasMixedConnector = /\b(and|plus|while|but|also|with|maybe)\b/i.test(normalizedText);
-  const crossDomainSignalCount = countCrossDomainSignals(signals);
+  const crossDomainSignalCount = countCrossDomainSignals(rawSignals);
+  const explicitIndependentGoalDraft = hasSeparatedGoalPhrases || (crossDomainSignalCount >= 2 && hasMixedConnector);
   const strongReEntrySignal = Boolean(
-    signals.hasSafeRebuild
+    explicitSafeRebuildCue
     || (
-      signals.hasReEntry
-      && !signals.hasRunning
-      && !signals.hasSwimming
-      && !signals.hasBench
-      && !signals.hasSquat
-      && !signals.hasDeadlift
-      && !signals.hasAthleticPower
+      explicitReEntryCue
+      && !rawSignals.hasRunning
+      && !rawSignals.hasSwimming
+      && !rawSignals.hasBench
+      && !rawSignals.hasSquat
+      && !rawSignals.hasDeadlift
+      && !rawSignals.hasAthleticPower
     )
   );
   const structuredMixedIntent = [
@@ -1377,35 +1383,56 @@ const shouldPreferLegacyMixedGoalResolution = ({
     "tactical_fitness",
     "triathlon_multisport",
   ].includes(structuredIntentId);
+  const protectedStructuredIntent = [
+    "swim_better",
+    "recomp",
+    "keep_strength_while_cutting",
+    "get_back_in_shape",
+    "rebuild_routine",
+    "run_and_lift",
+    "stronger_and_fitter",
+    "aesthetic_plus_endurance",
+    "sport_support",
+    "seasonal_sport_support",
+    "tactical_fitness",
+  ].includes(structuredIntentId);
   const explicitMixedGoalDraft = Boolean(
-    (signals.hasExplicitRunningStrengthMix && !canonicalRunLiftPhrase)
-    || signals.hasExplicitStrengthBodyCompMix
-    || signals.hasExplicitRunningBodyCompMix
-    || (signals.hasFatLoss && signals.hasKeepStrength && !canonicalStrengthCutPhrase)
+    (rawSignals.hasExplicitRunningStrengthMix && !canonicalRunLiftPhrase)
+    || (rawSignals.hasExplicitStrengthBodyCompMix && !canonicalStrengthCutPhrase && !canonicalRecompPhrase)
+    || (rawSignals.hasExplicitRunningBodyCompMix && !canonicalBalancedHybridPhrase)
+    || (rawSignals.hasFatLoss && rawSignals.hasKeepStrength && !canonicalStrengthCutPhrase && !canonicalRecompPhrase)
     || /\bhybrid athlete\b/i.test(normalizedText)
   );
+  const shouldForceStructuredIntent = protectedStructuredIntent
+    && !explicitMixedGoalDraft
+    && !explicitIndependentGoalDraft
+    && !rawSignals.hasAthleticPower;
 
-  if (canonicalStructuredHybridPhrase && !explicitMixedGoalDraft && !hasSeparatedGoalPhrases) {
+  if (shouldForceStructuredIntent) {
+    return false;
+  }
+
+  if ((canonicalStructuredHybridPhrase || canonicalRecompPhrase || canonicalSwimTechniquePhrase) && !explicitMixedGoalDraft && !hasSeparatedGoalPhrases) {
     return false;
   }
   if (
     (structuredDiscoveryFamily === "hybrid" || structuredMixedIntent)
     && !explicitMixedGoalDraft
     && !strongReEntrySignal
-    && !signals.hasAthleticPower
+    && !rawSignals.hasAthleticPower
     && !hasSeparatedGoalPhrases
   ) {
     return false;
   }
   return Boolean(
-    signals.hasHybrid
-    || signals.hasAthleticPower
+    rawSignals.hasHybrid
+    || rawSignals.hasAthleticPower
     || strongReEntrySignal
-    || signals.hasExplicitRunningStrengthMix
-    || signals.hasExplicitStrengthBodyCompMix
-    || signals.hasExplicitRunningBodyCompMix
-    || (signals.hasFatLoss && signals.hasKeepStrength)
-    || (crossDomainSignalCount >= 2 && (hasSeparatedGoalPhrases || hasMixedConnector))
+    || rawSignals.hasExplicitRunningStrengthMix
+    || rawSignals.hasExplicitStrengthBodyCompMix
+    || rawSignals.hasExplicitRunningBodyCompMix
+    || (rawSignals.hasFatLoss && rawSignals.hasKeepStrength)
+    || explicitIndependentGoalDraft
   );
 };
 

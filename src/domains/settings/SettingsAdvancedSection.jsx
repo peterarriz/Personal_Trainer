@@ -23,6 +23,7 @@ export function SettingsAdvancedSection({
   showProtectedDiagnostics = false,
   showInternalSettingsTools = false,
   frictionDashboard = null,
+  adaptiveDiagnostics = null,
   goalRequest = {},
   coachSetup = {},
   integrations = {},
@@ -77,6 +78,14 @@ export function SettingsAdvancedSection({
     ["Garmin Connect", resolvedIntegrations.garmin],
     ["Location", resolvedIntegrations.location],
   ];
+  const adaptiveDiagnosticsModel = {
+    visible: false,
+    cards: [],
+    registryRows: [],
+    commandHints: [],
+    notes: [],
+    ...adaptiveDiagnostics,
+  };
 
   return (
     <section data-testid="settings-advanced-section" style={SETTINGS_SECTION_STYLE}>
@@ -111,6 +120,66 @@ export function SettingsAdvancedSection({
               ))}
             </div>
           ))}
+        </div>
+      )}
+      {showProtectedDiagnostics && adaptiveDiagnosticsModel.visible && (
+        <details data-testid="settings-adaptive-diagnostics" style={SETTINGS_PANEL_STYLE}>
+          <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"#dbe7f6" }}>Internal adaptive readiness</summary>
+          <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+            <div style={{ fontSize:"0.49rem", color:"#8fa5c8", lineHeight:1.5 }}>
+              Launch-safe adaptive status for trusted local review only. This stays hidden in consumer mode and should not be used as user-facing copy.
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.35rem" }}>
+              {adaptiveDiagnosticsModel.cards.map((card) => (
+                <div key={card.id} data-testid={`settings-adaptive-diagnostics-card-${card.id}`} style={{ border:"1px solid #20314a", borderRadius:12, background:"#0b1220", padding:"0.52rem 0.56rem", display:"grid", gap:"0.16rem" }}>
+                  <div style={{ fontSize:"0.45rem", color:"#64748b", letterSpacing:"0.08em" }}>{card.title}</div>
+                  <div style={{ fontSize:"0.58rem", color:"#dbe7f6", lineHeight:1.4 }}>{card.headline}</div>
+                  <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{card.detail}</div>
+                </div>
+              ))}
+            </div>
+            {!!adaptiveDiagnosticsModel.registryRows?.length && (
+              <div style={{ display:"grid", gap:"0.22rem" }}>
+                <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.08em" }}>Decision-point registry</div>
+                {adaptiveDiagnosticsModel.registryRows.map((row) => (
+                  <div key={row.id} data-testid={`settings-adaptive-diagnostics-row-${row.id}`} style={{ border:"1px solid #20314a", borderRadius:10, background:"#0f172a", padding:"0.5rem", display:"grid", gap:"0.14rem" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", gap:"0.3rem", alignItems:"center", flexWrap:"wrap" }}>
+                      <div style={{ fontSize:"0.5rem", color:"#dbe7f6", lineHeight:1.45 }}>{row.label}</div>
+                      <span style={buildSettingsPillStyle({ color:"#dbe7f6", background:"#132033", borderColor:"#20314a" })}>
+                        {row.enabled ? `${row.effectiveMode || "deterministic_only"}` : "disabled"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>
+                      Stage {row.stage || "approved_safe_lever"}. {row.ruleCount || 0} reviewed rule{row.ruleCount === 1 ? "" : "s"}. Owner {row.owner || "unknown"}.
+                    </div>
+                    {(row.latestActionId || row.latestFallbackReason) && (
+                      <div style={{ fontSize:"0.47rem", color:"#cbd5e1", lineHeight:1.45 }}>
+                        Latest plan trace: {row.latestActionId || "no action"}{row.latestFallbackReason ? `. ${row.latestFallbackReason}` : ""}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {!!adaptiveDiagnosticsModel.commandHints?.length && (
+              <div style={{ display:"grid", gap:"0.22rem" }}>
+                <div style={{ fontSize:"0.47rem", color:"#64748b", letterSpacing:"0.08em" }}>Operator commands</div>
+                {adaptiveDiagnosticsModel.commandHints.map((entry) => (
+                  <div key={entry.id} style={{ fontSize:"0.47rem", color:"#dbe7f6", lineHeight:1.5 }}>
+                    {entry.label}: <code>{entry.command}</code>
+                  </div>
+                ))}
+              </div>
+            )}
+            {!!adaptiveDiagnosticsModel.notes?.length && adaptiveDiagnosticsModel.notes.map((note) => (
+              <div key={note} style={{ fontSize:"0.47rem", color:"#8fa5c8", lineHeight:1.45 }}>{note}</div>
+            ))}
+          </div>
+        </details>
+      )}
+      {showProtectedDiagnostics && showInternalSettingsTools && !adaptiveDiagnosticsModel.visible && (
+        <div data-testid="settings-adaptive-diagnostics-disabled" style={{ ...SETTINGS_SUBPANEL_STYLE, borderStyle:"dashed" }}>
+          Adaptive diagnostics stay off until the trusted local adaptive flag is enabled.
         </div>
       )}
       {showInternalSettingsTools && !showProtectedDiagnostics && (
@@ -221,3 +290,4 @@ export function SettingsAdvancedSection({
     </section>
   );
 }
+

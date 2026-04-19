@@ -74,7 +74,7 @@ export function SettingsPreferencesSection({
             {showEnvEditor && (
               <div style={{ display:"grid", gap:"0.28rem" }}>
                 <select value={trainingPrefs?.defaultEnvironment || "Home"} onChange={(e) => patchTrainingPreferences({ defaultEnvironment: e.target.value })}>
-                  {["Home", "Gym", "Travel"].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+                  {["Home", "Gym", "Outdoor", "Travel"].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
                 </select>
                 <div style={{ fontSize:"0.5rem", color:"var(--text-soft)", lineHeight:1.45 }}>
                   Session-by-session changes still happen from Today.

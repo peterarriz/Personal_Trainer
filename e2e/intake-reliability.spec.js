@@ -160,7 +160,7 @@ test.describe("intake reliability", () => {
     await continueButton.click();
 
     await expect.poll(async () => page.getByTestId("intake-root").getAttribute("data-intake-phase"), { timeout: 20_000 }).toBe("clarify");
-    await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/big lift|bench|squat|deadlift|press|pull-up/i);
+    await expect(page.getByTestId("intake-review")).toContainText(/big lift|bench|squat|deadlift|press|pull-up/i);
   });
 
   test("signed-in intake still reaches clarify and does not depend on cloud writes before onboarding finishes", async ({ page }) => {

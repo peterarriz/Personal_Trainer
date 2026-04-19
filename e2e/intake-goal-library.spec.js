@@ -13,8 +13,8 @@ test.describe("goal-library intake paths", () => {
   });
 
   test("running path can reach review from the featured library card", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
-    await completeGoalLibraryIntakeStep(page, {
+    await gotoIntakeInLocalMode(page, {}, { freshStart: true });
+    const phase = await completeGoalLibraryIntakeStep(page, {
       goalType: "running",
       templateId: "run_first_5k",
       trainingDays: "3",
@@ -27,14 +27,18 @@ test.describe("goal-library intake paths", () => {
       },
     });
 
+    if (phase === "completed") {
+      await expect(page.getByTestId("today-session-card")).toBeVisible();
+      return;
+    }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
   });
 
   test("swim path can reach review from the featured library card", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
-    await completeGoalLibraryIntakeStep(page, {
+    await gotoIntakeInLocalMode(page, {}, { freshStart: true });
+    const phase = await completeGoalLibraryIntakeStep(page, {
       goalType: "swim",
       templateId: "open_water_swim",
       trainingDays: "3",
@@ -46,14 +50,18 @@ test.describe("goal-library intake paths", () => {
       },
     });
 
+    if (phase === "completed") {
+      await expect(page.getByTestId("today-session-card")).toBeVisible();
+      return;
+    }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
   });
 
   test("strength path can reach review from the featured library card", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
-    await completeGoalLibraryIntakeStep(page, {
+    await gotoIntakeInLocalMode(page, {}, { freshStart: true });
+    const phase = await completeGoalLibraryIntakeStep(page, {
       goalType: "strength",
       templateId: "bench_225",
       trainingDays: "4",
@@ -66,14 +74,18 @@ test.describe("goal-library intake paths", () => {
       },
     });
 
+    if (phase === "completed") {
+      await expect(page.getByTestId("today-session-card")).toBeVisible();
+      return;
+    }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
   });
 
   test("fat-loss path can reach review from the featured library card", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
-    await completeGoalLibraryIntakeStep(page, {
+    await gotoIntakeInLocalMode(page, {}, { freshStart: true });
+    const phase = await completeGoalLibraryIntakeStep(page, {
       goalType: "fat_loss",
       templateId: "lose_10_lb",
       trainingDays: "4",
@@ -84,14 +96,18 @@ test.describe("goal-library intake paths", () => {
       },
     });
 
+    if (phase === "completed") {
+      await expect(page.getByTestId("today-session-card")).toBeVisible();
+      return;
+    }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
   });
 
   test("general-fitness path can reach review from the featured library card", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
-    await completeGoalLibraryIntakeStep(page, {
+    await gotoIntakeInLocalMode(page, {}, { freshStart: true });
+    const phase = await completeGoalLibraryIntakeStep(page, {
       goalType: "general_fitness",
       templateId: "get_back_in_shape",
       experienceLevel: "Beginner",
@@ -103,13 +119,17 @@ test.describe("goal-library intake paths", () => {
       },
     });
 
+    if (phase === "completed") {
+      await expect(page.getByTestId("today-session-card")).toBeVisible();
+      return;
+    }
     await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
   });
 
   test("custom goal path still completes without the featured library", async ({ page }) => {
-    await gotoIntakeInLocalMode(page);
+    await gotoIntakeInLocalMode(page, {}, { freshStart: true });
     await completeIntroQuestionnaire(page, {
       goalText: "gain muscle",
       trainingDays: "4",

@@ -7,6 +7,7 @@ import {
 export const TRAINING_ENVIRONMENT_VALUES = Object.freeze({
   home: "home",
   gym: "gym",
+  outdoor: "outdoor",
   mixed: "mixed",
   variable: "variable",
   unknown: "unknown",
@@ -70,6 +71,7 @@ export const normalizeTrainingEnvironment = (value = "") => {
   if (!text) return TRAINING_ENVIRONMENT_VALUES.unknown;
   if (["home"].includes(text)) return TRAINING_ENVIRONMENT_VALUES.home;
   if (["gym", "full gym", "limited gym"].includes(text)) return TRAINING_ENVIRONMENT_VALUES.gym;
+  if (["outdoor", "outside", "road", "trail", "park"].includes(text)) return TRAINING_ENVIRONMENT_VALUES.outdoor;
   if (["both", "mixed"].includes(text)) return TRAINING_ENVIRONMENT_VALUES.mixed;
   if (["varies", "varies a lot", "variable", "travel"].includes(text)) return TRAINING_ENVIRONMENT_VALUES.variable;
   return TRAINING_ENVIRONMENT_VALUES.unknown;
@@ -96,12 +98,14 @@ export const deriveEquipmentAccessValue = ({
   environmentValue = TRAINING_ENVIRONMENT_VALUES.unknown,
 } = {}) => {
   const normalizedItems = dedupeStrings((Array.isArray(items) ? items : []).map((item) => String(item || "").trim()).filter(Boolean));
+  if (!normalizedItems.length && environmentValue === TRAINING_ENVIRONMENT_VALUES.outdoor) return TRAINING_EQUIPMENT_VALUES.none;
   if (!normalizedItems.length) return TRAINING_EQUIPMENT_VALUES.unknown;
   const text = normalizedItems.join(" ").toLowerCase();
   if (/full rack|barbell|cable|machine|full gym/.test(text)) return TRAINING_EQUIPMENT_VALUES.fullGym;
   if (/basic gym|hotel gym/.test(text)) return TRAINING_EQUIPMENT_VALUES.basicGym;
   if (/bodyweight only|no equipment|outdoors only/.test(text)) return TRAINING_EQUIPMENT_VALUES.none;
   if (/dumbbell/.test(text) && normalizedItems.length === 1) return TRAINING_EQUIPMENT_VALUES.dumbbells;
+  if (environmentValue === TRAINING_ENVIRONMENT_VALUES.outdoor) return TRAINING_EQUIPMENT_VALUES.none;
   if (environmentValue === TRAINING_ENVIRONMENT_VALUES.home && normalizedItems.length > 0) return TRAINING_EQUIPMENT_VALUES.mixed;
   return TRAINING_EQUIPMENT_VALUES.mixed;
 };
@@ -138,6 +142,8 @@ export const buildTrainingContextFromAnswers = ({ answers = {} } = {}) => {
     items: equipmentItems,
     environmentValue,
   });
+  const equipmentConfirmed = equipmentItems.length > 0
+    || (environmentValue === TRAINING_ENVIRONMENT_VALUES.outdoor && equipmentValue === TRAINING_EQUIPMENT_VALUES.none);
 
   return {
     environment: makeField({
@@ -148,7 +154,7 @@ export const buildTrainingContextFromAnswers = ({ answers = {} } = {}) => {
     equipmentAccess: {
       ...makeField({
         value: equipmentValue,
-        confirmed: equipmentItems.length > 0,
+        confirmed: equipmentConfirmed,
         source: TRAINING_CONTEXT_SOURCES.onboardingAnswers,
       }),
       items: equipmentItems,
@@ -191,6 +197,9 @@ export const buildTrainingContextFromEditor = ({
         items: normalizedEquipmentItems,
         environmentValue,
       });
+  const equipmentConfirmed = normalizedEquipmentValue !== TRAINING_EQUIPMENT_VALUES.unknown
+    || normalizedEquipmentItems.length > 0
+    || (environmentValue === TRAINING_ENVIRONMENT_VALUES.outdoor && normalizedEquipmentValue === TRAINING_EQUIPMENT_VALUES.none);
 
   return {
     environment: makeField({
@@ -201,7 +210,7 @@ export const buildTrainingContextFromEditor = ({
     equipmentAccess: {
       ...makeField({
         value: normalizedEquipmentValue,
-        confirmed: normalizedEquipmentValue !== TRAINING_EQUIPMENT_VALUES.unknown || normalizedEquipmentItems.length > 0,
+        confirmed: equipmentConfirmed,
         source: TRAINING_CONTEXT_SOURCES.environmentEditor,
       }),
       items: normalizedEquipmentItems,
@@ -245,7 +254,15 @@ export const deriveTrainingContextFromPersonalization = ({ personalization = {} 
   const legacyEnvironmentValue = normalizeTrainingEnvironment(
     trainingPreferences?.defaultEnvironment
     || environmentConfig?.defaultMode
-    || (/full gym|limited gym|gym/.test(travelEnvironmentText) ? "Gym" : /travel/.test(travelEnvironmentText) ? "Varies" : /home/.test(travelEnvironmentText) ? "Home" : "")
+    || (/outdoor|outside|trail|road/.test(travelEnvironmentText)
+      ? "Outdoor"
+      : /full gym|limited gym|gym/.test(travelEnvironmentText)
+      ? "Gym"
+      : /travel/.test(travelEnvironmentText)
+      ? "Varies"
+      : /home/.test(travelEnvironmentText)
+      ? "Home"
+      : "")
     || ""
   );
   const legacyDurationValue = normalizeTrainingSessionDuration(legacyProfile?.session_length || "");
@@ -261,6 +278,8 @@ export const deriveTrainingContextFromPersonalization = ({ personalization = {} 
         items: legacyEquipmentItems,
         environmentValue: legacyEnvironmentValue,
       })
+    : legacyEnvironmentValue === TRAINING_ENVIRONMENT_VALUES.outdoor
+    ? TRAINING_EQUIPMENT_VALUES.none
     : /full gym/.test(travelEnvironmentText)
     ? TRAINING_EQUIPMENT_VALUES.fullGym
     : /limited gym|hotel/.test(travelEnvironmentText)
@@ -270,7 +289,7 @@ export const deriveTrainingContextFromPersonalization = ({ personalization = {} 
   const sessionDurationValue = storedSessionDurationValue || TRAINING_SESSION_DURATION_VALUES.unknown;
   const intensityValue = storedIntensityValue || TRAINING_INTENSITY_VALUES.unknown;
   const equipmentValue = storedEquipmentValue || TRAINING_EQUIPMENT_VALUES.unknown;
-  const hasTravelEvidence = Boolean(travelState?.isTravelWeek) || /gym|travel|hotel|home/.test(travelEnvironmentText);
+  const hasTravelEvidence = Boolean(travelState?.isTravelWeek) || /gym|travel|hotel|home|outdoor|outside|trail|road/.test(travelEnvironmentText);
   const hasLegacyEnvironmentEvidence = legacyEquipmentItems.length > 0 || hasTravelEvidence;
   const legacyEnvironmentSource = legacyEnvironmentValue !== TRAINING_ENVIRONMENT_VALUES.unknown
     ? (hasLegacyEnvironmentEvidence ? TRAINING_CONTEXT_SOURCES.legacyPersonalization : TRAINING_CONTEXT_SOURCES.defaultPlaceholder)
@@ -394,6 +413,7 @@ export const summarizeTrainingContext = (trainingContext = null) => {
 export const trainingEnvironmentToDisplayMode = (value = TRAINING_ENVIRONMENT_VALUES.unknown) => (
   value === TRAINING_ENVIRONMENT_VALUES.home ? "Home"
   : value === TRAINING_ENVIRONMENT_VALUES.gym ? "Gym"
+  : value === TRAINING_ENVIRONMENT_VALUES.outdoor ? "Outdoor"
   : value === TRAINING_ENVIRONMENT_VALUES.mixed ? "Both"
   : value === TRAINING_ENVIRONMENT_VALUES.variable ? "Varies"
   : "Unknown"

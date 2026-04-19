@@ -54,6 +54,33 @@ import {
  reduceSyncDiagnosticsState,
  SYNC_DIAGNOSTIC_EVENT_TYPES,
 } from "./services/sync-diagnostics-service.js";
+import {
+ ADAPTIVE_LEARNING_EVENT_NAMES,
+ ADAPTIVE_OUTCOME_KINDS,
+ ADAPTIVE_RECOMMENDATION_KINDS,
+ buildRecommendationJoinKey,
+} from "./services/adaptive-learning-event-service.js";
+import { createAdaptiveLearningStore } from "./services/adaptive-learning-store-service.js";
+import { buildAdaptiveDiagnosticsPanelModel } from "./services/adaptive-policy-operator-service.js";
+import {
+ buildAdaptiveLearningIdentityFromSession,
+ buildAuthLifecycleEventInput,
+ buildCoachOutcomeEventInput,
+ buildCoachSuggestionRecommendationEventInput,
+ buildCohortSnapshotEventInput,
+ buildDayPrescriptionRecommendationEventInput,
+ buildGoalChangeEventInput,
+ buildIntakeCompletionRecommendationEventInput,
+ buildNutritionOutcomeEventInput,
+ buildNutritionRecommendationEventInput,
+ buildPlanGenerationRecommendationEventInput,
+ buildSyncLifecycleEventInput,
+ buildUserStateSnapshotEventInput,
+ buildWeeklyEvaluationEventInput,
+ buildWeeklyPlanRefreshRecommendationEventInput,
+ buildWorkoutAdjustmentRecommendationEventInput,
+ buildWorkoutOutcomeEventInput,
+} from "./services/adaptive-learning-domain-service.js";
 import { coordinateCoachActionCommit, resolveStoredAiApiKey, runCoachChatRuntime, runIntakeCoachVoiceRuntime, runIntakeInterpretationRuntime, runPlanAnalysisRuntime } from "./services/ai-runtime-service.js";
 import { canExposeInternalOperatorTools, canUseClientSuppliedAiKey } from "./services/internal-access-policy-service.js";
 import { deriveCanonicalAthleteState, withLegacyGoalProfileCompatibility } from "./services/canonical-athlete-service.js";
@@ -451,6 +478,7 @@ const ACHILLES = [
 const ENV_MODE_PRESETS = {
  Home: { equipment: "none", time: "30" },
  Gym: { equipment: "full_gym", time: "45+" },
+ Outdoor: { equipment: "none", time: "30" },
  Travel: { equipment: "basic_gym", time: "30" },
  Both: { equipment: "mixed", time: "45+" },
  Varies: { equipment: "mixed", time: "30" },
@@ -472,6 +500,32 @@ const resolveModePreset = (mode = "Home", presets = {}) => {
  equipment: inferEquipmentFromPreset(preset, mode),
  time: preset?.time || fallback.time,
  };
+};
+const resolveTravelStateEnvironmentMode = ({ mode = "", equipment = "unknown" } = {}) => {
+ const normalizedMode = String(mode || "").trim().toLowerCase();
+ if (normalizedMode === "outdoor") return "outdoor";
+ if (normalizedMode === "both") return "mixed";
+ if (normalizedMode === "varies") return "variable";
+ if (normalizedMode === "travel") return "travel";
+ if (normalizedMode === "home") return "home";
+ if (normalizedMode === "gym") {
+ return equipment === "basic_gym"
+ ? "limited gym"
+ : equipment === "full_gym"
+ ? "full gym"
+ : "gym";
+ }
+ return equipment === "full_gym"
+ ? "full gym"
+ : equipment === "basic_gym"
+ ? "limited gym"
+ : equipment === "none"
+ ? "home"
+ : equipment === "mixed"
+ ? "mixed"
+ : equipment === "unknown"
+ ? "unknown"
+ : "home";
 };
 const CORE_FINISHER = [
  { ex: "Dead Bug", sets: "3", reps: "15/side", rest: "30s", cue: "Ribs down, low back pressed into floor." },
@@ -2950,7 +3004,7 @@ const buildConfirmedArbitrationInputs = ({
  const confirmedPrimaryGoal = primaryGoalText
  ? resolveGoalTranslation({
  rawUserGoalIntent: primaryGoalText,
- typedIntakePacket: buildArbitrationIntakePacket({
+ typedIntakePacket: buildFocusedArbitrationIntakePacket({
  typedIntakePacket,
  rawGoalText: primaryGoalText,
  goalTemplateSelection: primaryGoalTemplateSelection,
@@ -3007,9 +3061,23 @@ const buildPreviewGoalResolutionBundle = ({
  intent: "intake_interpretation",
  intake: intakeContext,
  };
+ const primaryGoalTemplateSelection = intakeContext?.goalTemplateSelection
+ || resolveGoalTemplateSelectionFromAnswers({
+ answers,
+ goalText: intakeContext?.rawGoalText || "",
+ index: 0,
+ });
+ const focusedPrimaryTypedPacket = {
+ ...typedIntakePacket,
+ intake: buildFocusedArbitrationIntakePacket({
+ typedIntakePacket,
+ rawGoalText: intakeContext?.rawGoalText || "",
+ goalTemplateSelection: primaryGoalTemplateSelection,
+ }).intake,
+ };
  const goalResolution = resolveGoalTranslation({
  rawUserGoalIntent: intakeContext?.rawGoalText || "",
- typedIntakePacket,
+ typedIntakePacket: focusedPrimaryTypedPacket,
  aiInterpretationProposal,
  explicitUserConfirmation: {
  confirmed: false,
@@ -3490,6 +3558,7 @@ const DEFAULT_PERSONALIZATION = {
  schedule: [],
  presets: {
  Home: { equipment: ["dumbbells", "pull-up bar"], time: "30" },
+ Outdoor: { equipment: ["bodyweight only", "outdoor route"], time: "30" },
  Travel: { equipment: ["bodyweight only"], time: "20" },
  Gym: { equipment: ["full rack", "barbell", "cable stack"], time: "45+" },
  },
@@ -3790,16 +3859,22 @@ const resolveEnvironmentSelection = ({ personalization, todayKey, currentWeek })
  durationSource: trainingContext?.sessionDuration?.source || TRAINING_CONTEXT_SOURCES.unknown,
  intensitySource: trainingContext?.intensityPosture?.source || TRAINING_CONTEXT_SOURCES.unknown,
  };
+ const finalizeScopedOverride = (selection = {}, scope = "base") => ({
+ ...base,
+ ...selection,
+ neutral: false,
+ scope,
+ });
  const todayOverride = personalization?.environmentConfig?.todayOverride;
  const weekOverride = personalization?.environmentConfig?.weekOverride;
  const schedule = personalization?.environmentConfig?.schedule || [];
  const scheduledWindow = schedule.find((slot) => slot?.startDate && slot?.endDate && todayKey >= slot.startDate && todayKey <= slot.endDate);
- if (todayOverride?.date === todayKey) return { ...base, ...todayOverride, scope: "today" };
+ if (todayOverride?.date === todayKey) return finalizeScopedOverride(todayOverride, "today");
  if (scheduledWindow) {
  const modePreset = resolveModePreset(scheduledWindow.mode || "Travel", presets);
- return { ...base, ...modePreset, ...scheduledWindow, scope: "calendar" };
+ return finalizeScopedOverride({ ...modePreset, ...scheduledWindow }, "calendar");
  }
- if (weekOverride?.week === currentWeek) return { ...base, ...weekOverride, scope: "week" };
+ if (weekOverride?.week === currentWeek) return finalizeScopedOverride(weekOverride, "week");
  return { ...base, scope: "base" };
 };
 
@@ -3817,16 +3892,18 @@ const applyEnvironmentToWorkout = (workout, env, context = {}) => {
  const next = { ...(workout || {}) };
  const equipment = env?.equipment || "unknown";
  const time = env?.time || "unknown";
+ const behavior = String(env?.behavior || "").toLowerCase();
  const weekState = context.weekState || "normal";
  const injuryFlag = context.injuryFlag || "none";
- const shortSession = time === "20";
- const mediumSession = time === "30";
- const longSession = time === "45+" || time === "45" || time === "60+";
+  const shortSession = time === "20";
+  const mediumSession = time === "30";
+  const longSession = time === "45+" || time === "45" || time === "60+";
  const limitedEquipment = equipment === "none";
  const gymReady = equipment === "full_gym" || equipment === "basic_gym";
  const chaotic = weekState === "chaotic";
  const fatigued = weekState === "fatigued";
  const achillesLimited = injuryFlag !== "none";
+ const forceOutdoorSession = behavior === "outdoor_session";
  const dayIdentity = next.type === "long-run"
  ? "long"
  : next.type === "easy-run"
@@ -3846,6 +3923,45 @@ const applyEnvironmentToWorkout = (workout, env, context = {}) => {
  if (env?.neutral) {
  next.environmentNote = [next.environmentNote, "Training setup is still unconfirmed, so this prescription stays equipment-neutral until you set your environment."].filter(Boolean).join(" ").trim();
  return next;
+ }
+
+ if (forceOutdoorSession) {
+ const outdoorMove = achillesLimited
+ ? shortSession
+ ? "15-20 min outdoor walk"
+ : mediumSession
+ ? "20-30 min outdoor walk"
+ : "30-45 min outdoor walk"
+ : shortSession
+ ? "15-20 min brisk walk or easy jog"
+ : mediumSession
+ ? "25-35 min brisk walk, hike, or easy jog"
+ : "35-50 min easy run, hike, or brisk walk";
+ if (dayIdentity === "strength") {
+ next.type = "conditioning";
+ next.label = shortSession ? "Outdoor reset" : "Outdoor aerobic session";
+ next.fallback = outdoorMove;
+ next.optionalSecondary = allowSecondary ? "Optional: 8-12 min bodyweight strength after the outdoor work." : null;
+ next.environmentNote = "Outdoor override active: swap the gym session for simple outdoor aerobic work today.";
+ next.nutri = NUTRITION_DAY_TYPES.conditioningMixed;
+ return next;
+ }
+ if (dayIdentity === "hybrid") {
+ next.label = shortSession ? "Outdoor hybrid reset" : "Outdoor hybrid session";
+ next.run = { ...(next.run || {}), t: "Easy", d: shortSession ? "10-12 min easy jog or walk" : mediumSession ? "18-25 min easy run or walk" : "25-35 min easy outdoor run" };
+ next.strengthDose = shortSession ? "6-8 min bodyweight strength" : "8-12 min bodyweight strength";
+ next.optionalSecondary = allowSecondary ? "Optional: keep the strength piece bodyweight-only." : null;
+ next.environmentNote = "Outdoor override active: keep both lanes alive, but make the whole session outdoor-friendly.";
+ return next;
+ }
+ if (dayIdentity === "recovery") {
+ next.label = "Outdoor recovery walk";
+ next.fallback = achillesLimited ? "Easy outdoor walk only." : "Easy outdoor walk and mobility.";
+ next.environmentNote = "Outdoor override active: keep recovery simple and outside.";
+ next.optionalSecondary = null;
+ return next;
+ }
+ next.environmentNote = [next.environmentNote, "Outdoor override active today."].filter(Boolean).join(" ").trim();
  }
 
  if (dayIdentity === "long") {
@@ -3937,6 +4053,9 @@ const applyEnvironmentToWorkout = (workout, env, context = {}) => {
  if (shortSession && !next.fallback) next.fallback = "20-min version: main work only.";
  if (mediumSession && !next.environmentNote) next.environmentNote = "30-min cap: prioritize main stimulus.";
  if (longSession && !next.environmentNote) next.environmentNote = gymReady ? "45+ min with full setup." : "45+ min available.";
+ if (forceOutdoorSession && next.environmentNote && !/outdoor/i.test(next.environmentNote)) {
+ next.environmentNote = `Outdoor override active today. ${next.environmentNote}`.trim();
+ }
  return next;
 };
 
@@ -5030,6 +5149,7 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  };
  }, []);
  const frictionAnalytics = useMemo(() => createFrictionAnalytics(), []);
+ const adaptiveLearningStore = useMemo(() => createAdaptiveLearningStore(), []);
  const [analyticsVersion, setAnalyticsVersion] = useState(0);
 
  useEffect(() => {
@@ -5057,7 +5177,35 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  const trackFrictionEvent = useMemo(() => ({ flow = "app", action = "interaction", outcome = "observed", props = {} } = {}) => {
  frictionAnalytics.track({ flow, action, outcome, props });
  }, [frictionAnalytics]);
+ const recordAdaptiveLearningEvent = useCallback(({
+ eventName = "",
+ payload = {},
+ dedupeKey = "",
+ authSessionOverride = authSession,
+ userId = "",
+ occurredAt = Date.now(),
+ } = {}) => {
+ const identity = buildAdaptiveLearningIdentityFromSession({
+ authSession: authSessionOverride,
+ localActorId: adaptiveLearningStore?.getSnapshot?.()?.actorId || "",
+ });
+ return adaptiveLearningStore.recordEvent({
+ eventName,
+ payload,
+ actorId: identity.actorId || userId || adaptiveLearningStore?.getSnapshot?.()?.actorId || "",
+ userId: userId || identity.userId || "",
+ localActorId: identity.localActorId || adaptiveLearningStore?.getSnapshot?.()?.actorId || "",
+ dedupeKey,
+ occurredAt,
+ });
+ }, [adaptiveLearningStore, authSession]);
  const classifyFrictionErrorCode = (error = null) => getDiagnosticsCode(error, "unknown");
+ useEffect(() => {
+ adaptiveLearningStore.setUserIdentity({
+ userId: String(authSession?.user?.id || "").trim(),
+ localActorId: adaptiveLearningStore?.getSnapshot?.()?.actorId || "",
+ });
+ }, [adaptiveLearningStore, authSession?.user?.id]);
  useEffect(() => {
  if (typeof window === "undefined" || typeof window.addEventListener !== "function") return undefined;
  const handleAnalyticsEvent = () => setAnalyticsVersion((current) => current + 1);
@@ -5701,6 +5849,143 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  canonicalSurface: planDaySurfaceModels?.today || null,
  surfaceModels: planDaySurfaceModels,
  });
+ useEffect(() => {
+ if (!personalization?.profile?.onboardingComplete || !currentPlanWeek?.id) return;
+ const planGenerationEvent = buildPlanGenerationRecommendationEventInput({
+ goals: goalsModel,
+ planComposer,
+ currentPlanWeek,
+ currentWeek,
+ sourceSurface: "intake",
+ });
+ const weeklyRefreshEvent = buildWeeklyPlanRefreshRecommendationEventInput({
+ goals: goalsModel,
+ currentPlanWeek,
+ currentWeek,
+ dayOfWeek,
+ sourceSurface: "program",
+ });
+ const cohortSnapshotEvent = buildCohortSnapshotEventInput({
+ goals: goalsModel,
+ personalization,
+ planComposer,
+ });
+ const userStateSnapshotEvent = buildUserStateSnapshotEventInput({
+ snapshotKind: "weekly_refresh",
+ goals: goalsModel,
+ currentPlanWeek,
+ planDay,
+ personalization,
+ syncMode: storageStatus?.mode || "local",
+ pendingLocalWrites: Boolean(syncDiagnostics?.pendingLocalWrites),
+ latestCompletionRate: momentum?.completionRate || 0,
+ });
+ if (planGenerationEvent) {
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
+ payload: planGenerationEvent,
+ dedupeKey: `plan_generation_${planGenerationEvent.recommendationJoinKey}_${currentPlanWeek?.status || "planned"}_${Boolean(currentPlanWeek?.adjusted)}`,
+ });
+ }
+ if (weeklyRefreshEvent) {
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
+ payload: weeklyRefreshEvent,
+ dedupeKey: `weekly_refresh_${weeklyRefreshEvent.recommendationJoinKey}_${currentPlanWeek?.changeSummary?.headline || currentPlanWeek?.summary || ""}`,
+ });
+ }
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.cohortSnapshotCaptured,
+ payload: cohortSnapshotEvent,
+ dedupeKey: `cohort_snapshot_${cohortSnapshotEvent.cohortKey}`,
+ });
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.userStateSnapshotCaptured,
+ payload: userStateSnapshotEvent,
+ dedupeKey: `user_state_week_${currentPlanWeek?.id}_${currentPlanWeek?.status || "planned"}_${storageStatus?.mode || "local"}`,
+ });
+ }, [
+ currentPlanWeek,
+ currentWeek,
+ dayOfWeek,
+ goalsModel,
+ momentum?.completionRate,
+ personalization,
+ planComposer,
+ planDay,
+ recordAdaptiveLearningEvent,
+ storageStatus?.mode,
+ syncDiagnostics?.pendingLocalWrites,
+ ]);
+ useEffect(() => {
+ if (!planDay?.dateKey) return;
+ const dayRecommendationEvent = buildDayPrescriptionRecommendationEventInput({
+ goals: goalsModel,
+ planDay,
+ currentWeek,
+ dayOfWeek,
+ sourceSurface: "today",
+ });
+ const workoutAdjustmentEvent = buildWorkoutAdjustmentRecommendationEventInput({
+ goals: goalsModel,
+ planDay,
+ currentWeek,
+ dayOfWeek,
+ sourceSurface: "today",
+ });
+ const nutritionRecommendationEvent = buildNutritionRecommendationEventInput({
+ goals: goalsModel,
+ planDay,
+ sourceSurface: "nutrition",
+ });
+ const userStateSnapshotEvent = buildUserStateSnapshotEventInput({
+ snapshotKind: "daily_prescription",
+ goals: goalsModel,
+ currentPlanWeek,
+ planDay,
+ personalization,
+ syncMode: storageStatus?.mode || "local",
+ pendingLocalWrites: Boolean(syncDiagnostics?.pendingLocalWrites),
+ latestCompletionRate: momentum?.completionRate || 0,
+ });
+ if (dayRecommendationEvent) {
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
+ payload: dayRecommendationEvent,
+ dedupeKey: `day_prescription_${dayRecommendationEvent.recommendationJoinKey}_${planDay?.decision?.mode || "planned"}_${planDay?.resolved?.training?.label || ""}`,
+ });
+ }
+ if (workoutAdjustmentEvent) {
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
+ payload: workoutAdjustmentEvent,
+ dedupeKey: `workout_adjustment_${workoutAdjustmentEvent.recommendationJoinKey}_${planDay?.provenance?.summary || ""}`,
+ });
+ }
+ if (nutritionRecommendationEvent) {
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
+ payload: nutritionRecommendationEvent,
+ dedupeKey: `nutrition_recommendation_${nutritionRecommendationEvent.recommendationJoinKey}_${planDay?.resolved?.nutrition?.dayType || ""}`,
+ });
+ }
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.userStateSnapshotCaptured,
+ payload: userStateSnapshotEvent,
+ dedupeKey: `user_state_day_${planDay?.id}_${planDay?.decision?.mode || "planned"}_${storageStatus?.mode || "local"}`,
+ });
+ }, [
+ currentPlanWeek,
+ currentWeek,
+ dayOfWeek,
+ goalsModel,
+ momentum?.completionRate,
+ personalization,
+ planDay,
+ recordAdaptiveLearningEvent,
+ storageStatus?.mode,
+ syncDiagnostics?.pendingLocalWrites,
+ ]);
  const runtimeDebugSnapshot = useMemo(() => {
  const weekIntent = currentPlanWeek?.weeklyIntent || {};
  const readiness = planDay?.resolved?.recovery || {};
@@ -6030,7 +6315,7 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  setPersonalization(updated);
  await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, updated, coachActions, coachPlanAdjustments);
  };
- const setEnvironmentMode = async ({ equipment, equipmentItems = [], time, mode, scope = "base", clearTodayOverride = false }) => {
+ const setEnvironmentMode = async ({ equipment, equipmentItems = [], time, mode, behavior, scope = "base", clearTodayOverride = false }) => {
  const presets = personalization.environmentConfig?.presets || {};
  const baseMode = personalization.environmentConfig?.defaultMode || "Home";
  const fromMode = mode ? resolveModePreset(mode, presets) : null;
@@ -6038,13 +6323,22 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  const selectedMode = mode || baseMode || "Unknown";
  const selectedEquipment = equipment || fromMode?.equipment || baseConfig.equipment || "unknown";
  const selectedTime = time || fromMode?.time || baseConfig.time || "unknown";
+ const selectedBehavior = typeof behavior === "string"
+ ? behavior
+ : mode
+ ? ""
+ : scope === "today"
+ ? String(personalization.environmentConfig?.todayOverride?.behavior || "")
+ : scope === "week"
+ ? String(personalization.environmentConfig?.weekOverride?.behavior || "")
+ : String(baseConfig?.behavior || "");
  const selectedItems = Array.isArray(equipmentItems)
  ? equipmentItems
  : String(equipmentItems || "")
  .split(/[,/]/)
  .map((item) => item.trim())
  .filter(Boolean);
- const selected = { equipment: selectedEquipment, equipmentItems: selectedItems, time: selectedTime, mode: selectedMode };
+ const selected = { equipment: selectedEquipment, equipmentItems: selectedItems, time: selectedTime, mode: selectedMode, behavior: selectedBehavior };
  const trainingContextPatch = scope === "base"
  ? buildTrainingContextFromEditor({
  mode: selected.mode,
@@ -6063,17 +6357,10 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  const draftPersonalization = mergePersonalization(personalization, { environmentConfig: nextEnvironmentConfig, trainingContext: trainingContextPatch || undefined });
  const resolvedSelection = resolveEnvironmentSelection({ personalization: draftPersonalization, todayKey, currentWeek });
  const effectiveEquipment = resolvedSelection?.equipment || selected.equipment;
- const environmentMode = effectiveEquipment === "full_gym"
- ? "full gym"
- : effectiveEquipment === "basic_gym"
- ? "limited gym"
- : effectiveEquipment === "none"
- ? "home"
- : effectiveEquipment === "mixed"
- ? "mixed"
- : effectiveEquipment === "unknown"
- ? "unknown"
- : "home";
+ const environmentMode = resolveTravelStateEnvironmentMode({
+ mode: resolvedSelection?.mode || selected.mode,
+ equipment: effectiveEquipment,
+ });
  const updated = mergePersonalization(draftPersonalization, {
  travelState: {
  ...draftPersonalization.travelState,
@@ -6225,7 +6512,8 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  DEFAULT_MULTI_GOALS,
  analytics: frictionAnalytics,
  reportSyncDiagnostic: recordSyncDiagnostic,
- }), [frictionAnalytics, recordSyncDiagnostic]);
+ adaptiveLearningStore,
+ }), [adaptiveLearningStore, frictionAnalytics, recordSyncDiagnostic]);
 
  const { SB_URL, SB_KEY, SB_CONFIG_ERROR, localLoad, getClientCloudConfigDiagnostics } = authStorage;
  const clientCloudConfigDiagnostics = useMemo(() => {
@@ -7857,6 +8145,39 @@ Keep it plain and specific.`;
  setDailyCheckins(nextDaily);
  setLogs(nextLogs);
  setPersonalization(nextPersonalization);
+ const workoutOutcomeComparison = linkedLog?.comparison || comparePlannedDayToActual({
+ plannedDayRecord,
+ actualLog: linkedLog || existingLog || {},
+ dailyCheckin: nextDailyEntry,
+ dateKey,
+ });
+ const workoutRecommendationJoinKey = buildRecommendationJoinKey({
+ recommendationKind: ADAPTIVE_RECOMMENDATION_KINDS.dayPrescription,
+ planWeekId: plannedDayRecord?.week?.planWeekId || planDay?.week?.planWeekId || "",
+ planDayId: plannedDayRecord?.id || `plan_day_${dateKey}`,
+ dateKey,
+ weekNumber: plannedDayRecord?.week?.currentWeek || currentWeek,
+ chosenOption: {
+ optionKey: plannedTraining?.label || plannedTraining?.type || "planned_session",
+ label: plannedTraining?.label || plannedTraining?.type || "Planned session",
+ },
+ fallbackSeed: plannedDayRecord?.provenance?.summary || plannedTraining?.label || plannedTraining?.type || "",
+ });
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationOutcomeRecorded,
+ payload: buildWorkoutOutcomeEventInput({
+ recommendationJoinKey: workoutRecommendationJoinKey,
+ decisionId: `decision_${workoutRecommendationJoinKey}`,
+ dateKey,
+ comparison: workoutOutcomeComparison,
+ checkin: nextDailyEntry,
+ planDay,
+ plannedDayRecord,
+ actualLog: linkedLog || existingLog || null,
+ sourceSurface: "log",
+ }),
+ dedupeKey: `workout_outcome_${dateKey}_${linkedLog?.ts || nextDailyEntry?.ts || Date.now()}`,
+ });
  await persistAll(nextLogs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, goals, nextDaily, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
  if (linkedLog) await syncSessionLogShadowRow(dateKey, linkedLog);
  trackFrictionEvent({
@@ -7876,8 +8197,53 @@ Keep it plain and specific.`;
  const startedAt = Date.now();
  const nextWeekly = { ...weeklyCheckins, [String(weekNum)]: { ...(checkin || {}), ts: Date.now() } };
  const nextAlerts = [{ id:`weekly_${Date.now()}`, type:"info", msg:"Weekly reflection saved - nice follow-through." }, ...planAlerts].slice(0, 12);
+ const recentComparisons = [];
+ if (Number(weekNum || 0) === Number(currentWeek || 0) && currentPlanWeek?.startDate && currentPlanWeek?.endDate) {
+ const cursor = new Date(`${currentPlanWeek.startDate}T12:00:00`);
+ const end = new Date(`${currentPlanWeek.endDate}T12:00:00`);
+ while (cursor <= end) {
+ const cursorKey = cursor.toISOString().split("T")[0];
+ const weekPlannedDayRecord = getPlannedDayRecordForDate(cursorKey, logs?.[cursorKey] || null);
+ const weekDailyCheckin = dailyCheckins?.[cursorKey] || logs?.[cursorKey]?.checkin || {};
+ const weekComparison = comparePlannedDayToActual({
+ plannedDayRecord: weekPlannedDayRecord,
+ actualLog: logs?.[cursorKey] || {},
+ dailyCheckin: weekDailyCheckin,
+ dateKey: cursorKey,
+ });
+ const weekRecommendationJoinKey = buildRecommendationJoinKey({
+ recommendationKind: ADAPTIVE_RECOMMENDATION_KINDS.dayPrescription,
+ planWeekId: weekPlannedDayRecord?.week?.planWeekId || currentPlanWeek?.id || "",
+ planDayId: weekPlannedDayRecord?.id || `plan_day_${cursorKey}`,
+ dateKey: cursorKey,
+ weekNumber: currentPlanWeek?.weekNumber || currentWeek,
+ chosenOption: {
+ optionKey: weekPlannedDayRecord?.resolved?.training?.label || weekPlannedDayRecord?.resolved?.training?.type || "planned_session",
+ label: weekPlannedDayRecord?.resolved?.training?.label || weekPlannedDayRecord?.resolved?.training?.type || "Planned session",
+ },
+ fallbackSeed: weekPlannedDayRecord?.provenance?.summary || weekPlannedDayRecord?.resolved?.training?.label || "",
+ });
+ recentComparisons.push({
+ ...weekComparison,
+ recommendationJoinKey: weekRecommendationJoinKey,
+ });
+ cursor.setDate(cursor.getDate() + 1);
+ }
+ }
  setWeeklyCheckins(nextWeekly);
  setPlanAlerts(nextAlerts);
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.weeklyEvaluationCompleted,
+ payload: buildWeeklyEvaluationEventInput({
+ currentPlanWeek,
+ weeklyCheckin: checkin,
+ recentComparisons,
+ nutritionSummary: weeklyNutritionReview?.adaptation?.summary || "",
+ acceptedCoachActions: (coachActions || []).filter((action) => action?.acceptedBy).length,
+ goalProgressSignal: checkin?.summary || checkin?.note || "",
+ }),
+ dedupeKey: `weekly_evaluation_${weekNum}_${nextWeekly?.[String(weekNum)]?.ts || Date.now()}`,
+ });
  await persistAll(logs, bodyweights, paceOverrides, weekNotes, nextAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, nextWeekly, nutritionFavorites, nutritionActualLogs);
  trackFrictionEvent({
  flow: "logging",
@@ -7918,6 +8284,29 @@ const saveNutritionActualLog = async (dateKey, feedback) => {
  [dateKey]: actualNutrition,
  };
  setNutritionActualLogs(nextActualLogs);
+ const nutritionRecommendationJoinKey = buildRecommendationJoinKey({
+ recommendationKind: ADAPTIVE_RECOMMENDATION_KINDS.nutritionRecommendation,
+ planWeekId: plannedDayRecord?.week?.planWeekId || planDay?.week?.planWeekId || "",
+ planDayId: plannedDayRecord?.id || `plan_day_${dateKey}`,
+ dateKey,
+ weekNumber: plannedDayRecord?.week?.currentWeek || currentWeek,
+ chosenOption: {
+ optionKey: actualNutrition?.dayType || plannedDayRecord?.resolved?.nutrition?.dayType || "nutrition_day",
+ label: actualNutrition?.dayType || plannedDayRecord?.resolved?.nutrition?.dayType || "Nutrition day",
+ },
+ fallbackSeed: plannedDayRecord?.provenance?.summary || actualNutrition?.note || "",
+ });
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationOutcomeRecorded,
+ payload: buildNutritionOutcomeEventInput({
+ recommendationJoinKey: nutritionRecommendationJoinKey,
+ decisionId: `decision_${nutritionRecommendationJoinKey}`,
+ dateKey,
+ actualNutritionLog: actualNutrition,
+ sourceSurface: "nutrition",
+ }),
+ dedupeKey: `nutrition_outcome_${dateKey}_${actualNutrition?.loggedAt || actualNutrition?.updatedAt || Date.now()}`,
+ });
  try {
  await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, personalization, coachActions, coachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nextActualLogs);
  trackFrictionEvent({
@@ -8453,6 +8842,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  authMode,
  startupLocalResumeAvailable: startupUsableLocalResumeAvailable,
  authProviderUnavailable,
+ allowLocalFallback: TRUSTED_DEBUG_MODE,
  syncStateModel,
  });
 
@@ -8715,6 +9105,20 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  local_resume_available: startupLocalResumeAvailable,
  },
  });
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+ dedupeKey: `auth_continue_local_${startupLocalResumeAvailable ? "resume" : "blank"}_${Math.floor(Date.now() / 1000)}`,
+ payload: buildAuthLifecycleEventInput({
+ authEvent: "continue_local_mode",
+ status: "selected",
+ source: "auth_gate",
+ hadCloudSession: false,
+ mergedLocalCache: Boolean(startupLocalResumeAvailable),
+ detail: startupLocalResumeAvailable
+ ? "The user chose the saved local resume path instead of signing in."
+ : "The user chose to continue in local-only mode.",
+ }),
+ });
  if (startupLocalResumeAvailable) {
  suspendLocalPersistenceRef.current = false;
  hydrateLocalRuntimeCache({
@@ -8963,6 +9367,10 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  equipment: normalizedEquipment.length ? normalizedEquipment : (personalization.environmentConfig?.presets?.Home?.equipment || ["Bodyweight only"]),
  time: sessionLength,
  },
+ Outdoor: {
+ equipment: personalization.environmentConfig?.presets?.Outdoor?.equipment || ["Bodyweight only", "Outdoor route"],
+ time: sessionLength,
+ },
  Gym: {
  equipment: personalization.environmentConfig?.presets?.Gym?.equipment || ["full rack", "barbell", "cable stack"],
  time: trainingDays >= 5 ? "45+" : sessionLength,
@@ -9119,6 +9527,41 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  setPersonalization(nextPersonalization);
  setGoals(refreshedGoals);
  setTab(0);
+ const intakeCompletionEvent = buildIntakeCompletionRecommendationEventInput({
+ goals: refreshedGoals,
+ personalization: nextPersonalization,
+ sourceSurface: "intake",
+ });
+ if (intakeCompletionEvent) {
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
+ payload: intakeCompletionEvent,
+ dedupeKey: `intake_completion_${intakeCompletionEvent.recommendationJoinKey}_${todayKey}`,
+ });
+ }
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.cohortSnapshotCaptured,
+ payload: buildCohortSnapshotEventInput({
+ goals: refreshedGoals,
+ personalization: nextPersonalization,
+ planComposer,
+ }),
+ dedupeKey: `cohort_snapshot_intake_${todayKey}_${refreshedGoals?.[0]?.id || "goal"}`,
+ });
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.userStateSnapshotCaptured,
+ payload: buildUserStateSnapshotEventInput({
+ snapshotKind: "intake_completion",
+ goals: refreshedGoals,
+ currentPlanWeek,
+ planDay,
+ personalization: nextPersonalization,
+ syncMode: storageStatus?.mode || "local",
+ pendingLocalWrites: Boolean(syncDiagnostics?.pendingLocalWrites),
+ latestCompletionRate: momentum?.completionRate || 0,
+ }),
+ dedupeKey: `user_state_intake_${todayKey}_${refreshedGoals?.[0]?.id || "goal"}`,
+ });
  await persistAll(logs, bodyweights, paceOverrides, weekNotes, planAlerts, nextPersonalization, coachActions, coachPlanAdjustments, refreshedGoals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
  };
 
@@ -9323,6 +9766,20 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  setPlanWeekRecords(nextActivePlanningState.planWeekRecords);
  setWeeklyCheckins(nextActivePlanningState.weeklyCheckins);
  setCoachPlanAdjustments(nextActivePlanningState.coachPlanAdjustments);
+ const abandonedGoalSummaries = (historyEvent?.previousGoals || []).filter((summary) => !(historyEvent?.nextGoals || []).includes(summary));
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.goalChanged,
+ payload: buildGoalChangeEventInput({
+ changeKind: changeMode === GOAL_CHANGE_MODES.startNewGoalArc ? "replace" : "edit",
+ changeMode,
+ historyEvent,
+ previousGoals: historyEvent?.previousGoals || [],
+ nextGoals: historyEvent?.nextGoals || [],
+ abandonedGoals: abandonedGoalSummaries,
+ rationale: preparedPreview?.goalFeasibility?.realismStatus || historyEvent?.label || "",
+ }),
+ dedupeKey: `goal_change_${historyEvent?.id || todayKeyLocal}_${changeMode}`,
+ });
 
  await persistAll(
  logs,
@@ -9503,6 +9960,20 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  setPlanWeekRecords(nextActivePlanningState.planWeekRecords);
  setWeeklyCheckins(nextActivePlanningState.weeklyCheckins);
  setCoachPlanAdjustments(nextActivePlanningState.coachPlanAdjustments);
+ const abandonedGoalSummaries = previousGoals.filter((summary) => !nextGoalSummaries.includes(summary));
+ recordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.goalChanged,
+ payload: buildGoalChangeEventInput({
+ changeKind: abandonedGoalSummaries.length ? "abandon" : "edit",
+ changeMode,
+ historyEvent,
+ previousGoals,
+ nextGoals: nextGoalSummaries,
+ abandonedGoals: abandonedGoalSummaries,
+ rationale: previewBundle?.changeLabel || historyEvent?.label || "",
+ }),
+ dedupeKey: `goal_management_change_${historyEvent?.id || todayKeyLocal}_${changeMode}`,
+ });
 
  await persistAll(
  logs,
@@ -9880,7 +10351,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  {tab === 3 && <NutritionTab planDay={planDay} surfaceModel={planDaySurfaceModels?.nutrition || null} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} weeklyNutritionReview={weeklyNutritionReview} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.nutrition || null} />}
 
  {/* COACH */}
- {tab === 4 && <CoachTab planDay={planDay} surfaceModel={planDaySurfaceModels?.coach || null} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onOpenSettings={()=>{ setSettingsFocus("advanced"); setTab(5); }} onTrackFrictionEvent={trackFrictionEvent} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.coach || null} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
+ {tab === 4 && <CoachTab planDay={planDay} surfaceModel={planDaySurfaceModels?.coach || null} logs={logs} dailyCheckins={dailyCheckins} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} bodyweights={bodyweights} personalization={personalization} athleteProfile={canonicalAthlete} goals={goalsModel} momentum={momentum} arbitration={arbitration} expectations={expectations} memoryInsights={memoryInsights} compoundingCoachMemory={compoundingCoachMemory} recalibration={recalibration} strengthLayer={strengthLayer} patterns={patterns} proactiveTriggers={proactiveTriggers} onApplyTrigger={applyProactiveNudge} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} weeklyNutritionReview={weeklyNutritionReview} setPersonalization={setPersonalization} coachActions={coachActions} setCoachActions={setCoachActions} coachPlanAdjustments={coachPlanAdjustments} setCoachPlanAdjustments={setCoachPlanAdjustments} weekNotes={weekNotes} setWeekNotes={setWeekNotes} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} onOpenSettings={()=>{ setSettingsFocus("advanced"); setTab(5); }} onTrackFrictionEvent={trackFrictionEvent} onRecordAdaptiveLearningEvent={recordAdaptiveLearningEvent} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.coach || null} onPersist={async (nextPersonalization, nextCoachActions, nextCoachPlanAdjustments = coachPlanAdjustments, nextWeekNotes = weekNotes, nextPlanAlerts = planAlerts) => {
  setPersonalization(nextPersonalization);
  setCoachActions(nextCoachActions);
  setCoachPlanAdjustments(nextCoachPlanAdjustments);
@@ -9889,7 +10360,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
  }} />}
 
- {tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} syncDiagnostics={syncDiagnostics} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} planHistoryReviews={planHistoryReportReviews} planHistoryWeekSummaries={planHistoryWeekSummaries} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} passwordResetBusy={authPasswordResetBusy} passwordResetMessage={authNotice} onRequestPasswordReset={() => handleForgotPassword({
+{tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} syncDiagnostics={syncDiagnostics} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} adaptiveLearningSnapshot={adaptiveLearningStore?.buildPersistenceSnapshot?.() || null} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} planHistoryReviews={planHistoryReportReviews} planHistoryWeekSummaries={planHistoryWeekSummaries} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} passwordResetBusy={authPasswordResetBusy} passwordResetMessage={authNotice} onRequestPasswordReset={() => handleForgotPassword({
  source: "settings_account",
  emailOverride: authSession?.user?.email || "",
  })} onOpenAuthGate={() => {
@@ -10187,7 +10658,7 @@ function OnboardingCoach({ onComplete, startingFresh = false, existingMemory = [
  { key: "experience_level", type: "buttons", message: "Got it. What's your training experience level?", options: EXPERIENCE_LEVEL_OPTIONS.map(k => EXPERIENCE_LEVEL_LABELS[k]), valueMap: Object.fromEntries(EXPERIENCE_LEVEL_OPTIONS.map(k => [EXPERIENCE_LEVEL_LABELS[k], k])) },
  { key: "training_days", type: "buttons", message: "How many days a week can you realistically train? Think about your average week - not your best one.", options: ["2", "3", "4", "5", "6+"] },
  { key: "session_length", type: "buttons", message: "How much time do you have per session?", options: SESSION_LENGTH_OPTIONS.map(k => SESSION_LENGTH_LABELS[k]), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
- { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Both", "Varies a lot"] },
+ { key: "training_location", type: "buttons", message: "Where do you usually work out?", options: ["Home", "Gym", "Outdoor", "Both", "Varies a lot"] },
  ...(["Home", "Both"].includes(currentAnswers.training_location || "") ? [{
  key: "home_equipment",
  type: "multiselect",
@@ -13136,7 +13607,7 @@ appendUserMessage("Create my plan");
  <div style={{ display:"grid", gap:"0.35rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>WHERE YOU TRAIN</div>
  {renderChoiceChips({
- items: ["Home", "Gym", "Both", "Varies a lot"],
+ items: ["Home", "Gym", "Outdoor", "Both", "Varies a lot"],
  selectedValue: trainingLocationValue,
  onSelect: (value) => updateTrainingLocationAnswer(value),
  testIdPrefix: "intake-goals-option-training-location",
@@ -15221,6 +15692,7 @@ function MetricsBaselinesSection({
  <option value="Unknown">Where you train</option>
  <option value="Home">Home</option>
  <option value="Gym">Gym</option>
+ <option value="Outdoor">Outdoor</option>
  <option value="Travel">Travel / mixed</option>
  </select>
  <select data-testid="metrics-input-environment-equipment" value={contextDraft.equipment || "unknown"} onChange={(e)=>updateContextDraft("equipment", e.target.value)} style={{ fontSize:"0.54rem" }}>
@@ -15279,7 +15751,7 @@ function MetricsBaselinesSection({
  );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, onResetThisDevice = async () => ({ ok: false }), onOpenAuthGate = () => {}, passwordResetBusy = false, passwordResetMessage = "", onRequestPasswordReset = () => {}, storageStatus = null, syncStateModel = null, syncSurfaceModel = null, syncDiagnostics = null, deviceSyncAudit, athleteProfile = null, planComposer = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], planHistoryReviews = [], planHistoryWeekSummaries = [], focusSection = "", frictionDashboard = null, onTrackFrictionEvent = () => {} }) {
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, onResetThisDevice = async () => ({ ok: false }), onOpenAuthGate = () => {}, passwordResetBusy = false, passwordResetMessage = "", onRequestPasswordReset = () => {}, storageStatus = null, syncStateModel = null, syncSurfaceModel = null, syncDiagnostics = null, deviceSyncAudit, athleteProfile = null, planComposer = null, adaptiveLearningSnapshot = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], planHistoryReviews = [], planHistoryWeekSummaries = [], focusSection = "", frictionDashboard = null, onTrackFrictionEvent = () => {} }) {
  const appleHealth = personalization?.connectedDevices?.appleHealth || {};
  const garmin = personalization?.connectedDevices?.garmin || {};
  const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
@@ -15821,6 +16293,12 @@ const settingsDiagnosticsFlag = typeof window !== "undefined"
  storedDiagnosticsFlag: settingsDiagnosticsFlag,
  onTrackFrictionEvent,
  });
+ const adaptiveDiagnosticsModel = useMemo(() => buildAdaptiveDiagnosticsPanelModel({
+ personalization,
+ adaptiveLearningSnapshot,
+ planComposer,
+ trustedLocalDebug: showProtectedDiagnostics,
+ }), [adaptiveLearningSnapshot, personalization, planComposer, showProtectedDiagnostics]);
  const appendDebugDetail = (message = "", detail = "") => {
  const base = String(message || "").trim();
  const extra = String(detail || "").trim();
@@ -17169,6 +17647,7 @@ setGoalManagementError("See the change first, then save it.");
  showProtectedDiagnostics={showProtectedDiagnostics}
  showInternalSettingsTools={showInternalSettingsTools}
  frictionDashboard={frictionDashboard}
+ adaptiveDiagnostics={adaptiveDiagnosticsModel}
  goalRequest={{
  mode: goalChangeMode,
  intent: goalChangeIntent,
@@ -17718,7 +18197,7 @@ setGoalManagementError("See the change first, then save it.");
  {showEnvEditor && (
  <div style={{ display:"grid", gap:"0.3rem", border:"1px solid #243752", borderRadius:9, padding:"0.45rem" }}>
  <select value={trainingPrefs?.defaultEnvironment || "Home"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, defaultEnvironment: e.target.value } })}>
- {["Home","Gym","Travel"].map((m)=><option key={m} value={m}>{m}</option>)}
+ {["Home","Gym","Outdoor","Travel"].map((m)=><option key={m} value={m}>{m}</option>)}
  </select>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Use the Environment editor in Today/Program to update equipment list and session duration presets.</div>
  </div>
@@ -17836,7 +18315,7 @@ function OnboardingCoachLegacy({ onComplete }) {
  { key: "training_days", text: "How many days per week can you realistically train? Not your best week - your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
  { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
  { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
- { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
+ { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Outdoor","Both","Varies"] },
  ];
  const [messages, setMessages] = useState([{ role: "coach", text: SCRIPT[0].text }]);
  const [answers, setAnswers] = useState({});
@@ -18058,7 +18537,7 @@ function OnboardingCoachLegacy({ onComplete }) {
  {showEnvEditor && (
  <div style={{ display:"grid", gap:"0.3rem", border:"1px solid #243752", borderRadius:9, padding:"0.45rem" }}>
  <select value={trainingPrefs?.defaultEnvironment || "Home"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, defaultEnvironment: e.target.value } })}>
- {["Home","Gym","Travel"].map((m)=><option key={m} value={m}>{m}</option>)}
+ {["Home","Gym","Outdoor","Travel"].map((m)=><option key={m} value={m}>{m}</option>)}
  </select>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Use the Environment editor in Today/Program to update equipment list and session duration presets.</div>
  </div>
@@ -18157,7 +18636,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
  { key: "training_days", text: "How many days per week can you realistically train? Not your best week - your average week when life is happening.", type: "buttons", options: ["2","3","4","5","6"] },
  { key: "session_length", text: "How much time do you have per session?", type: "buttons", options: Object.values(SESSION_LENGTH_LABELS), valueMap: Object.fromEntries(SESSION_LENGTH_OPTIONS.map(k => [SESSION_LENGTH_LABELS[k], k])) },
  { key: "injury_text", text: "Do you have any injuries or physical limitations I need to plan around?", type: "text", placeholder: "None currently" },
- { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Both","Varies"] },
+ { key: "training_location", text: "Where do you usually train?", type: "buttons", options: ["Home","Gym","Outdoor","Both","Varies"] },
  ];
  const [messages, setMessages] = useState([{ role: "coach", text: sanitizeIntakeText(SCRIPT[0].text) }]);
  const [answers, setAnswers] = useState({});
@@ -18937,7 +19416,8 @@ const todaySaveFeedbackModel = buildSaveFeedbackModel({
  errorMessage: todayDataError,
 });
 const todayChangePreview = sanitizeDisplayText(
- todayChangeLine
+ (environmentSelection?.scope === "today" ? displayWorkout?.environmentNote : "")
+ || todayChangeLine
  || canonicalTodayReasonLine
  || planBasisHeadline
  || rationaleSupport
@@ -18958,6 +19438,7 @@ const todayNextStepLine = sanitizeDisplayText(
  summary: todayPrescriptionSummary,
  readinessState,
  changeSummary: todayChangePreview,
+ explanation: surfaceModel?.explanationModel || null,
  nextStep: todayNextStepLine,
  hasLogged: hasSavedToday,
  });
@@ -19453,6 +19934,11 @@ const todayNextStepLine = sanitizeDisplayText(
  <div data-testid="today-adaptation-note" className="card card-subtle" style={{ borderColor:adaptationBorderColor, background:"var(--consumer-panel)" }}>
  <div style={{ display:"grid", gap:"0.18rem" }}>
  <div className="sect-title" style={{ color:adaptationToneColor, marginBottom:0 }}>{todayCommandCenter.adaptationTitle}</div>
+ {!!todayCommandCenter.adaptationSourceLabel && (
+ <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ {todayCommandCenter.adaptationSourceLabel}
+ </div>
+ )}
  <div data-testid="today-change-summary" style={{ fontSize:"0.54rem", color:"var(--consumer-text-soft)", lineHeight:1.5, overflowWrap:"anywhere" }}>
  {todayCommandCenter.adaptationSummary}
  </div>
@@ -19534,7 +20020,17 @@ const todayNextStepLine = sanitizeDisplayText(
  <details className="card card-subtle" data-testid="today-why-changed">
  <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"var(--consumer-text)" }}>Why this changed</summary>
  <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
+ {!!todayCommandCenter.adaptationSourceLabel && (
+ <div style={{ fontSize:"0.46rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ {todayCommandCenter.adaptationSourceLabel}
+ </div>
+ )}
  <div style={{ fontSize:"0.58rem", color:"var(--consumer-text)", lineHeight:1.45 }}>{primaryWhyChangedLine || todayCommandCenter.adaptationSummary}</div>
+ {!!todayCommandCenter.adaptationDetailLine && (
+ <div style={{ fontSize:"0.5rem", color:"var(--consumer-text-soft)", lineHeight:1.5, overflowWrap:"anywhere" }}>
+ {todayCommandCenter.adaptationDetailLine}
+ </div>
+ )}
  {!!canonicalWhyChangedLine && (
  <div data-testid="today-canonical-reason" style={{ fontSize:"0.5rem", color:"var(--consumer-text-soft)", lineHeight:1.5, overflowWrap:"anywhere" }}>
  {canonicalWhyChangedLine}
@@ -19563,7 +20059,7 @@ const todayNextStepLine = sanitizeDisplayText(
 <summary style={{ cursor:"pointer", fontSize:"0.55rem", color:"var(--consumer-text)" }}>Adjust today</summary>
 <div style={{ display:"grid", gap:"0.35rem", marginTop:"0.45rem" }}>
 <div style={{ display:"flex", gap:"0.3rem", flexWrap:"wrap" }}>
- {["Home", "Gym", "Travel"].map((mode) => {
+ {["Home", "Gym", "Outdoor", "Travel"].map((mode) => {
  const selected = environmentSelection?.scope === "today" && String(environmentSelection?.mode || "").toLowerCase() === mode.toLowerCase();
  return (
  <button
@@ -19588,6 +20084,26 @@ Use default setup
 )}
 </div>
 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(100%, 180px),1fr))", gap:"0.35rem" }}>
+ <button
+ className="btn"
+ onClick={async ()=>setEnvironmentMode({
+ mode: "Outdoor",
+ scope: "today",
+ behavior: environmentSelection?.scope === "today" && environmentSelection?.behavior === "outdoor_session" ? "" : "outdoor_session",
+ })}
+ style={{
+ fontSize:"0.52rem",
+ color: environmentSelection?.scope === "today" && environmentSelection?.behavior === "outdoor_session" ? "#0f172a" : C.blue,
+ background: environmentSelection?.scope === "today" && environmentSelection?.behavior === "outdoor_session" ? C.blue : "transparent",
+ borderColor:C.blue+"30",
+ whiteSpace:"normal",
+ lineHeight:1.35,
+ }}
+ >
+ {environmentSelection?.scope === "today" && environmentSelection?.behavior === "outdoor_session"
+ ? "Outdoor session active"
+ : "Make today outdoor"}
+ </button>
  <button className="btn" onClick={()=>setSessionVariant((value)=>value === "short" ? "standard" : "short")} style={{ fontSize:"0.52rem", color: sessionVariant === "short" ? "#0f172a" : C.green, background: sessionVariant === "short" ? C.green : "transparent", borderColor:C.green+"30", whiteSpace:"normal", lineHeight:1.35 }}>
  {sessionVariant === "short" ? "Short version active" : "Shorten to 20 min"}
  </button>
@@ -19946,7 +20462,7 @@ Support signals: {readinessBasisLine}{shortProvenance ? ` ${shortProvenance}` : 
  </div>
  <div style={{ fontSize:"0.52rem", color:"#64748b", letterSpacing:"0.08em", marginBottom:"0.25rem" }}>Environment</div>
  <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:"0.3rem", marginBottom:"0.55rem" }}>
- {["Unknown","Home","Gym","Both","Varies","Travel"].map((value) => (
+ {["Unknown","Home","Gym","Outdoor","Both","Varies","Travel"].map((value) => (
  <button key={value} className="btn" onClick={()=>setEnvDraft(prev=>({ ...prev, mode:value }))} style={{ fontSize:"0.54rem", color:envDraft.mode===value?C.green:"#94a3b8", borderColor:envDraft.mode===value?C.green+"40":"#334155" }}>{value}</button>
  ))}
  </div>
@@ -21386,7 +21902,7 @@ const hiddenFutureWeekCount = Math.max(0, futureWeekRows.length - detailedFuture
  ? currentWeekModel.constraints.slice(0, 2).join(" - ")
  : hierarchyIntentBits.join(" - ")),
  165
- ) || "No major week-level change flags are active.";
+ ) || "This week is following the normal build.";
  const canonicalProgramLabel = sanitizeDisplayText(
  surfaceModel?.display?.sessionLabel
  || todayWorkout?.label
@@ -22022,6 +22538,14 @@ style={{ background:"rgba(11, 20, 32, 0.76)" }}
 <div style={{ fontSize:"0.8rem", color:"#f8fafc", lineHeight:1.35 }}>{currentWeekLabel}</div>
 <div style={{ fontSize:"0.54rem", color:"#dbe7f6", marginTop:"0.16rem", lineHeight:1.55 }}>
 {currentWeekPurposeLine}
+</div>
+ {!!surfaceModel?.explanationSourceLabel && (
+ <div data-testid="program-change-source" style={{ fontSize:"0.44rem", color:"#64748b", marginTop:"0.16rem", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ {surfaceModel.explanationSourceLabel}
+ </div>
+ )}
+<div data-testid="program-change-summary" style={{ fontSize:"0.48rem", color:"#8fa5c8", marginTop:"0.18rem", lineHeight:1.5 }}>
+{currentWeekChangesLine}
 </div>
 </div>
 <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap", justifyContent:"flex-end" }}>
@@ -23171,8 +23695,11 @@ Upcoming weeks will appear here as soon as the visible plan extends beyond this 
  <div>
  <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>CHANGE MY GOAL</div>
  <div style={{ fontSize:"0.62rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>Start vague if you need to. We'll resolve it before it changes the plan.</div>
- <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.18rem", lineHeight:1.55 }}>
+<div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.18rem", lineHeight:1.55 }}>
  This uses the same setup flow as onboarding. Nothing changes your plan until you confirm it.
+ </div>
+ <div style={{ fontSize:"0.46rem", color:"#64748b", marginTop:"0.16rem", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ You changed this
  </div>
  {goalRepairHint && (
  <div style={{ fontSize:"0.5rem", color:"#dbe7f6", marginTop:"0.18rem", lineHeight:1.5 }}>
@@ -23528,7 +24055,7 @@ Upcoming weeks will appear here as soon as the visible plan extends beyond this 
  <div className="sect-title" style={{ color:C.blue, marginBottom:0 }}>WEEK SETTINGS</div>
  <div style={{ display:"grid", gridTemplateColumns:"1fr auto auto", gap:"0.3rem", alignItems:"center" }}>
  <select value={environmentSelection?.mode || personalization?.environmentConfig?.defaultMode || "Home"} onChange={e=>setEnvironmentMode({ mode:e.target.value, scope: "week" })} style={{ fontSize:"0.55rem" }}>
- {(["Home","Gym","Travel"] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
+ {(["Home","Gym","Outdoor","Travel"] ?? []).map(m => <option key={m} value={m}>{m}</option>)}
  </select>
  <button className="btn" onClick={()=>setEnvironmentMode({ mode: environmentSelection?.mode || "Home", scope: "week" })} style={{ fontSize:"0.5rem" }}>This week</button>
  <button className="btn" onClick={()=>setEnvironmentMode({ mode: environmentSelection?.mode || "Home", scope: "base" })} style={{ fontSize:"0.5rem" }}>Default</button>
@@ -24262,6 +24789,16 @@ style={{ display:"grid", gap:"0.6rem", marginTop:"0.55rem", paddingTop:"0.55rem"
 <div data-testid="log-canonical-session-label" style={{ fontSize:"0.6rem", color:"var(--consumer-text)", lineHeight:1.4 }}>
  {canonicalLogLabel}
  </div>
+ {!!surfaceModel?.explanationSourceLabel && (
+ <div style={{ fontSize:"0.44rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ {surfaceModel.explanationSourceLabel}
+ </div>
+ )}
+ {!!canonicalLogReason && (
+ <div data-testid="log-canonical-reason" style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
+ {canonicalLogReason}
+ </div>
+ )}
  <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
   One planned workout. Change only what changed.
  </div>
@@ -25334,8 +25871,18 @@ finishNutritionSave("Meal anchors saved.");
  <div style={{ fontSize:"0.68rem", color:"#f8fafc", lineHeight:1.35 }}>
  {sanitizeDisplayText(nutritionSurfaceModel?.heroTitle || "Fuel today")}
  </div>
- <div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.45 }}>{compactNutritionHeroLine}</div>
- <div data-testid="nutrition-canonical-session-label" style={{ fontSize:"0.54rem", color:"#f8fafc", lineHeight:1.45 }}>{canonicalNutritionLabel}</div>
+<div style={{ fontSize:"0.56rem", color:"#e2e8f0", lineHeight:1.45 }}>{compactNutritionHeroLine}</div>
+<div data-testid="nutrition-canonical-session-label" style={{ fontSize:"0.54rem", color:"#f8fafc", lineHeight:1.45 }}>{canonicalNutritionLabel}</div>
+ {!!surfaceModel?.explanationSourceLabel && (
+ <div style={{ fontSize:"0.44rem", color:"#64748b", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ {surfaceModel.explanationSourceLabel}
+ </div>
+ )}
+ {!!compactNutritionReason && (
+ <div data-testid="nutrition-canonical-reason" style={{ fontSize:"0.49rem", color:"#9fb2d2", lineHeight:1.45 }}>
+ {compactNutritionReason}
+ </div>
+ )}
  {nutritionSaveFeedbackModel.show && (
  <StateFeedbackBanner
  model={nutritionSaveFeedbackModel}
@@ -26959,6 +27506,7 @@ function CoachTab({
  bodyweights,
  personalization,
  athleteProfile = null,
+ goals: explicitGoals = [],
  momentum,
  arbitration,
  expectations,
@@ -26990,12 +27538,13 @@ function CoachTab({
  setPlanAlerts,
  onOpenSettings = () => {},
  onTrackFrictionEvent = () => {},
+ onRecordAdaptiveLearningEvent = () => {},
  syncStateModel = null,
  syncSurfaceModel = null,
  onPersist,
 }) {
  const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
- const goals = athleteProfile?.goals || [];
+ const goals = explicitGoals?.length ? explicitGoals : (athleteProfile?.goals || []);
  const goalState = athleteProfile?.goalState || {};
  const userProfile = athleteProfile?.userProfile || {};
  const nutritionLayer = planDay?.resolved?.nutrition?.prescription || legacyNutritionLayer;
@@ -27899,6 +28448,51 @@ setCoachNotice("");
  diffLines: primaryWeekAction?.diffLines || [],
  action: primaryWeekAction?.action || null,
  };
+ const buildCoachAdaptiveRecommendationPayload = (recommendation = null, displaySource = "Coach") => {
+ if (!recommendation?.action?.type) return null;
+ return buildCoachSuggestionRecommendationEventInput({
+ goals,
+ action: recommendation.action,
+ planDay,
+ displaySource,
+ recommendation: recommendation.recommendation,
+ why: recommendation.why,
+ likelyEffect: recommendation.likelyEffect,
+ });
+ };
+ const getActiveCoachAdaptiveRecommendation = (mode = coachSurfaceMode) => {
+ if (mode === COACH_SURFACE_MODES.todayWeek) {
+ return {
+ payload: buildCoachAdaptiveRecommendationPayload(todayRecommendation, "Adjust today"),
+ recommendation: todayRecommendation,
+ };
+ }
+ if (mode === COACH_SURFACE_MODES.changePlan) {
+ return {
+ payload: buildCoachAdaptiveRecommendationPayload(weekRecommendation, "Adjust this week"),
+ recommendation: weekRecommendation,
+ };
+ }
+ if (mode === COACH_SURFACE_MODES.askAnything) {
+ return {
+ payload: buildCoachAdaptiveRecommendationPayload(askRecommendation, "Ask coach"),
+ recommendation: askRecommendation,
+ };
+ }
+ return {
+ payload: null,
+ recommendation: null,
+ };
+ };
+ useEffect(() => {
+ const activeAdaptiveRecommendation = getActiveCoachAdaptiveRecommendation(coachSurfaceMode);
+ if (!activeAdaptiveRecommendation?.payload) return;
+ onRecordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
+ payload: activeAdaptiveRecommendation.payload,
+ dedupeKey: `coach_shown_${activeAdaptiveRecommendation.payload.recommendationJoinKey}_${coachSurfaceMode}`,
+ });
+ }, [askRecommendation, coachSurfaceMode, onRecordAdaptiveLearningEvent, todayRecommendation, weekRecommendation]);
 
  const acceptCoachRecommendation = async (action, { proposalSource = "coach_change_plan" } = {}) => {
  if (!action?.type || actionLoading || acceptCoachActionInFlightRef.current) return;
@@ -27913,9 +28507,31 @@ setCoachNotice("");
  proposalSource: action?.proposalSource || proposalSource,
  source: action?.source || action?.proposalSource || proposalSource,
  };
+ const acceptedRecommendationPayload = buildCoachSuggestionRecommendationEventInput({
+ goals,
+ action: acceptedAction,
+ planDay,
+ displaySource: proposalSource,
+ recommendation: acceptedAction?.type || "Coach suggestion",
+ why: "",
+ likelyEffect: "",
+ });
  try {
  const result = await commitAction(acceptedAction);
  if (result?.ok) {
+ onRecordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationOutcomeRecorded,
+ payload: buildCoachOutcomeEventInput({
+ recommendationJoinKey: acceptedRecommendationPayload?.recommendationJoinKey || `coach_${acceptedAction?.type || "action"}`,
+ decisionId: `decision_${acceptedRecommendationPayload?.recommendationJoinKey || acceptedAction?.type || "coach_action"}`,
+ outcomeKind: ADAPTIVE_OUTCOME_KINDS.coachAccepted,
+ action: acceptedAction,
+ status: "accepted",
+ detail: "Coach suggestion accepted and persisted.",
+ sourceSurface: "coach",
+ }),
+ dedupeKey: `coach_accept_${acceptedRecommendationPayload?.recommendationJoinKey || acceptedAction?.type || "action"}_${Math.floor(Date.now() / 1000)}`,
+ });
  onTrackFrictionEvent({
  flow: "coach",
  action: "plan_accept",
@@ -27926,6 +28542,19 @@ setCoachNotice("");
  },
  });
  } else {
+ onRecordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationOutcomeRecorded,
+ payload: buildCoachOutcomeEventInput({
+ recommendationJoinKey: acceptedRecommendationPayload?.recommendationJoinKey || `coach_${acceptedAction?.type || "action"}`,
+ decisionId: `decision_${acceptedRecommendationPayload?.recommendationJoinKey || acceptedAction?.type || "coach_action"}`,
+ outcomeKind: ADAPTIVE_OUTCOME_KINDS.coachIgnored,
+ action: acceptedAction,
+ status: "ignored",
+ detail: "Coach suggestion could not be applied.",
+ sourceSurface: "coach",
+ }),
+ dedupeKey: `coach_accept_error_${acceptedRecommendationPayload?.recommendationJoinKey || acceptedAction?.type || "action"}_${Math.floor(Date.now() / 1000)}`,
+ });
  onTrackFrictionEvent({
  flow: "coach",
  action: "plan_accept",
@@ -27958,6 +28587,7 @@ setCoachNotice("");
  <div className="sect-title" style={{ color: C.blue, marginBottom: 0 }}>COACH</div>
  <div style={{ fontSize: "0.68rem", color: "#f8fbff", lineHeight: 1.4 }}>A clear call, nothing hidden.</div>
  <div data-testid="coach-canonical-session-label" style={{ fontSize: "0.54rem", color: "#f8fbff", lineHeight: 1.45 }}>{canonicalCoachLabel}</div>
+ {!!surfaceModel?.explanationSourceLabel && <div style={{ fontSize: "0.44rem", color: "#64748b", letterSpacing: "0.08em", textTransform: "uppercase" }}>{surfaceModel.explanationSourceLabel}</div>}
  {!!compactCoachReason && <div data-testid="coach-canonical-reason" style={{ fontSize: "0.49rem", color: "#9fb2d2", lineHeight: 1.45 }}>{compactCoachReason}</div>}
  </div>
  <div style={{ display: "flex", gap: "0.28rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -27988,6 +28618,22 @@ setCoachNotice("");
  className={`btn ${coachSurfaceMode === mode.id ? "btn-selected" : ""}`}
  data-testid={`coach-mode-button-${mode.id}`}
  onClick={() => {
+ const activeAdaptiveRecommendation = getActiveCoachAdaptiveRecommendation(coachSurfaceMode);
+ if (coachSurfaceMode !== mode.id && activeAdaptiveRecommendation?.payload?.recommendationJoinKey && activeAdaptiveRecommendation?.recommendation?.action?.type) {
+ onRecordAdaptiveLearningEvent({
+ eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationOutcomeRecorded,
+ payload: buildCoachOutcomeEventInput({
+ recommendationJoinKey: activeAdaptiveRecommendation.payload.recommendationJoinKey,
+ decisionId: `decision_${activeAdaptiveRecommendation.payload.recommendationJoinKey}`,
+ outcomeKind: ADAPTIVE_OUTCOME_KINDS.coachIgnored,
+ action: activeAdaptiveRecommendation.recommendation.action,
+ status: "ignored",
+ detail: "Coach suggestion was left without being accepted.",
+ sourceSurface: "coach",
+ }),
+ dedupeKey: `coach_ignore_${activeAdaptiveRecommendation.payload.recommendationJoinKey}_${mode.id}`,
+ });
+ }
  setCoachSurfaceMode(mode.id);
  clearCoachSaveFeedback();
  setCoachError("");

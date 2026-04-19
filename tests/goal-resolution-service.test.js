@@ -119,6 +119,36 @@ test("swim goals keep swim-specific summaries and domain adapter hints", () => {
   assert.ok(result.unresolvedGaps.some((gap) => /pool|swim/i.test(gap)));
 });
 
+test("canonical swim-improvement phrasing stays on the structured swim path even with rich swim context", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "improve my swim endurance and technique",
+    typedIntakePacket: {
+      ...buildIntakePacket({
+        rawGoalText: "improve my swim endurance and technique",
+        additionalContext: "regular pool access with a recent swim benchmark and room for multiple weekly swims",
+      }),
+      intake: {
+        ...buildIntakePacket({
+          rawGoalText: "improve my swim endurance and technique",
+          additionalContext: "regular pool access with a recent swim benchmark and room for multiple weekly swims",
+        }).intake,
+        goalCompletenessContext: {
+          fields: {
+            recent_swim_anchor: { value: "1000 yd in 22:00", raw: "1000 yd in 22:00" },
+            swim_access_reality: { value: "pool", raw: "Pool" },
+          },
+        },
+      },
+    },
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-18",
+  });
+
+  assert.equal(result.resolvedGoals[0].structuredIntentId, "swim_better");
+  assert.equal(result.resolvedGoals[0].planArchetypeId, "swim_endurance_improvement");
+  assert.equal(result.resolvedGoals[0].primaryDomain, "swimming_endurance_technique");
+});
+
 test("template-first swim goals keep the swim benchmark metric instead of falling back to generic text capture", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "improve my swim speed",
@@ -153,6 +183,68 @@ test("template-first swim goals keep the swim benchmark metric instead of fallin
   assert.equal(templatedResult.resolvedGoals[0].summary, "Swim a faster mile");
   assert.equal(templatedResult.resolvedGoals[0].primaryMetric?.key, "swim_mile_time");
   assert.equal(templatedResult.resolvedGoals[0].goalTemplateId, "swim_faster_mile");
+});
+
+test("canonical recomp phrasing stays structured even when the intake context mentions strength retention", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "lose fat and gain muscle",
+    typedIntakePacket: {
+      ...buildIntakePacket({
+        rawGoalText: "lose fat and gain muscle",
+        additionalContext: "Can train consistently and wants body-composition progress without wrecking recovery.",
+      }),
+      intake: {
+        ...buildIntakePacket({
+          rawGoalText: "lose fat and gain muscle",
+          additionalContext: "Can train consistently and wants body-composition progress without wrecking recovery.",
+        }).intake,
+        goalCompletenessContext: {
+          fields: {
+            current_bodyweight: { value: "185", raw: "185" },
+            muscle_retention_priority: { value: "high", raw: "High" },
+            cardio_preference: { value: "low_impact", raw: "Low impact" },
+          },
+        },
+      },
+    },
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-18",
+  });
+
+  assert.equal(result.resolvedGoals[0].structuredIntentId, "recomp");
+  assert.equal(result.resolvedGoals[0].goalFamily, "body_comp");
+  assert.equal(result.resolvedGoals[0].planArchetypeId, "recomp_moderate_cardio");
+});
+
+test("canonical hybrid phrasing stays structured even when context mentions both run and lift lanes", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "stronger and fitter",
+    typedIntakePacket: {
+      ...buildIntakePacket({
+        rawGoalText: "stronger and fitter",
+        additionalContext: "Has enough room to run and lift, but running clearly leads the current block.",
+      }),
+      intake: {
+        ...buildIntakePacket({
+          rawGoalText: "stronger and fitter",
+          additionalContext: "Has enough room to run and lift, but running clearly leads the current block.",
+        }).intake,
+        goalCompletenessContext: {
+          fields: {
+            hybrid_priority: { value: "running", raw: "Running" },
+            current_run_frequency: { value: "4", raw: "4" },
+          },
+        },
+      },
+    },
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-18",
+  });
+
+  assert.equal(result.resolvedGoals[0].structuredIntentId, "stronger_and_fitter");
+  assert.equal(result.resolvedGoals[0].goalFamily, "hybrid");
+  assert.equal(result.resolvedGoals[0].planArchetypeId, "strength_conditioning_balanced");
+  assert.match(result.resolvedGoals[0].tradeoffs[0] || "", /recovery|lane/i);
 });
 
 test("swim goals no longer collapse into running planning categories", () => {
@@ -257,6 +349,54 @@ test("explicit open-ended confirmation clears timing without forcing a date or h
 
   assert.equal(result.resolvedGoals[0].targetDate, "");
   assert.equal(result.resolvedGoals[0].targetHorizonWeeks, null);
+});
+
+test("goal-change preview keeps a structured physique resolution when baseline copy mentions recovery", () => {
+  const result = resolveGoalTranslation({
+    rawUserGoalIntent: "lose body fat",
+    typedIntakePacket: {
+      version: "2026-04-v1",
+      intent: "goal_change_preview",
+      intake: {
+        rawGoalText: "lose body fat",
+        baselineContext: {
+          primaryGoalLabel: "General Fitness",
+          currentBaseline: "Can train consistently and wants body-composition progress without wrecking recovery.",
+        },
+        scheduleReality: {
+          trainingDaysPerWeek: 4,
+          sessionLength: "45 min",
+          trainingLocation: "Mixed",
+        },
+        equipmentAccessContext: {
+          trainingLocation: "Mixed",
+          equipment: ["Dumbbells", "Gym access"],
+        },
+        injuryConstraintContext: {
+          injuryText: "",
+          constraints: [],
+        },
+        userProvidedConstraints: {
+          timingConstraints: [],
+          appearanceConstraints: [],
+          additionalContext: "",
+        },
+        goalCompletenessContext: {
+          fields: {
+            current_bodyweight: { value: "185", raw: "185" },
+            muscle_retention_priority: { value: "high", raw: "High" },
+            cardio_preference: { value: "low_impact", raw: "Low impact" },
+          },
+        },
+      },
+    },
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true, source: "goal_change_preview" },
+    now: "2026-04-16",
+  });
+
+  assert.equal(result.resolvedGoals.length, 1);
+  assert.equal(result.resolvedGoals[0].structuredIntentId, "lose_body_fat");
+  assert.match(result.resolvedGoals[0].planArchetypeId || "", /^fat_loss_/);
 });
 
 test("resolves a fully measurable strength goal into logged-lift planning input", () => {
@@ -409,7 +549,7 @@ test("hybrid athlete goals become two exploratory planning goals with a first 30
   assert.ok(result.unresolvedGaps.some((gap) => /balance between endurance and strength/i.test(gap)));
 });
 
-test("re-entry goals stay exploratory and become 30-day success definitions instead of fake precise targets", () => {
+test("get-back-in-shape goals stay exploratory and ask for a starting-capacity anchor before getting sharper", () => {
   const result = resolveGoalTranslation({
     rawUserGoalIntent: "get back in shape",
     typedIntakePacket: buildIntakePacket({ rawGoalText: "get back in shape" }),
@@ -418,13 +558,12 @@ test("re-entry goals stay exploratory and become 30-day success definitions inst
   });
 
   assert.equal(result.resolvedGoals.length, 1);
-  assert.equal(result.resolvedGoals[0].goalFamily, "re_entry");
+  assert.equal(result.resolvedGoals[0].goalFamily, "general_fitness");
   assert.equal(result.resolvedGoals[0].measurabilityTier, GOAL_MEASURABILITY_TIERS.exploratoryFuzzy);
   assert.equal(result.resolvedGoals[0].primaryMetric, null);
-  assert.equal(result.resolvedGoals[0].confidence, "low");
   assert.match(result.resolvedGoals[0].first30DaySuccessDefinition, /30 days/i);
   assert.equal(result.planningGoals[0].measurableTarget, result.resolvedGoals[0].first30DaySuccessDefinition);
-  assert.ok(result.unresolvedGaps.some((gap) => /stronger metrics/i.test(gap)));
+  assert.ok(result.unresolvedGaps.some((gap) => /starting capacity/i.test(gap)));
 });
 
 test("safe rebuild language with postpartum context resolves into re-entry instead of generic strength", () => {

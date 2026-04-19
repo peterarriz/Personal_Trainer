@@ -12,7 +12,7 @@ const toArray = (value) => Array.isArray(value) ? value : value == null ? [] : [
 
 export const INTAKE_STAGE_CONTRACT = Object.freeze([
   Object.freeze({ key: "setup", label: "Start", helper: "Pick your goal and week-one setup." }),
-  Object.freeze({ key: "details", label: "Details", helper: "Add the details that still change week one." }),
+  Object.freeze({ key: "details", label: "Details", helper: "Add the details that still shape week one and your starting point." }),
   Object.freeze({ key: "build", label: "Your plan", helper: "Build your first week." }),
 ]);
 
@@ -41,7 +41,7 @@ export const INTAKE_COPY_DECK = Object.freeze({
     emptyState: "Your first draft will show up here.",
   }),
   clarify: Object.freeze({
-    helper: "Answer the details that still change week one.",
+    helper: "Answer the details that still shape week one and your starting point.",
     stackEyebrow: "CURRENT PRIORITIES",
     baselineNote: "Saved in Settings so you can change it later.",
     structuredToggle: "Quick picks",
@@ -64,7 +64,7 @@ export const INTAKE_COPY_DECK = Object.freeze({
   footer: Object.freeze({
     goals: "Choose your goal, add the key details, and build from here when it looks right.",
     interpretation: "Check the draft before you add more detail.",
-    clarify: "Add anything that still changes week one.",
+    clarify: "Add anything that still shapes week one or your current baseline.",
     confirm: "One last look before you build.",
     building: "Building week one now.",
     adjust: "Describe the change, then continue.",

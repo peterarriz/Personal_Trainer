@@ -70,17 +70,20 @@ const buildAdaptationSummary = ({
   dayKind = "single_session",
   baseDayKind = "single_session",
   changeSummary = "",
+  explanationLine = "",
 } = {}) => {
   const normalizedChange = sanitizeText(changeSummary, 180);
+  const normalizedExplanation = sanitizeText(explanationLine, 180);
   const hasMeaningfulChange = normalizedChange && !isGenericOnPlanCopy(normalizedChange);
 
   if (dayKind === "reduced_load") {
-    return normalizedChange || "Load came down today so the session stays productive without forcing it.";
+    return normalizedChange || normalizedExplanation || "Load came down today so the session stays productive without forcing it.";
   }
   if (baseDayKind === "rest") {
-    return normalizedChange || "Today stays light so the next productive session lands well.";
+    return normalizedChange || normalizedExplanation || "Today stays light so the next productive session lands well.";
   }
   if (hasMeaningfulChange) return normalizedChange;
+  if (normalizedExplanation && !isGenericOnPlanCopy(normalizedExplanation)) return normalizedExplanation;
   if (baseDayKind === "hybrid") return "Both parts of the session stay on plan today.";
   if (baseDayKind === "strength_only") return "This strength session stays on plan today.";
   return "This session stays on plan today.";
@@ -142,6 +145,7 @@ export const buildTodayCommandCenterModel = ({
   summary = null,
   readinessState = "",
   changeSummary = "",
+  explanation = null,
   nextStep = "",
   hasLogged = false,
 } = {}) => {
@@ -161,7 +165,14 @@ export const buildTodayCommandCenterModel = ({
     statusLabel: resolveStatusLabel({ baseDayKind, dayKind }),
     heroSupportLine: buildHeroSupportLine({ dayKind, baseDayKind, summary }),
     adaptationTitle: "What changed",
-    adaptationSummary: buildAdaptationSummary({ dayKind, baseDayKind, changeSummary }),
+    adaptationSummary: buildAdaptationSummary({
+      dayKind,
+      baseDayKind,
+      changeSummary,
+      explanationLine: explanation?.line || "",
+    }),
+    adaptationSourceLabel: sanitizeText(explanation?.sourceLabel || "", 80),
+    adaptationDetailLine: sanitizeText(explanation?.detailLine || "", 180),
     adaptationTone: dayKind === "reduced_load"
       ? "warning"
       : baseDayKind === "rest"

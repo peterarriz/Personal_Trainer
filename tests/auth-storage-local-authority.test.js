@@ -4,6 +4,11 @@ import assert from "node:assert/strict";
 import { createAuthStorageModule } from "../src/modules-auth-storage.js";
 import { buildPersistedTrainerPayload } from "../src/services/persistence-adapter-service.js";
 import { SYNC_DIAGNOSTIC_EVENT_TYPES } from "../src/services/sync-diagnostics-service.js";
+import { createAdaptiveLearningStore } from "../src/services/adaptive-learning-store-service.js";
+import {
+  ADAPTIVE_LEARNING_EVENT_NAMES,
+  ADAPTIVE_RECOMMENDATION_KINDS,
+} from "../src/services/adaptive-learning-event-service.js";
 
 const noop = () => {};
 
@@ -77,7 +82,7 @@ const installLocalStorage = (initial = {}) => {
   return store;
 };
 
-const createModule = ({ fetchImpl, reportSyncDiagnostic = noop }) => {
+const createModule = ({ fetchImpl, reportSyncDiagnostic = noop, adaptiveLearningStore = null }) => {
   global.window = {
     __SUPABASE_URL: "https://example.supabase.co",
     __SUPABASE_ANON_KEY: "anon-key",
@@ -90,8 +95,38 @@ const createModule = ({ fetchImpl, reportSyncDiagnostic = noop }) => {
     DEFAULT_PERSONALIZATION: {},
     DEFAULT_MULTI_GOALS: [],
     reportSyncDiagnostic,
+    adaptiveLearningStore,
   });
 };
+
+const buildAdaptiveRecommendationPayload = () => ({
+  recommendationKind: ADAPTIVE_RECOMMENDATION_KINDS.dayPrescription,
+  recommendationJoinKey: "join_1",
+  goalStack: [{ id: "goal_1", summary: "Run faster", category: "running", priority: 1, active: true }],
+  planStage: {
+    currentPhase: "BUILD",
+    currentWeek: 3,
+    currentDay: 2,
+    dateKey: "2026-04-18",
+    planWeekId: "plan_week_3",
+    planDayId: "plan_day_2026-04-18",
+  },
+  contextualInputs: {},
+  candidateOptionsConsidered: [],
+  chosenOption: {
+    optionKey: "tempo",
+    label: "Tempo run",
+    source: "deterministic_engine",
+    accepted: true,
+  },
+  whyChosen: ["Threshold focus"],
+  provenance: {
+    source: "plan_day_resolution",
+    summary: "Resolved from planner",
+  },
+  sourceSurface: "today",
+  owner: "planning",
+});
 
 test("sbLoad prefers a newer pending local cache over stale cloud rows and clears the pending marker after replay", async () => {
   const session = buildSession();
@@ -399,6 +434,77 @@ test("sbLoad resumes newer pending onboarding intake locally without replaying i
   const savedCache = JSON.parse(global.localStorage.getItem("trainer_local_cache_v4") || "{}");
   assert.equal(savedCache?.syncMeta?.pendingCloudWrite, true);
   assert.equal(savedCache?.personalization?.profile?.onboardingComplete, false);
+});
+
+test("persistAll replays pending adaptive events to the dedicated sink after a cloud save", async () => {
+  installLocalStorage();
+  const session = buildSession();
+  const adaptiveLearningStore = createAdaptiveLearningStore();
+  adaptiveLearningStore.recordEvent({
+    eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
+    dedupeKey: "day_prescription_plan_day_2026-04-18",
+    payload: buildAdaptiveRecommendationPayload(),
+  });
+
+  const requests = [];
+  const module = createModule({
+    adaptiveLearningStore,
+    fetchImpl: async (url, options = {}) => {
+      requests.push({
+        url,
+        method: options.method || "GET",
+        body: options.body ? JSON.parse(options.body) : null,
+      });
+      if (/\/rest\/v1\/trainer_data$/.test(url) && (options.method || "GET") === "POST") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ([]),
+          text: async () => "",
+        };
+      }
+      if (url === "/api/adaptive-learning/events" && (options.method || "GET") === "POST") {
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            ok: true,
+            code: "adaptive_events_ingested",
+            ingestedEventIds: options.body ? JSON.parse(options.body).eventIds : [],
+            pendingEventIds: [],
+            transport: "supabase_event_sink",
+          }),
+          text: async () => "",
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ([]),
+        text: async () => "",
+      };
+    },
+  });
+
+  const payload = buildPayload({
+    label: "Local Tempo Run",
+    note: "Unsynced local copy",
+    ts: 1714000000000,
+  });
+
+  const result = await module.persistAll({
+    payload,
+    authSession: session,
+    setStorageStatus: noop,
+    setAuthSession: noop,
+  });
+
+  assert.equal(result.ok, true);
+  const sinkRequest = requests.find((request) => request.url === "/api/adaptive-learning/events" && request.method === "POST");
+  assert.equal(Boolean(sinkRequest), true);
+  assert.equal(Array.isArray(sinkRequest?.body?.events), true);
+  assert.equal(sinkRequest?.body?.events?.length >= 1, true);
+  assert.equal(adaptiveLearningStore.getSnapshot().pendingServerEventIds.length, 0);
 });
 
 test("pending local replay after a transient failure reconciles once and does not replay again on the next identical load", async () => {

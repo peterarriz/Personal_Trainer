@@ -8,6 +8,9 @@ const {
   normalizeGoals,
 } = require("../src/modules-planning.js");
 const {
+  resolveGoalTranslation,
+} = require("../src/services/goal-resolution-service.js");
+const {
   buildGoalCapabilityPacket,
   DOMAIN_ADAPTER_IDS,
 } = require("../src/services/goal-capability-resolution-service.js");
@@ -211,6 +214,56 @@ test("strength-first plans without a running goal stay non-run by default", () =
   const sessionTypes = Object.values(composer.dayTemplates || {}).map((session) => String(session?.type || ""));
   assert.equal(sessionTypes.some((type) => ["easy-run", "hard-run", "long-run", "run+strength"].includes(type)), false);
   assert.equal(sessionTypes.includes("conditioning"), true);
+});
+
+test("hybrid strength-priority plans keep a visible endurance lane even when the primary category is strength", () => {
+  const typedIntakePacket = {
+    version: "2026-04-v1",
+    intent: "intake_interpretation",
+    intake: {
+      rawGoalText: "run and lift with strength priority",
+      scheduleReality: {
+        trainingDaysPerWeek: 4,
+        sessionLength: "45 min",
+        trainingLocation: "Gym",
+      },
+      equipmentAccessContext: {
+        trainingLocation: "Gym",
+        equipment: ["Barbell", "Dumbbells", "Running shoes"],
+      },
+      goalCompletenessContext: {
+        fields: {
+          hybrid_priority: { value: "strength", raw: "Strength" },
+          equipment_profile: { value: "full_gym", raw: "Full gym" },
+          current_strength_baseline: { value: "Bench 205 x 5", raw: "Bench 205 x 5" },
+          current_run_frequency: { value: "2", raw: "2" },
+        },
+      },
+    },
+  };
+  const resolution = resolveGoalTranslation({
+    rawUserGoalIntent: "run and lift with strength priority",
+    typedIntakePacket,
+    explicitUserConfirmation: { confirmed: true, acceptedProposal: true },
+    now: "2026-04-18",
+  });
+  const goals = buildGoals([
+    {
+      name: resolution.resolvedGoals[0].summary,
+      category: "strength",
+      resolvedGoal: resolution.resolvedGoals[0],
+    },
+  ]);
+
+  const composer = buildComposer({
+    goals,
+    todayKey: "2026-04-15",
+    currentDayOfWeek: 3,
+  });
+
+  const sessionTypes = Object.values(composer.dayTemplates || {}).map((session) => String(session?.type || ""));
+  assert.ok(sessionTypes.some((type) => ["easy-run", "hard-run", "long-run", "run+strength", "conditioning"].includes(type)));
+  assert.equal(composer.planContract?.id, "hybrid");
 });
 
 test("under-fueling trend protects the next quality session without rewriting the whole week", () => {

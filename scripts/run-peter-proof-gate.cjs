@@ -251,8 +251,10 @@ const e2eLogPath = path.join(logsDir, "adversarial-e2e.log");
 const personaJsonPath = path.join(reportsDir, "persona-subset-report.json");
 const personaMdPath = path.join(reportsDir, "persona-subset-report.md");
 const manualLogPath = path.join(logsDir, "manual-pack.log");
+const adaptiveLaunchLogPath = path.join(logsDir, "adaptive-launch-readiness.log");
 const summaryPath = path.join(runDir, "stoplight-summary.md");
 const summaryJsonPath = path.join(runDir, "stoplight-summary.json");
+const adaptiveLaunchOutputDir = ensureDir(path.join(runDir, "adaptive-launch-readiness"));
 
 const steps = [];
 
@@ -391,6 +393,66 @@ steps.push({
   commandLine: manualResult.commandLine,
 });
 
+const adaptiveLaunchResult = runProcess({
+  label: "Adaptive launch-readiness gate",
+  command: process.execPath,
+  commandArgs: [
+    path.join("scripts", "run-adaptive-policy-launch-readiness.js"),
+    "--fixture",
+    "--output",
+    toRepoPath(adaptiveLaunchOutputDir),
+  ],
+  logPath: adaptiveLaunchLogPath,
+});
+
+let adaptiveLaunchSummary = null;
+if (adaptiveLaunchResult.ok) {
+  try {
+    adaptiveLaunchSummary = JSON.parse(
+      fs.readFileSync(path.join(adaptiveLaunchOutputDir, "results.json"), "utf8")
+    );
+  } catch (error) {
+    adaptiveLaunchSummary = {
+      parseError: error.message,
+    };
+  }
+}
+
+const adaptiveLaunchRecommendation = adaptiveLaunchSummary?.summary?.activationRecommendation || "";
+const adaptiveLaunchArtifacts = [
+  { label: "adaptive launch log", path: adaptiveLaunchLogPath },
+  { label: "adaptive launch results", path: path.join(adaptiveLaunchOutputDir, "results.json") },
+  { label: "adaptive launch report", path: path.join(adaptiveLaunchOutputDir, "launch-readiness-report.md") },
+];
+
+let adaptiveLaunchStatus = STOPLIGHT.red;
+let adaptiveLaunchDetail = `Adaptive launch-readiness gate failed with exit code ${adaptiveLaunchResult.exitCode}.`;
+if (adaptiveLaunchResult.ok) {
+  if (adaptiveLaunchRecommendation === "keep_in_shadow") {
+    adaptiveLaunchStatus = STOPLIGHT.green;
+    adaptiveLaunchDetail = "Gate ran and recommends keep_in_shadow. That is launch-safe while adaptive remains off or shadow-only.";
+  } else if (adaptiveLaunchRecommendation === "eligible_for_limited_active_rollout") {
+    adaptiveLaunchStatus = STOPLIGHT.green;
+    adaptiveLaunchDetail = "Gate ran and at least one bounded decision point is eligible for a limited rollout.";
+  } else if (adaptiveLaunchSummary?.parseError) {
+    adaptiveLaunchStatus = STOPLIGHT.yellow;
+    adaptiveLaunchDetail = `Gate ran, but results.json could not be parsed: ${adaptiveLaunchSummary.parseError}`;
+  } else {
+    adaptiveLaunchStatus = STOPLIGHT.yellow;
+    adaptiveLaunchDetail = "Gate ran, but the activation recommendation was not recognized. Review the adaptive launch artifacts before rollout.";
+  }
+}
+
+steps.push({
+  id: "adaptive_launch_readiness",
+  label: "Adaptive launch-readiness gate",
+  status: adaptiveLaunchStatus,
+  detail: adaptiveLaunchDetail,
+  blocked: !adaptiveLaunchResult.ok,
+  artifacts: adaptiveLaunchArtifacts,
+  commandLine: adaptiveLaunchResult.commandLine,
+});
+
 const hasRed = steps.some((step) => step.status === STOPLIGHT.red || step.blocked);
 const hasYellow = steps.some((step) => step.status === STOPLIGHT.yellow);
 const overallStatus = hasRed ? STOPLIGHT.red : hasYellow ? STOPLIGHT.yellow : STOPLIGHT.green;
@@ -455,6 +517,7 @@ const summaryMarkdown = [
   "",
   "- The persona-lab layer uses a Peter-shaped subset and does not attempt to satisfy the full synthetic release threshold of 100 personas over 26 weeks.",
   "- The manual-pack layer only generates the worksheet and artifact folders. RG-11 still requires a human pass before a release can be called ready.",
+  "- The adaptive launch-readiness layer is safety-only. A keep_in_shadow recommendation is acceptable for launch while adaptive remains off or shadow-only.",
 ].join("\n");
 
 fs.writeFileSync(summaryPath, summaryMarkdown, "utf8");

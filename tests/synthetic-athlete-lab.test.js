@@ -231,3 +231,28 @@ test("synthetic athlete lab no longer loops proxy-choice intake or flags plain-E
   assert.ok(!appearancePersona.failures.some((failure) => failure.clusterId === "baseline_timing_problems"));
   assert.ok(!travelPersona.failures.some((failure) => failure.clusterId === "ugly_confusing_copy"));
 });
+
+test("synthetic athlete lab only flags support-tier dishonesty when the product overpromises support", () => {
+  const report = runSyntheticAthleteLab({
+    personas: [
+      {
+        id: "support_tier_conservative_probe",
+        name: "Support tier conservative probe",
+        ageRange: "36-36",
+        trainingAgeYears: 1,
+        goalIntents: ["Keep a sane training rhythm around rotating shifts"],
+        supportTierExpectation: "tier_1",
+        bodyCompContext: "general health",
+        strengthContext: "occasional dumbbells",
+        enduranceContext: "walks and short sessions",
+        scheduleReality: "rotating nursing shifts with inconsistent windows",
+      },
+    ],
+    weeks: 8,
+    includeArchetypeMatrix: false,
+  });
+
+  const persona = report.personaResults[0];
+  assert.ok(persona);
+  assert.ok(!persona.failures.some((failure) => failure.clusterId === "support_tier_dishonesty"));
+});

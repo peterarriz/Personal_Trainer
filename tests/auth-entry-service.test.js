@@ -86,11 +86,22 @@ test("provider-unavailable auth model keeps the local path explicit as a fallbac
   });
 
   assert.ok(model.statusBadges.some((badge) => /cloud sign-in temporarily unavailable/i.test(badge)));
-  assert.ok(model.localAction);
-  assert.match(model.localAction?.description || "", /device|offline|local/i);
+  assert.equal(model.localAction, null);
   assert.match(model.pathCards[0]?.description || "", /temporarily unavailable|offline/i);
-  assert.match(model.localAction?.badge || "", /fallback/i);
-  assert.equal(model.localAction?.variant, AUTH_ACTION_VARIANTS.tertiary);
+  assert.match(model.subtitle || "", /account is still required/i);
+});
+
+test("first-time auth model requires an account before a user can start", () => {
+  const model = buildAuthEntryViewModel({
+    authMode: "signup",
+    startupLocalResumeAvailable: false,
+    authProviderUnavailable: false,
+  });
+
+  assert.equal(model.localAction, null);
+  assert.match(model.title, /create your account/i);
+  assert.match(model.subtitle, /account before you start/i);
+  assert.match(model.form.primaryCaption, /required before FORMA can build or save your plan/i);
 });
 
 test("auth entry theme keeps primary and local-secondary contrast safe across all curated themes", () => {

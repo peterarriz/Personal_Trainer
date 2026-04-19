@@ -2,6 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { buildPlannedDayRecord } = require("../src/modules-checkins.js");
+const {
+  ADAPTIVE_LEARNING_EVENT_NAMES,
+  ADAPTIVE_OUTCOME_KINDS,
+  ADAPTIVE_RECOMMENDATION_KINDS,
+  createAdaptiveLearningEvent,
+} = require("../src/services/adaptive-learning-event-service.js");
 const { buildPersistedTrainerPayload } = require("../src/services/persistence-adapter-service.js");
 const {
   createPrescribedDayHistoryEntry,
@@ -123,4 +129,95 @@ test("REST row sanitizers keep allowed fields and drop malformed rows", () => {
   assert.equal(exerciseRows[0].exercise_name, "Bench Press");
   assert.equal(exerciseRows[0].actual_weight, 185);
   assert.equal(exerciseRows[0].temp, undefined);
+});
+
+test("trainer payload preserves adaptive learning joins through the persistence boundary", () => {
+  const recommendationEvent = createAdaptiveLearningEvent({
+    eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationGenerated,
+    actorId: "local_actor_1",
+    localActorId: "local_actor_1",
+    dedupeKey: "day_prescription_plan_day_2026-04-18",
+    payload: {
+      recommendationKind: ADAPTIVE_RECOMMENDATION_KINDS.dayPrescription,
+      recommendationJoinKey: "day_prescription_join_1",
+      goalStack: [
+        { id: "goal_1", summary: "Run a faster 10k", category: "running", priority: 1, active: true },
+      ],
+      planStage: {
+        currentPhase: "BUILD",
+        currentWeek: 4,
+        currentDay: 2,
+        dateKey: "2026-04-18",
+        planWeekId: "plan_week_4",
+        planDayId: "plan_day_2026-04-18",
+      },
+      contextualInputs: {
+        readiness_state: "steady",
+      },
+      candidateOptionsConsidered: [
+        { optionKey: "tempo", label: "Tempo session", source: "deterministic_engine" },
+      ],
+      chosenOption: {
+        optionKey: "tempo",
+        label: "Tempo session",
+        source: "deterministic_engine",
+        accepted: true,
+      },
+      whyChosen: ["Threshold work is the build priority."],
+      provenance: {
+        source: "plan_day_resolution",
+        summary: "Resolved the tempo day from the deterministic planner.",
+      },
+      sourceSurface: "today",
+      owner: "planning",
+    },
+  });
+  const outcomeEvent = createAdaptiveLearningEvent({
+    eventName: ADAPTIVE_LEARNING_EVENT_NAMES.recommendationOutcomeRecorded,
+    actorId: "local_actor_1",
+    localActorId: "local_actor_1",
+    dedupeKey: "workout_outcome_plan_day_2026-04-18",
+    payload: {
+      outcomeKind: ADAPTIVE_OUTCOME_KINDS.workoutLog,
+      recommendationJoinKey: "day_prescription_join_1",
+      decisionId: recommendationEvent.payload.decisionId,
+      adherenceOutcome: "modified",
+      completionPercentage: 0.75,
+      userModifications: ["shortened cooldown"],
+      perceivedDifficulty: "harder_than_expected",
+      painFlag: false,
+      painArea: "",
+      satisfactionSignal: "neutral",
+      frustrationSignal: "",
+      shortHorizonResultWindow: {
+        windowDays: 3,
+        reviewDateKey: "2026-04-18",
+        observedSignals: ["modified"],
+        summary: "Completed most of the session with a shorter finish.",
+      },
+      actualSummary: "Completed most of the session with a shorter finish.",
+      sourceSurface: "log",
+      owner: "logging",
+    },
+  });
+
+  const payload = buildPersistedTrainerPayload({
+    runtimeState: {},
+    adaptiveLearningSnapshot: {
+      actorId: "local_actor_1",
+      userId: "",
+      seq: 2,
+      events: [recommendationEvent, outcomeEvent],
+      pendingEventIds: [outcomeEvent.eventId],
+      lastLocalWriteAt: 1713441600000,
+      lastCloudReadAt: 0,
+      lastCloudWriteAt: 0,
+      lastReplayAt: 0,
+    },
+  });
+
+  assert.equal(payload.adaptiveLearning.events.length, 2);
+  assert.equal(payload.adaptiveLearning.events[0].payload.recommendationJoinKey, "day_prescription_join_1");
+  assert.equal(payload.adaptiveLearning.events[1].payload.recommendationJoinKey, "day_prescription_join_1");
+  assert.deepEqual(payload.adaptiveLearning.pendingEventIds, [outcomeEvent.eventId]);
 });

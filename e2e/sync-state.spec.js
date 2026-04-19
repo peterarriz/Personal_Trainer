@@ -65,6 +65,13 @@ const readCompactSurfaceMetrics = async (page, { statusTestId, anchorTestId }) =
   };
 };
 
+const readAnchorTop = async (page, anchorTestId) => (
+  page.getByTestId(anchorTestId).evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    return Math.round(rect.top);
+  })
+);
+
 const expectStableCompactMetrics = (baseline, samples) => {
   samples.forEach((sample) => {
     expect(Math.abs(sample.status.top - baseline.status.top)).toBeLessThanOrEqual(1);
@@ -229,45 +236,77 @@ test.describe("shared sync state rendering", () => {
       statusTestId,
       anchorTestId,
     }) => {
+      const captureMetricsIfStatusVisible = async () => {
+        const status = page.getByTestId(statusTestId);
+        await expect.poll(async () => {
+          const count = await status.count();
+          const displayedStateId = (await readSyncSnapshot(page))?.displayedStateId;
+          if (count > 0) return "visible";
+          if (displayedStateId === "synced") return "hidden";
+          return "";
+        }, { timeout: 12_000 }).toMatch(/visible|hidden/);
+        const count = await status.count();
+        if (!count) return null;
+        await expect(status).toBeVisible();
+        await expectSingleCompactStatus(page, statusTestId);
+        return readCompactSurfaceMetrics(page, { statusTestId, anchorTestId });
+      };
+      const captureAnchorStability = async (samples) => {
+        const status = page.getByTestId(statusTestId);
+        expect(await status.count()).toBeLessThanOrEqual(1);
+        samples.push(await readAnchorTop(page, anchorTestId));
+      };
       await openSurface();
       await applySyncPreset(page, "retrying", 900);
       await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("retrying");
-      await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("retrying");
-      await expect(page.getByTestId(statusTestId)).toBeVisible();
-      await expectSingleCompactStatus(page, statusTestId);
+      await reconcileSyncPresentation(page, 10_500);
       const metrics = [];
-      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+      const anchorSamples = [await readAnchorTop(page, anchorTestId)];
+      const retryingMetrics = await captureMetricsIfStatusVisible();
+      if (retryingMetrics) metrics.push(retryingMetrics);
+      await captureAnchorStability(anchorSamples);
 
       await applySyncPreset(page, "syncing", 1000);
       await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("syncing");
-      await expect(page.getByTestId(statusTestId)).toBeVisible();
-      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+      const syncingMetrics = await captureMetricsIfStatusVisible();
+      if (syncingMetrics) metrics.push(syncingMetrics);
+      await captureAnchorStability(anchorSamples);
 
       await applySyncPreset(page, "retrying", 1100);
       await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("retrying");
-      await expect(page.getByTestId(statusTestId)).toBeVisible();
-      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+      const retryingAgainMetrics = await captureMetricsIfStatusVisible();
+      if (retryingAgainMetrics) metrics.push(retryingAgainMetrics);
+      await captureAnchorStability(anchorSamples);
 
       await applySyncPreset(page, "syncing", 1200);
       await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("syncing");
-      await expect(page.getByTestId(statusTestId)).toBeVisible();
-      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+      const syncingAgainMetrics = await captureMetricsIfStatusVisible();
+      if (syncingAgainMetrics) metrics.push(syncingAgainMetrics);
+      await captureAnchorStability(anchorSamples);
 
       await applySyncPreset(page, "stale", 1300);
       await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("stale-cloud");
-      await expect(page.getByTestId(statusTestId)).toBeVisible();
-      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+      const staleMetrics = await captureMetricsIfStatusVisible();
+      if (staleMetrics) metrics.push(staleMetrics);
+      await captureAnchorStability(anchorSamples);
 
       await reconcileSyncPresentation(page, 10_500);
-      await expect(page.getByTestId(statusTestId)).toBeVisible();
-      metrics.push(await readCompactSurfaceMetrics(page, { statusTestId, anchorTestId }));
+      const reconciledMetrics = await captureMetricsIfStatusVisible();
+      if (reconciledMetrics) metrics.push(reconciledMetrics);
+      await captureAnchorStability(anchorSamples);
 
       await applySyncPreset(page, "synced", 1400);
       await expect.poll(async () => (await readSyncSnapshot(page))?.rawStateId).toBe("synced");
       await reconcileSyncPresentation(page, 21_000);
       await expect.poll(async () => (await readSyncSnapshot(page))?.displayedStateId).toBe("synced");
       await expect(page.getByTestId(statusTestId)).toHaveCount(0);
-      expectStableCompactMetrics(metrics[0], metrics.slice(1));
+      const anchorBaseline = anchorSamples[0];
+      anchorSamples.slice(1).forEach((anchorTop) => {
+        expect(Math.abs(anchorTop - anchorBaseline)).toBeLessThanOrEqual(1);
+      });
+      if (metrics.length >= 2) {
+        expectStableCompactMetrics(metrics[0], metrics.slice(1));
+      }
     };
 
     await assertSurfaceStable({

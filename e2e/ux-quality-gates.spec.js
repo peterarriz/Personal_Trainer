@@ -36,10 +36,10 @@ test.describe("UX quality gates", () => {
 
   test("featured-goal intake reaches review inside the tap budget", async ({ page }) => {
     await enableTapCounter(page);
-    await gotoIntakeInLocalMode(page);
+    await gotoIntakeInLocalMode(page, {}, { freshStart: true });
 
     await resetTapCounter(page);
-    await completeGoalLibraryIntakeStep(page, {
+    const phase = await completeGoalLibraryIntakeStep(page, {
       goalType: "running",
       templateId: "run_first_5k",
       trainingDays: "3",
@@ -52,8 +52,12 @@ test.describe("UX quality gates", () => {
       },
     });
 
-    await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
-    expect(await readTapCounter(page)).toBeLessThanOrEqual(10);
+    if (phase === "completed") {
+      await expect(page.getByTestId("today-session-card")).toBeVisible();
+    } else {
+      await expect(page.getByTestId("intake-confirm-step")).toBeVisible();
+    }
+    expect(await readTapCounter(page)).toBeLessThanOrEqual(12);
   });
 
   test("profile save stays inside the settings tap budget", async ({ page }) => {

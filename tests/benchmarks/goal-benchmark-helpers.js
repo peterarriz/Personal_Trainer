@@ -204,16 +204,28 @@ const classifySession = (session = null) => {
   if (!session) return { category: "empty", text: "" };
   const type = lower(session?.type || "");
   const text = collectSessionText(session);
+  const primaryText = uniqueStrings([
+    session?.label,
+    session?.fallback,
+    session?.run?.t,
+    session?.run?.d,
+    session?.swim?.focus,
+    session?.swim?.d,
+    session?.swim?.setLine,
+    session?.strengthDose,
+    session?.power?.focus,
+    session?.power?.dose,
+  ]).join(" ").toLowerCase();
   if (type === "rest" || type === "recovery" || session?.isRecoverySlot) return { category: "recovery", text };
   if (/run\+strength/.test(type)) return { category: "run_strength", text };
-  if (/^swim-/.test(type) || /\bswim|pool|open water\b/.test(text)) return { category: "swim", text };
-  if (/ride|cycling|bike|brick/.test(type) || /\bride|bike|cycling|brick|cadence\b/.test(text)) return { category: "ride", text };
-  if (/long-run/.test(type) || /\blong run\b/.test(text)) return { category: "long_run", text };
-  if (/hard-run/.test(type) || /\btempo|interval|threshold|race-pace|quality\b/.test(text)) return { category: "run_quality", text };
-  if (/easy-run|run\+strength/.test(type) || /\brun\b/.test(text)) return { category: "run", text };
-  if (/power|plyo|sprint-support/.test(type) || /\bjump|power|reactive|plyo|explosive\b/.test(text)) return { category: "power", text };
-  if (/strength/.test(type) || /\bstrength|hypertrophy|press|squat|deadlift|bench|lift\b/.test(text)) return { category: "strength", text };
-  if (/conditioning/.test(type) || /\bconditioning|aerobic|tempo\b/.test(text)) return { category: "conditioning", text };
+  if (/^swim-/.test(type) || /\bswim|pool|open water\b/.test(primaryText)) return { category: "swim", text };
+  if (/long-run/.test(type) || /\blong run\b/.test(primaryText)) return { category: "long_run", text };
+  if (/ride|cycling|bike|brick/.test(type) || /\bride|bike|cycling|brick|cadence\b/.test(primaryText)) return { category: "ride", text };
+  if (/hard-run/.test(type) || /\btempo|interval|threshold|race-pace|quality\b/.test(primaryText)) return { category: "run_quality", text };
+  if (/easy-run|run\+strength/.test(type) || /\brun\b/.test(primaryText)) return { category: "run", text };
+  if (/power|plyo|sprint-support/.test(type) || /\bjump|power|reactive|plyo|explosive\b/.test(primaryText)) return { category: "power", text };
+  if (/strength/.test(type) || /\bstrength|hypertrophy|press|squat|deadlift|bench|lift\b/.test(primaryText)) return { category: "strength", text };
+  if (/conditioning/.test(type) || /\bconditioning|aerobic|tempo\b/.test(primaryText)) return { category: "conditioning", text };
   return { category: "other", text };
 };
 

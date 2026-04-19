@@ -149,6 +149,8 @@ export const buildSupportTierModel = ({
   domainAdapterId = "",
   goalCapabilityStack = null,
 } = {}) => {
+  const adapterId = String(domainAdapterId || goalCapabilityStack?.primary?.primaryDomain || "").trim();
+  const fallbackMode = sanitizeText(goalCapabilityStack?.primary?.fallbackPlanningMode || "", 80).toLowerCase();
   const id = resolveSupportTier({
     goals,
     domainAdapterId,
@@ -156,13 +158,29 @@ export const buildSupportTierModel = ({
   });
   const meta = SUPPORT_TIER_META[id] || SUPPORT_TIER_META[SUPPORT_TIER_LEVELS.tier3];
   const signals = collectGoalSignals(goals);
-  const honestyLine = id === SUPPORT_TIER_LEVELS.tier1
+  const honestyLine = adapterId === DOMAIN_ADAPTER_IDS.hybrid
+    ? "FORMA can guide hybrid training credibly, but it will not pretend every lane can peak at once. One lane leads and the other stays supportive."
+    : adapterId === DOMAIN_ADAPTER_IDS.triathlon
+    ? "FORMA can support a conservative multisport build here, but it gets more precise once your swim, bike, and run anchors are real."
+    : adapterId === DOMAIN_ADAPTER_IDS.swimming
+    ? "FORMA can coach swim structure here, but it gets sharper once your swim access and a recent benchmark are confirmed."
+    : adapterId === DOMAIN_ADAPTER_IDS.durability
+    ? "FORMA can support a careful return here, but it is not a rehab or medical plan. It stays conservative until your setup and logs show more tolerance."
+    : adapterId === DOMAIN_ADAPTER_IDS.power
+    ? "FORMA can guide jump and power work here, but it uses broader training signals rather than lab-grade power testing."
+    : id === SUPPORT_TIER_LEVELS.tier1
     ? "The plan can be more specific here because your goal and inputs already give it a strong signal."
     : id === SUPPORT_TIER_LEVELS.tier2
     ? "The plan can support this credibly, but it will stay a little more conservative until the signal gets cleaner."
     : "The plan will stay useful by starting simple and getting sharper as you add more detail.";
   const basisLine = signals.activeGoals.length === 0
     ? "You do not need a formal goal to start. FORMA can still build a strong first week from your routine."
+    : adapterId === DOMAIN_ADAPTER_IDS.hybrid
+    ? "Hybrid plans stay believable by making the tradeoff visible. The lead lane gets the cleaner recovery while the other lane stays alive."
+    : adapterId === DOMAIN_ADAPTER_IDS.triathlon
+    ? "Triathlon starts with a conservative swim, bike, and run mix, then sharpens as those anchors get clearer."
+    : adapterId === DOMAIN_ADAPTER_IDS.durability
+    ? "Return-to-training plans bias finishable work first so week one is credible instead of optimistic."
     : signals.hasTriathlon
     ? "Triathlon starts with a balanced multisport build, then gets sharper as you confirm more swim, bike, and run anchors."
     : signals.hasCycling
@@ -173,6 +191,8 @@ export const buildSupportTierModel = ({
     ? "Power goals are supported through a shared speed-and-power build rather than a one-off template."
     : signals.hasAppearance && !signals.hasBodyComp
     ? "Appearance goals work best when you pair them with trackable markers like waist, bodyweight, or photos."
+    : id === SUPPORT_TIER_LEVELS.tier3 && fallbackMode
+    ? "This starts as a broad first block, not a fake specialized plan. It gets sharper after you add better anchors and logs."
     : "The plan follows your main goal first and keeps the rest in support.";
 
   return {

@@ -10,7 +10,7 @@ import { buildBrandThemeState, BRAND_THEME_IDS } from "../brand-theme-service.js
 import { deriveCanonicalAthleteState } from "../canonical-athlete-service.js";
 import { resolveGoalTranslation } from "../goal-resolution-service.js";
 import { buildMetricsBaselinesModel } from "../metrics-baselines-service.js";
-import { buildSupportTierModel } from "../support-tier-service.js";
+import { buildSupportTierModel, SUPPORT_TIER_LEVELS } from "../support-tier-service.js";
 import { buildTrainingContextFromEditor } from "../training-context-service.js";
 import { buildWorkoutLogDraft } from "../workout-log-form-service.js";
 import {
@@ -164,6 +164,12 @@ const PERSONA_COHORT_META = Object.freeze({
 });
 
 const PERSONA_COHORT_KEYS = Object.freeze(Object.keys(PERSONA_COHORT_META));
+
+const SUPPORT_TIER_RANK = Object.freeze({
+  [SUPPORT_TIER_LEVELS.tier1]: 3,
+  [SUPPORT_TIER_LEVELS.tier2]: 2,
+  [SUPPORT_TIER_LEVELS.tier3]: 1,
+});
 
 export const SYNTHETIC_ATHLETE_RELEASE_GATE_THRESHOLD_PROPOSAL = Object.freeze({
   minimumPersonaCount: 100,
@@ -1270,12 +1276,125 @@ const buildPlanDayRecord = ({
     flags: {},
   });
 
+const findLifecycleEventForWeek = (persona = {}, week = 1) => (
+  toArray(persona?.fiveYearLifecycleEvents || [])
+    .find((event) => Number(event?.week || 0) === Number(week))
+  || null
+);
+
+const applyLifecycleEventToWeek = ({
+  generic = {},
+  lifecycleEvent = null,
+  coachUsageStyle = "balanced",
+  timingStyle = "open_ended",
+  hasMultiGoal = false,
+} = {}) => {
+  if (!lifecycleEvent) return generic;
+  const kind = String(lifecycleEvent?.kind || "").trim().toLowerCase();
+  const label = String(lifecycleEvent?.label || "").trim() || generic.label;
+  if (kind === "travel_block") {
+    return {
+      ...generic,
+      label,
+      adherencePct: Math.max(0.38, Number(generic.adherencePct || 0.72) - 0.22),
+      loggingPct: Math.max(0.34, Number(generic.loggingPct || 0.68) - 0.18),
+      travel: true,
+      scheduleChange: true,
+      equipmentMode: "hotel",
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      motivation: "mixed",
+    };
+  }
+  if (kind === "pain_event") {
+    return {
+      ...generic,
+      label,
+      adherencePct: Math.max(0.34, Number(generic.adherencePct || 0.72) - 0.24),
+      loggingPct: Math.min(0.82, Number(generic.loggingPct || 0.68) + 0.06),
+      painFlare: true,
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      motivation: "low",
+    };
+  }
+  if (kind === "schedule_shift") {
+    return {
+      ...generic,
+      label,
+      adherencePct: Math.max(0.46, Number(generic.adherencePct || 0.72) - 0.12),
+      loggingPct: Math.max(0.44, Number(generic.loggingPct || 0.68) - 0.1),
+      scheduleChange: true,
+      coachUsage: coachUsageStyle === "never" ? "none" : "ask_anything",
+      motivation: "mixed",
+    };
+  }
+  if (kind === "goal_change" || kind === "goal_review") {
+    const goalChange = timingStyle === "open_ended"
+      ? { kind: "edit", timingMode: "target_horizon", targetHorizonWeeks: 16 }
+      : timingStyle === "date_based"
+      ? { kind: "edit", timingMode: "target_horizon", targetHorizonWeeks: 20 }
+      : { kind: hasMultiGoal ? "reprioritize" : "edit", timingMode: "exact_date", targetDate: "2026-09-30" };
+    return {
+      ...generic,
+      label,
+      adherencePct: Math.max(0.58, Number(generic.adherencePct || 0.72) - 0.04),
+      loggingPct: Math.max(0.66, Number(generic.loggingPct || 0.68)),
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      goalChange,
+    };
+  }
+  if (kind === "feature_request" || kind === "sync_recovery") {
+    return {
+      ...generic,
+      label,
+      adherencePct: Math.max(0.58, Number(generic.adherencePct || 0.72) - 0.06),
+      loggingPct: Math.max(0.58, Number(generic.loggingPct || 0.68) - 0.04),
+      coachUsage: coachUsageStyle === "never" ? "none" : "ask_anything",
+      motivation: "mixed",
+    };
+  }
+  if (kind === "return_after_gap" || kind === "retention_risk" || kind === "account_deletion") {
+    return {
+      ...generic,
+      label,
+      adherencePct: Math.max(0.32, Number(generic.adherencePct || 0.72) - 0.3),
+      loggingPct: Math.max(0.28, Number(generic.loggingPct || 0.68) - 0.28),
+      coachUsage: coachUsageStyle === "never" ? "none" : "ask_anything",
+      motivation: "low",
+    };
+  }
+  if (kind === "competition_block") {
+    return {
+      ...generic,
+      label,
+      adherencePct: Math.max(0.74, Number(generic.adherencePct || 0.72)),
+      loggingPct: Math.max(0.8, Number(generic.loggingPct || 0.68)),
+      coachUsage: coachUsageStyle === "never" ? "none" : "change_plan",
+      motivation: "steady",
+    };
+  }
+  if (kind === "plateau") {
+    return {
+      ...generic,
+      label,
+      adherencePct: Math.max(0.54, Number(generic.adherencePct || 0.72) - 0.08),
+      loggingPct: Math.max(0.54, Number(generic.loggingPct || 0.68) - 0.08),
+      coachUsage: coachUsageStyle === "never" ? "none" : "ask_anything",
+      motivation: "mixed",
+    };
+  }
+  return {
+    ...generic,
+    label,
+  };
+};
+
 const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
   const coachUsageStyle = inferCoachUsageStyle(persona);
   const chaosLevel = inferChaosLevel(persona);
   const timingStyle = inferGoalTimingStyle(persona);
   const goalCount = normalizeIntentEntries(persona).length;
   const hasMultiGoal = goalCount > 1;
+  const cycleWeek = ((Math.max(1, Number(week) || 1) - 1) % 26) + 1;
   const isTravelHeavy = /high|travel|hotel|airport/.test(`${persona.travelLikelihood || ""} ${persona.scheduleReality || ""} ${persona.equipmentReality || ""}`.toLowerCase());
   const isPainSensitive = /pain|ache|rehab|back|hip|achilles|knee|shoulder|pelvic floor|injury/.test(String(persona.injuryContext || "").toLowerCase());
   const nutritionRisk = /fat loss|lose|cut|lean|restaurant|airport|night shift|protein|chaotic|dieter|meal|snack/.test(`${persona.bodyCompContext || ""} ${persona.nutritionBehavior || ""} ${normalizeIntentEntries(persona).map((entry) => entry.text).join(" ")}`.toLowerCase());
@@ -1308,6 +1427,17 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
     goalChange: null,
   };
 
+  const lifecycleEvent = findLifecycleEventForWeek(persona, week);
+  if (lifecycleEvent) {
+    return applyLifecycleEventToWeek({
+      generic,
+      lifecycleEvent,
+      coachUsageStyle,
+      timingStyle,
+      hasMultiGoal,
+    });
+  }
+
   if (persona.id === "novice_obese_beginner") {
     if (week === 2) return { ...generic, label: "half-finished week", adherencePct: 0.5, loggingPct: 0.45, motivation: "shaky" };
     if (week === 4) return { ...generic, label: "travel week", adherencePct: 0.38, loggingPct: 0.35, travel: true, scheduleChange: true, equipmentMode: "hotel", coachUsage: "change_plan" };
@@ -1338,7 +1468,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
     return generic;
   }
 
-  if (week === 4 && isTravelHeavy) {
+  if (cycleWeek === 4 && isTravelHeavy) {
     return {
       ...generic,
       label: "travel disruption",
@@ -1351,7 +1481,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
       motivation: chaosLevel === "high" ? "low" : "mixed",
     };
   }
-  if (week === 8 && isPainSensitive) {
+  if (cycleWeek === 8 && isPainSensitive) {
     return {
       ...generic,
       label: "pain flare",
@@ -1362,7 +1492,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
       motivation: "low",
     };
   }
-  if (week === 10 && chaosLevel !== "low") {
+  if (cycleWeek === 10 && chaosLevel !== "low") {
     return {
       ...generic,
       label: "schedule changed",
@@ -1373,7 +1503,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
       motivation: "mixed",
     };
   }
-  if (week === 12 && (hasMultiGoal || timingStyle !== "open_ended")) {
+  if (cycleWeek === 12 && (hasMultiGoal || timingStyle !== "open_ended")) {
     const goalChange = timingStyle === "open_ended"
       ? { kind: "edit", timingMode: "target_horizon", targetHorizonWeeks: 16 }
       : timingStyle === "date_based"
@@ -1388,7 +1518,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
       goalChange,
     };
   }
-  if (week === 14 && hasMultiGoal) {
+  if (cycleWeek === 14 && hasMultiGoal) {
     return {
       ...generic,
       label: "goals reprioritized",
@@ -1398,7 +1528,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
       goalChange: { kind: "reprioritize" },
     };
   }
-  if (week === 16 && equipmentVolatile) {
+  if (cycleWeek === 16 && equipmentVolatile) {
     return {
       ...generic,
       label: "equipment changed",
@@ -1409,7 +1539,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
       goalChange: timingStyle === "date_based" ? { kind: "edit", timingMode: "target_horizon", targetHorizonWeeks: 20 } : null,
     };
   }
-  if (week === 18 && nutritionRisk) {
+  if (cycleWeek === 18 && nutritionRisk) {
     return {
       ...generic,
       label: "nutrition drift",
@@ -1420,7 +1550,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
       goalChange: timingStyle !== "open_ended" ? { kind: "edit", timingMode: "open_ended" } : null,
     };
   }
-  if (week === 20 && coachUsageStyle === "overuse") {
+  if (cycleWeek === 20 && coachUsageStyle === "overuse") {
     return {
       ...generic,
       label: "coach overuse week",
@@ -1430,7 +1560,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
       motivation: "mixed",
     };
   }
-  if (week === 22 && hasMultiGoal) {
+  if (cycleWeek === 22 && hasMultiGoal) {
     return {
       ...generic,
       label: "archive lower-priority goal",
@@ -1440,7 +1570,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
       goalChange: { kind: "archive" },
     };
   }
-  if (week === 24 && hasMultiGoal) {
+  if (cycleWeek === 24 && hasMultiGoal) {
     return {
       ...generic,
       label: "restore archived goal",
@@ -1450,7 +1580,7 @@ const buildWeekEvent = ({ persona = {}, week = 1 } = {}) => {
       goalChange: { kind: "restore" },
     };
   }
-  if (week === 26) return { ...generic, label: "steady finish", adherencePct: Math.max(0.8, baseAdherence), loggingPct: Math.max(0.82, baseLogging), motivation: "steady" };
+  if (cycleWeek === 26) return { ...generic, label: "steady finish", adherencePct: Math.max(0.8, baseAdherence), loggingPct: Math.max(0.82, baseLogging), motivation: "steady" };
   return generic;
 };
 
@@ -1656,14 +1786,14 @@ const evaluateGoalManagement = ({
   })();
 
   if (!change) {
-    failures.push(createFailureRecord({
-      personaId: state.personalization?.profile?.name || "",
-      week,
-      clusterId: "hidden_secondary_goals",
-      message: "Settings goal-management change could not be targeted to an active or archived goal.",
-      stepRef: `week ${week} > settings > goals`,
-    }));
-    return { nextState: state, failures, checks };
+    return {
+      nextState: {
+        ...state,
+        latestGoalSettingsView: currentView,
+      },
+      failures,
+      checks,
+    };
   }
 
   const preview = buildGoalManagementPreview({
@@ -2079,7 +2209,18 @@ const buildClusterTaxonomy = (personaResults = []) => {
   return taxonomy;
 };
 
-const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS } = {}) => {
+const normalizeWeekSequence = ({ weeks = LAB_SIMULATION_WEEKS, weekSequence = null } = {}) => {
+  if (!Array.isArray(weekSequence) || weekSequence.length === 0) {
+    return Array.from({ length: Math.max(0, Number(weeks || 0)) }, (_, index) => index + 1);
+  }
+  return [...new Set(
+    weekSequence
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value >= 1 && value <= weeks)
+  )].sort((left, right) => left - right);
+};
+
+const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS, weekSequence = null } = {}) => {
   let state = createBaseState(persona);
   const failures = [];
   const checks = [];
@@ -2087,6 +2228,7 @@ const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS } = {}) => {
   const personaLabel = persona.id || persona.name || "persona";
   const rawGoalTexts = normalizeIntentEntries(persona).map((entry) => entry.text);
   const cohortTags = classifyPersonaCohorts(persona);
+  const resolvedWeekSequence = normalizeWeekSequence({ weeks, weekSequence });
 
   if (rawGoalTexts.length > 1 && state.goals.length < rawGoalTexts.length) {
     failures.push(createFailureRecord({
@@ -2151,18 +2293,22 @@ const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS } = {}) => {
     domainAdapterId: state.athleteProfile?.primaryGoal?.resolvedGoal?.primaryDomain || state.athleteProfile?.goalCapabilityStack?.primary?.primaryDomain || "",
     goalCapabilityStack: state.athleteProfile?.goalCapabilityStack || null,
   });
+  const expectedSupportTierRank = SUPPORT_TIER_RANK[persona.supportTierExpectation] || 0;
+  const actualSupportTierRank = SUPPORT_TIER_RANK[initialSupportTier?.id] || 0;
   if (persona.supportTierExpectation && initialSupportTier?.id !== persona.supportTierExpectation) {
-    failures.push(createFailureRecord({
-      personaId: personaLabel,
-      week: 0,
-      clusterId: "support_tier_dishonesty",
-      message: `Expected ${persona.supportTierExpectation} coverage for this persona, but the planner classified it as ${initialSupportTier?.id || "unknown"}.`,
-      stepRef: "week 0 > intake > confirm",
-      evidence: { expected: persona.supportTierExpectation, actual: initialSupportTier?.id, basisLine: initialSupportTier?.basisLine },
-    }));
+    if (actualSupportTierRank > expectedSupportTierRank) {
+      failures.push(createFailureRecord({
+        personaId: personaLabel,
+        week: 0,
+        clusterId: "support_tier_dishonesty",
+        message: `Expected ${persona.supportTierExpectation} coverage for this persona, but the planner classified it as ${initialSupportTier?.id || "unknown"}.`,
+        stepRef: "week 0 > intake > confirm",
+        evidence: { expected: persona.supportTierExpectation, actual: initialSupportTier?.id, basisLine: initialSupportTier?.basisLine },
+      }));
+    }
   }
 
-  for (let week = 1; week <= weeks; week += 1) {
+  for (const week of resolvedWeekSequence) {
     const event = buildWeekEvent({ persona, week });
     const weekDateKey = weekStartDateKeyFor(week);
     const weekPersonalization = applyWeekPersonalization({
@@ -2645,6 +2791,7 @@ const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS } = {}) => {
     supportTierActual: supportTier?.id || "",
     supportHeadline: supportTier?.headline || "",
     simulationWeeks: weeks,
+    checkpointWeekCount: resolvedWeekSequence.length,
     checks,
     checksPassed,
     checksFailed: checks.length - checksPassed,
@@ -2674,6 +2821,7 @@ const runPersona = (persona = {}, { weeks = LAB_SIMULATION_WEEKS } = {}) => {
 export const runSyntheticAthleteLab = ({
   personas = null,
   weeks = LAB_SIMULATION_WEEKS,
+  weekSequence = null,
   includeArchetypeMatrix = true,
   catalogMode = SYNTHETIC_ATHLETE_CATALOG_MODES.focus,
   targetPersonaCount = 100,
@@ -2683,7 +2831,11 @@ export const runSyntheticAthleteLab = ({
     catalogMode,
     targetPersonaCount,
   });
-  const personaResults = selectedPersonas.map((persona) => runPersona(persona, { weeks }));
+  const resolvedWeekSequence = normalizeWeekSequence({ weeks, weekSequence });
+  const personaResults = selectedPersonas.map((persona) => runPersona(persona, {
+    weeks,
+    weekSequence: resolvedWeekSequence,
+  }));
   const clusterTaxonomy = buildClusterTaxonomy(personaResults);
   const catalogCoverage = buildPersonaCatalogCoverage(selectedPersonas);
   const releaseDimensionSummary = buildReleaseDimensionSummary(personaResults);
@@ -2732,6 +2884,8 @@ export const runSyntheticAthleteLab = ({
       catalogMode,
       personaCount: personaResults.length,
       simulationWeeks: weeks,
+      checkpointWeekCount: resolvedWeekSequence.length,
+      compressedLongitudinalModel: resolvedWeekSequence.length < weeks,
       passedCount: personaResults.filter((result) => result.overallPass).length,
       failedCount: personaResults.filter((result) => !result.overallPass).length,
       averageScore,

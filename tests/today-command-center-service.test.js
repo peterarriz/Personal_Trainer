@@ -127,3 +127,31 @@ test("command-center rules stay defined for every required Today mode", () => {
   assert.ok(TODAY_COMMAND_CENTER_RULES.rest);
   assert.ok(TODAY_COMMAND_CENTER_RULES.reduced_load);
 });
+
+test("today command center carries concise explanation source labeling without leaking internals", () => {
+  const model = buildTodayCommandCenterModel({
+    training: {
+      type: "easy-run",
+      label: "Easy run",
+      run: { t: "Easy", d: "35 min" },
+    },
+    summary: {
+      structure: "Easy: 35 min",
+      purpose: "Build aerobic work without burning recovery.",
+    },
+    changeSummary: "This session stays on plan today.",
+    explanation: {
+      sourceLabel: "Based on your recent training",
+      line: "We split the work into shorter blocks because that has been easier to finish on busy weeks.",
+      detailLine: "We will keep watching completion and recovery before making bigger shifts.",
+      internal: {
+        decisionPointId: "time_crunched_session_format_choice",
+      },
+    },
+  });
+
+  assert.equal(model.adaptationSourceLabel, "Based on your recent training");
+  assert.match(model.adaptationSummary, /shorter blocks|busy weeks/i);
+  assert.match(model.adaptationDetailLine, /completion and recovery/i);
+  assert.doesNotMatch(model.adaptationSummary, /time_crunched_session_format_choice/);
+});

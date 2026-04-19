@@ -435,6 +435,42 @@ test("explicit multi-goal interpretation preserves the full resolved stack befor
   assert.ok([INTAKE_MACHINE_STATES.ANCHOR_COLLECTION, INTAKE_MACHINE_STATES.REVIEW_CONFIRM].includes(nextState.stage));
 });
 
+test("separate additional goals do not steal the primary running lane during interpretation", () => {
+  let nextState = createIntakeMachineState();
+  nextState = intakeReducer(nextState, {
+    event_id: "evt_separate_multi_goal_submit",
+    type: INTAKE_MACHINE_EVENTS.GOALS_SUBMITTED,
+    timestamp: TEST_NOW,
+    payload: {
+      answers: {
+        goal_intent: "run a 1:45 half marathon",
+        additional_goals_list: ["bench 225", "get leaner by summer", "keep shoulders healthy"],
+        other_goals: "bench 225. get leaner by summer. keep shoulders healthy",
+      },
+      now: TEST_NOW,
+    },
+  });
+  nextState = intakeReducer(nextState, buildInterpretationEvent({
+    event_id: "evt_separate_multi_goal_interpreted",
+    answers: {
+      goal_intent: "run a 1:45 half marathon",
+      additional_goals_list: ["bench 225", "get leaner by summer", "keep shoulders healthy"],
+      other_goals: "bench 225. get leaner by summer. keep shoulders healthy",
+    },
+    rawGoalText: "run a 1:45 half marathon",
+  }));
+
+  assert.ok(nextState.draft.orderedResolvedGoals.length >= 3);
+  assert.match(nextState.draft.orderedResolvedGoals[0]?.summary || "", /run|half marathon/i);
+  assert.ok(nextState.draft.orderedResolvedGoals.some((goal) => /bench/i.test(goal?.summary || "")));
+  assert.ok(nextState.draft.orderedResolvedGoals.some((goal) => /lean|body/i.test(goal?.summary || "")));
+  assert.ok(nextState.draft.orderedResolvedGoals.some((goal) => /shoulder|general fitness/i.test(goal?.summary || "")));
+  assert.match(nextState.draft.reviewModel?.primarySummary || "", /run|half marathon/i);
+  assert.ok(["target_timeline", "current_run_frequency", "running_endurance_anchor_kind", "longest_recent_run", "recent_pace_baseline"].includes(
+    nextState.draft.missingAnchorsEngine.currentAnchor?.field_id || ""
+  ));
+});
+
 test("replaying the same intake event log ends in the same state and missing anchors", () => {
   const events = [
     {
