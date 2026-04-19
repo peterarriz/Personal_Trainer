@@ -262,13 +262,14 @@ import {
  GOAL_MANAGEMENT_CHANGE_TYPES,
 } from "./services/goal-management-service.js";
 import {
- findGoalTemplateById,
- findGoalTemplateSelectionForGoalText,
- applyGoalTemplateSelectionToDraft,
- buildGoalTemplateSelection,
- buildGoalTemplateSelectionsFromAnswers,
- listGoalTemplateCategories,
- listGoalTemplates,
+  findGoalTemplateById,
+  findGoalTemplateSelectionForGoalText,
+  applyGoalTemplateSelectionToDraft,
+  buildGoalTemplateSelection,
+  buildGoalTemplateSelectionsFromAnswers,
+  listGoalSpecificityPresets,
+  listGoalTemplateCategories,
+  listGoalTemplates,
 } from "./services/goal-template-catalog-service.js";
 import {
  buildGoalTimingPresentation,
@@ -11611,11 +11612,11 @@ const syncGoalStackDraftToAnswers = ({
   clearCompatibilityPrimaryGoal = false,
 } = {}) => {
  const normalizedSelections = (Array.isArray(goalSelections) ? goalSelections : [])
- .map((selection) => buildGoalTemplateSelection({
- templateId: selection?.templateId || "",
+.map((selection) => buildGoalTemplateSelection({
+ templateId: selection?.legacyTemplateId || selection?.templateId || "",
  customGoalText: !selection?.templateId ? selection?.goalText || selection?.summary || "" : "",
  customSummary: selection?.summary || "",
- }))
+}))
  .filter(Boolean);
  const selectedGoalTexts = normalizedSelections.map((selection) => normalizeIntakeGoalEntry(selection?.goalText || "", 320)).filter(Boolean);
  const selectedPrimaryGoal = selectedGoalTexts[0] || "";
@@ -13023,6 +13024,10 @@ const normalizedPendingGoalText = normalizeIntakeGoalEntry(pendingGoalSelection?
 const pendingGoalAlreadyAdded = normalizedPendingGoalText
 ? selectedGoalTextSet.has(normalizedPendingGoalText)
 : false;
+const pendingGoalSpecificityOptions = useMemo(() => listGoalSpecificityPresets({
+templateId: pendingGoalSelection?.legacyTemplateId || pendingGoalSelection?.templateId || "",
+}), [pendingGoalSelection?.legacyTemplateId, pendingGoalSelection?.templateId]);
+const pendingGoalSpecificitySelectionId = String(pendingGoalSelection?.legacyTemplateId || "").trim().toLowerCase();
 const pendingGoalCommitLabel = intakeGoalSelections.length === 0 ? "Save as Priority 1" : "Add as another goal";
 const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 320);
  const intakePreviewTodayKey = new Date().toISOString().split("T")[0];
@@ -13527,6 +13532,8 @@ const renderGoalMetricQuestionCard = (question = null) => {
 };
 const renderPendingGoalSelectionCard = () => {
 if (!pendingGoalSelection?.goalText) return null;
+const canChooseSpecificGoal = pendingGoalSpecificityOptions.length > 0;
+const usingSpecificGoalPreset = Boolean(pendingGoalSpecificitySelectionId);
 return (
 <div
 data-testid="intake-goal-selection-draft"
@@ -13547,11 +13554,49 @@ background:"rgba(6,17,31,0.82)",
 <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>
 {pendingGoalAlreadyAdded
 ? "This goal is already in your stack."
+: canChooseSpecificGoal && !usingSpecificGoalPreset
+? "You can save this broad path now, or make it more specific first."
+: canChooseSpecificGoal && usingSpecificGoalPreset
+? "Specific target selected. Save it now, or switch back to the broader path."
 : intakeGoalSelections.length === 0
 ? "This will not become Priority 1 until you save it."
 : `Your current stack stays in place until you tap ${pendingGoalCommitLabel}.`}
 </div>
 </div>
+{canChooseSpecificGoal ? (
+<div data-testid="intake-goal-specificity-options" style={{ display:"grid", gap:"0.42rem" }}>
+<div style={{ display:"grid", gap:"0.14rem" }}>
+<div style={{ fontSize:"0.48rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>SPECIFIC GOAL</div>
+<div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.5 }}>Pick a precise target if you already know it. Otherwise keep the broader path.</div>
+</div>
+<div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:"0.42rem" }}>
+<button
+type="button"
+className={usingSpecificGoalPreset ? "btn" : "btn btn-primary"}
+data-testid="intake-goal-specificity-broad"
+onClick={() => queueGoalSelection(buildGoalTemplateSelection({ templateId: pendingGoalSelection?.templateId || "" }))}
+style={usingSpecificGoalPreset ? { color:"#dbe7f6", borderColor:"#324961", textAlign:"left" } : { textAlign:"left" }}
+>
+Keep it broad
+</button>
+{pendingGoalSpecificityOptions.map((option) => {
+const selected = pendingGoalSpecificitySelectionId === String(option.id || "").trim().toLowerCase();
+return (
+<button
+key={option.id}
+type="button"
+className={selected ? "btn btn-primary" : "btn"}
+data-testid={`intake-goal-specificity-${toTestIdFragment(option.id || option.label)}`}
+onClick={() => queueGoalSelection(option.selection)}
+style={selected ? { textAlign:"left" } : { color:"#dbe7f6", borderColor:"#324961", textAlign:"left" }}
+>
+{option.label}
+</button>
+);
+})}
+</div>
+</div>
+) : null}
 <div style={{ display:"flex", gap:"0.45rem", flexWrap:"wrap", alignItems:"center" }}>
 <button
 type="button"

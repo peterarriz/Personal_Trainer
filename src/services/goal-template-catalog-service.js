@@ -224,6 +224,29 @@ export const listGoalTemplates = ({
 
 export const findGoalTemplateById = (templateId = "") => cloneValue(resolveTemplate(templateId) || null);
 
+export const listGoalSpecificityPresets = ({
+  templateId = "",
+} = {}) => {
+  const canonicalTemplateId = resolveStructuredGoalIntentId(
+    resolveTemplate(templateId)?.templateId || templateId
+  );
+  if (!canonicalTemplateId) return [];
+  return Object.keys(LEGACY_PRESET_DEFAULTS)
+    .map((presetId) => {
+      const preset = LEGACY_PRESET_DEFAULTS[presetId];
+      if (resolveStructuredGoalIntentId(preset?.templateId || "") !== canonicalTemplateId) return null;
+      const selection = buildGoalTemplateSelection({ templateId: presetId });
+      if (!selection) return null;
+      return {
+        id: presetId,
+        label: sanitizeText(selection.summary || selection.goalText || presetId, 120),
+        goalText: sanitizeText(selection.goalText || selection.summary || "", 220),
+        selection: cloneValue(selection),
+      };
+    })
+    .filter(Boolean);
+};
+
 export const buildGoalTemplateSelection = ({
   templateId = "",
   customGoalText = "",
@@ -233,7 +256,7 @@ export const buildGoalTemplateSelection = ({
   const template = resolveTemplate(templateId);
   if (template) {
     return {
-      id: buildSelectionId({ templateId: template.id, goalText: template.goalText }),
+      id: buildSelectionId({ templateId: template.legacyTemplateId || template.id, goalText: template.goalText }),
       entryMode: GOAL_TEMPLATE_ENTRY_MODES.preset,
       templateId: template.id,
       legacyTemplateId: template.legacyTemplateId || "",

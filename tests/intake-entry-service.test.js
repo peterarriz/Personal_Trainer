@@ -5,6 +5,7 @@ const {
   applyIntakeStarterMetrics,
   INTAKE_COPY_DECK,
   INTAKE_STAGE_CONTRACT,
+  buildIntakeStarterMetricDraft,
   buildIntakeStarterFieldSchema,
   buildIntakeStarterGoalTypes,
   buildIntakeStarterMetricQuestions,
@@ -172,6 +173,23 @@ test("improve-big-lifts starter metrics frame target numbers as user-entered inp
   assert.match(targetLoadField?.helperText || "", /enter your own number here\. example: 225 lb\./i);
   assert.equal(targetRepField?.placeholder, "Type target reps");
   assert.match(targetRepField?.helperText || "", /enter your own rep target here\. example: 1 or 5\./i);
+});
+
+test("exact-goal presets prefill the starter draft with the specific target details", () => {
+  const benchDraft = buildIntakeStarterMetricDraft({
+    goalTypeId: "strength",
+    selection: buildGoalTemplateSelection({ templateId: "bench_225" }),
+    answers: {},
+  });
+  const halfDraft = buildIntakeStarterMetricDraft({
+    goalTypeId: "endurance",
+    selection: buildGoalTemplateSelection({ templateId: "half_marathon" }),
+    answers: {},
+  });
+
+  assert.equal(benchDraft.lift_focus, "bench");
+  assert.equal(benchDraft.lift_target_weight, "225");
+  assert.equal(halfDraft.event_distance, "half_marathon");
 });
 
 test("swim schema exposes structured distance, time, and access fields instead of one required free-text anchor", () => {

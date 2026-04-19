@@ -379,12 +379,40 @@ const GOAL_FOCUS_OPTIONS = Object.freeze([
   choice("endurance", "Endurance"),
 ]);
 
+const resolveStarterPresetValues = (selection = null) => {
+  const intentId = sanitizeText(selection?.intentId || selection?.templateId || "", 80).toLowerCase();
+  const specificityDefaults = selection?.specificityDefaults && typeof selection.specificityDefaults === "object"
+    ? selection.specificityDefaults
+    : {};
+  const nextValues = {};
+  if (intentId === "train_for_run_race" && specificityDefaults?.event_distance) {
+    nextValues.event_distance = sanitizeText(specificityDefaults.event_distance, 40);
+  }
+  if (intentId === "improve_big_lifts") {
+    if (specificityDefaults?.lift_focus) {
+      nextValues.lift_focus = sanitizeText(specificityDefaults.lift_focus, 40);
+    }
+    if (selection?.primaryMetric?.targetValue) {
+      nextValues.lift_target_weight = sanitizeText(selection.primaryMetric.targetValue, 40);
+    }
+  }
+  if (intentId === "swim_better" && specificityDefaults?.goal_focus) {
+    nextValues.goal_focus = sanitizeText(specificityDefaults.goal_focus, 40);
+  }
+  return nextValues;
+};
+
+const applyStarterPresetVisibility = (question = null, presetValues = {}) => {
+  return question;
+};
+
 const buildQuestionsForIntent = (selection = null) => {
   const intentId = sanitizeText(selection?.intentId || selection?.templateId || "", 80).toLowerCase();
+  const presetValues = resolveStarterPresetValues(selection);
   switch (intentId) {
     case "train_for_run_race":
       return [
-        createQuestion({
+        applyStarterPresetVisibility(createQuestion({
           key: "endurance_race_profile",
           title: "Race setup",
           helper: "Pick the distance and timing.",
@@ -393,7 +421,7 @@ const buildQuestionsForIntent = (selection = null) => {
             choiceField("event_distance", "Race distance", "Pick the race you want to train for.", EVENT_DISTANCE_OPTIONS, true),
             textField("target_timeline", "Race date or target month", "October 12 or early October", "A target month is enough to keep moving."),
           ],
-        }),
+        }), presetValues),
         createQuestion({
           key: "running_baseline",
           title: "Current running baseline",
@@ -461,7 +489,7 @@ const buildQuestionsForIntent = (selection = null) => {
       ];
     case "swim_better":
       return [
-        createQuestion({
+        applyStarterPresetVisibility(createQuestion({
           key: "swim_baseline",
           title: "Swim setup",
           helper: "Add one recent swim anchor and where you actually swim right now.",
@@ -502,7 +530,7 @@ const buildQuestionsForIntent = (selection = null) => {
           fieldErrorMap: {
             recent_swim_anchor: "recent_swim_distance_value",
           },
-        }),
+        }), presetValues),
       ];
     case "ride_stronger":
       return [
@@ -551,7 +579,7 @@ const buildQuestionsForIntent = (selection = null) => {
       ];
     case "improve_big_lifts":
       return [
-        createQuestion({
+        applyStarterPresetVisibility(createQuestion({
           key: "lift_focus_profile",
           title: "Lift focus",
           helper: "Pick the lift, the target load, and the time horizon.",
@@ -562,7 +590,7 @@ const buildQuestionsForIntent = (selection = null) => {
             numberField("lift_target_reps", "Target reps", "Type target reps", "Enter your own rep target here. Example: 1 or 5. Leave it blank only if the target is truly a single.", false),
             textField("target_timeline", "Time horizon", "July or in 12 weeks", "A rough horizon is enough.", true),
           ],
-        }),
+        }), presetValues),
         createQuestion({
           key: "strength_baseline",
           title: "Current lift baseline",
@@ -713,6 +741,7 @@ export const buildIntakeStarterMetricDraft = ({
   answers = {},
 } = {}) => {
   const draft = {};
+  const presetValues = resolveStarterPresetValues(selection);
   buildIntakeStarterMetricQuestions({ goalTypeId, selection })
     .forEach((question) => {
       if (typeof question?.draftValueTransform === "function") {
@@ -721,6 +750,11 @@ export const buildIntakeStarterMetricDraft = ({
         Object.assign(draft, buildIntakeCompletenessDraft({ question, answers }));
       }
     });
+  Object.entries(presetValues).forEach(([fieldKey, fieldValue]) => {
+    if (!sanitizeText(draft?.[fieldKey], 80)) {
+      draft[fieldKey] = fieldValue;
+    }
+  });
   return draft;
 };
 
@@ -741,14 +775,23 @@ export const applyIntakeStarterMetrics = ({
   values = {},
 } = {}) => {
   const questions = buildIntakeStarterMetricQuestions({ goalTypeId, selection });
+  const presetValues = resolveStarterPresetValues(selection);
   let nextAnswers = answers;
   const fieldErrors = {};
   const formErrors = [];
   const appliedQuestionKeys = [];
 
   questions.forEach((question) => {
-    if (!hasMeaningfulQuestionValue(question, values)) return;
-    const rawAnswerValues = extractQuestionValues(question, values);
+    const rawAnswerValues = {
+      ...Object.fromEntries(
+        toArray(question?.fieldKeys)
+          .map((fieldKey) => sanitizeText(fieldKey, 80))
+          .filter(Boolean)
+          .map((fieldKey) => [fieldKey, presetValues?.[fieldKey] ?? ""])
+      ),
+      ...extractQuestionValues(question, values),
+    };
+    if (!Object.values(rawAnswerValues).some((value) => sanitizeText(value, 120))) return;
     const answerValues = typeof question?.answerValueTransform === "function"
       ? question.answerValueTransform(rawAnswerValues)
       : rawAnswerValues;
