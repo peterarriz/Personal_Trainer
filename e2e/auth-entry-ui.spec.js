@@ -45,6 +45,7 @@ async function bootAuthEntry(page, {
   forcedColors = "none",
   seedLocalCache = true,
   debugMode = false,
+  payloadSeed = null,
 } = {}) {
   await page.emulateMedia({ colorScheme, forcedColors });
   await page.setViewportSize({ width, height });
@@ -61,7 +62,7 @@ async function bootAuthEntry(page, {
       localStorage.setItem("trainer_local_cache_v4", JSON.stringify(payloadSeed));
     }
   }, {
-    payloadSeed: makeLocalPayload({ theme, mode }),
+    payloadSeed: payloadSeed || makeLocalPayload({ theme, mode }),
     supabaseUrl: SUPABASE_URL,
     supabaseKey: SUPABASE_KEY,
     shouldSeedLocalCache: seedLocalCache,
@@ -86,6 +87,27 @@ test.describe("auth entry UI", () => {
 
     await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
     await expect(page.getByText(/create your account before you start/i)).toBeVisible();
+  });
+
+  test("saved local consumer auth entry still requires sign-in before reopening the app", async ({ page }) => {
+    const savedPayload = makeLocalPayload({ theme: "Atlas", mode: "Dark" });
+    savedPayload.personalization.profile.onboardingComplete = true;
+    savedPayload.personalization.profile.profileSetupComplete = true;
+
+    await bootAuthEntry(page, {
+      theme: "Atlas",
+      mode: "Dark",
+      width: 390,
+      height: 844,
+      colorScheme: "dark",
+      seedLocalCache: true,
+      debugMode: false,
+      payloadSeed: savedPayload,
+    });
+
+    await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
+    await expect(page.getByText(/sign in to reopen your plan/i)).toBeVisible();
+    await expect(page.getByText(/local data available on this device/i)).toBeVisible();
   });
 
   test("auth entry preserves action hierarchy and stacks cleanly on mobile", async ({ page }) => {

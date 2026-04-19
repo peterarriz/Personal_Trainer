@@ -105,7 +105,7 @@ test.describe("auth and management hardening", () => {
     await expect(page.getByTestId("auth-notice")).toContainText(/confirmation email resent/i);
   });
 
-  test("logout keeps the device in local mode until the user explicitly reopens sign-in", async ({ page }) => {
+  test("logout returns the user to the account gate while preserving the saved local copy", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     await mockSupabaseRuntime(page, { session, payload });
@@ -117,12 +117,9 @@ test.describe("auth and management hardening", () => {
     await page.getByTestId("settings-surface-account").click();
     await page.getByTestId("settings-logout").click();
 
-    await expect(page.getByTestId("settings-account-section")).toBeVisible();
-    await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
-    await expect(page.getByTestId("settings-sync-status")).toContainText(/saved local copy|This device only/i);
-    await expect(page.getByTestId("auth-gate")).toHaveCount(0);
-    await page.getByTestId("settings-open-auth-gate").click();
     await expect(page.getByTestId("auth-gate")).toBeVisible();
+    await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
+    await expect(page.getByText(/sign in to reopen your plan/i)).toBeVisible();
   });
 
   test("delete account clears local identity and a later sign-in attempt fails cleanly", async ({ page }) => {

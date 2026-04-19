@@ -6569,6 +6569,13 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  fallbackToAuthGate = false,
  } = {}) => {
  const snapshot = syncLocalResumeFlags();
+ if (!TRUSTED_DEBUG_MODE) {
+ if (statusOverride) applyStorageStatus(statusOverride);
+ if (fallbackToAuthGate || !authSessionRef.current?.user?.id) {
+ setStartupLocalResumeAccepted(false);
+ }
+ return false;
+ }
  if (!snapshot.hasUsableState) {
  if (statusOverride && snapshot.hasCache) {
  hydrateLocalRuntimeCache({ statusOverride });
@@ -6584,7 +6591,8 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  return true;
  };
  const authRecoveryActive = Boolean(authRecoverySession?.access_token && authRecoverySession?.user?.id);
- const authGateVisible = authRecoveryActive || (!authSession?.user?.id && !startupLocalResumeAccepted);
+ const localResumeBypassEnabled = TRUSTED_DEBUG_MODE && startupLocalResumeAccepted;
+ const authGateVisible = authRecoveryActive || (!authSession?.user?.id && !localResumeBypassEnabled);
  const authDiagnosticStatus = authInitializing
  ? "booting"
  : authRecoveryActive
@@ -7457,8 +7465,8 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  });
  setAuthError(
  DEBUG_MODE
- ? `Cloud sync is unavailable right now. Using local data on this device. (${SB_CONFIG_ERROR})`
- : "Cloud sync is unavailable right now. Using local data on this device."
+ ? `Cloud sign-in is unavailable right now. Your account is still required before FORMA can reopen local data on this device. (${SB_CONFIG_ERROR})`
+ : "Cloud sign-in is unavailable right now. Your account is still required before FORMA can reopen local data on this device."
  );
  resumeUsableLocalState({ statusOverride: providerStatus, fallbackToAuthGate: true });
  bootPersistenceReadyRef.current = true;
@@ -7506,15 +7514,21 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  if (!restoredAuthSession?.user?.id) {
  const localSnapshot = syncLocalResumeFlags();
  if (localSnapshot.hasUsableState) {
- resumeUsableLocalState({
- statusOverride: buildStorageStatus({
+ const signedOutStatus = buildStorageStatus({
  mode: "local",
  label: "NOT SIGNED IN",
  reason: STORAGE_STATUS_REASONS.notSignedIn,
- detail: "This device is using the last saved local copy until you sign in again.",
- }),
+ detail: "Your last saved local copy is still on this device, but sign-in is required before FORMA can reopen it.",
+ });
+ if (TRUSTED_DEBUG_MODE) {
+ resumeUsableLocalState({
+ statusOverride: signedOutStatus,
  fallbackToAuthGate: false,
  });
+ } else {
+ applyStorageStatus(signedOutStatus);
+ setStartupLocalResumeAccepted(false);
+ }
  }
  }
   const restoredSignedInSession = Boolean(restoredAuthSession?.user?.id);

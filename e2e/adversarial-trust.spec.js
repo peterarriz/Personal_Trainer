@@ -414,11 +414,9 @@ test.describe("skeptical user adversarial coverage", () => {
     );
 
     await page.getByTestId("settings-logout").click();
-    await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible({ timeout: 1200 });
-    await page.getByTestId("settings-open-auth-gate").click();
     await expect(page.getByTestId("auth-gate")).toBeVisible();
-    await expect(page.getByTestId("continue-local-mode")).toBeVisible();
-    await expect(page.getByTestId("auth-sync-status")).toContainText(/Signed out|This device only/i);
+    await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
+    await expect(page.getByText(/sign in to reopen your plan/i)).toBeVisible();
   });
 
   test("sync timeout and retry copy stay aligned across settings, today, and program", async ({ page }) => {

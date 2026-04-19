@@ -310,6 +310,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   let lastTransientPersistFailureUserId = "";
   let activePersistPromise = null;
   let activePersistUserId = "";
+  let localCacheWriteFence = 0;
   const trackAnalytics = ({ flow = "sync", action = "storage", outcome = "observed", props = {} } = {}) => {
     try {
       analytics?.track?.({ flow, action, outcome, props });
@@ -492,8 +493,9 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     } catch { return null; }
   };
 
-  const localSave = (payload) => {
+  const localSave = (payload, { fence = localCacheWriteFence } = {}) => {
     try {
+      if (fence !== localCacheWriteFence) return;
       localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(payload));
       emitLocalCacheDiagnostics(payload, Date.now());
     } catch {}
@@ -501,6 +503,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
 
   const clearLocalCache = () => {
     try {
+      localCacheWriteFence += 1;
       if (typeof localStorage?.removeItem === "function") {
         localStorage.removeItem(LOCAL_CACHE_KEY);
       } else {
@@ -1755,6 +1758,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
   const sbLoad = async ({ authSession, setters, persistAll, setAuthSession }) => {
     const normalized = normalizeSession(authSession);
     const userId = normalized?.user?.id || authSession?.user?.id;
+    const cacheWriteFence = localCacheWriteFence;
     if (!userId) throw new Error(AUTH_REQUIRED);
     const endpoint = `rest/v1/trainer_data?user_id=eq.${userId}`;
     pushSyncDiagnostic({
@@ -1862,7 +1866,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             pendingCloudWrite: false,
             syncedAt: Date.now(),
             previousSyncMeta: cache?.syncMeta || null,
-          }));
+          }), { fence: cacheWriteFence });
         }
       } catch (e) {
         logDiag("cloud.load.data_incompatible", e?.message || "unknown");
@@ -1889,7 +1893,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             payload: buildPayloadWithAdaptiveLearning(effectivePayload),
             pendingCloudWrite: true,
             previousSyncMeta: effectivePayload?.syncMeta || null,
-          }));
+          }), { fence: cacheWriteFence });
         } else {
           try {
           await sbSave({
@@ -1910,13 +1914,13 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             pendingCloudWrite: false,
               syncedAt: Date.now(),
               previousSyncMeta: effectivePayload?.syncMeta || null,
-            }));
+            }), { fence: cacheWriteFence });
           } catch (e) {
             localSave(buildLocalCachePayload({
               payload: buildPayloadWithAdaptiveLearning(effectivePayload),
               pendingCloudWrite: true,
             previousSyncMeta: effectivePayload?.syncMeta || null,
-          }));
+          }), { fence: cacheWriteFence });
             throw e;
           }
         }
@@ -1996,7 +2000,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             payload: buildPayloadWithAdaptiveLearning(cache),
             pendingCloudWrite: true,
             previousSyncMeta: cache?.syncMeta || null,
-          }));
+          }), { fence: cacheWriteFence });
         } else {
           await sbSave({
             payload: buildPersistedTrainerPayload({
@@ -2096,6 +2100,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
     setAuthSession,
   }) => {
     const startedAt = Date.now();
+    const cacheWriteFence = localCacheWriteFence;
     const payloadWithAdaptiveLearning = buildPayloadWithAdaptiveLearning(payload || {});
     const previousLocalPayload = localLoad();
     const localPayload = buildLocalCachePayload({
@@ -2103,7 +2108,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
       pendingCloudWrite: Boolean(authSession?.user?.id),
       previousSyncMeta: previousLocalPayload?.syncMeta || null,
     });
-    localSave(localPayload);
+    localSave(localPayload, { fence: cacheWriteFence });
     if (!authSession?.user?.id) {
       lastPersistedPayloadFingerprint = "";
       lastPersistedUserId = "";
@@ -2261,7 +2266,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
             pendingCloudWrite: false,
             syncedAt: Date.now(),
             previousSyncMeta: localPayload?.syncMeta || null,
-          }));
+          }), { fence: cacheWriteFence });
           applyStorageStatusUpdate(setStorageStatus, alreadyCurrentStatus);
           trackAnalytics({
             flow: "sync",
@@ -2319,7 +2324,7 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
           pendingCloudWrite: false,
           syncedAt: Date.now(),
           previousSyncMeta: localPayload?.syncMeta || null,
-        }));
+        }), { fence: cacheWriteFence });
         const nextGoalsFingerprint = createStableFingerprint(payloadWithAdaptiveLearning?.goals || []);
         const nextCoachMemoryFingerprint = createStableFingerprint((payloadWithAdaptiveLearning?.personalization || DEFAULT_PERSONALIZATION)?.coachMemory || {});
         try {

@@ -612,11 +612,12 @@ export const buildAuthEntryViewModel = ({
   allowLocalFallback = false,
 } = {}) => {
   const mode = normalizeAuthMode(authMode);
-  const hasLocalPath = Boolean(startupLocalResumeAvailable || allowLocalFallback);
+  const hasSavedLocalContext = Boolean(startupLocalResumeAvailable);
+  const hasLocalPath = Boolean(allowLocalFallback);
   const recoveryMode = mode === "recovery";
-  const requiresAccountBeforeStart = !recoveryMode && !startupLocalResumeAvailable && !allowLocalFallback;
+  const requiresAccountBeforeStart = !recoveryMode && !hasSavedLocalContext && !allowLocalFallback;
 
-  const localPathDescription = startupLocalResumeAvailable
+  const localPathDescription = hasSavedLocalContext
     ? "Resume the last usable training state on this device, then sign in again when you want cloud sync and account controls back on."
     : "This local fallback is only for trusted troubleshooting and internal QA on this device.";
 
@@ -624,8 +625,8 @@ export const buildAuthEntryViewModel = ({
     ? "Choose a new password to finish the reset and get back into your account."
     : authProviderUnavailable
     ? "Cloud sign-in is offline right now. Your account is still required before FORMA can start or restore training on this device."
-    : startupLocalResumeAvailable
-    ? "You can sign in to restore cloud backup and account controls. Your local training state is already safe on this device."
+    : hasSavedLocalContext
+    ? "Your training state is still saved on this device, but your account is required before FORMA can reopen it."
     : "Create an account before you start so your plan, progress, and recovery stay tied to you from day one.";
 
   return {
@@ -634,13 +635,13 @@ export const buildAuthEntryViewModel = ({
       ? "Set your new password"
       : authProviderUnavailable
       ? "Sign-in is temporarily offline"
-      : startupLocalResumeAvailable
-      ? "Sign in when you want cloud sync back"
+      : hasSavedLocalContext
+      ? "Sign in to reopen your plan"
       : "Create your account before you start",
     subtitle,
     statusBadges: [
       recoveryMode ? "Secure reset link confirmed" : null,
-      startupLocalResumeAvailable ? "Local data available on this device" : null,
+      hasSavedLocalContext ? "Local data available on this device" : null,
       authProviderUnavailable ? "Cloud sign-in temporarily unavailable" : "Cloud sync ready when you are",
     ].filter(Boolean),
     pathCards: [
@@ -658,8 +659,8 @@ export const buildAuthEntryViewModel = ({
           ? "This link came from your email. Set a new password here, then sign in again."
           : authProviderUnavailable
           ? "Email sign-in, backup, and account recovery are temporarily unavailable. Come back once the auth provider is healthy again."
-          : startupLocalResumeAvailable
-          ? "Use your FORMA account for cloud sync, backup, account controls, and recovery on a new device."
+          : hasSavedLocalContext
+          ? "Use your FORMA account to reopen the training state saved on this device and restore cloud backup, recovery, and account controls."
           : "Create the account first, then let FORMA keep your plan, progress, and recovery in one place from the start.",
         benefits: recoveryMode
           ? [
@@ -673,11 +674,11 @@ export const buildAuthEntryViewModel = ({
               "No anonymous local setup is created while sign-in is offline.",
               "Come back when the account path is healthy again.",
             ]
-          : startupLocalResumeAvailable
+          : hasSavedLocalContext
           ? [
+              "Reopen the saved training state on this device after you sign in.",
               "Sync plans, check-ins, and settings with your account.",
-              "Restore your training state on a new device.",
-              "Keep account controls and recovery tied to your email.",
+              "Keep recovery and account controls tied to your email.",
             ]
           : [
               "Account creation happens before your first real plan is built.",
@@ -721,8 +722,8 @@ export const buildAuthEntryViewModel = ({
         : "Turns on cloud backup and lets you recover this training state on another device."
         : recoveryMode
         ? "After you save it, FORMA will take you back to sign in with the new password ready."
-        : startupLocalResumeAvailable
-        ? "Signing in turns cloud sync, backup, and account controls back on for this device."
+        : hasSavedLocalContext
+        ? "Signing in reopens the saved plan on this device and turns cloud backup back on."
         : "Sign in to continue with the training account that owns this plan.",
     },
     localAction: recoveryMode ? null : hasLocalPath ? {

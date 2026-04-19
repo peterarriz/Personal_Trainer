@@ -43,7 +43,7 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
     await expect.poll(() => stats.deleteGetRequests).toBeGreaterThan(0);
   });
 
-  test("sign out falls back to local mode before a slow remote logout finishes and preserves local resume", async ({ page }) => {
+  test("sign out returns to the account gate before a slow remote logout finishes and preserves the saved local copy", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     const stats = await mockSupabaseRuntime(page, {
@@ -58,11 +58,10 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
     const startedAt = Date.now();
     await page.getByTestId("settings-logout").click();
 
-    await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible({ timeout: 1000 });
+    await expect(page.getByTestId("auth-gate")).toBeVisible({ timeout: 1000 });
     expect(Date.now() - startedAt).toBeLessThan(1200);
-    await expect(page.getByTestId("auth-gate")).toHaveCount(0);
-    await expect(page.getByTestId("settings-sync-status")).toContainText(/saved local copy|This device only/i);
-    await expect(page.getByTestId("settings-account-action-message")).toContainText("Local data stays on this device");
+    await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
+    await expect(page.getByText(/sign in to reopen your plan/i)).toBeVisible();
     await expect.poll(() => page.evaluate(() => ({
       auth: localStorage.getItem("trainer_auth_session_v1"),
       hasCache: Boolean(localStorage.getItem("trainer_local_cache_v4")),
@@ -71,14 +70,10 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
       hasCache: true,
     });
     await expect.poll(() => stats.logoutRequests).toBe(1);
-    await page.getByTestId("settings-open-auth-gate").click();
-    await expect(page.getByTestId("auth-gate")).toBeVisible();
-    await expect(page.getByTestId("continue-local-mode")).toBeVisible();
-    await expect(page.getByTestId("auth-local-cta-description")).toContainText(/last usable training state|keep going locally/i);
     await page.waitForTimeout(1600);
   });
 
-  test("device reset clears this browser and removes the local resume path", async ({ page }) => {
+  test("device reset clears this browser and still returns to the account gate", async ({ page }) => {
     const session = makeSession();
     const payload = makeSignedInPayload();
     const stats = await mockSupabaseRuntime(page, { session, payload });
@@ -92,8 +87,7 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
     await page.getByTestId("settings-reset-device-submit").click();
 
     await expect(page.getByTestId("auth-gate")).toBeVisible();
-    await expect(page.getByTestId("continue-local-mode")).toBeVisible();
-    await expect(page.getByTestId("auth-local-cta-description")).toContainText(/local fallback|need this device right away/i);
+    await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => ({
       auth: localStorage.getItem("trainer_auth_session_v1"),
       cache: localStorage.getItem("trainer_local_cache_v4"),

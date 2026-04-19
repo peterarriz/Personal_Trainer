@@ -182,20 +182,15 @@ test.describe("shared sync state rendering", () => {
     await expect(page.getByTestId("settings-sync-diagnostics-local-cache")).toContainText("pending writes Yes");
   });
 
-  test("signed-out devices resume the last usable local state before showing auth choices", async ({ page }) => {
+  test("signed-out devices stop at the account gate even when a saved local copy exists", async ({ page }) => {
     const payload = makeSignedInPayload();
 
     await bootAppWithSupabaseSeeds(page, { session: null, payload });
 
-    await expect(page.getByTestId("today-tab")).toBeVisible();
-    await expect(page.getByTestId("today-sync-status")).toContainText("This device only");
-    await expect(page.getByTestId("today-sync-status")).toContainText("saved local copy");
-
-    await openSettingsAccountSurface(page);
-    await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
-    await page.getByTestId("settings-open-auth-gate").click();
     await expect(page.getByTestId("auth-gate")).toBeVisible();
-    await expect(page.getByTestId("continue-local-mode")).toBeVisible();
+    await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
+    await expect(page.getByText(/sign in to reopen your plan/i)).toBeVisible();
+    await expect(page.getByText(/local data available on this device/i)).toBeVisible();
   });
 
   test("provider outage surfaces a fatal sync state instead of a vague broken local mode", async ({ page }) => {

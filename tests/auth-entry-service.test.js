@@ -67,6 +67,7 @@ test("auth entry view model exposes clear primary, secondary, and tertiary actio
     authMode: "signup",
     startupLocalResumeAvailable: true,
     authProviderUnavailable: false,
+    allowLocalFallback: true,
   });
 
   assert.equal(model.form.primaryAction.variant, AUTH_ACTION_VARIANTS.primary);
@@ -102,6 +103,20 @@ test("first-time auth model requires an account before a user can start", () => 
   assert.match(model.title, /create your account/i);
   assert.match(model.subtitle, /account before you start/i);
   assert.match(model.form.primaryCaption, /required before FORMA can build or save your plan/i);
+});
+
+test("saved local context in consumer mode still requires sign-in before reopening the app", () => {
+  const model = buildAuthEntryViewModel({
+    authMode: "signin",
+    startupLocalResumeAvailable: true,
+    authProviderUnavailable: false,
+    allowLocalFallback: false,
+  });
+
+  assert.equal(model.localAction, null);
+  assert.match(model.title, /sign in to reopen your plan/i);
+  assert.match(model.subtitle, /account is required before FORMA can reopen it/i);
+  assert.match(model.form.primaryCaption, /reopens the saved plan on this device/i);
 });
 
 test("auth entry theme keeps primary and local-secondary contrast safe across all curated themes", () => {
