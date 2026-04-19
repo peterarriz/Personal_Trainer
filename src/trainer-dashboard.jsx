@@ -6713,6 +6713,10 @@ const APPLE_HEALTH_SUPPORTED_MODE = typeof window !== "undefined" && safeStorage
  setAuthPendingConfirmationEmail(String(result?.pendingConfirmationEmail || authEmail || "").trim());
  setAuthMode("signin");
  setAuthPassword("");
+ } else if (result?.alreadyRegistered) {
+ setAuthPendingConfirmationEmail("");
+ setAuthMode("signin");
+ setAuthPassword("");
  } else {
  setAuthPendingConfirmationEmail("");
  }

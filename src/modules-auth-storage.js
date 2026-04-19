@@ -1005,6 +1005,49 @@ export function createAuthStorageModule({ safeFetchWithTimeout, logDiag, mergePe
         });
         return { ok: true, session, needsEmailConfirmation: false };
       } else {
+        // Supabase Auth returns 200 with an obfuscated user (identities=[]) when
+        // the email is already registered, to prevent address enumeration. In
+        // that case no confirmation email is sent, so don't tell the user to go
+        // check their inbox.
+        const alreadyRegistered = Boolean(
+          data?.user
+          && Array.isArray(data.user.identities)
+          && data.user.identities.length === 0
+        );
+        if (alreadyRegistered) {
+          if (typeof setAuthNotice === "function") {
+            setAuthNotice("That email is already registered. Try signing in, or use \"Forgot password\" if you can't remember it.");
+          }
+          recordAdaptiveEvent({
+            eventName: ADAPTIVE_LEARNING_EVENT_NAMES.authLifecycleChanged,
+            userId: "",
+            occurredAt: Date.now(),
+            dedupeKey: `auth_sign_up_already_registered_${email.toLowerCase()}`,
+            payload: buildAuthLifecycleEventInput({
+              authEvent: "sign_up",
+              status: "already_registered",
+              source: "auth_gate",
+              hadCloudSession: false,
+              detail: "Sign-up was attempted with an email that already has an account; no confirmation email was sent.",
+            }),
+          });
+          trackAnalytics({
+            flow: "auth",
+            action: "sign_up",
+            outcome: "already_registered",
+            props: {
+              duration_ms: Date.now() - startedAt,
+              auto_signed_in: false,
+            },
+          });
+          return {
+            ok: true,
+            session: null,
+            needsEmailConfirmation: false,
+            alreadyRegistered: true,
+            pendingConfirmationEmail: "",
+          };
+        }
         if (typeof setAuthNotice === "function") {
           setAuthNotice("Account created. Check your email to confirm, then sign in.");
         }
