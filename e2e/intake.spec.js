@@ -216,12 +216,8 @@ test.describe("intake onboarding e2e", () => {
     await page.getByTestId("intake-goal-metric-current-strength-baseline-weight").fill("205");
     await page.getByTestId("intake-goal-metric-current-strength-baseline-reps").fill("5");
     await commitPendingGoalSelection(page);
-    const goalLibraryVisible = await page.getByTestId("intake-goal-library-grid").isVisible().catch(() => false);
-    if (!goalLibraryVisible) {
-      await page.getByTestId("intake-goal-library-toggle").click();
-    }
-    await page.getByTestId("intake-goal-category-physique").click();
-    await page.getByTestId("intake-goal-template-get_leaner").click();
+    await page.getByTestId("intake-goal-type-physique").click();
+    await page.getByTestId("intake-featured-goal-get_leaner").click();
     await expect(page.getByTestId("intake-selected-goals")).not.toContainText("Get leaner");
     await expect(page.getByTestId("intake-goal-selection-draft")).toContainText("Get leaner");
     await page.getByTestId("intake-goal-metric-body_comp_tempo-steady").click();

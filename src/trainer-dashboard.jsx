@@ -285,6 +285,10 @@ import { buildPostIntakeReadyModel } from "./services/post-intake-ready-service.
 import { buildSharedSessionSummaryModel } from "./services/session-summary-surface-service.js";
 import { buildTodayCommandCenterModel } from "./services/today-command-center-service.js";
 import {
+ buildTodayPrescriptionSurfaceModel,
+ TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS,
+} from "./services/today-prescription-surface-service.js";
+import {
  buildSupportTierModel,
 } from "./services/support-tier-service.js";
 import {
@@ -8896,8 +8900,8 @@ const getAnthropicKey = () => (typeof window !== "undefined"
 
  const TABS = [
  { id: "today", label: "Today" },
- { id: "program", label: "Plan" },
  { id: "log", label: "Log" },
+ { id: "program", label: "Plan" },
  { id: "nutrition", label: "Nutrition" },
  { id: "coach", label: "Coach" },
  ];
@@ -10574,17 +10578,17 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  </div>
 
  {/* TODAY */}
- {tab === 0 && <TodayTab planDay={planDay} surfaceModel={planDaySurfaceModels?.today || null} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(1)} onGoLog={()=>setTab(2)} onDismissPostIntakeReady={dismissWeekOneReady} loading={loading} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.today || null} authError={authError} />}
+ {tab === 0 && <TodayTab planDay={planDay} surfaceModel={planDaySurfaceModels?.today || null} todayWorkout={planDay?.resolved?.training} plannedWorkout={planDay?.base?.training} currentWeek={currentWeek} rollingHorizon={rollingHorizon} logs={logs} bodyweights={bodyweights} planAlerts={planAlerts} setPlanAlerts={setPlanAlerts} analyzing={analyzing} getZones={getZones} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} strengthLayer={strengthLayer} dailyStory={dailyStory} behaviorLoop={behaviorLoop} proactiveTriggers={proactiveTriggers} onDismissTrigger={dismissTriggerForToday} onApplyTrigger={applyProactiveNudge} applyDayContextOverride={applyDayContextOverride} shiftTodayWorkout={shiftTodayWorkout} restoreShiftTodayWorkout={restoreShiftTodayWorkout} setEnvironmentMode={setEnvironmentMode} environmentSelection={environmentSelection} injuryRule={injuryRule} setInjuryState={setInjuryState} dailyCheckins={dailyCheckins} saveDailyCheckin={saveDailyCheckin} learningLayer={learningLayer} salvageLayer={salvageLayer} validationLayer={validationLayer} optimizationLayer={optimizationLayer} failureMode={failureMode} planComposer={planComposer} saveBodyweights={saveBodyweights} coachPlanAdjustments={coachPlanAdjustments} onGoProgram={()=>setTab(2)} onDismissPostIntakeReady={dismissWeekOneReady} loading={loading} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.today || null} authError={authError} />}
+
+ {/* LOG */}
+ {tab === 1 && <LogTab planDay={planDay} surfaceModel={planDaySurfaceModels?.log || null} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} personalization={personalization} athleteProfile={canonicalAthlete} saveManualProgressInputs={saveManualProgressInputs} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.log || null} />}
 
  {/* PROGRAM */}
- {tab === 1 && (
+ {tab === 2 && (
  <ProgramTabErrorBoundary>
  <PlanTab planDay={planDay} surfaceModel={planDaySurfaceModels?.program || null} currentPlanWeek={currentPlanWeek} currentWeek={currentWeek} logs={logs} bodyweights={bodyweights} dailyCheckins={dailyCheckins} personalization={personalization} athleteProfile={canonicalAthlete} setGoals={setGoals} momentum={momentum} strengthLayer={strengthLayer} weeklyReview={weeklyReview} expectations={expectations} memoryInsights={memoryInsights} recalibration={recalibration} patterns={patterns} getZones={getZones} weekNotes={weekNotes} paceOverrides={paceOverrides} setPaceOverrides={setPaceOverrides} learningLayer={learningLayer} salvageLayer={salvageLayer} failureMode={failureMode} planComposer={planComposer} rollingHorizon={rollingHorizon} horizonAnchor={horizonAnchor} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} saveWeeklyCheckin={saveWeeklyCheckin} environmentSelection={environmentSelection} setEnvironmentMode={setEnvironmentMode} saveEnvironmentSchedule={saveEnvironmentSchedule} deviceSyncAudit={deviceSyncAudit} syncSurfaceModel={syncSurfaceModels?.program || null} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} saveGoalReview={saveGoalReview} saveBodyweights={saveBodyweights} saveManualProgressInputs={saveManualProgressInputs} saveProgramSelection={saveProgramSelection} todayWorkout={planDay?.resolved?.training} onManagePlan={(focus = "plan")=>{ setSettingsFocus(focus); setTab(5); }} />
  </ProgramTabErrorBoundary>
  )}
-
- {/* LOG */}
- {tab === 2 && <LogTab planDay={planDay} surfaceModel={planDaySurfaceModels?.log || null} logs={logs} dailyCheckins={dailyCheckins} plannedDayRecords={plannedDayRecords} planWeekRecords={planWeekRecords} weeklyCheckins={weeklyCheckins} nutritionActualLogs={nutritionActualLogs} saveLogs={saveLogs} bodyweights={bodyweights} saveBodyweights={saveBodyweights} personalization={personalization} athleteProfile={canonicalAthlete} saveManualProgressInputs={saveManualProgressInputs} currentWeek={currentWeek} todayWorkout={planDay?.resolved?.training} planArchives={personalization?.planArchives || []} planStartDate={canonicalGoalState?.planStartDate || ""} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.log || null} />}
 
  {/* NUTRITION */}
  {tab === 3 && <NutritionTab planDay={planDay} surfaceModel={planDaySurfaceModels?.nutrition || null} todayWorkout={planDay?.resolved?.training} currentWeek={currentWeek} logs={logs} personalization={personalization} athleteProfile={canonicalAthlete} momentum={momentum} bodyweights={bodyweights} learningLayer={learningLayer} nutritionLayer={planDay?.resolved?.nutrition?.prescription} realWorldNutrition={planDay?.resolved?.nutrition?.reality} nutritionActualLogs={nutritionActualLogs} nutritionFavorites={nutritionFavorites} weeklyNutritionReview={weeklyNutritionReview} saveNutritionFavorites={saveNutritionFavorites} saveNutritionActualLog={saveNutritionActualLog} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.nutrition || null} />}
@@ -10599,7 +10603,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
  }} />}
 
-{tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} syncDiagnostics={syncDiagnostics} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} adaptiveLearningSnapshot={adaptiveLearningStore?.buildPersistenceSnapshot?.() || null} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} planHistoryReviews={planHistoryReportReviews} planHistoryWeekSummaries={planHistoryWeekSummaries} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} onOpenPlan={()=>setTab(1)} passwordResetBusy={authPasswordResetBusy} passwordResetMessage={authNotice} onRequestPasswordReset={() => handleForgotPassword({
+{tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} syncDiagnostics={syncDiagnostics} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} adaptiveLearningSnapshot={adaptiveLearningStore?.buildPersistenceSnapshot?.() || null} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} planHistoryReviews={planHistoryReportReviews} planHistoryWeekSummaries={planHistoryWeekSummaries} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} onOpenPlan={()=>setTab(2)} passwordResetBusy={authPasswordResetBusy} passwordResetMessage={authNotice} onRequestPasswordReset={() => handleForgotPassword({
  source: "settings_account",
  emailOverride: authSession?.user?.email || "",
  })} onOpenAuthGate={() => {
@@ -13211,6 +13215,7 @@ const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 
  }
  }, [answers]);
  useEffect(() => {
+ if (intakeGoalSelections.length > 0 || pendingGoalSelection?.goalText) return;
  const inferredGoalTypeId = inferIntakeStarterGoalTypeId({
  selection: primaryIntakeGoalSelection,
  answers,
@@ -13218,7 +13223,7 @@ const normalizedGoalText = normalizeIntakeGoalEntry(answers?.goal_intent || "", 
  if (inferredGoalTypeId && inferredGoalTypeId !== selectedStarterGoalTypeId && primaryIntakeGoalSelection) {
  setSelectedStarterGoalTypeId(inferredGoalTypeId);
  }
- }, [answers, primaryIntakeGoalSelection, selectedStarterGoalTypeId]);
+ }, [answers, intakeGoalSelections.length, pendingGoalSelection?.goalText, primaryIntakeGoalSelection, selectedStarterGoalTypeId]);
  useEffect(() => {
  const metricSelections = [
  ...intakeGoalSelections,
@@ -14166,8 +14171,8 @@ const toggleGoalLock = () => {
  </div>
  </div>
  );
- const renderGoalSelectionSurface = () => (
- <div style={{ display:"grid", gap:"0.75rem" }}>
+const renderGoalSelectionSurface = () => (
+ <div data-testid="intake-goal-selection-surface" style={{ display:"grid", gap:"0.75rem" }}>
  <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>GOAL TYPE</div>
@@ -14352,7 +14357,7 @@ opacity: added ? 0.82 : 1,
  <div data-testid="intake-selected-goals" style={{ display:"grid", gap:"0.42rem", border:"1px solid rgba(111,148,198,0.12)", borderRadius:16, padding:"0.8rem", background:"rgba(4,10,18,0.55)" }}>
  <div style={{ display:"grid", gap:"0.14rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT GOAL STACK</div>
- <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Save one goal at a time here. Then pick another example if you want to add another goal.</div>
+ <div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Save one goal at a time. Then switch families above, pick the next example, and save that goal too.</div>
  </div>
  {intakeGoalSelections.length > 0 ? (
  <div style={{ display:"grid", gap:"0.42rem" }}>
@@ -14406,107 +14411,17 @@ opacity: added ? 0.82 : 1,
  ))}
  </div>
  ) : (
- <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>Pick a featured path first. If you need a second goal, add it from the full library instead of typing from scratch.</div>
+ <div style={{ fontSize:"0.56rem", color:"#8fa5c8", lineHeight:1.5 }}>Pick a family above, choose the example that fits, then save the goal.</div>
  )}
  </div>
 
  {renderGoalLockSurface()}
-
- <div style={{ display:"grid", gap:"0.55rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
- <div style={{ display:"flex", justifyContent:"space-between", gap:"0.4rem", alignItems:"center", flexWrap:"wrap" }}>
-<div style={{ display:"grid", gap:"0.14rem" }}>
-<div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>FULL GOAL LIBRARY</div>
-<div style={{ fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>Use this for additional priorities or when the featured paths are close but not quite right.</div>
-</div>
- <button
- type="button"
- className="btn"
- data-testid="intake-goal-library-toggle"
- onClick={() => setShowGoalLibraryBrowser((current) => !current)}
- style={{ fontSize:"0.48rem", color:"#dbe7f6", borderColor:"#324961" }}
- >
- {showGoalLibraryBrowser ? "Hide full library" : "Browse full library"}
- </button>
- </div>
- {showGoalLibraryBrowser ? (
- <>
- <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
- {goalTemplateCategories.map((category) => {
- const selected = goalLibraryCategory === category.id;
- return (
- <button
- key={category.id}
- type="button"
- className="btn"
- data-testid={`intake-goal-category-${category.id}`}
- onClick={() => openGoalLibraryCategory(category.id)}
- style={{
- fontSize:"0.5rem",
- color:selected ? "#0f172a" : "#dbe7f6",
- background:selected ? "#dbe7f6" : "transparent",
- borderColor:selected ? "#dbe7f6" : "#324961",
- }}
- >
- {category.label}
- </button>
- );
- })}
- </div>
- <input
- data-testid="intake-goal-library-search"
- value={goalLibrarySearch}
- onChange={(e) => setGoalLibrarySearch(e.target.value)}
- placeholder="Search goal paths"
- />
- <div data-testid="intake-goal-library-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:"0.45rem", maxHeight:320, overflowY:"auto", paddingRight:"0.12rem", alignContent:"start" }}>
-{visibleGoalTemplates.map((template) => {
-const added = selectedGoalTextSet.has(String(template.goalText || "").toLowerCase());
-const selectedForDraft = String(pendingGoalSelection?.templateId || "").trim() === template.id;
-return (
-<button
-key={template.id}
-type="button"
-className="btn"
-data-testid={`intake-goal-template-${template.id}`}
-onClick={() => queueGoalSelection(buildGoalTemplateSelection({ templateId: template.id }))}
-disabled={added}
-style={{
-textAlign:"left",
-borderColor: selectedForDraft ? "rgba(0,194,255,0.38)" : added ? "rgba(147,197,253,0.55)" : "#22324a",
-background: selectedForDraft ? "linear-gradient(180deg, rgba(0,194,255,0.1), rgba(11,18,32,0.9))" : added ? "rgba(147,197,253,0.12)" : "rgba(11,18,32,0.8)",
-padding:"0.75rem",
-display:"grid",
-gap:"0.18rem",
-opacity: added ? 0.82 : 1,
-}}
->
-<div style={{ display:"flex", justifyContent:"space-between", gap:"0.35rem", alignItems:"flex-start" }}>
-<div style={{ fontSize:"0.58rem", color:"#f8fbff", lineHeight:1.4, fontWeight:600 }}>{template.title}</div>
-<div style={{ fontSize:"0.44rem", color:selectedForDraft ? "#b9ecff" : added ? "#bfdbfe" : "#8fa5c8" }}>{added ? "Added" : selectedForDraft ? "Selected" : "Select"}</div>
-</div>
-<div style={{ fontSize:"0.48rem", color:"#8fa5c8", lineHeight:1.45 }}>{template.helper}</div>
-</button>
-);
-})}
- {visibleGoalTemplates.length === 0 ? (
- <div style={{ border:"1px dashed rgba(111,148,198,0.18)", borderRadius:14, padding:"0.8rem", fontSize:"0.54rem", color:"#8fa5c8", lineHeight:1.45 }}>
- No goal path matched that search yet. Write a custom goal only if none of these fit.
- </div>
- ) : null}
- </div>
- </>
- ) : (
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>
- Open the library only if the featured paths miss or you want to add another priority.
- </div>
- )}
- </div>
  </div>
  );
 const renderPlanningRealitySurface = () => (
- <div style={{ display:"grid", gap:"0.75rem", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
+ <div data-testid="intake-reality-surface" style={{ display:"grid", gap:"0.75rem", alignSelf:"start", border:"1px solid rgba(111,148,198,0.16)", borderRadius:20, padding:"1rem", background:"rgba(8,14,25,0.78)" }}>
  {renderSectionLabel("Reality", "What shapes week one", "Only the details that materially change the first plan belong here.")}
- <div style={{ display:"grid", gap:"0.7rem" }}>
+ <div style={{ display:"grid", gap:"0.7rem", alignItems:"start", gridTemplateColumns:intakeWideLayout ? "repeat(2, minmax(0, 1fr))" : "1fr" }}>
  <div style={{ display:"grid", gap:"0.35rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>EXPERIENCE</div>
  {renderChoiceChips({
@@ -14544,7 +14459,7 @@ const renderPlanningRealitySurface = () => (
  })}
  </div>
  {needsHomeEquipment ? (
- <div style={{ display:"grid", gap:"0.35rem" }}>
+ <div style={{ display:"grid", gap:"0.35rem", ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>HOME SETUP</div>
  {renderChoiceChips({
  items: ["Dumbbells", "Resistance bands", "Pull-up bar", "Bodyweight only", "Other"],
@@ -14563,7 +14478,7 @@ const renderPlanningRealitySurface = () => (
  ) : null}
  </div>
  ) : null}
- <div style={{ display:"grid", gap:"0.35rem" }}>
+ <div style={{ display:"grid", gap:"0.35rem", ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>CURRENT ISSUES</div>
  {renderStructuredInjuryFields({ testIdPrefix: "intake-goals-compact-injury-structured" })}
  <textarea
@@ -14581,7 +14496,7 @@ const renderPlanningRealitySurface = () => (
  testIdPrefix: "intake-goals-option-injury-impact",
  }) : null}
  </div>
- <div style={{ display:"grid", gap:"0.35rem", borderTop:"1px solid rgba(111,148,198,0.12)", paddingTop:"0.75rem" }}>
+ <div style={{ display:"grid", gap:"0.35rem", borderTop:"1px solid rgba(111,148,198,0.12)", paddingTop:"0.75rem", ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}>
  <div style={{ display:"grid", gap:"0.16rem" }}>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", letterSpacing:"0.12em" }}>COACHING TONE</div>
  <div style={{ fontSize:"0.5rem", color:"#8fa5c8", lineHeight:1.45 }}>Optional. If you skip it, we use Balanced coaching.</div>
@@ -14594,13 +14509,13 @@ const renderPlanningRealitySurface = () => (
  })}
  </div>
  {goalsStageNeeds.length > 0 ? (
- <div data-testid="intake-goals-needs" style={{ display:"grid", gap:"0.28rem" }}>
+ <div data-testid="intake-goals-needs" style={{ display:"grid", gap:"0.28rem", ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}>
  {goalsStageNeeds.map((item) => (
  <div key={item} style={{ fontSize:"0.54rem", color:"#9fb4d3", lineHeight:1.5 }}>{item}</div>
  ))}
  </div>
  ) : (
- <div data-testid="intake-goals-needs" style={{ fontSize:"0.54rem", color:"#9fe8c7", lineHeight:1.5 }}>
+ <div data-testid="intake-goals-needs" style={{ fontSize:"0.54rem", color:"#9fe8c7", lineHeight:1.5, ...(intakeWideLayout ? { gridColumn:"1 / -1" } : {}) }}>
  Enough to shape week one. Preview it, or lock the goal order and build directly from here.
  </div>
  )}
@@ -14628,7 +14543,7 @@ const renderGoalsStage = () => (
  ))}
  </div>
  </div>
- <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))", gap:"0.95rem" }}>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))", gap:"0.95rem", alignItems:"start" }}>
  {renderGoalSelectionSurface()}
  {renderPlanningRealitySurface()}
  </div>
@@ -19275,7 +19190,7 @@ function OnboardingCoachLegacyFallback({ onComplete }) {
 }
 
 // TODAY TAB
-function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, onGoProgram = () => {}, onGoLog = () => {}, onDismissPostIntakeReady = () => {}, loading, storageStatus, syncStateModel = null, syncSurfaceModel = null, authError }) {
+function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTodayWorkout, currentWeek, rollingHorizon = [], logs, bodyweights, planAlerts, setPlanAlerts, analyzing, getZones, personalization, athleteProfile = null, momentum, strengthLayer, dailyStory, behaviorLoop, proactiveTriggers, onDismissTrigger, onApplyTrigger, applyDayContextOverride, shiftTodayWorkout, restoreShiftTodayWorkout, setEnvironmentMode, environmentSelection, injuryRule, setInjuryState, dailyCheckins, saveDailyCheckin, learningLayer, salvageLayer, validationLayer, optimizationLayer, failureMode, planComposer, saveBodyweights, coachPlanAdjustments, onGoProgram = () => {}, onDismissPostIntakeReady = () => {}, loading, storageStatus, syncStateModel = null, syncSurfaceModel = null, authError }) {
  const todayWorkout = planDay?.resolved?.training || legacyTodayWorkout;
  const userProfile = athleteProfile?.userProfile || {};
  const todayUnitSettings = personalization?.settings?.units || DEFAULT_PERSONALIZATION.settings.units;
@@ -19312,6 +19227,8 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
  const [checkinSaving, setCheckinSaving] = useState(false);
  const [showQuickLogComposer, setShowQuickLogComposer] = useState(false);
  const [sessionVariant, setSessionVariant] = useState("standard");
+ const [todayAdjustmentState, setTodayAdjustmentState] = useState(TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS);
+ const [adjustTodayOpen, setAdjustTodayOpen] = useState(false);
  const [shiftChoiceOpen, setShiftChoiceOpen] = useState(false);
  const [shiftUndo, setShiftUndo] = useState(null);
  const [showEnvEditor, setShowEnvEditor] = useState(false);
@@ -19324,6 +19241,9 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
  });
  const [showInjuryPanel, setShowInjuryPanel] = useState(false);
  const todaySessionCardRef = useRef(null);
+ const todayAdjustmentStorageKey = useMemo(() => (
+ `today_prescription_adjustments_${todayKey}_${String(todayWorkout?.label || todayWorkout?.type || "session").toLowerCase().replace(/[^a-z0-9]+/g, "_")}`
+ ), [todayKey, todayWorkout?.label, todayWorkout?.type]);
  useEffect(() => {
  setInjuryArea(personalization?.injuryPainState?.area || "Achilles");
  setInjurySide(personalization?.injuryPainState?.side || "unspecified");
@@ -19348,7 +19268,34 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
  const [activeCoachAdjustment, setActiveCoachAdjustment] = useState(null);
  const [coachAdjustmentDetail, setCoachAdjustmentDetail] = useState("");
  const [coachAdjustmentLoading, setCoachAdjustmentLoading] = useState(false);
- useEffect(() => { setSessionVariant("standard"); }, [todayKey, todayWorkout?.label, todayWorkout?.type]);
+ useEffect(() => {
+ setAdjustTodayOpen(false);
+ try {
+ const raw = sessionStorage.getItem(todayAdjustmentStorageKey);
+ if (!raw) {
+ setSessionVariant("standard");
+ setTodayAdjustmentState(TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS);
+ return;
+ }
+ const parsed = JSON.parse(raw);
+ setSessionVariant(["standard", "short", "extended"].includes(parsed?.sessionVariant) ? parsed.sessionVariant : "standard");
+ setTodayAdjustmentState({
+ ...TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS,
+ ...(parsed?.adjustments || {}),
+ });
+ } catch {
+ setSessionVariant("standard");
+ setTodayAdjustmentState(TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS);
+ }
+ }, [todayAdjustmentStorageKey]);
+ useEffect(() => {
+ try {
+ sessionStorage.setItem(todayAdjustmentStorageKey, JSON.stringify({
+ sessionVariant,
+ adjustments: todayAdjustmentState,
+ }));
+ } catch {}
+ }, [todayAdjustmentStorageKey, sessionVariant, todayAdjustmentState]);
  useEffect(() => { setShowQuickLogComposer(false); }, [todayKey]);
  useEffect(() => {
  setEnvDraft({
@@ -19681,6 +19628,77 @@ const postIntakeReadyModel = useMemo(() => buildPostIntakeReadyModel({
  }
  }, [onDismissPostIntakeReady]);
  const strExercises = buildStrengthPrescriptionEntriesForLogging(displayWorkout);
+ const todayTimeAdjustment = sessionVariant === "short"
+ ? "short"
+ : sessionVariant === "extended"
+ ? "extended"
+ : "standard";
+ const todayAdjustmentSnapshot = useMemo(() => ({
+ ...todayAdjustmentState,
+ time: todayTimeAdjustment,
+ }), [todayAdjustmentState, todayTimeAdjustment]);
+ const todayPrescriptionModel = useMemo(() => buildTodayPrescriptionSurfaceModel({
+ dateKey: todayKey,
+ training: displayWorkout,
+ summary: todayPrescriptionSummary,
+ surfaceModel,
+ whyNowLine: todayWhyNow,
+ prescribedExercises: strExercises,
+ adjustments: todayAdjustmentSnapshot,
+ environmentSelection,
+ }), [
+ todayKey,
+ displayWorkout,
+ todayPrescriptionSummary,
+ surfaceModel,
+ todayWhyNow,
+ strExercises,
+ todayAdjustmentSnapshot,
+ environmentSelection,
+ ]);
+ const updateTodayAdjustmentState = useCallback((patch = {}) => {
+ setTodayAdjustmentState((current) => ({
+ ...current,
+ ...(patch || {}),
+ }));
+ }, []);
+ const resetTodayAdjustmentState = useCallback(() => {
+ setSessionVariant("standard");
+ setTodayAdjustmentState(TODAY_PRESCRIPTION_ADJUSTMENT_DEFAULTS);
+ }, []);
+ const toggleTodayTimeVariant = useCallback((nextVariant = "standard") => {
+ setSessionVariant((current) => current === nextVariant ? "standard" : nextVariant);
+ }, []);
+ const toggleTodayRecovery = useCallback(() => {
+ setTodayAdjustmentState((current) => ({
+ ...current,
+ recovery: current?.recovery === "low_energy" ? "standard" : "low_energy",
+ }));
+ }, []);
+ const toggleTodaySoreness = useCallback((nextValue = "none") => {
+ setTodayAdjustmentState((current) => ({
+ ...current,
+ soreness: current?.soreness === nextValue ? "none" : nextValue,
+ }));
+ }, []);
+ const toggleTodayLowImpact = useCallback(() => {
+ setTodayAdjustmentState((current) => ({
+ ...current,
+ impact: current?.impact === "low_impact" ? "normal" : "low_impact",
+ }));
+ }, []);
+ const toggleTodayCardioSwap = useCallback((nextValue = "as_planned") => {
+ setTodayAdjustmentState((current) => ({
+ ...current,
+ cardioSwap: current?.cardioSwap === nextValue ? "as_planned" : nextValue,
+ }));
+ }, []);
+ const toggleTodayExerciseSwap = useCallback(() => {
+ setTodayAdjustmentState((current) => ({
+ ...current,
+ swapExercises: !current?.swapExercises,
+ }));
+ }, []);
  const prehabExercises = activeIssueContext?.active ? ACHILLES.map(sanitizeWorkoutEntry) : [];
  const hasStrength = displayWorkout?.type === "run+strength" || displayWorkout?.type === "strength+prehab";
  const hasPrehab = displayWorkout?.type === "strength+prehab" && activeIssueContext?.active;
@@ -20090,6 +20108,335 @@ const todayNextStepLine = sanitizeDisplayText(
  setCheckinSaving(false);
  }
  };
+
+ const todayFocusLine = sanitizeDisplayText(
+ todayPrescriptionModel?.focusLine
+ || conciseFocus
+ || "Recovery, aerobic base, and core."
+ );
+ const todayVisibleWhyLine = sanitizeDisplayText(
+ todayPrescriptionModel?.whyLine
+ || primaryWhyChangedLine
+ || todayWhyNow
+ || "Today moves the week forward without adding unnecessary fatigue."
+ );
+ const todaySecondaryWhyLine = sanitizeDisplayText(
+ todayPrescriptionModel?.canonicalReasonLine
+ && todayPrescriptionModel.canonicalReasonLine.toLowerCase() !== todayVisibleWhyLine.toLowerCase()
+ ? todayPrescriptionModel.canonicalReasonLine
+ : ""
+ );
+ const todayBlocks = Array.isArray(todayPrescriptionModel?.blocks) ? todayPrescriptionModel.blocks.filter(Boolean).slice(0, 5) : [];
+ const todayRules = Array.isArray(todayPrescriptionModel?.rules) ? todayPrescriptionModel.rules.filter(Boolean).slice(0, 4) : [];
+ const todayAdjustmentLabels = Array.isArray(todayPrescriptionModel?.adjustmentSummary) ? todayPrescriptionModel.adjustmentSummary.filter(Boolean) : [];
+ const todayAdjustmentIntroLine = todayAdjustmentLabels.length
+ ? `Active now: ${todayAdjustmentLabels.join(" • ")}.`
+ : "Change time, recovery, soreness, or setup without rebuilding the day.";
+ const buildTodayAdjustmentButtonStyle = (active, color = C.blue) => ({
+ fontSize:"0.5rem",
+ minHeight:40,
+ color:active ? "#08111d" : color,
+ background:active ? color : "transparent",
+ borderColor:`${color}35`,
+ whiteSpace:"normal",
+ lineHeight:1.35,
+ });
+
+ return (
+ <div className="fi" data-testid="today-tab" style={{ display:"grid", gap:"0.75rem" }}>
+ {authError && (
+ <div className="card card-soft" style={{ borderColor:C.amber+"35", fontSize:"0.54rem", color:C.amber }}>
+ {authError}
+ </div>
+ )}
+ {showStorageBanner && (
+ <SyncStateCallout
+ model={syncSurfaceModel}
+ dataTestId="today-sync-status"
+ compact
+ style={{ background:"rgba(11, 20, 32, 0.76)" }}
+ />
+ )}
+
+ <SurfaceCard
+ ref={todaySessionCardRef}
+ data-testid="today-session-card"
+ variant="elevated"
+ style={{
+ display:"grid",
+ gap:"0.85rem",
+ padding:"0.95rem",
+ borderRadius:24,
+ borderColor:`${cardColor}2b`,
+ background:"linear-gradient(180deg, color-mix(in srgb, var(--consumer-panel-strong) 90%, transparent), color-mix(in srgb, var(--consumer-panel) 96%, transparent))",
+ boxShadow:"var(--shadow-2)",
+ }}
+ >
+ <div style={{ display:"grid", gap:"0.18rem" }}>
+ <div style={{ fontSize:"0.48rem", color:cardColor, letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ {todayPrescriptionModel?.dateLabel || "Today"}
+ </div>
+ <div style={{ fontSize:"0.96rem", color:"var(--consumer-text)", fontWeight:700, lineHeight:1.2 }}>
+ {todayPrescriptionModel?.headerTitle || "Today's Plan"}
+ </div>
+ <div data-testid="today-canonical-session-label" style={{ fontSize:"0.6rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
+ {todayPrescriptionModel?.sessionLabel || canonicalTodayLabel}
+ </div>
+ </div>
+
+ <div style={{ display:"grid", gap:"0.18rem" }}>
+ <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ Focus
+ </div>
+ <div data-testid="today-focus-line" style={{ fontSize:"0.68rem", color:"var(--consumer-text)", lineHeight:1.38, fontWeight:600 }}>
+ {todayFocusLine}
+ </div>
+ </div>
+
+ <div style={{ display:"grid", gap:"0.18rem" }}>
+ <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ Why today
+ </div>
+ <div data-testid="today-change-summary" style={{ fontSize:"0.56rem", color:"var(--consumer-text-soft)", lineHeight:1.55 }}>
+ {todayVisibleWhyLine}
+ </div>
+ {!!todaySecondaryWhyLine && (
+ <div data-testid="today-canonical-reason" style={{ fontSize:"0.48rem", color:"var(--consumer-text-faint)", lineHeight:1.45 }}>
+ {todaySecondaryWhyLine}
+ </div>
+ )}
+ </div>
+
+ {!!todayAdjustmentLabels.length && (
+ <div style={{ display:"flex", gap:"0.28rem", flexWrap:"wrap" }}>
+ {todayAdjustmentLabels.map((label, index) => (
+ <SurfacePill key={`today-adjustment-pill-${index}`} style={{ color:cardColor, background:`${cardColor}12`, borderColor:`${cardColor}24` }}>
+ {label}
+ </SurfacePill>
+ ))}
+ </div>
+ )}
+
+ <div style={{ display:"flex", justifyContent:"flex-start" }}>
+ <button
+ type="button"
+ data-testid="today-primary-cta"
+ className="btn btn-primary"
+ onClick={() => setAdjustTodayOpen((current) => !current)}
+ style={{ fontSize:"0.52rem" }}
+ >
+ {adjustTodayOpen ? "Hide adjustments" : "Adjust Today"}
+ </button>
+ </div>
+
+ <div data-testid="today-session-plan" style={{ display:"grid", gap:"0.5rem" }}>
+ <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ Workout
+ </div>
+ <div data-testid="today-full-workout" style={{ display:"grid", gap:"0.45rem" }}>
+ {todayBlocks.map((block) => (
+ <div
+ key={block.key || block.number}
+ style={{
+ display:"grid",
+ gridTemplateColumns:"auto 1fr",
+ gap:"0.48rem",
+ alignItems:"flex-start",
+ border:"1px solid var(--consumer-border)",
+ borderRadius:18,
+ padding:"0.7rem",
+ background:"color-mix(in srgb, var(--consumer-panel) 94%, transparent)",
+ }}
+ >
+ <div
+ style={{
+ width:24,
+ height:24,
+ borderRadius:999,
+ border:`1px solid ${cardColor}38`,
+ background:`${cardColor}14`,
+ color:cardColor,
+ display:"inline-flex",
+ alignItems:"center",
+ justifyContent:"center",
+ fontSize:"0.54rem",
+ fontWeight:700,
+ }}
+ >
+ {block.number}
+ </div>
+ <div style={{ display:"grid", gap:"0.18rem", minWidth:0 }}>
+ <div style={{ fontSize:"0.58rem", color:"var(--consumer-text)", fontWeight:700, lineHeight:1.4 }}>
+ {block.title}
+ </div>
+ <div style={{ fontSize:"0.54rem", color:"var(--consumer-text-soft)", lineHeight:1.5 }}>
+ {block.prescription}
+ </div>
+ {!!block.effort && (
+ <div style={{ fontSize:"0.47rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
+ Effort: {block.effort}
+ </div>
+ )}
+ {!!block.variant && (
+ <div style={{ fontSize:"0.47rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
+ {block.variant}
+ </div>
+ )}
+ </div>
+ </div>
+ ))}
+ </div>
+ </div>
+
+ {!!todayRules.length && (
+ <div data-testid="today-rules" style={{ display:"grid", gap:"0.22rem" }}>
+ <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ Rules for today
+ </div>
+ <ul style={{ margin:0, paddingLeft:"1rem", display:"grid", gap:"0.18rem", color:"var(--consumer-text-soft)", fontSize:"0.52rem", lineHeight:1.5 }}>
+ {todayRules.map((rule, index) => (
+ <li key={`today-rule-${index}`}>{rule}</li>
+ ))}
+ </ul>
+ </div>
+ )}
+ </SurfaceCard>
+
+ <SurfaceCard
+ data-testid="today-adjust-section"
+ variant="subtle"
+ style={{
+ display:"grid",
+ gap:"0.6rem",
+ padding:"0.8rem",
+ borderRadius:22,
+ borderColor:"var(--consumer-border-strong)",
+ }}
+ >
+ <div style={{ display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"flex-start", flexWrap:"wrap" }}>
+ <div style={{ display:"grid", gap:"0.18rem", minWidth:0, flex:"1 1 280px" }}>
+ <div style={{ fontSize:"0.52rem", color:"var(--consumer-text)", fontWeight:700 }}>
+ Adjust Today
+ </div>
+ <div style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", lineHeight:1.5 }}>
+ {todayAdjustmentIntroLine}
+ </div>
+ </div>
+ </div>
+
+ {adjustTodayOpen && (
+ <div data-testid="today-adjust-panel" style={{ display:"grid", gap:"0.6rem" }}>
+ <div style={{ display:"grid", gap:"0.28rem" }}>
+ <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ Time and recovery
+ </div>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:"0.35rem" }}>
+ <button type="button" className="btn" onClick={() => toggleTodayTimeVariant("short")} style={buildTodayAdjustmentButtonStyle(sessionVariant === "short", C.green)}>
+ Short on time
+ </button>
+ <button type="button" className="btn" onClick={() => toggleTodayTimeVariant("extended")} style={buildTodayAdjustmentButtonStyle(sessionVariant === "extended", C.amber)}>
+ Push a little harder
+ </button>
+ <button type="button" className="btn" onClick={toggleTodayRecovery} style={buildTodayAdjustmentButtonStyle(todayAdjustmentState?.recovery === "low_energy", C.blue)}>
+ Low energy
+ </button>
+ </div>
+ </div>
+
+ <div style={{ display:"grid", gap:"0.28rem" }}>
+ <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ Soreness and impact
+ </div>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:"0.35rem" }}>
+ <button type="button" className="btn" onClick={() => toggleTodaySoreness("legs")} style={buildTodayAdjustmentButtonStyle(todayAdjustmentState?.soreness === "legs", C.amber)}>
+ Legs sore
+ </button>
+ <button type="button" className="btn" onClick={() => toggleTodaySoreness("upper")} style={buildTodayAdjustmentButtonStyle(todayAdjustmentState?.soreness === "upper", C.amber)}>
+ Upper body sore
+ </button>
+ <button type="button" className="btn" onClick={toggleTodayLowImpact} style={buildTodayAdjustmentButtonStyle(todayAdjustmentState?.impact === "low_impact", C.blue)}>
+ Need low impact
+ </button>
+ </div>
+ </div>
+
+ <div style={{ display:"grid", gap:"0.28rem" }}>
+ <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ Cardio and swap
+ </div>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:"0.35rem" }}>
+ <button type="button" className="btn" onClick={() => toggleTodayCardioSwap("treadmill")} style={buildTodayAdjustmentButtonStyle(todayAdjustmentState?.cardioSwap === "treadmill", C.blue)}>
+ Treadmill
+ </button>
+ <button type="button" className="btn" onClick={() => toggleTodayCardioSwap("bike")} style={buildTodayAdjustmentButtonStyle(todayAdjustmentState?.cardioSwap === "bike", C.blue)}>
+ Bike
+ </button>
+ <button type="button" className="btn" onClick={() => toggleTodayCardioSwap("elliptical")} style={buildTodayAdjustmentButtonStyle(todayAdjustmentState?.cardioSwap === "elliptical", C.blue)}>
+ Elliptical
+ </button>
+ <button type="button" className="btn" onClick={toggleTodayExerciseSwap} style={buildTodayAdjustmentButtonStyle(Boolean(todayAdjustmentState?.swapExercises), C.green)}>
+ Swap exercise
+ </button>
+ </div>
+ </div>
+
+ <div style={{ display:"grid", gap:"0.28rem" }}>
+ <div style={{ fontSize:"0.45rem", color:"var(--consumer-text-muted)", letterSpacing:"0.08em", textTransform:"uppercase" }}>
+ Setup
+ </div>
+ <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:"0.35rem" }}>
+ {[
+ { label: "Home only", mode: "Home" },
+ { label: "Gym", mode: "Gym" },
+ { label: "Outdoor", mode: "Outdoor" },
+ { label: "Travel", mode: "Travel" },
+ ].map((option) => {
+ const selected = environmentSelection?.scope === "today" && String(environmentSelection?.mode || "").toLowerCase() === option.mode.toLowerCase();
+ return (
+ <button
+ key={`today-adjust-mode-${option.mode}`}
+ type="button"
+ className="btn"
+ onClick={async () => setEnvironmentMode({ mode: option.mode, scope:"today" })}
+ style={buildTodayAdjustmentButtonStyle(selected, C.blue)}
+ >
+ {option.label}
+ </button>
+ );
+ })}
+ </div>
+ </div>
+
+ <div style={{ display:"flex", gap:"0.35rem", flexWrap:"wrap" }}>
+ {environmentSelection?.scope === "today" && (
+ <button
+ type="button"
+ className="btn"
+ onClick={async () => setEnvironmentMode({ scope:"today", clearTodayOverride:true })}
+ style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", borderColor:"var(--consumer-border-strong)" }}
+ >
+ Use default setup
+ </button>
+ )}
+ <button
+ type="button"
+ className="btn"
+ onClick={async () => {
+ resetTodayAdjustmentState();
+ if (environmentSelection?.scope === "today") {
+ await setEnvironmentMode({ scope:"today", clearTodayOverride:true });
+ }
+ }}
+ style={{ fontSize:"0.5rem", color:"var(--consumer-text-muted)", borderColor:"var(--consumer-border-strong)" }}
+ >
+ Reset adjustments
+ </button>
+ </div>
+ </div>
+ )}
+ </SurfaceCard>
+ </div>
+ );
 
  return (
  <div className="fi" data-testid="today-tab" style={{ display:"grid", gap:"0.75rem" }}>

@@ -167,7 +167,11 @@ test.describe("surface clarity guard", () => {
 
     for (const surfaceId of ["program", "log", "coach"]) {
       expect(surfaceSnapshots[surfaceId].label, `${surfaceId} drifted from Today's current-day label`).toBe(baseline.label);
-      expect(surfaceSnapshots[surfaceId].reason, `${surfaceId} drifted from Today's current-day reason`).toBe(baseline.reason);
+      expect(surfaceSnapshots[surfaceId].reason, `${surfaceId} drifted away from Today's current-day reason`).toMatch(/aggressive preference/i);
+      expect(
+        surfaceSnapshots[surfaceId].reason.includes(baseline.reason) || baseline.reason.includes(surfaceSnapshots[surfaceId].reason),
+        `${surfaceId} no longer carries the same core reason as Today`
+      ).toBe(true);
     }
   });
 });

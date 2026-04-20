@@ -45,10 +45,8 @@ async function openGoalFamilyAndSelectStack(page) {
   await commitPendingGoalSelection(page);
   await expect(page.getByTestId("intake-selected-goals")).toContainText(/improve a big lift/i);
 
-  await page.getByTestId("intake-goal-library-toggle").click();
-  await expect(page.getByTestId("intake-goal-library-grid")).toBeVisible();
-  await page.getByTestId("intake-goal-category-physique").click();
-  await page.getByTestId("intake-goal-template-get_leaner").click();
+  await page.getByTestId("intake-goal-type-physique").click();
+  await page.getByTestId("intake-featured-goal-get_leaner").click();
   await fillLeanerDetails(page);
   await commitPendingGoalSelection(page);
   await expect(page.getByTestId("intake-selected-goals")).toContainText(/get leaner/i);
@@ -143,6 +141,20 @@ async function installSignedInIntakeRuntime(page) {
 test.describe("intake reliability", () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
+  });
+
+  test("desktop intake keeps the reality column compact instead of stretching it to goal-picker height", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await gotoIntakeInLocalMode(page);
+    await expect(page.getByTestId("intake-goals-step")).toBeVisible();
+
+    const goalBox = await page.getByTestId("intake-goal-selection-surface").boundingBox();
+    const realityBox = await page.getByTestId("intake-reality-surface").boundingBox();
+
+    expect(goalBox).toBeTruthy();
+    expect(realityBox).toBeTruthy();
+    expect(Math.abs((goalBox?.y || 0) - (realityBox?.y || 0))).toBeLessThan(2);
+    expect((goalBox?.height || 0) - (realityBox?.height || 0)).toBeGreaterThan(120);
   });
 
   test("mobile intake keeps goal-family switching and continue usable after picking a first goal", async ({ page }) => {

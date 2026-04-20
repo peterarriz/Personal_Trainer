@@ -132,15 +132,28 @@ test.describe("mobile surface simplification", () => {
   test("today is action-first, program is read-first, and settings owns plan management", async ({ page }) => {
     await bootSignedInTodaySurface(page);
 
+    await expect(page.locator("[data-testid^='app-tab-']:not([data-testid='app-tab-settings'])")).toHaveText([
+      "Today",
+      "Log",
+      "Plan",
+      "Nutrition",
+      "Coach",
+    ]);
     await expect(page.getByTestId("today-tab")).toBeVisible();
     await expect(page.getByTestId("app-tab-program")).toHaveText("Plan");
+    await expect(page.getByTestId("app-tab-log")).toHaveText("Log");
     await expect(page.getByTestId("today-session-card")).toBeVisible();
     await expect(page.getByTestId("today-session-plan")).toBeVisible();
+    await expect(page.getByTestId("today-adjust-section")).toBeVisible();
     await expect(page.getByTestId("today-primary-cta")).toBeVisible();
-    await expect(page.getByTestId("today-secondary-cta")).toBeVisible();
     await expect(page.getByTestId("today-quick-log")).toHaveCount(0);
     await expect(page.getByTestId("today-tab").getByTestId("planned-session-plan")).not.toBeVisible();
+    await expect(page.getByTestId("today-secondary-cta")).toHaveCount(0);
     await expect(page.getByText("LOG TODAY", { exact: true })).toHaveCount(0);
+
+    await page.getByTestId("app-tab-log").click();
+    await expect(page.getByTestId("log-tab")).toBeVisible();
+    await expect(page.getByTestId("log-save-quick")).toBeVisible();
 
     await page.getByTestId("app-tab-program").click();
     await expect(page.getByTestId("program-tab")).toBeVisible();
@@ -182,14 +195,14 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByPlaceholder("Anthropic key (optional)")).toHaveCount(0);
   });
 
-  test("today, program, and log each expose planned session blocks on mobile", async ({ page }) => {
+  test("today shows direct workout blocks while Program and Log keep plan detail views on mobile", async ({ page }) => {
     await bootSignedInTodaySurface(page);
 
-    await page.getByTestId("today-session-plan").locator("summary").click();
-    const todayPlan = page.getByTestId("today-full-workout").getByTestId("planned-session-plan");
+    const todayPlan = page.getByTestId("today-full-workout");
     await expect(todayPlan).toBeVisible();
     const todayPlanText = (await todayPlan.innerText()).replace(/\s+/g, " ").trim();
-    expect(todayPlanText.length).toBeGreaterThan(20);
+    expect(todayPlanText.length).toBeGreaterThan(40);
+    await expect(page.getByTestId("today-full-workout").getByText(/Effort:/).first()).toBeVisible();
 
     await page.getByTestId("app-tab-program").click();
     const programThisWeek = page.getByTestId("program-this-week");
@@ -224,10 +237,10 @@ test.describe("mobile surface simplification", () => {
     const logPlan = page.getByTestId("log-detailed-entry").getByTestId("planned-session-plan");
     await expect(logPlan).toBeVisible();
     const logPlanText = (await logPlan.innerText()).replace(/\s+/g, " ").trim();
-    expect(logPlanText).toBe(todayPlanText);
+    expect(logPlanText.length).toBeGreaterThan(20);
   });
 
-  test("today keeps narrow-layout text and quick-log controls unclipped on mobile", async ({ page }) => {
+  test("today keeps narrow-layout prescription and adjustment controls unclipped on mobile", async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 844 });
     await bootSignedInTodaySurface(page);
 
@@ -250,22 +263,15 @@ test.describe("mobile surface simplification", () => {
     await page.getByTestId("app-tab-today").click();
 
     await page.getByTestId("today-primary-cta").click();
-    const quickLog = page.getByTestId("today-quick-log");
-    await quickLog.getByRole("button", { name: /completed as planned/i }).click();
-    await quickLog.getByRole("button", { name: /about right/i }).click();
-    await quickLog.getByPlaceholder("Optional note").fill("Felt better after the warmup, but the ankle still needed extra rest between sets.");
-    await quickLog.getByPlaceholder(/Bodyweight/i).fill("182");
-    await page.getByTestId("today-save-log").click();
-    await expect.poll(async () => {
-      const text = await page.getByTestId("today-save-status").innerText();
-      return String(text || "").replace(/\s+/g, " ").trim();
-    }).toMatch(/saved|safe here|locked in|saving/i);
+    const adjustPanel = page.getByTestId("today-adjust-panel");
+    await expect(adjustPanel).toBeVisible();
+    await adjustPanel.getByRole("button", { name: "Short on time" }).click();
+    await adjustPanel.getByRole("button", { name: "Low energy" }).click();
 
     const textTargets = [
       "today-canonical-session-label",
-      "today-canonical-reason",
+      "today-focus-line",
       "today-change-summary",
-      "today-save-status",
     ];
     for (const testId of textTargets) {
       const locator = page.getByTestId(testId);
@@ -276,10 +282,10 @@ test.describe("mobile surface simplification", () => {
       expect(metrics.writingMode).toBe("horizontal-tb");
     }
 
-    const quickLogMetrics = await readVisibleChildMetrics(quickLog);
-    quickLogMetrics.items.forEach((item) => {
-      expect(item.left).toBeGreaterThanOrEqual(quickLogMetrics.left - 1);
-      expect(item.right).toBeLessThanOrEqual(quickLogMetrics.right + 1);
+    const adjustPanelMetrics = await readVisibleChildMetrics(adjustPanel);
+    adjustPanelMetrics.items.forEach((item) => {
+      expect(item.left).toBeGreaterThanOrEqual(adjustPanelMetrics.left - 1);
+      expect(item.right).toBeLessThanOrEqual(adjustPanelMetrics.right + 1);
       expect(item.scrollWidth).toBeLessThanOrEqual(item.clientWidth + 2);
       expect(item.scrollHeight).toBeLessThanOrEqual(item.clientHeight + 2);
       expect(item.writingMode).toBe("horizontal-tb");
@@ -289,11 +295,11 @@ test.describe("mobile surface simplification", () => {
   test("today can force an outdoor session without leaving the screen", async ({ page }) => {
     await bootSignedInTodaySurface(page);
 
-    await page.getByText("Adjust today", { exact: true }).click();
-    await page.getByRole("button", { name: "Make today outdoor" }).click();
+    await page.getByTestId("today-primary-cta").click();
+    await page.getByRole("button", { name: "Outdoor" }).click();
 
-    await expect(page.getByRole("button", { name: "Outdoor session active" })).toBeVisible();
-    await expect(page.getByTestId("today-change-summary")).toContainText(/outdoor/i);
+    await expect(page.getByText(/Active now:.*Outdoor setup/i)).toBeVisible();
+    await expect(page.getByTestId("today-session-card").getByText("Outdoor setup")).toBeVisible();
   });
 
   test("canonical session label stays aligned across today, program, log, nutrition, and coach", async ({ page }) => {
