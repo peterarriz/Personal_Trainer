@@ -30,17 +30,27 @@ const enableDeveloperDiagnostics = async (page) => {
   });
 };
 
-const readSyncSnapshot = async (page) => page.evaluate(() => window.__TRAINER_SYNC_TEST_HELPERS?.snapshot?.() || null);
+const readSyncSnapshot = async (page) => page.evaluate(() => {
+  const helpers = window.__TRAINER_SYNC_TEST_HELPERS;
+  if (!helpers || typeof helpers.snapshot !== "function") return null;
+  return helpers.snapshot() || null;
+});
 
 const applySyncPreset = async (page, preset, at = Date.now()) => {
   await page.evaluate(({ nextPreset, timestamp }) => {
-    window.__TRAINER_SYNC_TEST_HELPERS?.applyPreset?.(nextPreset, timestamp);
+    const helpers = window.__TRAINER_SYNC_TEST_HELPERS;
+    if (helpers && typeof helpers.applyPreset === "function") {
+      helpers.applyPreset(nextPreset, timestamp);
+    }
   }, { nextPreset: preset, timestamp: at });
 };
 
 const reconcileSyncPresentation = async (page, offsetMs = 0) => {
   await page.evaluate((offset) => {
-    window.__TRAINER_SYNC_TEST_HELPERS?.reconcilePresentation?.(offset);
+    const helpers = window.__TRAINER_SYNC_TEST_HELPERS;
+    if (helpers && typeof helpers.reconcilePresentation === "function") {
+      helpers.reconcilePresentation(offset);
+    }
   }, offsetMs);
 };
 
@@ -207,13 +217,11 @@ test.describe("shared sync state rendering", () => {
 
     await page.goto("/");
 
-    await expect(page.getByTestId("today-tab")).toBeVisible();
-    await expect(page.getByTestId("today-sync-status")).toContainText("Account sync is unavailable");
-    await expect(page.getByTestId("today-sync-status")).toContainText("local training copy is still usable here");
-
-    await openSettingsAccountSurface(page);
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Account sync is unavailable");
-    await expect(page.getByTestId("settings-sync-status")).toContainText("Keep using this device locally for now");
+    await expect(page.getByTestId("auth-gate")).toBeVisible();
+    await expect(page.getByText(/Account sync is unavailable/i)).toBeVisible();
+    await expect(page.getByText(/local training copy is still usable here/i)).toBeVisible();
+    await expect(page.getByText(/Cloud sync provider is unavailable or misconfigured/i)).toBeVisible();
+    await expect(page.getByTestId("continue-local-mode")).toHaveCount(0);
   });
 
   test("rapid compact-surface sync transitions keep one chip mounted with zero layout shift", async ({ page }) => {

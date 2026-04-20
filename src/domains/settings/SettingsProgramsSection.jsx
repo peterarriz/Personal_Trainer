@@ -17,6 +17,7 @@ import {
 
 export function SettingsProgramsSection({
   colors,
+  onOpenPlan = () => {},
   settingsPlanBasisExplanation = null,
   activeProgramDefinition = null,
   activeStyleDefinition = null,
@@ -48,10 +49,18 @@ export function SettingsProgramsSection({
   return (
     <section data-testid="settings-programs-section" style={SETTINGS_SECTION_STYLE}>
       <div style={SETTINGS_SECTION_HEADER_STYLE}>
-        <div className="sect-title" style={{ color:colors.blue, marginBottom:0 }}>TRAINING STYLE</div>
+        <div className="sect-title" style={{ color:colors.blue, marginBottom:0 }}>PLAN LAYERS</div>
         <div style={SETTINGS_SECTION_INTRO_STYLE}>
-          Choose a named plan, or keep FORMA building one around your goals and routine.
+          Plan now owns activation and style overlays. This section stays available while the migration settles.
         </div>
+      </div>
+      <div style={{ ...SETTINGS_SUBPANEL_STYLE, display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"center", flexWrap:"wrap" }}>
+        <div style={{ ...SETTINGS_BODY_STYLE, maxWidth:640 }}>
+          Use Plan for the main experience. Keep this as a fallback if you want the old controls.
+        </div>
+        <button className="btn" onClick={onOpenPlan} style={{ fontSize:"0.48rem", color:colors.blue, borderColor:colors.blue + "35" }}>
+          Open Plan
+        </button>
       </div>
       <div style={SETTINGS_TWO_COL_GRID_STYLE}>
         <div style={SETTINGS_SUBPANEL_STYLE}>

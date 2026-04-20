@@ -19,6 +19,7 @@ import {
   buildProgramTrajectoryHeaderModel,
   buildProgramWeekGridCells,
 } from "./program-roadmap-service.js";
+import { buildIntakeTrajectoryArcModel } from "./intake-trajectory-arc-service.js";
 
 const sanitizeText = (value = "", maxLength = 180) => String(value || "")
   .replace(/\s+/g, " ")
@@ -27,6 +28,7 @@ const sanitizeText = (value = "", maxLength = 180) => String(value || "")
 
 const toArray = (value) => (Array.isArray(value) ? value : value == null ? [] : [value]);
 const INTAKE_PREVIEW_VISIBLE_WEEK_COUNT = 1;
+const INTAKE_PREVIEW_ARC_WEEK_COUNT = 12;
 
 const parseTrainingDays = (value = "") => {
   const cleanValue = sanitizeText(value, 20);
@@ -232,6 +234,11 @@ export const buildIntakePlanPreviewModel = ({
       resolvedGoals: safeResolvedGoals,
     });
     const primaryCategory = planningGoals?.[0]?.category || "general_fitness";
+    const primaryResolvedGoal = safeResolvedGoals[0]?.resolvedGoal || safeResolvedGoals[0] || null;
+    const primaryMeasurabilityTier = sanitizeText(
+      primaryResolvedGoal?.measurabilityTier || "",
+      40
+    ).toLowerCase();
     const previewPersonalization = buildPreviewPersonalization({
       personalization,
       answers,
@@ -269,7 +276,7 @@ export const buildIntakePlanPreviewModel = ({
       baseWeek: safeBaseWeek,
       weekTemplates: safeWeekTemplates,
       planComposer,
-      horizonWeeks: 2,
+      horizonWeeks: INTAKE_PREVIEW_ARC_WEEK_COUNT,
     });
     const displayHorizon = resolveProgramDisplayHorizon({
       rollingHorizon: runtime?.rollingHorizon || [],
@@ -278,8 +285,8 @@ export const buildIntakePlanPreviewModel = ({
       weekTemplates: safeWeekTemplates,
       goals: previewGoals,
       planComposer,
-      previewLength: 2,
-    }).slice(0, 2);
+      previewLength: INTAKE_PREVIEW_ARC_WEEK_COUNT,
+    }).slice(0, INTAKE_PREVIEW_ARC_WEEK_COUNT);
     const roadmapRows = buildProgramRoadmapRows({
       displayHorizon,
       currentWeek,
@@ -293,6 +300,13 @@ export const buildIntakePlanPreviewModel = ({
       primaryCategory,
       currentWeekLabel: runtime?.currentPlanWeek?.label || "",
       currentWeekFocus: runtime?.currentPlanWeek?.weeklyIntent?.focus || runtime?.currentPlanWeek?.summary || "",
+    });
+    const arcDisclosure = buildIntakeTrajectoryArcModel({
+      roadmapRows,
+      trajectoryHeader,
+      primaryCategory,
+      measurabilityTier: primaryMeasurabilityTier,
+      totalWeeks: INTAKE_PREVIEW_ARC_WEEK_COUNT,
     });
     const weeks = displayHorizon
       .slice(0, INTAKE_PREVIEW_VISIBLE_WEEK_COUNT)
@@ -312,6 +326,7 @@ export const buildIntakePlanPreviewModel = ({
       progressBadge: sanitizeText(trajectoryHeader?.progressBadge || "Draft", 40),
       nextBadge: sanitizeText(trajectoryHeader?.nextBadge || "Next", 40),
       weeks,
+      arcDisclosure,
     };
   } catch {
     return {

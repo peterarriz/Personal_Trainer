@@ -13,10 +13,10 @@ test("service worker controls the repeat visit and caches the auth shell", async
   await page.goto("/");
   await expect(page.getByTestId("auth-gate")).toBeVisible();
 
-  await page.waitForFunction(() => navigator.serviceWorker?.ready, null, { timeout: 30_000 });
+  await page.waitForFunction(() => navigator.serviceWorker && navigator.serviceWorker.ready, null, { timeout: 30_000 });
   await page.reload({ waitUntil: "load" });
   await expect.poll(async () => (
-    page.evaluate(() => Boolean(navigator.serviceWorker?.controller))
+    page.evaluate(() => Boolean(navigator.serviceWorker && navigator.serviceWorker.controller))
   )).toBe(true);
 
   await expect(page.getByTestId("auth-gate")).toBeVisible();

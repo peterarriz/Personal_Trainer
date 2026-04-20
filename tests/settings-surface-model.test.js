@@ -15,7 +15,7 @@ test("settings surface catalog stays focused on clear user jobs", () => {
     SETTINGS_SURFACES.map((surface) => surface.key),
     ["account", "profile", "goals", "baselines", "programs", "preferences", "advanced"]
   );
-  assert.equal(SETTINGS_SURFACES.find((surface) => surface.key === "programs")?.label, "Plan style");
+  assert.equal(SETTINGS_SURFACES.find((surface) => surface.key === "programs")?.label, "Plan layers");
   assert.equal(SETTINGS_SURFACES.find((surface) => surface.key === "advanced")?.label, "Devices");
 });
 

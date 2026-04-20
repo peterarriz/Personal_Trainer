@@ -966,12 +966,24 @@ const buildShortConfirmationReason = (items = []) => (
     || ""
 );
 
+const normalizeClarityItem = (value = "") => {
+  const cleanValue = sanitizeDisplayLine(value, 220);
+  if (!cleanValue) return "";
+  if (/fits the available schedule and baseline cleanly enough to plan from|proceed with a steady first block/i.test(cleanValue)) {
+    return "";
+  }
+  if (/^appearance tracking proxy$/i.test(cleanValue)) {
+    return "Pick one proxy we can track right now: bodyweight or waist.";
+  }
+  return cleanValue;
+};
+
 const buildPlainNeedItem = ({
   label = "",
   question = "",
 } = {}) => {
-  const cleanLabel = sanitizeDisplayLine(label, 160);
-  const cleanQuestion = sanitizeDisplayLine(question, 220);
+  const cleanLabel = normalizeClarityItem(sanitizeDisplayLine(label, 160));
+  const cleanQuestion = normalizeClarityItem(sanitizeDisplayLine(question, 220));
   if (cleanQuestion) return cleanQuestion;
   if (!cleanLabel) return "";
   return sanitizeDisplayLine(`Need: ${cleanLabel.toLowerCase()}.`, 220);
@@ -2042,7 +2054,7 @@ export const buildIntakeGoalReviewModel = ({
     })),
     ...(goalResolution?.unresolvedGaps || []),
     ...resolvedGoals.flatMap((goal) => goal?.unresolvedGaps || []),
-  ]).slice(0, 5);
+  ].map((item) => normalizeClarityItem(item)).filter(Boolean)).slice(0, 5);
   const dedupeQuestionObjects = (questions = []) => {
     const seen = new Set();
     return toArray(questions)
@@ -2072,7 +2084,9 @@ export const buildIntakeGoalReviewModel = ({
     ...buildDeterministicClarifyingQuestions(resolvedGoals),
     ...(aiInterpretationProposal?.missingClarifyingQuestions || []),
   ]);
-  const clarifyingQuestions = nextQuestions.map((item) => item.prompt);
+  const clarifyingQuestions = nextQuestions
+    .map((item) => normalizeClarityItem(item.prompt))
+    .filter(Boolean);
   const confirmationAction = sanitizeText(goalFeasibility?.confirmationAction || "proceed", 20).toLowerCase() || "proceed";
   const arbitrationBlockingIssues = dedupeStrings([
     ...toArray(arbitration?.finalization?.blockingIssues),
@@ -2179,7 +2193,7 @@ export const buildIntakeSummaryRailModel = ({
     })),
     ...toArray(reviewModel?.unresolvedItems),
     ...toArray(reviewModel?.clarifyingQuestions),
-  ]).slice(0, 5);
+  ].map((item) => normalizeClarityItem(item)).filter(Boolean)).slice(0, 5);
   const tradeoffItems = dedupeStrings([
     sanitizeText(reviewModel?.goalStackReview?.tradeoffStatement || reviewModel?.tradeoffStatement || "", 320),
     sanitizeText(reviewModel?.tradeoffSummary || "", 220),

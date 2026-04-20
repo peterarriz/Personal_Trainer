@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Background Rest-Timer System</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #637086;
+      --muted-strong: #53627a;
+      --paper: #f5efe6;
+      --panel: rgba(255, 250, 242, 0.9);
+      --panel-soft: rgba(255, 255, 255, 0.76);
+      --line: rgba(23, 32, 51, 0.08);
+      --blue: #2f77d4;
+      --blue-soft: rgba(47, 119, 212, 0.14);
+      --green: #4f8768;
+      --green-soft: rgba(79, 135, 104, 0.14);
+      --amber: #c68b44;
+      --amber-soft: rgba(198, 139, 68, 0.16);
+      --ink-deep: #0f1625;
+      --phone-shadow: 0 20px 48px rgba(18, 24, 38, 0.18);
+      --page-shadow: 0 24px 60px rgba(26, 32, 45, 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "SF Pro Text", "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(47, 119, 212, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(198, 139, 68, 0.12), transparent 24%),
+        linear-gradient(180deg, #f8f4ec 0%, #f2ece2 100%);
+    }
+
+    .page {
+      width: min(1460px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    .intro {
+      display: grid;
+      gap: 18px;
+      margin-bottom: 34px;
+      max-width: 78ch;
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted-strong);
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Newsreader", Georgia, serif;
+      font-size: clamp(38px, 5vw, 58px);
+      line-height: 0.94;
+      letter-spacing: -0.04em;
+      max-width: 11ch;
+      font-weight: 500;
+    }
+
+    .lede {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 18px;
+      line-height: 1.64;
+    }
+
+    .pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      backdrop-filter: blur(14px);
+    }
+
+    .review {
+      display: grid;
+      gap: 26px;
+      padding: 28px;
+      border-radius: 32px;
+      background: rgba(255, 250, 242, 0.86);
+      border: 1px solid var(--line);
+      box-shadow: var(--page-shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .review-head {
+      display: grid;
+      gap: 10px;
+      max-width: 74ch;
+    }
+
+    .review-head h2 {
+      margin: 0;
+      font-size: clamp(28px, 3vw, 40px);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+    }
+
+    .review-head p {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 17px;
+      line-height: 1.62;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 330px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .phones {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 24px;
+      align-items: start;
+    }
+
+    .phone-wrap {
+      display: grid;
+      gap: 12px;
+      justify-items: center;
+    }
+
+    .screen-label {
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .iphone {
+      width: 316px;
+      min-height: 698px;
+      padding: 14px;
+      border-radius: 42px;
+      background: linear-gradient(180deg, #1a2232 0%, #0f1520 100%);
+      box-shadow: var(--phone-shadow);
+    }
+
+    .iphone-inner {
+      min-height: 670px;
+      border-radius: 30px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background:
+        radial-gradient(circle at top left, rgba(47, 119, 212, 0.08), transparent 28%),
+        linear-gradient(180deg, #f9f6ef 0%, #f3eee4 100%);
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+    }
+
+    .lockscreen {
+      background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.22), transparent 30%),
+        linear-gradient(180deg, #31425c 0%, #182130 100%);
+    }
+
+    .status {
+      display: flex;
+      justify-content: space-between;
+      padding: 14px 18px 6px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .lockscreen .status {
+      color: rgba(255, 255, 255, 0.88);
+    }
+
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 18px 12px;
+      color: var(--ink);
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .content {
+      display: grid;
+      gap: 12px;
+      padding: 0 14px 18px;
+      align-content: start;
+    }
+
+    .hero {
+      display: grid;
+      gap: 10px;
+      padding: 14px 16px 6px;
+    }
+
+    .hero h4 {
+      margin: 0;
+      font-size: 30px;
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+      color: var(--ink);
+      max-width: 8ch;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 14px;
+      line-height: 1.56;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      border: 1px solid transparent;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .chip.blue {
+      background: var(--blue-soft);
+      color: var(--blue);
+      border-color: rgba(47, 119, 212, 0.18);
+    }
+
+    .chip.green {
+      background: var(--green-soft);
+      color: #456a55;
+      border-color: rgba(79, 135, 104, 0.18);
+    }
+
+    .chip.amber {
+      background: var(--amber-soft);
+      color: #8d6228;
+      border-color: rgba(198, 139, 68, 0.22);
+    }
+
+    .card,
+    .note {
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 12px 28px rgba(27, 34, 48, 0.06);
+      backdrop-filter: blur(16px);
+      padding: 14px 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .micro {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .subline {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.56;
+      color: var(--muted-strong);
+    }
+
+    .toggle-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .toggle {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.68);
+      border: 1px solid rgba(23, 32, 51, 0.06);
+    }
+
+    .toggle strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.3;
+      color: var(--ink);
+    }
+
+    .toggle span {
+      display: block;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    .switch {
+      width: 46px;
+      height: 28px;
+      border-radius: 999px;
+      position: relative;
+      background: rgba(23, 32, 51, 0.14);
+      border: 1px solid rgba(23, 32, 51, 0.08);
+      flex-shrink: 0;
+    }
+
+    .switch.on {
+      background: rgba(79, 135, 104, 0.26);
+    }
+
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      background: white;
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.14);
+    }
+
+    .switch.on::after {
+      left: 21px;
+    }
+
+    .action-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      padding: 10px 12px;
+      border-radius: 16px;
+      border: 1px solid rgba(23, 32, 51, 0.08);
+      background: rgba(255, 255, 255, 0.74);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .btn.primary {
+      background: linear-gradient(180deg, #243c5c 0%, #182639 100%);
+      color: white;
+      border-color: transparent;
+    }
+
+    .timer-hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .timer-big {
+      font-size: 42px;
+      line-height: 0.95;
+      letter-spacing: -0.05em;
+      color: var(--ink-deep);
+      font-weight: 800;
+      margin: 0;
+    }
+
+    .timer-ready {
+      color: #456a55;
+    }
+
+    .metric-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .metric {
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.68);
+      border: 1px solid rgba(23, 32, 51, 0.06);
+      display: grid;
+      gap: 4px;
+    }
+
+    .metric strong {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .metric span {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--ink);
+    }
+
+    .lock-body {
+      padding: 36px 18px 18px;
+      display: grid;
+      align-content: start;
+      gap: 18px;
+    }
+
+    .notification {
+      padding: 14px;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.16);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      backdrop-filter: blur(24px);
+      color: white;
+      display: grid;
+      gap: 10px;
+      box-shadow: 0 18px 42px rgba(10, 14, 24, 0.22);
+    }
+
+    .notification-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.76);
+      font-weight: 800;
+    }
+
+    .notification h4 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 0.98;
+      letter-spacing: -0.03em;
+      color: white;
+    }
+
+    .notification .count {
+      margin: 0;
+      font-size: 34px;
+      line-height: 0.94;
+      letter-spacing: -0.05em;
+      color: white;
+      font-weight: 800;
+    }
+
+    .notification p {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.5;
+      color: rgba(255, 255, 255, 0.82);
+    }
+
+    .quick-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .quick {
+      padding: 9px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: white;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .notes {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .note h3 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+    }
+
+    .note p,
+    .note li {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 14px;
+      line-height: 1.58;
+    }
+
+    .note ul {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-around;
+      padding: 10px 18px 16px;
+      border-top: 1px solid rgba(23, 32, 51, 0.06);
+      background: linear-gradient(180deg, rgba(249, 246, 239, 0) 0%, rgba(249, 246, 239, 0.94) 38%, rgba(249, 246, 239, 1) 100%);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .footer .active {
+      color: var(--ink);
+    }
+
+    @media (max-width: 1080px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        width: min(100vw - 24px, 1460px);
+        padding-top: 28px;
+      }
+
+      .review {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="intro">
+      <div class="eyebrow">Background rest-timer system</div>
+      <h1>The timer should keep coaching after the phone locks.</h1>
+      <p class="lede">
+        This system turns the current local rest strip into a real between-set tool: background-safe, lock-screen visible, haptic at the right moments, optionally spoken, and still graceful when the user wants it quiet.
+      </p>
+      <div class="pills">
+        <div class="pill">Consent in onboarding</div>
+        <div class="pill">Lock-screen timer card</div>
+        <div class="pill">T-10 warning</div>
+        <div class="pill">T=0 call</div>
+        <div class="pill">Silent fallback</div>
+      </div>
+    </section>
+
+    <section class="review">
+      <div class="review-head">
+        <div class="eyebrow">System review</div>
+        <h2>One timer, three surfaces, no awkward first-use permission ambush.</h2>
+        <p>
+          The permission request happens during onboarding, the active timer stays visible in Log, and the lock-screen notification mirrors the same exercise and countdown instead of turning into generic reminder copy.
+        </p>
+      </div>
+
+      <div class="grid">
+        <div class="phones">
+          <div class="phone-wrap">
+            <div class="screen-label">Onboarding consent</div>
+            <section class="iphone">
+              <div class="iphone-inner">
+                <div class="status"><span>9:41</span><span>5G 100%</span></div>
+                <div class="nav"><span class="icon">&#8249;</span><span>Setup</span><span class="icon">&#9719;</span></div>
+                <div class="content">
+                  <div class="hero">
+                    <div class="eyebrow">Finish setup</div>
+                    <h4>Stay with your sets</h4>
+                    <p>FORMA can keep your rest timer alive on the lock screen, warn you at 10 seconds, and stay quiet when you want it quiet.</p>
+                    <div class="chip-row">
+                      <span class="chip blue">Background timer</span>
+                      <span class="chip green">Optional voice cue</span>
+                    </div>
+                  </div>
+
+                  <article class="card">
+                    <div class="micro">Timer cues</div>
+                    <div class="toggle-list">
+                      <div class="toggle">
+                        <div>
+                          <strong>Enable lock-screen timer alerts</strong>
+                          <span>See the active rest timer after the phone locks.</span>
+                        </div>
+                        <div class="switch"></div>
+                      </div>
+                      <div class="toggle">
+                        <div>
+                          <strong>Use haptic countdown</strong>
+                          <span>Light warn at 10 seconds, stronger cue when rest is over.</span>
+                        </div>
+                        <div class="switch on"></div>
+                      </div>
+                      <div class="toggle">
+                        <div>
+                          <strong>Speak the last cue</strong>
+                          <span>Optional short call at the end of the timer.</span>
+                        </div>
+                        <div class="switch"></div>
+                      </div>
+                    </div>
+                  </article>
+
+                  <article class="card">
+                    <div class="micro">Coach note</div>
+                    <p class="subline">Ask here once, not while you are standing between sets. You can change this later in settings.</p>
+                    <div class="action-row">
+                      <button class="btn primary">Enable timer cues</button>
+                      <button class="btn">Not now</button>
+                    </div>
+                  </article>
+                </div>
+                <div class="footer"><span>Today</span><span>Program</span><span class="active">Setup</span><span>Coach</span></div>
+              </div>
+            </section>
+          </div>
+
+          <div class="phone-wrap">
+            <div class="screen-label">Log running state</div>
+            <section class="iphone">
+              <div class="iphone-inner">
+                <div class="status"><span>9:41</span><span>5G 100%</span></div>
+                <div class="nav"><span class="icon">&#8249;</span><span>Log</span><span class="icon">&#10003;</span></div>
+                <div class="content">
+                  <div class="hero">
+                    <div class="eyebrow">Strength day</div>
+                    <h4>Rest stays in view</h4>
+                    <p>The timer should feel like part of the lift flow, not a separate mini-app living above it.</p>
+                    <div class="chip-row">
+                      <span class="chip blue">Haptic at T-10</span>
+                      <span class="chip amber">Voice off</span>
+                    </div>
+                  </div>
+
+                  <article class="card">
+                    <div class="timer-hero">
+                      <div>
+                        <div class="micro">Rest timer</div>
+                        <h4 style="font-size:24px; max-width:none;">Front squat</h4>
+                        <p class="subline">Set 4 follows. Stay nearby.</p>
+                      </div>
+                      <div>
+                        <p class="timer-big">0:10</p>
+                        <p class="subline" style="text-align:right;">10 seconds</p>
+                      </div>
+                    </div>
+                    <div class="action-row">
+                      <button class="btn">+30 sec</button>
+                      <button class="btn">Pause</button>
+                      <button class="btn">Clear</button>
+                    </div>
+                  </article>
+
+                  <article class="card">
+                    <div class="micro">At completion</div>
+                    <div class="metric-grid">
+                      <div class="metric">
+                        <strong>Haptic</strong>
+                        <span>Soft cue at 10 seconds, stronger cue at zero.</span>
+                      </div>
+                      <div class="metric">
+                        <strong>Voice</strong>
+                        <span>If enabled: `Front squat. Next set.` If not, stay silent.</span>
+                      </div>
+                      <div class="metric">
+                        <strong>Clear rule</strong>
+                        <span>If the athlete logs a set, the timer clears because work resumed.</span>
+                      </div>
+                    </div>
+                  </article>
+
+                  <article class="card">
+                    <div class="micro">Ready state</div>
+                    <div class="timer-hero">
+                      <div>
+                        <h4 style="font-size:22px; max-width:none;">Front squat</h4>
+                        <p class="subline">Ready for the next set.</p>
+                      </div>
+                      <div>
+                        <p class="timer-big timer-ready">0:00</p>
+                      </div>
+                    </div>
+                  </article>
+                </div>
+                <div class="footer"><span>Today</span><span>Program</span><span class="active">Log</span><span>Coach</span></div>
+              </div>
+            </section>
+          </div>
+
+          <div class="phone-wrap">
+            <div class="screen-label">Lock screen alert</div>
+            <section class="iphone">
+              <div class="iphone-inner lockscreen">
+                <div class="status"><span>9:41</span><span>5G 100%</span></div>
+                <div class="lock-body">
+                  <article class="notification">
+                    <div class="notification-top">
+                      <span>Rest timer</span>
+                      <span>Now</span>
+                    </div>
+                    <h4>Front squat</h4>
+                    <p class="count">0:10</p>
+                    <p>Set 4 follows.</p>
+                    <div class="quick-actions">
+                      <span class="quick">+30 sec</span>
+                      <span class="quick">Pause</span>
+                      <span class="quick">Clear</span>
+                    </div>
+                  </article>
+
+                  <article class="notification">
+                    <div class="notification-top">
+                      <span>Rest timer</span>
+                      <span>Ready</span>
+                    </div>
+                    <h4>Front squat</h4>
+                    <p class="count">0:00</p>
+                    <p>Time for the next set.</p>
+                    <div class="quick-actions">
+                      <span class="quick">+30 sec</span>
+                      <span class="quick">Clear</span>
+                    </div>
+                  </article>
+                </div>
+                <div class="footer" style="background:none; border-top:none; color:rgba(255,255,255,0.68);"><span>Flashlight</span><span>Swipe up</span><span>Camera</span></div>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <aside class="notes">
+          <article class="note">
+            <div class="micro">Edge cases</div>
+            <ul>
+              <li>Pause the session, and the timer pauses with it.</li>
+              <li>Log a set, and the current timer clears immediately.</li>
+              <li>Start a new rest timer, and it replaces the old one.</li>
+              <li>Reload or change session context, and any active timer is cleared.</li>
+            </ul>
+          </article>
+
+          <article class="note">
+            <div class="micro">Silent fallback</div>
+            <p>If alerts or speech are unavailable, the timer still runs in-app, keeps haptics when possible, and resolves to a calm `Rest finished while you were away` message on return.</p>
+          </article>
+
+          <article class="note">
+            <div class="micro">System rule</div>
+            <p>This is a workout-time utility, not a reminder product. Do not bury it under weekly reminders, and do not ask for permission the first time someone taps `Rest 90s` in the gym.</p>
+          </article>
+        </aside>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

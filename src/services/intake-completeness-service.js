@@ -893,7 +893,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
     );
     requiredFields.push(buildRequirement({
       key: INTAKE_COMPLETENESS_QUESTION_KEYS.appearanceProxyAnchor,
-      label: "Appearance tracking proxy",
+      label: "Tracking anchor",
       filled: proxyAnchorReady,
       fieldKeys: [
         INTAKE_COMPLETENESS_FIELDS.currentBodyweight,
@@ -912,7 +912,7 @@ const buildRequirementsForGoal = ({ goal = null, index = 0, facts = {} } = {}) =
           INTAKE_COMPLETENESS_FIELDS.currentWaist,
           INTAKE_COMPLETENESS_FIELDS.appearanceProxyPlan,
         ],
-        label: "Appearance tracking proxy",
+        label: "Tracking anchor",
         goalRole,
         expectedValueType: INTAKE_COMPLETENESS_VALUE_TYPES.appearanceProxyAnchor,
         inputFields: [

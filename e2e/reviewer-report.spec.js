@@ -83,7 +83,7 @@ test.describe("history export tooling", () => {
     await expect(page.getByTestId("settings-tab")).toBeVisible();
     await page.getByTestId("settings-surface-account").click();
     await expect(page.getByTestId("settings-account-section")).toBeVisible();
-    await page.getByTestId("settings-account-advanced").locator("summary").click();
+    await page.getByTestId("settings-account-advanced").locator("summary").first().click();
     await expect(page.getByTestId("settings-reviewer-report-card")).toHaveCount(0);
   });
 });

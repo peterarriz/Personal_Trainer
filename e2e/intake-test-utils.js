@@ -558,17 +558,29 @@ async function fillPlanningRealityInputs(page, {
 }
 
 async function fillStarterMetricInputs(page, quickMetrics = {}) {
+  const pickVisibleTarget = async (locator) => {
+    const count = await locator.count();
+    if (!count) return null;
+    for (let index = count - 1; index >= 0; index -= 1) {
+      const candidate = locator.nth(index);
+      if (await candidate.isVisible().catch(() => false)) return candidate;
+    }
+    return locator.first();
+  };
+
   for (const [fieldKey, rawValue] of Object.entries(quickMetrics || {})) {
     if (rawValue == null || rawValue === "") continue;
     const choiceValue = typeof rawValue === "object" && rawValue !== null ? rawValue.value : rawValue;
     const choiceTarget = page.getByTestId(`intake-goal-metric-${fieldKey}-${toTestIdFragment(choiceValue)}`);
-    if (await choiceTarget.count()) {
-      await choiceTarget.click();
+    const visibleChoiceTarget = await pickVisibleTarget(choiceTarget);
+    if (visibleChoiceTarget) {
+      await visibleChoiceTarget.click();
       continue;
     }
     const inputTarget = page.getByTestId(`intake-goal-metric-${toTestIdFragment(fieldKey)}`);
-    if (await inputTarget.count()) {
-      await inputTarget.fill(String(choiceValue));
+    const visibleInputTarget = await pickVisibleTarget(inputTarget);
+    if (visibleInputTarget) {
+      await visibleInputTarget.fill(String(choiceValue));
     }
   }
 }
@@ -749,6 +761,7 @@ async function completeGoalLibraryIntakeStep(page, {
   templateId = "",
   quickMetrics = {},
   stopAtReview = false,
+  lockGoalOrder = false,
   ...planningOverrides
 } = {}) {
   const normalizedGoalType = GOAL_TYPE_ALIASES[goalType] || goalType;
@@ -767,12 +780,14 @@ async function completeGoalLibraryIntakeStep(page, {
   }
   await fillStarterMetricInputs(page, normalizedQuickMetrics);
   await fillPlanningRealityInputs(page, planningOverrides);
-  const goalLockToggle = page.getByTestId("intake-goal-lock-toggle");
-  if (await goalLockToggle.isVisible().catch(() => false)) {
-    await expect(goalLockToggle).toBeEnabled();
-    if (!/locked/i.test(await goalLockToggle.innerText().catch(() => ""))) {
-      await goalLockToggle.click();
-      await expect(goalLockToggle).toContainText(/locked/i);
+  if (lockGoalOrder) {
+    const goalLockToggle = page.getByTestId("intake-goal-lock-toggle");
+    if (await goalLockToggle.isVisible().catch(() => false)) {
+      await expect(goalLockToggle).toBeEnabled();
+      if (!/locked/i.test(await goalLockToggle.innerText().catch(() => ""))) {
+        await goalLockToggle.click();
+        await expect(goalLockToggle).toContainText(/locked/i);
+      }
     }
   }
   await page.getByTestId("intake-footer-continue").click();
@@ -926,7 +941,7 @@ async function fillAnchorResponse(page, fieldId, response = {}) {
     } else {
       const structuredInput = page.getByTestId(`intake-anchor-input-${fieldFragment}`);
       await expect(structuredInput).toBeVisible();
-      const nativeInputType = await structuredInput.evaluate((node) => node?.type || "");
+      const nativeInputType = await structuredInput.evaluate((node) => (node && node.type) || "");
       if (nativeInputType === "month" || nativeInputType === "date") {
         await structuredInput.fill(normalizeNativeTimelineInput(response.value, nativeInputType));
       } else if (nativeInputType === "number") {

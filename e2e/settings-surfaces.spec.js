@@ -56,6 +56,7 @@ test.describe("settings surface integration", () => {
     await openSettingsSurface(page, "goals", "settings-goals-section");
     await expect(page.getByTestId("settings-profile-section")).toHaveCount(0);
     await expect(page.getByTestId("settings-goals-management")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open Plan" })).toBeVisible();
 
     await openSettingsSurface(page, "baselines", "settings-baselines-section");
     await expect(page.getByTestId("settings-goals-section")).toHaveCount(0);
@@ -63,7 +64,7 @@ test.describe("settings surface integration", () => {
 
     await openSettingsSurface(page, "programs", "settings-programs-section");
     await expect(page.getByTestId("settings-baselines-section")).toHaveCount(0);
-    await expect(page.getByText("PLAN STYLE").first()).toBeVisible();
+    await expect(page.getByText("PLAN LAYERS").first()).toBeVisible();
 
     await openSettingsSurface(page, "preferences", "settings-preferences-section");
     await expect(page.getByTestId("settings-programs-section")).toHaveCount(0);
@@ -91,7 +92,9 @@ test.describe("settings surface integration", () => {
 
     await expect.poll(() => page.evaluate(() => {
       const payload = JSON.parse(localStorage.getItem("trainer_local_cache_v4") || "{}");
-      return payload?.personalization?.profile?.name || "";
+      const personalization = payload && typeof payload === "object" ? payload.personalization : null;
+      const profile = personalization && typeof personalization === "object" ? personalization.profile : null;
+      return profile && typeof profile === "object" ? profile.name || "" : "";
     })).toBe("Jordan");
 
     await openSettingsSurface(page, "preferences", "settings-preferences-section");
@@ -99,7 +102,10 @@ test.describe("settings surface integration", () => {
     await expect(page.getByTestId("settings-theme-circuit")).toHaveAttribute("data-selected", "true");
     await expect.poll(() => page.evaluate(() => {
       const payload = JSON.parse(localStorage.getItem("trainer_local_cache_v4") || "{}");
-      return payload?.personalization?.settings?.appearance?.theme || "";
+      const personalization = payload && typeof payload === "object" ? payload.personalization : null;
+      const settings = personalization && typeof personalization === "object" ? personalization.settings : null;
+      const appearance = settings && typeof settings === "object" ? settings.appearance : null;
+      return appearance && typeof appearance === "object" ? appearance.theme || "" : "";
     })).toBe("Circuit");
 
     await openSettingsSurface(page, "advanced", "settings-advanced-section");

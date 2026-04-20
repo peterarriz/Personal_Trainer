@@ -58,48 +58,21 @@ const buildSeedState = () => {
 
 const seedAppState = async (page) => {
   const seedState = buildSeedState();
-  await page.addInitScript((seed) => {
-    const lockedAuthSession = JSON.stringify(seed.authSession);
-    const lockedCachePayload = JSON.stringify(seed.persistedPayload);
-    window.localStorage.setItem("trainer_auth_session_v1", lockedAuthSession);
-    window.localStorage.setItem("trainer_local_cache_v4", lockedCachePayload);
-    const originalSetItem = Storage.prototype.setItem;
-    Storage.prototype.setItem = function patchedSetItem(key, value) {
-      if (key === "trainer_auth_session_v1") {
-        return originalSetItem.call(this, key, lockedAuthSession);
-      }
-      if (key === "trainer_local_cache_v4") {
-        return originalSetItem.call(this, key, lockedCachePayload);
-      }
-      return originalSetItem.call(this, key, value);
-    };
-    const originalFetch = window.fetch.bind(window);
-    window.fetch = async (input, init) => {
-      const url = typeof input === "string" ? input : input?.url || "";
-      if (/example\.supabase\.co/i.test(url)) {
-        if (/\/rest\/v1\//i.test(url)) {
-          return new Response(JSON.stringify({ message: "stubbed integration failure" }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-        if (/\/auth\/v1\/logout/i.test(url)) {
-          return new Response("", { status: 204 });
-        }
-        return new Response(JSON.stringify({ message: "stubbed auth response" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      return originalFetch(input, init);
-    };
-  }, seedState);
+  await mockSupabaseRuntime(page, {
+    session: seedState.authSession,
+    payload: seedState.persistedPayload,
+  });
+  return seedState;
 };
 
 const openApp = async (page) => {
-  await seedAppState(page);
-  await page.goto(`/?e2e=${Date.now()}`);
-  await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
+  const seedState = await seedAppState(page);
+  await bootAppWithSupabaseSeeds(page, {
+    session: seedState.authSession,
+    payload: seedState.persistedPayload,
+    path: `/?e2e=${Date.now()}`,
+  });
+  await expect(page.getByTestId("app-tab-settings")).toBeVisible();
   await expect(page.getByTestId("app-tab-nutrition")).toBeVisible();
   const skipAppleHealth = page.getByRole("button", { name: "Skip for now" });
   await skipAppleHealth.waitFor({ state: "visible", timeout: 1500 }).catch(() => null);
@@ -110,15 +83,16 @@ const openApp = async (page) => {
 };
 
 const openSettings = async (page) => {
-  await page.getByRole("button", { name: "Open settings" }).click({ force: true });
+  await page.getByTestId("app-tab-settings").click({ force: true });
+  await expect(page.getByTestId("settings-tab")).toBeVisible();
 };
 
 const openTab = async (page, testId) => {
   await page.getByTestId(testId).click({ force: true });
 };
 
-const getHydrationCard = (page) => page.locator(".card").filter({ hasText: "HYDRATION & SUPPLEMENTS" }).first();
-const getHydrationButton = (page) => getHydrationCard(page).getByRole("button", { name: /Tap to add 12 oz/i });
+const getHydrationCard = (page) => page.locator(".card").filter({ hasText: "HYDRATION" }).first();
+const getHydrationButton = (page) => page.getByRole("button", { name: /Tap to add 12 oz/i });
 
 const readHydrationNumbers = async (page) => {
   const text = await getHydrationButton(page).innerText();
@@ -158,16 +132,16 @@ test("Settings account controls show visible feedback and sign-out result", asyn
   await expect(page.getByTestId("settings-sync-status")).toContainText(/Everything is saved|Up to date/i);
 
   await page.getByRole("button", { name: "Refresh from account" }).click();
-  await expect(page.getByText(/Reloaded cloud data|Cloud data could not be reloaded right now/i)).toBeVisible();
+  await expect(page.getByText(/Reloaded cloud data|Cloud data was reloaded for the signed-in account|Cloud data could not be reloaded right now/i)).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByText("Sign in to sync")).toBeVisible();
+  await expect(page.getByText(/Sign in to reopen your plan/i)).toBeVisible();
 });
 
 test("Nutrition hydration logging stays usable across and above target", async ({ page }) => {
   await openApp(page);
   await openTab(page, "app-tab-nutrition");
-  await expect(page.getByText("TODAY'S FOOD PLAN")).toBeVisible();
+  await expect(page.getByTestId("nutrition-tab")).toBeVisible();
 
   const before = await readHydrationNumbers(page);
   for (let index = 0; index < 12; index += 1) {
@@ -186,11 +160,13 @@ test("Nutrition hydration logging stays usable across and above target", async (
 test("Nutrition hides supplement checklist until a stored plan exists", async ({ page }) => {
   await openApp(page);
   await openTab(page, "app-tab-nutrition");
-  await expect(page.getByText("TODAY'S FOOD PLAN")).toBeVisible();
+  await expect(page.getByTestId("nutrition-tab")).toBeVisible();
 
-  const hydrationCard = getHydrationCard(page);
-  await expect(hydrationCard).toContainText(/No approved supplement stack yet\. Add only the supplements you actually use\.|No supplement stack is approved yet\. Add only the supplements you actually use\./i);
-  await expect(hydrationCard.getByRole("button", { name: "Why" })).toHaveCount(0);
+  await expect(page.getByText("Supplement plan")).toBeVisible();
+  const supplementDisclosure = page.getByText("Supplement plan").locator("..");
+  await supplementDisclosure.click();
+  await expect(page.getByText(/No approved supplement stack yet\. Add only the supplements you actually use\.|No supplement stack is approved yet\. Add only the supplements you actually use\./i)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Why" })).toHaveCount(0);
 });
 
 test("Coach keeps only applied-action surfaces visible", async ({ page }) => {

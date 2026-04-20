@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rest-Day Today Screen</title>
+  <style>
+    :root {
+      --ink: #1b2230;
+      --muted: #667284;
+      --muted-strong: #556173;
+      --canvas: #f6f0e7;
+      --canvas-soft: #fbf7f1;
+      --panel: rgba(255, 252, 247, 0.92);
+      --panel-soft: rgba(255, 255, 255, 0.72);
+      --line: rgba(27, 34, 48, 0.08);
+      --warm: #d9a96c;
+      --sage: #83997f;
+      --peach: #eac6aa;
+      --phone: #192232;
+      --shadow: 0 24px 60px rgba(26, 32, 45, 0.14);
+      --phone-shadow: 0 20px 48px rgba(18, 24, 38, 0.18);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "SF Pro Text", "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(217, 169, 108, 0.18), transparent 26%),
+        radial-gradient(circle at top right, rgba(131, 153, 127, 0.14), transparent 24%),
+        linear-gradient(180deg, #f8f4ed 0%, #f2ece2 100%);
+    }
+
+    .page {
+      width: min(1380px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    .intro {
+      display: grid;
+      gap: 18px;
+      margin-bottom: 34px;
+      max-width: 76ch;
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      line-height: 1.2;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-weight: 800;
+      color: var(--muted-strong);
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Newsreader", Georgia, serif;
+      font-size: clamp(38px, 5vw, 58px);
+      line-height: 0.94;
+      letter-spacing: -0.04em;
+      max-width: 11ch;
+      font-weight: 500;
+    }
+
+    .lede {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.65;
+      color: var(--muted-strong);
+    }
+
+    .principles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.74);
+      border: 1px solid rgba(27, 34, 48, 0.08);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      backdrop-filter: blur(14px);
+    }
+
+    .review {
+      display: grid;
+      gap: 24px;
+      padding: 28px;
+      border-radius: 32px;
+      background: rgba(255, 250, 242, 0.86);
+      border: 1px solid rgba(27, 34, 48, 0.08);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .review-head {
+      display: grid;
+      gap: 10px;
+      max-width: 72ch;
+    }
+
+    .review-head h2 {
+      margin: 0;
+      font-size: clamp(28px, 3vw, 40px);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+    }
+
+    .review-head p {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 17px;
+      line-height: 1.6;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 700px) minmax(280px, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    .phones {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 22px;
+      align-items: start;
+    }
+
+    .phone-wrap {
+      display: grid;
+      gap: 12px;
+      justify-items: center;
+    }
+
+    .screen-label {
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .iphone {
+      width: 316px;
+      min-height: 684px;
+      padding: 14px;
+      border-radius: 42px;
+      background: linear-gradient(180deg, #1a2232 0%, #0f1520 100%);
+      box-shadow: var(--phone-shadow);
+    }
+
+    .iphone-inner {
+      min-height: 656px;
+      border-radius: 30px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background:
+        radial-gradient(circle at top left, rgba(234, 198, 170, 0.22), transparent 34%),
+        radial-gradient(circle at top right, rgba(217, 169, 108, 0.14), transparent 24%),
+        linear-gradient(180deg, #fbf8f2 0%, #f3eee5 100%);
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+    }
+
+    .status {
+      display: flex;
+      justify-content: space-between;
+      padding: 14px 18px 6px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 18px 12px;
+      color: var(--ink);
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .content {
+      display: grid;
+      gap: 12px;
+      padding: 0 14px 18px;
+      align-content: start;
+    }
+
+    .card,
+    .quiet-card,
+    .tomorrow-card,
+    .sheet,
+    .note-card {
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 12px 28px rgba(27, 34, 48, 0.06);
+      backdrop-filter: blur(16px);
+    }
+
+    .card {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .quiet-card,
+    .tomorrow-card,
+    .note-card,
+    .sheet {
+      padding: 14px 16px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .micro {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .signature {
+      margin: 0;
+      font-family: "Newsreader", Georgia, serif;
+      font-style: italic;
+      font-size: 23px;
+      line-height: 1.05;
+      color: #3f4b5d;
+      letter-spacing: -0.02em;
+    }
+
+    .hero-title {
+      margin: 0;
+      font-size: 30px;
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+      color: var(--ink);
+      max-width: 8ch;
+    }
+
+    .reason {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.55;
+      color: var(--muted-strong);
+    }
+
+    .tone-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .chip {
+      width: fit-content;
+      padding: 8px 10px;
+      border-radius: 14px;
+      background: rgba(217, 169, 108, 0.14);
+      color: #7b5b31;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: 1px solid rgba(217, 169, 108, 0.22);
+    }
+
+    .anchors {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.66);
+      border: 1px solid rgba(27, 34, 48, 0.06);
+    }
+
+    .anchor {
+      display: grid;
+      grid-template-columns: 58px 1fr;
+      gap: 10px;
+      align-items: start;
+      font-size: 13px;
+      line-height: 1.48;
+      color: var(--ink);
+    }
+
+    .anchor strong {
+      color: #3e4b5b;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .cta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .text-link {
+      border: none;
+      background: none;
+      padding: 0;
+      color: #4d6b55;
+      font-size: 15px;
+      font-weight: 800;
+      cursor: default;
+    }
+
+    .helper {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+
+    .meta {
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+    }
+
+    .tomorrow-title {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.15;
+      color: var(--ink);
+    }
+
+    .sheet {
+      align-content: start;
+      gap: 10px;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .mini-chip {
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.74);
+      border: 1px solid rgba(27, 34, 48, 0.08);
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(27, 34, 48, 0.06);
+    }
+
+    .field strong {
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .field span {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--ink);
+    }
+
+    .save {
+      width: fit-content;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(131, 153, 127, 0.18);
+      background: rgba(131, 153, 127, 0.14);
+      color: #45624b;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-around;
+      padding: 10px 18px 16px;
+      border-top: 1px solid rgba(27, 34, 48, 0.06);
+      background: linear-gradient(180deg, rgba(251, 248, 242, 0) 0%, rgba(251, 248, 242, 0.94) 38%, rgba(251, 248, 242, 1) 100%);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .footer .active {
+      color: var(--ink);
+    }
+
+    .notes {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .note-card h3 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+
+    .note-card p,
+    .note-card li {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--muted-strong);
+    }
+
+    .note-card ul {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 6px;
+    }
+
+    @media (max-width: 1080px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        width: min(100vw - 24px, 1380px);
+        padding-top: 28px;
+      }
+
+      .review {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="intro">
+      <div class="eyebrow">Today rest-day design</div>
+      <h1>Recovery should feel planned, not empty.</h1>
+      <p class="lede">
+        This rest-day Today screen treats recovery as part of the block. It stays warm, coach-led, and light on demands while still giving the user a quiet place to note recovery and a quick look at what tomorrow needs.
+      </p>
+      <div class="principles">
+        <div class="pill">Planned recovery, not dead space</div>
+        <div class="pill">One-sentence reason</div>
+        <div class="pill">Quiet optional log</div>
+        <div class="pill">Tomorrow in one glance</div>
+        <div class="pill">Serif signature line</div>
+      </div>
+    </section>
+
+    <section class="review">
+      <div class="review-head">
+        <div class="eyebrow">Surface review</div>
+        <h2>Rest day becomes a calm coaching moment.</h2>
+        <p>
+          The hero sets the emotional temperature, the reason line explains why rest is there, the recovery note stays optional, and tomorrow is visible without hijacking the screen.
+        </p>
+      </div>
+
+      <div class="grid">
+        <div class="phones">
+          <div class="phone-wrap">
+            <div class="screen-label">Today default</div>
+            <section class="iphone">
+              <div class="iphone-inner">
+                <div class="status"><span>9:41</span><span>5G 100%</span></div>
+                <div class="nav"><span class="icon">&#8249;</span><span>Today</span><span class="icon">&#9719;</span></div>
+                <div class="content">
+                  <article class="card">
+                    <div class="tone-row">
+                      <div>
+                        <div class="micro">Recovery day</div>
+                        <p class="signature">Quiet work still counts.</p>
+                      </div>
+                      <div class="chip">Planned rest</div>
+                    </div>
+                    <h3 class="hero-title">Take the day light</h3>
+                    <p class="reason">
+                      Today is rest because the last two sessions carried the load, and tomorrow lands better if you show up fresh.
+                    </p>
+                    <div class="anchors">
+                      <div class="anchor"><strong>Move</strong><span>Walk if it feels good, not because you need to earn anything.</span></div>
+                      <div class="anchor"><strong>Reset</strong><span>Give yourself a few easy minutes of mobility and leave it there.</span></div>
+                      <div class="anchor"><strong>Recover</strong><span>Normal meals, more water, earlier sleep. Let the work settle.</span></div>
+                    </div>
+                  </article>
+
+                  <article class="quiet-card">
+                    <div class="cta-row">
+                      <div>
+                        <div class="micro">Optional note</div>
+                        <p class="helper">If recovery said something today, you can log it.</p>
+                      </div>
+                      <button class="text-link">Log recovery</button>
+                    </div>
+                  </article>
+
+                  <article class="tomorrow-card">
+                    <div class="micro">Tomorrow</div>
+                    <h3 class="tomorrow-title">Lower-body strength, 45 min</h3>
+                    <p class="reason">Crisp work, no junk volume. Fresh legs matter more than extra work tonight.</p>
+                    <div class="meta">First lift: front squat. Then hinge and trunk support.</div>
+                  </article>
+                </div>
+                <div class="footer"><span class="active">Today</span><span>Program</span><span>Log</span><span>Coach</span></div>
+              </div>
+            </section>
+          </div>
+
+          <div class="phone-wrap">
+            <div class="screen-label">Optional recovery note</div>
+            <section class="iphone">
+              <div class="iphone-inner">
+                <div class="status"><span>9:41</span><span>5G 100%</span></div>
+                <div class="nav"><span class="icon">&#8249;</span><span>Today</span><span class="icon">&#10005;</span></div>
+                <div class="content">
+                  <article class="card">
+                    <div class="micro">Recovery day</div>
+                    <p class="signature">Let the work settle.</p>
+                    <h3 class="hero-title">Take the day light</h3>
+                    <p class="reason">
+                      Today is rest because the block needs absorption more than another hard effort.
+                    </p>
+                  </article>
+
+                  <article class="sheet">
+                    <div class="micro">Recovery log</div>
+                    <p class="helper">Only note what matters. This is a coach notebook, not a checklist game.</p>
+
+                    <div class="field">
+                      <strong>Sleep</strong>
+                      <div class="chip-row">
+                        <span class="mini-chip">Light</span>
+                        <span class="mini-chip">Fine</span>
+                        <span class="mini-chip">Good</span>
+                      </div>
+                    </div>
+
+                    <div class="field">
+                      <strong>Body feel</strong>
+                      <div class="chip-row">
+                        <span class="mini-chip">Heavy</span>
+                        <span class="mini-chip">Normal</span>
+                        <span class="mini-chip">Fresh</span>
+                      </div>
+                    </div>
+
+                    <div class="field">
+                      <strong>Anything worth noting?</strong>
+                      <span>Sore calves eased up after a walk. Energy feels better by late afternoon.</span>
+                    </div>
+
+                    <button class="save">Save note</button>
+                  </article>
+
+                  <article class="tomorrow-card">
+                    <div class="micro">Tomorrow</div>
+                    <h3 class="tomorrow-title">Lower-body strength, 45 min</h3>
+                    <p class="reason">You are resting to make that session feel clean, not flat.</p>
+                  </article>
+                </div>
+                <div class="footer"><span class="active">Today</span><span>Program</span><span>Log</span><span>Coach</span></div>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <aside class="notes">
+          <article class="note-card">
+            <div class="micro">Brand signature</div>
+            <h3>Morning line</h3>
+            <p>
+              A short serif epigram sits above the hero headline on rest days. It reads like a coach's margin note, not a motivational poster.
+            </p>
+          </article>
+
+          <article class="note-card">
+            <div class="micro">Why it works</div>
+            <ul>
+              <li>Rest is explained in one sentence, so it feels intentional instead of suspiciously empty.</li>
+              <li>The recovery log is clearly optional and visually quieter than the hero.</li>
+              <li>Tomorrow is visible in one glance, which helps the user understand what today's recovery is protecting.</li>
+            </ul>
+          </article>
+
+          <article class="note-card">
+            <div class="micro">Guardrail</div>
+            <p>
+              No streaks, scorecards, rings, badges, or celebratory completion language. Recovery should feel respected, not gamified.
+            </p>
+          </article>
+        </aside>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

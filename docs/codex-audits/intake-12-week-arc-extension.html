@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Intake 12-Week Arc Extension</title>
+  <style>
+    :root {
+      --ink: #172034;
+      --muted: #627086;
+      --muted-strong: #51607a;
+      --paper: #f6f0e7;
+      --panel: rgba(255, 250, 242, 0.9);
+      --panel-soft: rgba(255, 255, 255, 0.76);
+      --line: rgba(23, 32, 52, 0.08);
+      --blue: #2d78d9;
+      --blue-soft: rgba(45, 120, 217, 0.14);
+      --green: #4d8666;
+      --green-soft: rgba(77, 134, 102, 0.14);
+      --amber: #c0893c;
+      --amber-soft: rgba(192, 137, 60, 0.16);
+      --phone-shadow: 0 20px 48px rgba(18, 24, 38, 0.18);
+      --page-shadow: 0 24px 60px rgba(26, 32, 45, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "SF Pro Text", "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(45, 120, 217, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(192, 137, 60, 0.1), transparent 22%),
+        linear-gradient(180deg, #f8f4ec 0%, #f2ece2 100%);
+    }
+
+    .page {
+      width: min(1440px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    .intro {
+      display: grid;
+      gap: 18px;
+      margin-bottom: 34px;
+      max-width: 76ch;
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted-strong);
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Newsreader", Georgia, serif;
+      font-size: clamp(38px, 5vw, 58px);
+      line-height: 0.94;
+      letter-spacing: -0.04em;
+      max-width: 12ch;
+      font-weight: 500;
+    }
+
+    .lede {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 18px;
+      line-height: 1.64;
+    }
+
+    .pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      backdrop-filter: blur(14px);
+    }
+
+    .review {
+      display: grid;
+      gap: 26px;
+      padding: 28px;
+      border-radius: 32px;
+      background: rgba(255, 250, 242, 0.86);
+      border: 1px solid var(--line);
+      box-shadow: var(--page-shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .review-head {
+      display: grid;
+      gap: 10px;
+      max-width: 74ch;
+    }
+
+    .review-head h2 {
+      margin: 0;
+      font-size: clamp(28px, 3vw, 40px);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+    }
+
+    .review-head p {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 17px;
+      line-height: 1.62;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 960px) minmax(280px, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    .phones {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(280px, 1fr));
+      gap: 22px;
+      align-items: start;
+    }
+
+    .phone-wrap {
+      display: grid;
+      gap: 12px;
+      justify-items: center;
+    }
+
+    .screen-label {
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .iphone {
+      width: 316px;
+      min-height: 720px;
+      padding: 14px;
+      border-radius: 42px;
+      background: linear-gradient(180deg, #1a2232 0%, #0f1520 100%);
+      box-shadow: var(--phone-shadow);
+      justify-self: center;
+    }
+
+    .iphone-inner {
+      min-height: 692px;
+      border-radius: 30px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background:
+        radial-gradient(circle at top left, rgba(45, 120, 217, 0.08), transparent 28%),
+        linear-gradient(180deg, #f9f6ef 0%, #f3eee4 100%);
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+    }
+
+    .status {
+      display: flex;
+      justify-content: space-between;
+      padding: 14px 18px 6px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 18px 12px;
+      color: var(--ink);
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .content {
+      display: grid;
+      gap: 12px;
+      padding: 0 14px 18px;
+      align-content: start;
+    }
+
+    .hero, .summary-card, .arc, .sidebar-card {
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 10px 28px rgba(24, 33, 45, 0.06);
+      backdrop-filter: blur(16px);
+    }
+
+    .hero, .summary-card, .arc {
+      padding: 15px 16px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .hero h4 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 0.96;
+      letter-spacing: -0.04em;
+      color: var(--ink);
+      max-width: 9ch;
+    }
+
+    .hero p, .body {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 14px;
+      line-height: 1.54;
+    }
+
+    .meta-row, .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      border: 1px solid transparent;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .chip.blue {
+      background: var(--blue-soft);
+      color: var(--blue);
+      border-color: rgba(45, 120, 217, 0.18);
+    }
+
+    .chip.green {
+      background: var(--green-soft);
+      color: var(--green);
+      border-color: rgba(77, 134, 102, 0.2);
+    }
+
+    .chip.amber {
+      background: var(--amber-soft);
+      color: var(--amber);
+      border-color: rgba(192, 137, 60, 0.2);
+    }
+
+    .week-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
+      gap: 8px;
+    }
+
+    .week-cell {
+      display: grid;
+      gap: 4px;
+      padding: 10px 8px;
+      border-radius: 14px;
+      border: 1px solid rgba(45, 120, 217, 0.16);
+      background: rgba(45, 120, 217, 0.08);
+    }
+
+    .week-cell small {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--blue);
+      font-weight: 800;
+    }
+
+    .week-cell span {
+      font-size: 12px;
+      line-height: 1.35;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .summary-head {
+      display: grid;
+      gap: 6px;
+    }
+
+    .summary-title {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.02;
+      letter-spacing: -0.03em;
+    }
+
+    .arc {
+      gap: 14px;
+    }
+
+    .phase-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .phase {
+      display: grid;
+      gap: 4px;
+      padding: 11px 10px;
+      border-radius: 16px;
+      border: 1px solid rgba(23, 32, 52, 0.08);
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .phase.current {
+      background: rgba(45, 120, 217, 0.1);
+      border-color: rgba(45, 120, 217, 0.22);
+    }
+
+    .phase.next {
+      background: rgba(77, 134, 102, 0.1);
+      border-color: rgba(77, 134, 102, 0.22);
+    }
+
+    .phase small {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .phase span {
+      font-size: 13px;
+      line-height: 1.28;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .label {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .line {
+      font-size: 13px;
+      line-height: 1.56;
+      color: var(--muted-strong);
+      margin: 0;
+    }
+
+    .collapsed-row {
+      display: grid;
+      gap: 8px;
+      padding: 12px 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(45, 120, 217, 0.16);
+      background: rgba(10, 16, 26, 0.78);
+    }
+
+    .collapsed-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .collapsed-title {
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #8fa5c8;
+      font-weight: 800;
+    }
+
+    .collapsed-summary {
+      font-size: 15px;
+      line-height: 1.4;
+      color: #f8fbff;
+      font-weight: 700;
+    }
+
+    .dark-chip {
+      padding: 6px 9px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #dbe7f6;
+      background: rgba(111, 148, 198, 0.12);
+      border: 1px solid rgba(111, 148, 198, 0.2);
+    }
+
+    .sidebar {
+      display: grid;
+      gap: 14px;
+    }
+
+    .sidebar-card {
+      padding: 18px;
+      background: rgba(255, 255, 255, 0.72);
+      display: grid;
+      gap: 12px;
+    }
+
+    .sidebar-card h3 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+    }
+
+    .sidebar-card p, .sidebar-card li {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.58;
+      color: var(--muted-strong);
+    }
+
+    .sidebar-card ul {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 8px;
+    }
+
+    @media (max-width: 1220px) {
+      .grid { grid-template-columns: 1fr; }
+      .phones { grid-template-columns: repeat(2, minmax(280px, 1fr)); }
+    }
+
+    @media (max-width: 820px) {
+      .page {
+        width: min(100vw - 24px, 1440px);
+        padding-top: 28px;
+      }
+      .phones { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="intro">
+      <div class="eyebrow">Intake preview</div>
+      <h1>Week one should promise the block, not hide it.</h1>
+      <p class="lede">
+        The living-card intake preview now keeps its fast week-one payoff, but adds a collapsed 12-week arc directly underneath it.
+        The arc uses the same phase-ladder language Program uses later, so the intake promise and the live block view feel like one system.
+      </p>
+      <div class="pills">
+        <div class="pill">Collapsed by default</div>
+        <div class="pill">Tap to expand</div>
+        <div class="pill">Program-matched phase ladder</div>
+        <div class="pill">Exact and fuzzy modes</div>
+      </div>
+    </section>
+
+    <section class="review">
+      <div class="review-head">
+        <div class="eyebrow">Three states</div>
+        <h2>Same intake rail, different trust posture.</h2>
+        <p>
+          The first mock shows the default collapsed state. The second shows the expanded exact-metric version. The third shows the expanded fuzzy-goal version, using the same ladder but calmer direction-first copy.
+        </p>
+      </div>
+
+      <div class="grid">
+        <div class="phones">
+          <div class="phone-wrap">
+            <div class="screen-label">Exact / Collapsed</div>
+            <div class="iphone">
+              <div class="iphone-inner">
+                <div class="status"><span>9:41</span><span>FORMA</span></div>
+                <div class="nav"><span>Intake</span><span class="icon">[]</span></div>
+                <div class="content">
+                  <div class="hero">
+                    <div class="eyebrow">Live summary</div>
+                    <h4>What your first week is built on</h4>
+                    <p>Goal first. Watch the draft take shape before you lock anything in.</p>
+                    <div class="meta-row">
+                      <span class="chip blue">Draft only</span>
+                      <span class="chip green">Preview ready</span>
+                    </div>
+                  </div>
+
+                  <div class="summary-card">
+                    <div class="summary-head">
+                      <div class="eyebrow">Plan shape</div>
+                      <h5 class="summary-title">Week 1 preview</h5>
+                      <p class="body">Build the next run milestone.</p>
+                    </div>
+                    <div class="week-grid">
+                      <div class="week-cell"><small>Mon</small><span>Easy run</span></div>
+                      <div class="week-cell"><small>Tue</small><span>Strength</span></div>
+                      <div class="week-cell"><small>Thu</small><span>Threshold</span></div>
+                      <div class="week-cell"><small>Sat</small><span>Long run</span></div>
+                    </div>
+                    <div class="collapsed-row">
+                      <div class="collapsed-top">
+                        <div class="collapsed-title">12-week arc</div>
+                        <div class="dark-chip">Metric-led</div>
+                      </div>
+                      <div class="collapsed-summary">Build now, Sharpen next</div>
+                      <div class="chip-row">
+                        <span class="dark-chip">Current: Build</span>
+                        <span class="dark-chip">Next: Sharpen</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="phone-wrap">
+            <div class="screen-label">Exact / Expanded</div>
+            <div class="iphone">
+              <div class="iphone-inner">
+                <div class="status"><span>9:41</span><span>FORMA</span></div>
+                <div class="nav"><span>Intake</span><span class="icon">[]</span></div>
+                <div class="content">
+                  <div class="hero">
+                    <div class="eyebrow">Live summary</div>
+                    <h4>What your first week is built on</h4>
+                    <p>Week one is visible, and the rest of the block now speaks the same language Program will use later.</p>
+                  </div>
+
+                  <div class="summary-card">
+                    <div class="summary-head">
+                      <div class="eyebrow">Plan shape</div>
+                      <h5 class="summary-title">Week 1 preview</h5>
+                      <p class="body">Build the next run milestone.</p>
+                    </div>
+                    <div class="week-grid">
+                      <div class="week-cell"><small>Mon</small><span>Easy run</span></div>
+                      <div class="week-cell"><small>Tue</small><span>Strength</span></div>
+                      <div class="week-cell"><small>Thu</small><span>Threshold</span></div>
+                      <div class="week-cell"><small>Sat</small><span>Long run</span></div>
+                    </div>
+
+                    <div class="arc">
+                      <div class="collapsed-top">
+                        <div class="collapsed-title">12-week arc</div>
+                        <div class="dark-chip">Metric-led</div>
+                      </div>
+                      <div class="collapsed-summary" style="color:var(--ink);">Build now, Sharpen next</div>
+                      <div class="chip-row">
+                        <span class="chip blue">Current: Build</span>
+                        <span class="chip green">Next: Sharpen</span>
+                      </div>
+                      <div class="phase-strip">
+                        <div class="phase current"><small>Weeks 1-3</small><span>Build</span></div>
+                        <div class="phase next"><small>Weeks 4-6</small><span>Sharpen</span></div>
+                        <div class="phase"><small>Weeks 7-9</small><span>Absorb</span></div>
+                        <div class="phase"><small>Weeks 10-12</small><span>Peak</span></div>
+                      </div>
+                      <div>
+                        <div class="label">Why week 1 starts here</div>
+                        <p class="line">8 mi long run is the first visible rung because your current anchor gives this block honest runway.</p>
+                      </div>
+                      <div>
+                        <div class="label">Next gate</div>
+                        <p class="line">10 mi long run and one clean quality week open the next rung.</p>
+                      </div>
+                      <p class="line">The visible arc covers the next 12 weeks, not the whole finish line.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="phone-wrap">
+            <div class="screen-label">Fuzzy / Expanded</div>
+            <div class="iphone">
+              <div class="iphone-inner">
+                <div class="status"><span>9:41</span><span>FORMA</span></div>
+                <div class="nav"><span>Intake</span><span class="icon">[]</span></div>
+                <div class="content">
+                  <div class="hero">
+                    <div class="eyebrow">Live summary</div>
+                    <h4>What your first week is built on</h4>
+                    <p>The same arc appears here, but the copy shifts toward direction first instead of pretending the target is already pinned down.</p>
+                  </div>
+
+                  <div class="summary-card">
+                    <div class="summary-head">
+                      <div class="eyebrow">Plan shape</div>
+                      <h5 class="summary-title">Week 1 preview</h5>
+                      <p class="body">Build a visible body-comp lane without losing training rhythm.</p>
+                    </div>
+                    <div class="week-grid">
+                      <div class="week-cell"><small>Mon</small><span>Easy run</span></div>
+                      <div class="week-cell"><small>Tue</small><span>Strength</span></div>
+                      <div class="week-cell"><small>Thu</small><span>Tempo</span></div>
+                      <div class="week-cell"><small>Sat</small><span>Long run</span></div>
+                    </div>
+
+                    <div class="arc">
+                      <div class="collapsed-top">
+                        <div class="collapsed-title">12-week arc</div>
+                        <div class="dark-chip">Direction-led</div>
+                      </div>
+                      <div class="collapsed-summary" style="color:var(--ink);">Base now, Build later</div>
+                      <div class="chip-row">
+                        <span class="chip blue">Current: Base</span>
+                        <span class="chip green">Next: Build</span>
+                      </div>
+                      <div class="phase-strip">
+                        <div class="phase current"><small>Weeks 1-3</small><span>Base</span></div>
+                        <div class="phase next"><small>Weeks 4-6</small><span>Build</span></div>
+                        <div class="phase"><small>Weeks 7-9</small><span>Sharpen</span></div>
+                        <div class="phase"><small>Weeks 10-12</small><span>Absorb</span></div>
+                      </div>
+                      <div>
+                        <div class="label">Why week 1 starts here</div>
+                        <p class="line">The block starts by making the direction repeatable before the target tightens into something more exact.</p>
+                      </div>
+                      <div>
+                        <div class="label">Next gate</div>
+                        <p class="line">A few repeatable weeks and one clearer anchor let the plan tighten what it is really chasing.</p>
+                      </div>
+                      <p class="line">The visible arc gives direction first. Precision can tighten once the opening block proves the lane.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="sidebar">
+          <div class="sidebar-card">
+            <div class="eyebrow">Mirror rule</div>
+            <h3>Intake borrows Program's ladder, not its proof language.</h3>
+            <p>Program later says what earned the current rung. Intake says why week 1 starts there. The ladder stays shared, but the pre-build semantics stay honest.</p>
+          </div>
+
+          <div class="sidebar-card">
+            <div class="eyebrow">Exact users</div>
+            <h3>Specific target, more specific gate.</h3>
+            <ul>
+              <li>Mode label becomes <strong>Metric-led</strong>.</li>
+              <li>Next gate prefers visible work like long-run size or strength exposure.</li>
+              <li>The trust line still reminds them the 12-week arc is not the whole finish line.</li>
+            </ul>
+          </div>
+
+          <div class="sidebar-card">
+            <div class="eyebrow">Fuzzy users</div>
+            <h3>Same structure, calmer promise.</h3>
+            <ul>
+              <li>Mode label becomes <strong>Direction-led</strong>.</li>
+              <li>Next gate uses repeatability and anchors, not fake numeric milestones.</li>
+              <li>The arc promises direction first, then precision later if the lane becomes clearer.</li>
+            </ul>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

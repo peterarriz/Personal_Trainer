@@ -11,6 +11,7 @@ import {
 export function SettingsBaselinesSection({
   colors,
   focusSection = "",
+  onOpenPlan = () => {},
   children = null,
 }) {
   return (
@@ -18,8 +19,16 @@ export function SettingsBaselinesSection({
       <div style={SETTINGS_SECTION_HEADER_STYLE}>
         <div className="sect-title" style={{ color:colors.amber, marginBottom:0 }}>PLAN INPUTS</div>
         <div style={SETTINGS_SECTION_INTRO_STYLE}>
-          Add the inputs that matter now. Everything else can wait until it meaningfully improves accuracy.
+          Plan now owns the main baseline-repair flow. Add only the inputs that meaningfully improve the next block.
         </div>
+      </div>
+      <div style={{ ...SETTINGS_SUBPANEL_STYLE, display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"center", flexWrap:"wrap" }}>
+        <div style={{ color:"var(--text-soft)", lineHeight:1.5, maxWidth:640 }}>
+          Use Plan when you want to repair missing baselines in context. This panel stays here as a backup editor.
+        </div>
+        <button className="btn" onClick={onOpenPlan} style={{ fontSize:"0.48rem", color:colors.amber, borderColor:colors.amber + "35" }}>
+          Open Plan
+        </button>
       </div>
       {focusSection === "metrics" && (
         <div style={{ ...SETTINGS_SUBPANEL_STYLE, color:colors.amber, lineHeight:1.5 }}>

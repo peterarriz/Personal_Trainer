@@ -23,7 +23,7 @@ const WEEK_TEMPLATES = [
   },
 ];
 
-const buildTypedIntakePacket = (rawGoalText = "run a half marathon") => ({
+const buildTypedIntakePacket = (rawGoalText = "run a 1:45 half marathon") => ({
   version: "2026-04-v1",
   intent: "intake_interpretation",
   intake: {
@@ -54,10 +54,10 @@ const buildTypedIntakePacket = (rawGoalText = "run a half marathon") => ({
   },
 });
 
-const buildResolvedGoals = () => {
+const buildResolvedGoals = (rawGoalText = "run a 1:45 half marathon") => {
   const result = resolveGoalTranslation({
-    rawUserGoalIntent: "run a half marathon",
-    typedIntakePacket: buildTypedIntakePacket(),
+    rawUserGoalIntent: rawGoalText,
+    typedIntakePacket: buildTypedIntakePacket(rawGoalText),
     explicitUserConfirmation: {
       confirmed: false,
       acceptedProposal: true,
@@ -90,7 +90,7 @@ test("preview model builds a week-one draft preview for a resolved running goal"
   const preview = buildIntakePlanPreviewModel({
     orderedResolvedGoals: buildResolvedGoals(),
     answers: {
-      goal_intent: "run a half marathon",
+      goal_intent: "run a 1:45 half marathon",
       experience_level: "intermediate",
       training_days: "4",
       session_length: "45",
@@ -114,7 +114,49 @@ test("preview model builds a week-one draft preview for a resolved running goal"
   assert.ok(preview.heading.length > 0);
   assert.ok(preview.trajectoryLine.length > 0);
   assert.equal(preview.weeks.length, 1);
+  assert.equal(preview.arcDisclosure?.isReady, true);
+  assert.equal(preview.arcDisclosure?.defaultExpanded, false);
+  assert.equal(preview.arcDisclosure?.userMode, "exact_metric");
+  assert.ok((preview.arcDisclosure?.phaseBlocks || []).length > 0);
   assert.ok(preview.weeks[0].summary.length > 0);
   assert.ok(preview.weeks[0].cells.length >= 4);
   assert.match(preview.weeks[0].label, /week 1/i);
+});
+
+test("preview arc shifts into direction-first language for fuzzy-goal users", () => {
+  const fuzzyGoals = buildResolvedGoals("look leaner and move better").map((goal) => ({
+    ...goal,
+    resolvedGoal: {
+      ...(goal?.resolvedGoal || {}),
+      measurabilityTier: "exploratory_fuzzy",
+    },
+  }));
+
+  const preview = buildIntakePlanPreviewModel({
+    orderedResolvedGoals: fuzzyGoals,
+    answers: {
+      goal_intent: "look leaner and move better",
+      experience_level: "intermediate",
+      training_days: "4",
+      session_length: "45",
+      training_location: "Gym",
+      coaching_style: "Balanced coaching",
+    },
+    personalization: {},
+    goalSlots: [],
+    weekTemplates: WEEK_TEMPLATES,
+    baseWeek: WEEK_TEMPLATES[0],
+    profileDefaults: {
+      age: 32,
+      weight: 180,
+      startDate: "2026-04-19",
+    },
+    todayKey: "2026-04-19",
+    dayOfWeek: 1,
+  });
+
+  assert.equal(preview.isReady, true);
+  assert.equal(preview.arcDisclosure?.userMode, "fuzzy_goal");
+  assert.match(preview.arcDisclosure?.supporting || "", /direction/i);
+  assert.match(preview.arcDisclosure?.gateLine || "", /repeatable weeks|clearer anchor|proxy/i);
 });

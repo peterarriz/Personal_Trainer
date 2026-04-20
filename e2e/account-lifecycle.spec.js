@@ -31,7 +31,7 @@ test("settings keeps reload and sign-out primary while recovery actions stay in 
     await bootAppWithSupabaseSeeds(page, { session, payload });
     await openSettingsAccountSurface(page);
 
-    await expect(page.getByRole("button", { name: "Reload cloud data" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Refresh from account" })).toBeVisible();
     await expect(page.getByTestId("settings-logout")).toBeVisible();
     await expect(page.getByTestId("settings-reset-device")).not.toBeVisible();
     await expect(page.getByTestId("settings-delete-account")).not.toBeVisible();

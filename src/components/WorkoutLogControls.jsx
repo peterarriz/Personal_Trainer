@@ -154,6 +154,8 @@ export function LogFeelStrip({
   return (
     <SurfaceCard
       data-testid={dataTestId}
+      role="group"
+      aria-label="How the session felt"
       variant="subtle"
       style={{
         display: "grid",
@@ -169,7 +171,7 @@ export function LogFeelStrip({
           Session feel
         </div>
         <div style={{ fontSize: "0.48rem", color: "var(--consumer-text-muted)", lineHeight: 1.45 }}>
-          One tap is enough. You can keep moving.
+          One tap and go.
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: "0.35rem" }}>

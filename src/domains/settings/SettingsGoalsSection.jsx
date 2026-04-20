@@ -17,6 +17,7 @@ import {
 export function SettingsGoalsSection({
   colors,
   focusSection = "",
+  onOpenPlan = () => {},
   priorityExplanation = "",
   goalCounts = {},
   currentGoalCards = [],
@@ -43,12 +44,20 @@ export function SettingsGoalsSection({
       <div style={SETTINGS_SECTION_HEADER_STYLE}>
         <div className="sect-title" style={{ color:colors.green, marginBottom:0 }}>GOALS</div>
         <div style={SETTINGS_SECTION_INTRO_STYLE}>
-          Update your goals here.
+          Plan is now the main place to change goals and see how they affect the week ahead.
         </div>
+      </div>
+      <div style={{ ...SETTINGS_SUBPANEL_STYLE, display:"flex", justifyContent:"space-between", gap:"0.6rem", alignItems:"center", flexWrap:"wrap" }}>
+        <div style={{ ...SETTINGS_BODY_STYLE, maxWidth:640 }}>
+          Use Plan for the common path. These controls stay here as a legacy workspace while we finish the move.
+        </div>
+        <button className="btn" onClick={onOpenPlan} style={{ fontSize:"0.48rem", color:colors.green, borderColor:colors.green + "35" }}>
+          Open Plan
+        </button>
       </div>
       {focusSection === "plan" && (
         <div data-testid="settings-goals-migration-note" style={{ ...SETTINGS_SUBPANEL_STYLE, color:"var(--text-strong)" }}>
-          Goal changes live here now.
+          Goal changes start in Plan now. This settings panel stays available as a fallback.
         </div>
       )}
       <div data-testid="settings-goals-management" style={{ ...SETTINGS_PANEL_STYLE, gap:"0.55rem" }}>

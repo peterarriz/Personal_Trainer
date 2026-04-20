@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Program Trajectory Header Variants</title>
+  <style>
+    :root {
+      --ink: #172034;
+      --muted: #627086;
+      --muted-strong: #51607a;
+      --paper: #f6f0e7;
+      --panel: rgba(255, 250, 242, 0.9);
+      --panel-soft: rgba(255, 255, 255, 0.76);
+      --line: rgba(23, 32, 52, 0.08);
+      --blue: #2d78d9;
+      --blue-soft: rgba(45, 120, 217, 0.14);
+      --green: #4d8666;
+      --green-soft: rgba(77, 134, 102, 0.14);
+      --amber: #c0893c;
+      --amber-soft: rgba(192, 137, 60, 0.16);
+      --rose: #b76558;
+      --phone-shadow: 0 20px 48px rgba(18, 24, 38, 0.18);
+      --page-shadow: 0 24px 60px rgba(26, 32, 45, 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "SF Pro Text", "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(45, 120, 217, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(192, 137, 60, 0.1), transparent 22%),
+        linear-gradient(180deg, #f8f4ec 0%, #f2ece2 100%);
+    }
+
+    .page {
+      width: min(1440px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    .intro {
+      display: grid;
+      gap: 18px;
+      margin-bottom: 34px;
+      max-width: 76ch;
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted-strong);
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Newsreader", Georgia, serif;
+      font-size: clamp(38px, 5vw, 58px);
+      line-height: 0.94;
+      letter-spacing: -0.04em;
+      max-width: 12ch;
+      font-weight: 500;
+    }
+
+    .lede {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 18px;
+      line-height: 1.64;
+    }
+
+    .pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      backdrop-filter: blur(14px);
+    }
+
+    .review {
+      display: grid;
+      gap: 26px;
+      padding: 28px;
+      border-radius: 32px;
+      background: rgba(255, 250, 242, 0.86);
+      border: 1px solid var(--line);
+      box-shadow: var(--page-shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .review-head {
+      display: grid;
+      gap: 10px;
+      max-width: 74ch;
+    }
+
+    .review-head h2 {
+      margin: 0;
+      font-size: clamp(28px, 3vw, 40px);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+    }
+
+    .review-head p {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 17px;
+      line-height: 1.62;
+    }
+
+    .variants {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 24px;
+      align-items: start;
+    }
+
+    .variant {
+      display: grid;
+      gap: 14px;
+    }
+
+    .variant-title {
+      display: grid;
+      gap: 6px;
+    }
+
+    .variant-title h3 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .variant-title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.58;
+    }
+
+    .iphone {
+      width: 316px;
+      min-height: 698px;
+      padding: 14px;
+      border-radius: 42px;
+      background: linear-gradient(180deg, #1a2232 0%, #0f1520 100%);
+      box-shadow: var(--phone-shadow);
+      justify-self: center;
+    }
+
+    .iphone-inner {
+      min-height: 670px;
+      border-radius: 30px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background:
+        radial-gradient(circle at top left, rgba(45, 120, 217, 0.08), transparent 28%),
+        linear-gradient(180deg, #f9f6ef 0%, #f3eee4 100%);
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+    }
+
+    .status {
+      display: flex;
+      justify-content: space-between;
+      padding: 14px 18px 6px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 18px 12px;
+      color: var(--ink);
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .content {
+      display: grid;
+      gap: 12px;
+      padding: 0 14px 18px;
+      align-content: start;
+    }
+
+    .hero {
+      display: grid;
+      gap: 10px;
+      padding: 14px 16px 6px;
+    }
+
+    .hero h4 {
+      margin: 0;
+      font-size: 30px;
+      line-height: 0.95;
+      letter-spacing: -0.04em;
+      color: var(--ink);
+      max-width: 8ch;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 14px;
+      line-height: 1.54;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      border: 1px solid transparent;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .chip.blue {
+      background: var(--blue-soft);
+      color: var(--blue);
+      border-color: rgba(45, 120, 217, 0.18);
+    }
+
+    .chip.amber {
+      background: var(--amber-soft);
+      color: #8f6327;
+      border-color: rgba(192, 137, 60, 0.2);
+    }
+
+    .chip.green {
+      background: var(--green-soft);
+      color: #446a54;
+      border-color: rgba(77, 134, 102, 0.18);
+    }
+
+    .card {
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 12px 28px rgba(27, 34, 48, 0.06);
+      backdrop-filter: blur(16px);
+      padding: 14px 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .micro {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .subline {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.54;
+      color: var(--muted-strong);
+    }
+
+    .meta-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .meta-item {
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.66);
+      border: 1px solid rgba(23, 32, 52, 0.06);
+      display: grid;
+      gap: 4px;
+    }
+
+    .meta-item strong {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .meta-item span {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--ink);
+    }
+
+    .graph {
+      display: flex;
+      align-items: end;
+      gap: 6px;
+      height: 96px;
+      padding: 4px 2px 0;
+    }
+
+    .bar {
+      flex: 1;
+      border-radius: 12px 12px 8px 8px;
+      background: rgba(45, 120, 217, 0.18);
+      position: relative;
+      min-width: 10px;
+    }
+
+    .bar.current {
+      background: linear-gradient(180deg, #2d78d9 0%, #68a6f3 100%);
+    }
+
+    .bar.cutback {
+      background: linear-gradient(180deg, #c0893c 0%, #dfb273 100%);
+    }
+
+    .bar::after {
+      content: attr(data-week);
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: -20px;
+      font-size: 10px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .phase-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .phase {
+      padding: 12px 10px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.64);
+      border: 1px solid rgba(23, 32, 52, 0.06);
+      display: grid;
+      gap: 4px;
+      position: relative;
+    }
+
+    .phase.current {
+      border-color: rgba(45, 120, 217, 0.22);
+      background: rgba(45, 120, 217, 0.12);
+    }
+
+    .phase.next {
+      border-color: rgba(77, 134, 102, 0.2);
+      background: rgba(77, 134, 102, 0.1);
+    }
+
+    .phase small {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .phase span {
+      font-size: 13px;
+      line-height: 1.35;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .phase-mark {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(23, 32, 52, 0.16);
+      position: absolute;
+      top: 10px;
+      right: 10px;
+    }
+
+    .phase.current .phase-mark {
+      background: var(--blue);
+    }
+
+    .phase.next .phase-mark {
+      background: var(--green);
+    }
+
+    .chapter-track {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .chapter {
+      flex: 1;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.68);
+      border: 1px solid rgba(23, 32, 52, 0.06);
+      display: grid;
+      gap: 6px;
+    }
+
+    .chapter.current {
+      background: rgba(45, 120, 217, 0.1);
+      border-color: rgba(45, 120, 217, 0.2);
+    }
+
+    .chapter h5 {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.2;
+      color: var(--ink);
+    }
+
+    .marks {
+      display: flex;
+      gap: 6px;
+    }
+
+    .mark {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(23, 32, 52, 0.14);
+    }
+
+    .mark.done {
+      background: var(--blue);
+    }
+
+    .mark.next {
+      background: var(--green);
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-around;
+      padding: 10px 18px 16px;
+      border-top: 1px solid rgba(23, 32, 52, 0.06);
+      background: linear-gradient(180deg, rgba(249, 246, 239, 0) 0%, rgba(249, 246, 239, 0.94) 38%, rgba(249, 246, 239, 1) 100%);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .footer .active {
+      color: var(--ink);
+    }
+
+    .decision {
+      display: grid;
+      gap: 12px;
+      padding: 16px 18px;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid var(--line);
+    }
+
+    .decision h3 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1;
+      letter-spacing: -0.03em;
+    }
+
+    .decision p,
+    .decision li {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .decision ul {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 6px;
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        width: min(100vw - 24px, 1440px);
+        padding-top: 28px;
+      }
+
+      .review {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="intro">
+      <div class="eyebrow">Program trajectory header</div>
+      <h1>Make the arc readable before the roadmap starts.</h1>
+      <p class="lede">
+        Program already has a real roadmap below. The header should not repeat it as three labels. It should show where the athlete sits in the arc, why they are there, and what earns the next phase.
+      </p>
+      <div class="pills">
+        <div class="pill">Current week in the arc</div>
+        <div class="pill">What earned it</div>
+        <div class="pill">What earns next</div>
+        <div class="pill">No duplicate roadmap</div>
+        <div class="pill">Adaptation-safe</div>
+      </div>
+    </section>
+
+    <section class="review">
+      <div class="review-head">
+        <div class="eyebrow">Three variants</div>
+        <h2>The header should orient, not explain by label alone.</h2>
+        <p>
+          Each concept uses the same example arc: week 6 of 12, a visible cutback ahead, and a run-priority mixed plan. The difference is how the header turns the arc into something legible and coached.
+        </p>
+      </div>
+
+      <div class="variants">
+        <section class="variant">
+          <div class="variant-title">
+            <div class="eyebrow">Variant 1</div>
+            <h3>Density graph</h3>
+            <p>Best for showing weekly stress rhythm. Weakest at feeling authored, and closest to duplicating the roadmap below.</p>
+          </div>
+          <div class="iphone">
+            <div class="iphone-inner">
+              <div class="status"><span>9:41</span><span>5G 100%</span></div>
+              <div class="nav"><span class="icon">&#8249;</span><span>Program</span><span class="icon">&#9719;</span></div>
+              <div class="content">
+                <div class="hero">
+                  <div class="eyebrow">Week 6</div>
+                  <h4>Run build stays on line</h4>
+                  <p>This week holds quality and long-run growth before the lighter absorb week ahead.</p>
+                  <div class="chip-row">
+                    <span class="chip blue">Week 6 of 12</span>
+                    <span class="chip amber">Cutback in week 8</span>
+                  </div>
+                </div>
+
+                <article class="card">
+                  <div class="micro">Arc density</div>
+                  <div class="graph">
+                    <div class="bar" style="height:38%" data-week="1"></div>
+                    <div class="bar" style="height:46%" data-week="2"></div>
+                    <div class="bar" style="height:52%" data-week="3"></div>
+                    <div class="bar" style="height:60%" data-week="4"></div>
+                    <div class="bar" style="height:68%" data-week="5"></div>
+                    <div class="bar current" style="height:74%" data-week="6"></div>
+                    <div class="bar" style="height:78%" data-week="7"></div>
+                    <div class="bar cutback" style="height:44%" data-week="8"></div>
+                    <div class="bar" style="height:70%" data-week="9"></div>
+                    <div class="bar" style="height:82%" data-week="10"></div>
+                    <div class="bar" style="height:88%" data-week="11"></div>
+                    <div class="bar" style="height:60%" data-week="12"></div>
+                  </div>
+                </article>
+
+                <article class="card">
+                  <div class="micro">Why you are here</div>
+                  <p class="subline">Four clean weeks, long run held at 10 mi, and two weekly strength touches stayed intact.</p>
+                  <div class="micro">What earns next</div>
+                  <p class="subline">Land this week without dragging recovery, then the next build step can open.</p>
+                </article>
+              </div>
+              <div class="footer"><span>Today</span><span class="active">Program</span><span>Log</span><span>Coach</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="variant">
+          <div class="variant-title">
+            <div class="eyebrow">Variant 2</div>
+            <h3>Phase ladder</h3>
+            <p>Best at showing current position, proof, and next gate without re-running the whole roadmap.</p>
+          </div>
+          <div class="iphone">
+            <div class="iphone-inner">
+              <div class="status"><span>9:41</span><span>5G 100%</span></div>
+              <div class="nav"><span class="icon">&#8249;</span><span>Program</span><span class="icon">&#9719;</span></div>
+              <div class="content">
+                <div class="hero">
+                  <div class="eyebrow">Week 6</div>
+                  <h4>Build the block with control</h4>
+                  <p>You are in the middle build. This week adds load, but it still has to leave room for the absorb step that follows.</p>
+                  <div class="chip-row">
+                    <span class="chip blue">Current rung: build</span>
+                    <span class="chip green">Next rung: sharpen</span>
+                  </div>
+                </div>
+
+                <article class="card">
+                  <div class="micro">Trajectory ladder</div>
+                  <div class="phase-strip">
+                    <div class="phase">
+                      <div class="phase-mark"></div>
+                      <small>Weeks 1-3</small>
+                      <span>Base</span>
+                    </div>
+                    <div class="phase current">
+                      <div class="phase-mark"></div>
+                      <small>Weeks 4-7</small>
+                      <span>Build</span>
+                    </div>
+                    <div class="phase next">
+                      <div class="phase-mark"></div>
+                      <small>Weeks 8-10</small>
+                      <span>Sharpen</span>
+                    </div>
+                    <div class="phase">
+                      <div class="phase-mark"></div>
+                      <small>Weeks 11-12</small>
+                      <span>Absorb</span>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="card">
+                  <div class="meta-grid">
+                    <div class="meta-item">
+                      <strong>Current week in the arc</strong>
+                      <span>Week 6 sits on the third mark of Build, with one more loading week before the absorb turn.</span>
+                    </div>
+                    <div class="meta-item">
+                      <strong>What earned this</strong>
+                      <span>You stacked four reliable weeks, held the long run, and kept support lifting alive instead of letting it disappear.</span>
+                    </div>
+                    <div class="meta-item">
+                      <strong>What earns next</strong>
+                      <span>Finish this week cleanly, keep the second quality touch controlled, and avoid turning the absorb week into another push week.</span>
+                    </div>
+                  </div>
+                </article>
+              </div>
+              <div class="footer"><span>Today</span><span class="active">Program</span><span>Log</span><span>Coach</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="variant">
+          <div class="variant-title">
+            <div class="eyebrow">Variant 3</div>
+            <h3>Narrative chapters</h3>
+            <p>Most premium in tone, but easiest to make vague unless the copy is tightly controlled.</p>
+          </div>
+          <div class="iphone">
+            <div class="iphone-inner">
+              <div class="status"><span>9:41</span><span>5G 100%</span></div>
+              <div class="nav"><span class="icon">&#8249;</span><span>Program</span><span class="icon">&#9719;</span></div>
+              <div class="content">
+                <div class="hero">
+                  <div class="eyebrow">Week 6</div>
+                  <h4>This chapter asks for restraint</h4>
+                  <p>The plan is no longer proving you can start. It is proving you can keep building without spending tomorrow too early.</p>
+                  <div class="chip-row">
+                    <span class="chip blue">Current chapter</span>
+                    <span class="chip green">Next chapter ahead</span>
+                  </div>
+                </div>
+
+                <article class="card">
+                  <div class="micro">Arc chapters</div>
+                  <div class="chapter-track">
+                    <div class="chapter">
+                      <h5>Base</h5>
+                      <div class="marks"><span class="mark done"></span><span class="mark done"></span><span class="mark done"></span></div>
+                      <p class="subline">Set rhythm and repeatability.</p>
+                    </div>
+                    <div class="chapter current">
+                      <h5>Build</h5>
+                      <div class="marks"><span class="mark done"></span><span class="mark done"></span><span class="mark next"></span><span class="mark"></span></div>
+                      <p class="subline">Ask for more without losing shape.</p>
+                    </div>
+                    <div class="chapter">
+                      <h5>Sharpen</h5>
+                      <div class="marks"><span class="mark"></span><span class="mark"></span><span class="mark"></span></div>
+                      <p class="subline">Turn fitness into specific quality.</p>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="card">
+                  <div class="micro">Why you are here</div>
+                  <p class="subline">This chapter was earned by consistency, not hero days. The next one opens only if this week lands with control.</p>
+                </article>
+              </div>
+              <div class="footer"><span>Today</span><span class="active">Program</span><span>Log</span><span>Coach</span></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="decision">
+        <div class="eyebrow">Pick one</div>
+        <h3>Recommendation: phase ladder</h3>
+        <p>
+          The ladder is the best replacement because it gives Program a real sense of movement without duplicating the roadmap below it. It explains the current week, the reason it belongs here, and the next standard the athlete has to meet.
+        </p>
+        <ul>
+          <li>Use the ladder position to show phase, not daily turbulence.</li>
+          <li>Refresh the `What earned this` line from the trailing closed-week evidence window.</li>
+          <li>Refresh the `What earns next` line from the next visible phase gate.</li>
+          <li>Only move the ladder when the committed week changes or the roadmap itself regenerates.</li>
+        </ul>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

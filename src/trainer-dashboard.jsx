@@ -8419,7 +8419,7 @@ const saveNutritionActualLog = async (dateKey, feedback) => {
  useEffect(() => {
  if (loading || authInitializing) return;
  if (!personalization?.profile?.onboardingComplete) return;
- if (!(DEBUG_MODE || APPLE_HEALTH_SUPPORTED_MODE)) return;
+ if (!APPLE_HEALTH_SUPPORTED_MODE) return;
  const apple = personalization?.connectedDevices?.appleHealth || {};
  if (apple?.permissionRequestedAt || apple?.skipped) return;
  setShowAppleHealthFirstLaunch(true);
@@ -8894,7 +8894,13 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  setAnalyzing(false);
  };
 
- const TABS = ["Today", "Program", "Log", "Nutrition", "Coach"];
+ const TABS = [
+ { id: "today", label: "Today" },
+ { id: "program", label: "Plan" },
+ { id: "log", label: "Log" },
+ { id: "nutrition", label: "Nutrition" },
+ { id: "coach", label: "Coach" },
+ ];
 
  if (authInitializing || loading) return (
  <div style={{ background:"linear-gradient(180deg,#0d1520 0%, #111b28 48%, #162131 100%)", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Inter',sans-serif", color:"#7f90a8" }}>
@@ -10560,9 +10566,9 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  {/* TABS */}
  <div style={{ display:"flex", gap:"0.35rem", marginBottom:"1.25rem", background:"var(--tab-strip-bg)", padding:"0.36rem", borderRadius:18, border:"1px solid var(--tab-strip-border)", overflowX:"auto", boxShadow:"var(--shadow-1)", backdropFilter:"blur(10px)" }}>
  {TABS.map((t,i) => (
- <button key={t} data-testid={`app-tab-${toTestIdFragment(t)}`} className="btn" onClick={()=>setTab(i)}
+ <button key={t.id} data-testid={`app-tab-${t.id}`} className="btn" onClick={()=>setTab(i)}
  style={{ color:tab===i?"var(--tab-active-text)":"var(--tab-text)", background:tab===i?"var(--tab-active-bg)":"transparent", borderColor:tab===i?"var(--border-strong)":"transparent", fontWeight:tab===i?700:500, flexShrink:0, minWidth:96 }}>
- {t}
+ {t.label}
  </button>
  ))}
  </div>
@@ -10593,7 +10599,7 @@ const getAnthropicKey = () => (typeof window !== "undefined"
  await persistAll(logs, bodyweights, paceOverrides, nextWeekNotes, nextPlanAlerts, nextPersonalization, nextCoachActions, nextCoachPlanAdjustments, goals, dailyCheckins, weeklyCheckins, nutritionFavorites, nutritionActualLogs);
  }} />}
 
-{tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} syncDiagnostics={syncDiagnostics} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} adaptiveLearningSnapshot={adaptiveLearningStore?.buildPersistenceSnapshot?.() || null} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} planHistoryReviews={planHistoryReportReviews} planHistoryWeekSummaries={planHistoryWeekSummaries} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} passwordResetBusy={authPasswordResetBusy} passwordResetMessage={authNotice} onRequestPasswordReset={() => handleForgotPassword({
+{tab === 5 && <SettingsTab onStartFresh={()=>setStartFreshConfirmOpen(true)} personalization={personalization} setPersonalization={setPersonalization} exportData={exportData} importData={importData} authSession={authSession} onReloadCloudData={sbLoad} storageStatus={storageStatus} syncStateModel={displayedSyncStateModel} syncSurfaceModel={syncSurfaceModels?.settings || null} syncDiagnostics={syncDiagnostics} deviceSyncAudit={deviceSyncAudit} athleteProfile={canonicalAthlete} planComposer={planComposer} adaptiveLearningSnapshot={adaptiveLearningStore?.buildPersistenceSnapshot?.() || null} saveProgramSelection={saveProgramSelection} saveManualProgressInputs={saveManualProgressInputs} logs={logs} bodyweights={bodyweights} planHistoryReviews={planHistoryReportReviews} planHistoryWeekSummaries={planHistoryWeekSummaries} previewGoalChange={previewGoalChange} applyGoalChange={applyGoalChange} previewGoalManagementChange={previewGoalManagementChange} applyGoalManagementChange={applyGoalManagementChange} onDeleteAccount={handleDeleteAccount} onLogout={handleSignOut} onResetThisDevice={handleResetThisDevice} onOpenPlan={()=>setTab(1)} passwordResetBusy={authPasswordResetBusy} passwordResetMessage={authNotice} onRequestPasswordReset={() => handleForgotPassword({
  source: "settings_account",
  emailOverride: authSession?.user?.email || "",
  })} onOpenAuthGate={() => {
@@ -16269,7 +16275,7 @@ function MetricsBaselinesSection({
  );
 }
 
-function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, onResetThisDevice = async () => ({ ok: false }), onOpenAuthGate = () => {}, passwordResetBusy = false, passwordResetMessage = "", onRequestPasswordReset = () => {}, storageStatus = null, syncStateModel = null, syncSurfaceModel = null, syncDiagnostics = null, deviceSyncAudit, athleteProfile = null, planComposer = null, adaptiveLearningSnapshot = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], planHistoryReviews = [], planHistoryWeekSummaries = [], focusSection = "", frictionDashboard = null, onTrackFrictionEvent = () => {} }) {
+function SettingsTab({ onStartFresh, personalization, setPersonalization, onPersist, exportData, importData, authSession, onReloadCloudData, onDeleteAccount, onLogout = async () => {}, onResetThisDevice = async () => ({ ok: false }), onOpenAuthGate = () => {}, onOpenPlan = () => {}, passwordResetBusy = false, passwordResetMessage = "", onRequestPasswordReset = () => {}, storageStatus = null, syncStateModel = null, syncSurfaceModel = null, syncDiagnostics = null, deviceSyncAudit, athleteProfile = null, planComposer = null, adaptiveLearningSnapshot = null, saveProgramSelection = async () => null, previewGoalChange = async () => null, applyGoalChange = async () => ({ ok: false }), previewGoalManagementChange = async () => null, applyGoalManagementChange = async () => ({ ok: false }), saveManualProgressInputs = async () => null, logs = {}, bodyweights = [], planHistoryReviews = [], planHistoryWeekSummaries = [], focusSection = "", frictionDashboard = null, onTrackFrictionEvent = () => {} }) {
  const appleHealth = personalization?.connectedDevices?.appleHealth || {};
  const garmin = personalization?.connectedDevices?.garmin || {};
  const debugMode = typeof window !== "undefined" && safeStorageGet(localStorage, "trainer_debug", "0") === "1";
@@ -17984,7 +17990,7 @@ setGoalManagementError("See the change first, then save it.");
  <div style={{ display:"grid", gap:"0.2rem", marginBottom:"0.7rem" }}>
  <div className="sect-title" style={{ color:"var(--text-strong)", marginBottom:0 }}>SETTINGS</div>
  <div style={{ fontSize:"0.55rem", color:"var(--text-soft)", lineHeight:1.55 }}>
- Edit your profile, goals, plan, devices, and preferences from one simple workspace.
+ Edit your account, profile, preferences, and devices here. Goal changes, plan layers, and baseline repair now live in Plan.
  </div>
  {settingsSaveFeedbackModel.show && (
  <StateFeedbackBanner
@@ -18061,6 +18067,7 @@ setGoalManagementError("See the change first, then save it.");
  }}
  syncDiagnostics={syncDiagnostics}
  showInternalSettingsTools={showInternalSettingsTools}
+ showProtectedDiagnostics={showProtectedDiagnostics}
  />
  )}
 
@@ -18078,6 +18085,7 @@ setGoalManagementError("See the change first, then save it.");
  <SettingsGoalsSection
  colors={C}
  focusSection={focusSection}
+ onOpenPlan={onOpenPlan}
  priorityExplanation={goalSettingsModel?.priorityExplanation || GOAL_PRIORITY_EXPLANATION}
  goalCounts={goalCounts}
  currentGoalCards={currentGoalCards}
@@ -18102,7 +18110,7 @@ setGoalManagementError("See the change first, then save it.");
  )}
 
  {activeSettingsSurface === "baselines" && (
- <SettingsBaselinesSection colors={C} focusSection={focusSection}>
+ <SettingsBaselinesSection colors={C} focusSection={focusSection} onOpenPlan={onOpenPlan}>
  <MetricsBaselinesSection
  athleteProfile={athleteProfile}
  personalization={personalization}
@@ -18119,6 +18127,7 @@ setGoalManagementError("See the change first, then save it.");
  {activeSettingsSurface === "programs" && (
  <SettingsProgramsSection
  colors={C}
+ onOpenPlan={onOpenPlan}
  settingsPlanBasisExplanation={settingsPlanBasisExplanation}
  activeProgramDefinition={activeProgramDefinition}
  activeStyleDefinition={activeStyleDefinition}
@@ -18717,7 +18726,7 @@ setGoalManagementError("See the change first, then save it.");
  <select value={trainingPrefs?.defaultEnvironment || "Home"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, defaultEnvironment: e.target.value } })}>
  {["Home","Gym","Outdoor","Travel"].map((m)=><option key={m} value={m}>{m}</option>)}
  </select>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Use the Environment editor in Today/Program to update equipment list and session duration presets.</div>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Use the Environment editor in Today/Plan to update equipment list and session duration presets.</div>
  </div>
  )}
  <select value={trainingPrefs?.weeklyCheckinDay || "Sun"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, weeklyCheckinDay: e.target.value } })}>
@@ -19057,7 +19066,7 @@ function OnboardingCoachLegacy({ onComplete }) {
  <select value={trainingPrefs?.defaultEnvironment || "Home"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, defaultEnvironment: e.target.value } })}>
  {["Home","Gym","Outdoor","Travel"].map((m)=><option key={m} value={m}>{m}</option>)}
  </select>
- <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Use the Environment editor in Today/Program to update equipment list and session duration presets.</div>
+ <div style={{ fontSize:"0.5rem", color:"#8fa5c8" }}>Use the Environment editor in Today/Plan to update equipment list and session duration presets.</div>
  </div>
  )}
  <select value={trainingPrefs?.weeklyCheckinDay || "Sun"} onChange={e=>patchSettings({ trainingPreferences: { ...trainingPrefs, weeklyCheckinDay: e.target.value } })}>
@@ -19596,7 +19605,7 @@ function TodayTab({ planDay = null, surfaceModel = null, todayWorkout: legacyTod
  const strengthSetupLabel = sanitizeDisplayText(
  displayWorkout?.strengthTrackLabel
  || todayWorkout?.strengthTrackLabel
- || (strTrack === "hotel" ? "Gym" : strTrack === "program" ? "Program" : "Home")
+ || (strTrack === "hotel" ? "Gym" : strTrack === "program" ? "Plan" : "Home")
  );
  const displayRun = sanitizeWorkoutRun(displayWorkout?.run);
  const todayPrescriptionSummary = sessionVariant === "standard" && surfaceModel?.display
@@ -21129,7 +21138,7 @@ class ProgramTabErrorBoundary extends React.Component {
  retry = () => this.setState((s) => ({ hasError: false, nonce: s.nonce + 1 }));
  render() {
  if (this.state.hasError) {
- return <div className="card card-soft" onClick={this.retry} style={{ cursor:"pointer", fontSize:"0.58rem", color:"#cbd5e1" }}>Program unavailable. Tap to retry.</div>;
+ return <div className="card card-soft" onClick={this.retry} style={{ cursor:"pointer", fontSize:"0.58rem", color:"#cbd5e1" }}>Plan unavailable. Tap to retry.</div>;
  }
  return <div key={this.state.nonce}>{this.props.children}</div>;
  }
@@ -21665,7 +21674,7 @@ function GoalAnchorQuickEntryPanel({
  <div style={{ fontSize:"0.46rem", color:"#64748b", letterSpacing:"0.1em", marginBottom:"0.16rem" }}>QUICK ANCHORS</div>
  <div style={{ fontSize:"0.52rem", color:"#dbe7f6", lineHeight:1.5 }}>
  {missingTrackedItems.length
- ? "Fix missing benchmark anchors here without leaving Program."
+ ? "Fix missing benchmark anchors here without leaving Plan."
  : "Add or refresh goal anchors here without redoing intake."}
  </div>
  </div>
@@ -23052,7 +23061,7 @@ style={{ background:"rgba(11, 20, 32, 0.76)" }}
 <SurfaceHeroHeader>
 <SurfaceHeroCopy>
 <SurfaceHeading
-eyebrow="Program"
+eyebrow="Plan"
 title={currentWeekLabel}
 supporting={currentWeekPurposeLine}
 eyebrowColor={C.blue}
@@ -23163,7 +23172,7 @@ Tighten goal details
 <div style={{ display:"flex", justifyContent:"space-between", gap:"0.55rem", alignItems:"flex-start", flexWrap:"wrap" }}>
 <div style={{ display:"grid", gap:"0.14rem", minWidth:0 }}>
 <div className="sect-title" style={{ color:C.amber, marginBottom:0 }}>FIX HERE</div>
-<div style={{ fontSize:"0.58rem", color:"#f8fafc", lineHeight:1.45 }}>Fix small plan gaps without leaving Program.</div>
+<div style={{ fontSize:"0.58rem", color:"#f8fafc", lineHeight:1.45 }}>Fix small plan gaps without leaving Plan.</div>
 <div style={{ fontSize:"0.49rem", color:"#94a3b8", lineHeight:1.5 }}>
 Every save updates future weeks only.
 </div>
@@ -23730,7 +23739,7 @@ Upcoming weeks will appear here as soon as the visible plan extends beyond this 
  <section className="card card-subtle" style={{ borderColor:"#2c3f63", background:"linear-gradient(180deg, rgba(12,18,32,0.96) 0%, rgba(9,14,24,0.96) 100%)" }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:"0.75rem", flexWrap:"wrap", marginBottom:"0.8rem" }}>
  <div style={{ minWidth:0 }}>
- <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>PROGRAMS + STYLES</div>
+ <div style={{ fontSize:"0.5rem", color:"#64748b", letterSpacing:"0.14em", marginBottom:"0.22rem" }}>PLAN LAYERS</div>
 <div style={{ fontSize:"0.66rem", color:"#f8fafc", fontWeight:600, lineHeight:1.35 }}>Choose a named plan, add a training feel, or stay with FORMA's built-for-you plan.</div>
  <div style={{ fontSize:"0.54rem", color:"#94a3b8", marginTop:"0.16rem", lineHeight:1.6, maxWidth:760 }}>
  Pick a plan or style if you want more structure. Your goals, schedule, equipment, and recovery still keep the final say.
@@ -25311,7 +25320,7 @@ const canonicalLogReason = sanitizeDisplayText(
   ? "Save changes"
   : "Save today's log";
  const primarySaveSupportLine = primarySaveUsesPlan
-  ? "Matches today's plan."
+  ? "Matches the plan."
   : quickCaptureHasValues
   ? "Only changed fields will override the plan."
   : hasAdvancedInput
@@ -25319,7 +25328,7 @@ const canonicalLogReason = sanitizeDisplayText(
   : "Open a section only if something changed.";
  const strengthSummaryLine = prescribedStrengthRows.length > 0
   ? `${prescribedStrengthRows.length} planned movement${prescribedStrengthRows.length === 1 ? "" : "s"} are loaded. Tap the cards between sets.`
-  : "Exercise-by-exercise logging is available when the plan includes lift detail.";
+  : "Exercise logging appears when the plan includes lift detail.";
  const extrasSummaryLine = extraStrengthRows.length > 0
   ? `${extraStrengthRows.length} extra movement${extraStrengthRows.length === 1 ? "" : "s"} added.`
   : "Keep this for bonus work that was not part of the plan.";
@@ -25342,7 +25351,7 @@ const canonicalLogReason = sanitizeDisplayText(
   || ""
  );
  const logExecutionLead = detailed?.sections?.strength?.enabled && detailed?.sections?.run?.enabled
-  ? "Hybrid day. Log the run numbers and lift cards from the same screen."
+  ? "Hybrid day. Log it as one session."
   : detailed?.sections?.strength?.enabled
   ? "Strength day. Big controls stay ready between sets."
   : detailed?.sections?.run?.enabled
@@ -25477,7 +25486,7 @@ return (
  <SurfaceHeading
  eyebrow="Log today"
  title={canonicalLogLabel}
- supporting="Fast actuals. Planned and actual stay separate."
+ supporting="Log actuals. Plan stays separate."
  eyebrowColor={C.green}
  titleTestId="log-canonical-session-label"
  titleSize="hero"
@@ -25497,17 +25506,9 @@ return (
  {canonicalLogReason}
  </div>
  )}
- {!!sessionContextLine && (
- <div style={{ fontSize:"0.5rem", color:"var(--consumer-text)", lineHeight:1.45 }}>
- {sessionContextLine}
- </div>
- )}
  </SurfaceHeroCopy>
  </SurfaceHeroHeader>
  <SurfaceQuietPanel>
- <div data-testid="log-save-state-line" style={{ fontSize:"0.48rem", color: saveErrorMsg ? C.red : "var(--consumer-text-muted)", lineHeight:1.45 }}>
- {saveStateLine}
- </div>
  {logSaveFeedbackModel.show && (
  <StateFeedbackBanner
  model={logSaveFeedbackModel}
@@ -25548,7 +25549,7 @@ return (
  {logExecutionLead}
  </div>
  <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- {primarySaveUsesPlan ? "If nothing changed, save exactly as planned. If something shifted, touch only that field." : "The plan stays visible above. Your actuals save quietly in the background."}
+ {primarySaveUsesPlan ? "If it matched the plan, save it. If it drifted, edit that only." : "The plan stays visible above. Your actuals save underneath it."}
  </div>
  </div>
  {!!detailed?.plannedSummary && (
@@ -25663,7 +25664,7 @@ return (
  </div>
  {!!detailed.substitutionSupport?.allowed && (
  <div style={{ fontSize:"0.48rem", color:"var(--consumer-text-muted)", lineHeight:1.45 }}>
- Change the exercise name only if you swapped the movement.
+ Rename the exercise only if you swapped it.
  </div>
  )}
  </div>

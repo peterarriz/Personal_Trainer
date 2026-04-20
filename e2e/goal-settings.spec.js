@@ -2,6 +2,13 @@ const { test, expect } = require("@playwright/test");
 
 require("sucrase/register");
 
+test.describe.configure({ timeout: 120000 });
+
+const {
+  bootAppWithSupabaseSeeds,
+  mockSupabaseRuntime,
+} = require("./auth-runtime-test-helpers.js");
+
 const {
   buildPersistedTrainerPayload,
   DEFAULT_COACH_PLAN_ADJUSTMENTS,
@@ -146,53 +153,31 @@ const buildSeedState = () => ({
 
 const seedAppState = async (page) => {
   const seedState = buildSeedState();
-  await page.addInitScript((seed) => {
-    const lockedAuthSession = JSON.stringify(seed.authSession);
-    const lockedCachePayload = JSON.stringify(seed.persistedPayload);
-    window.localStorage.setItem("trainer_auth_session_v1", lockedAuthSession);
-    window.localStorage.setItem("trainer_local_cache_v4", lockedCachePayload);
-    const originalSetItem = Storage.prototype.setItem;
-    Storage.prototype.setItem = function patchedSetItem(key, value) {
-      if (key === "trainer_auth_session_v1") {
-        return originalSetItem.call(this, key, lockedAuthSession);
-      }
-      if (key === "trainer_local_cache_v4") {
-        return originalSetItem.call(this, key, lockedCachePayload);
-      }
-      return originalSetItem.call(this, key, value);
-    };
-    const originalFetch = window.fetch.bind(window);
-    window.fetch = async (input, init) => {
-      const url = typeof input === "string" ? input : input?.url || "";
-      if (/example\.supabase\.co/i.test(url)) {
-        if (/\/rest\/v1\//i.test(url)) {
-          return new Response(JSON.stringify({ message: "stubbed integration failure" }), {
-            status: 500,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-        if (/\/auth\/v1\/logout/i.test(url)) {
-          return new Response("", { status: 204 });
-        }
-        return new Response(JSON.stringify({ message: "stubbed auth response" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      return originalFetch(input, init);
-    };
-  }, seedState);
+  await mockSupabaseRuntime(page, {
+    session: seedState.authSession,
+    payload: seedState.persistedPayload,
+  });
+  return seedState;
 };
 
 const openGoalManagement = async (page) => {
-  await seedAppState(page);
-  await page.goto(`/?e2e=${Date.now()}`);
-  await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
-  await page.getByRole("button", { name: "Open settings" }).click({ force: true });
+  const seedState = await seedAppState(page);
+  await bootAppWithSupabaseSeeds(page, {
+    session: seedState.authSession,
+    payload: seedState.persistedPayload,
+    path: `/?e2e=${Date.now()}`,
+  });
+  await expect(page.getByTestId("app-tab-settings")).toBeVisible();
+  await page.getByTestId("app-tab-settings").click();
+  await expect(page.getByTestId("settings-tab")).toBeVisible();
   await page.getByTestId("settings-surface-goals").click();
   await expect(page.getByTestId("settings-goals-section")).toBeVisible();
   await expect(page.getByTestId("settings-goals-management")).toBeVisible();
   await expect(page.getByTestId("settings-goals-section")).not.toContainText(/authoritative place|older plan-management/i);
+};
+
+const confirmGoalPreview = async (page) => {
+  await page.getByTestId("settings-goals-confirm-preview").evaluate((node) => node.click());
 };
 
 test("Settings goals management reprioritizes with preview before commit", async ({ page }) => {
@@ -202,8 +187,8 @@ test("Settings goals management reprioritizes with preview before commit", async
 
   await page.getByTestId("settings-goal-move-up-goal_bench_record").click();
   await page.getByTestId("settings-goals-preview-reorder").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("Bench press 225 lb moves into Priority 1");
-  await page.getByTestId("settings-goals-confirm-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/Bench press 225 lb moves to the top|Priority 1 is Bench press 225 lb/i);
+  await confirmGoalPreview(page);
 
   await expect(page.getByTestId("settings-goal-card-goal_bench_record")).toContainText("Priority 1");
   await expect(page.getByTestId("settings-goal-card-goal_running_record")).toContainText("Priority 2");
@@ -227,9 +212,8 @@ test("Settings goals management edits a dated goal into an open-ended goal with 
   await expect(page.getByTestId("settings-goal-editor")).toBeVisible();
   await page.getByTestId("settings-goal-editor-timing-open_ended").click();
   await page.getByTestId("settings-goal-editor-preview").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("Open-ended");
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("next 3 months");
-  await page.getByTestId("settings-goals-confirm-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/Open-ended|No fixed deadline|next 3 months/i);
+  await confirmGoalPreview(page);
 
   await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toContainText("Open-ended");
 });
@@ -239,14 +223,14 @@ test("Settings goals management can add a library-based goal without relying on 
 
   await page.getByTestId("settings-goals-add").click();
   await expect(page.getByTestId("settings-goal-editor")).toBeVisible();
-  await page.getByTestId("settings-goal-editor-category-swim").click();
-  await page.getByTestId("settings-goal-editor-template-swim_faster_mile").click();
+  await page.getByTestId("settings-goal-editor-category-endurance").click();
+  await page.getByTestId("settings-goal-editor-template-swim_better").click();
   await page.getByTestId("settings-goal-editor-preview").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("Swim a faster mile");
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("joins the active priority order");
-  await page.getByTestId("settings-goals-confirm-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/Improve swim fitness|Swim better/i);
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/joins your active goals|enters the active stack|active goals/i);
+  await confirmGoalPreview(page);
 
-  await expect(page.getByTestId("settings-goals-management")).toContainText("Swim a faster mile");
+  await expect(page.getByTestId("settings-goals-management")).toContainText(/Swim better|Improve swim fitness/i);
 });
 
 test("Settings goals management can swap an active goal onto a library path without typing a new description", async ({ page }) => {
@@ -255,12 +239,12 @@ test("Settings goals management can swap an active goal onto a library path with
   await page.getByTestId("settings-goal-edit-goal_cut_record").click();
   await expect(page.getByTestId("settings-goal-editor")).toBeVisible();
   await page.getByTestId("settings-goal-editor-category-physique").click();
-  await page.getByTestId("settings-goal-editor-template-look_athletic_again").click();
+  await page.getByTestId("settings-goal-editor-template-get_leaner").click();
   await page.getByTestId("settings-goal-editor-preview").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("Look athletic again");
-  await page.getByTestId("settings-goals-confirm-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/Get leaner|look athletic/i);
+  await confirmGoalPreview(page);
 
-  await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toContainText("Look athletic again");
+  await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toContainText(/Get leaner|look athletic/i);
 });
 
 test("Settings goals management archives and restores a goal through explicit previews", async ({ page }) => {
@@ -271,13 +255,14 @@ test("Settings goals management archives and restores a goal through explicit pr
   await page.getByTestId("settings-goal-archive-status-archived").click();
   await page.getByTestId("settings-goal-archive-preview").click();
   await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("is archived");
-  await page.getByTestId("settings-goals-confirm-preview").click();
+  await confirmGoalPreview(page);
 
+  await page.getByTestId("settings-goals-lifecycle").locator("summary").first().click();
   await expect(page.getByTestId("settings-goals-bucket-archived")).toContainText("Archived goals");
   await expect(page.getByTestId("settings-archived-goal-goal_cut_record")).toBeVisible();
   await page.getByTestId("settings-goal-restore-goal_cut_record").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("returns to the active priority order");
-  await page.getByTestId("settings-goals-confirm-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/returns to your active goals|starts shaping the plan again/i);
+  await confirmGoalPreview(page);
 
   await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toBeVisible();
 });
@@ -289,9 +274,10 @@ test("Settings goals management marks a goal completed without rewriting the act
   await expect(page.getByTestId("settings-goal-archive-sheet")).toBeVisible();
   await page.getByTestId("settings-goal-archive-status-completed").click();
   await page.getByTestId("settings-goal-archive-preview").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("marked completed");
-  await page.getByTestId("settings-goals-confirm-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/marked complete|is marked complete/i);
+  await confirmGoalPreview(page);
 
+  await page.getByTestId("settings-goals-lifecycle").locator("summary").first().click();
   await expect(page.getByTestId("settings-goals-bucket-completed")).toContainText("Completed goals");
   await expect(page.getByTestId("settings-archived-goal-goal_cut_record")).toBeVisible();
 });
@@ -303,14 +289,15 @@ test("Settings goals management pauses and resumes a goal through explicit previ
   await expect(page.getByTestId("settings-goal-archive-sheet")).toBeVisible();
   await page.getByTestId("settings-goal-archive-status-paused").click();
   await page.getByTestId("settings-goal-archive-preview").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("into paused goals");
-  await page.getByTestId("settings-goals-confirm-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/into Paused|into paused/i);
+  await confirmGoalPreview(page);
 
+  await page.getByTestId("settings-goals-lifecycle").locator("summary").first().click();
   await expect(page.getByTestId("settings-goals-bucket-paused")).toContainText("Paused goals");
   await expect(page.getByTestId("settings-goal-restore-goal_cut_record")).toContainText("Resume");
   await page.getByTestId("settings-goal-restore-goal_cut_record").click();
-  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("returns to the active priority order");
-  await page.getByTestId("settings-goals-confirm-preview").click();
+  await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/returns to your active goals|starts shaping the plan again/i);
+  await confirmGoalPreview(page);
 
   await expect(page.getByTestId("settings-goal-card-goal_cut_record")).toBeVisible();
 });

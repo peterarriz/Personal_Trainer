@@ -207,7 +207,7 @@ test.describe("log prescribed workflow", () => {
     await expect(logTab.getByRole("button", { name: /open full detail entry/i })).toHaveCount(0);
     await expect(logTab.getByTestId("planned-session-plan")).toHaveCount(1);
     await expect(page.getByTestId("log-detailed-entry")).toBeVisible();
-    await expect(page.getByTestId("log-save-support-line")).toContainText(/matches today's plan/i);
+    await expect(page.getByTestId("log-save-support-line")).toContainText(/matches (today's |the )?plan/i);
     await expect(page.getByTestId("log-run-duration")).toBeVisible();
     await expect(page.getByTestId("log-run-duration")).toHaveValue("40");
     await expect(page.getByTestId("log-extra-exercises")).toHaveCount(0);

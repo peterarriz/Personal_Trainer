@@ -43,7 +43,6 @@ test.describe("theme coverage across consumer surfaces", () => {
 
     await page.getByTestId("settings-surface-account").click();
     await page.getByTestId("settings-logout").click();
-    await page.getByTestId("settings-open-auth-gate").click();
     await expect(page.getByTestId("auth-gate")).toBeVisible();
     await expect.poll(() => page.getByTestId("auth-gate").evaluate((node) => (
       getComputedStyle(node).getPropertyValue("--auth-accent").trim()
@@ -64,7 +63,6 @@ test.describe("theme coverage across consumer surfaces", () => {
 
     await page.getByTestId("settings-surface-account").click();
     await page.getByTestId("settings-logout").click();
-    await page.getByTestId("settings-open-auth-gate").click();
     await expect(page.getByTestId("auth-gate")).toBeVisible();
     await expect.poll(() => page.getByTestId("auth-gate").evaluate((node) => (
       getComputedStyle(node).getPropertyValue("--auth-accent").trim()

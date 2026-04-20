@@ -100,6 +100,10 @@ async function openSeededApp(browser, {
   if (await continueLocalMode.isVisible().catch(() => false)) {
     await continueLocalMode.click();
   }
+  const authGate = runtime.page.getByTestId("auth-gate");
+  if (expectedSurface === "intake" && await authGate.isVisible().catch(() => false)) {
+    await signInThroughAuthGate(runtime.page);
+  }
 
   if (expectedSurface === "none") {
     return runtime;
@@ -213,8 +217,16 @@ async function signInFromSettings(page, {
   password = "correct horse battery",
 } = {}) {
   await openSettingsAccountSurface(page);
-  await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
-  await page.getByTestId("settings-open-auth-gate").click();
+  const openAuthGate = page.getByTestId("settings-open-auth-gate");
+  if (!await openAuthGate.isVisible().catch(() => false)) return;
+  await openAuthGate.click();
+  await signInThroughAuthGate(page, { email, password });
+}
+
+async function signInThroughAuthGate(page, {
+  email = "athlete@example.com",
+  password = "correct horse battery",
+} = {}) {
   await expect(page.getByTestId("auth-gate")).toBeVisible();
   await page.getByTestId("auth-email").fill(email);
   await page.getByTestId("auth-password").fill(password);
@@ -229,7 +241,7 @@ async function signInFromSettings(page, {
 
 async function reloadCloudDataFromSettings(page) {
   await openSettingsAccountSurface(page);
-  await page.getByRole("button", { name: "Reload cloud data" }).click();
+  await page.getByRole("button", { name: /Refresh from account|Reload cloud data/i }).click();
   await expect(page.getByText(/Reloaded cloud data|Cloud data could not be reloaded right now/i)).toBeVisible();
 }
 

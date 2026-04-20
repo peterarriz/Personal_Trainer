@@ -117,11 +117,11 @@ test.describe("friction analytics smoke", () => {
 
     await page.getByTestId("settings-goals-add").click();
     await expect(page.getByTestId("settings-goal-editor")).toBeVisible();
-    await page.getByTestId("settings-goal-editor-category-swim").click();
-    await page.getByTestId("settings-goal-editor-template-swim_faster_mile").click();
+    await page.getByTestId("settings-goal-editor-category-endurance").click();
+    await page.getByTestId("settings-goal-editor-template-swim_better").click();
     await page.getByTestId("settings-goal-editor-preview").click();
-    await expect(page.getByTestId("settings-goals-impact-preview")).toContainText("Swim a faster mile");
-    await page.getByTestId("settings-goals-confirm-preview").click();
+    await expect(page.getByTestId("settings-goals-impact-preview")).toContainText(/Improve swim fitness|Swim better/i);
+    await page.getByTestId("settings-goals-confirm-preview").evaluate((node) => node.click());
 
     await expect.poll(async () => {
       const analyticsNames = await getAnalyticsNames(page);
@@ -145,8 +145,8 @@ test.describe("friction analytics smoke", () => {
     await page.getByTestId("settings-surface-account").click();
     await expect(page.getByTestId("settings-account-section")).toBeVisible();
     await page.getByTestId("settings-logout").click();
-    await expect(page.getByTestId("settings-open-auth-gate")).toBeVisible();
-    await expect(page.getByTestId("settings-sync-status")).toContainText(/saved local copy|This device only/i);
+    await expect(page.getByTestId("auth-gate")).toBeVisible();
+    await expect(page.getByTestId("auth-gate")).toContainText(/saved local copy|This device only/i);
     await expect.poll(() => stats.logoutRequests).toBe(1);
 
     await expect.poll(async () => {

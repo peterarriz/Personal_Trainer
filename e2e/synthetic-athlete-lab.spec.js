@@ -32,7 +32,7 @@ test.describe("synthetic athlete browser probe", () => {
     }, { maxSteps: 3 });
 
     await waitForReview(page);
-    await expect(page.getByTestId("intake-summary-section-what-is-fuzzy")).toContainText(/30-day|baseline|consistency/i);
+    await expect(page.getByTestId("intake-summary-section-still-open")).toContainText(/30-day|baseline|consistency/i);
     await confirmIntakeBuild(page);
     await waitForPostOnboarding(page);
 
@@ -46,7 +46,7 @@ test.describe("synthetic athlete browser probe", () => {
     await page.getByTestId("app-tab-coach").click();
     await page.getByTestId("coach-mode-button-ask_coach").click();
     await expect(page.getByTestId("coach-mode-panel-ask_coach")).toBeVisible();
-    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Answers only/i);
+    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/never changes your plan|advisory/i);
   });
 
   test("exact strength plus aesthetics flow keeps both goals visible and coach ask-anything stays non-mutating", async ({ page }) => {
@@ -63,7 +63,7 @@ test.describe("synthetic athlete browser probe", () => {
 
     await expect.poll(() => getCurrentFieldId(page), { timeout: 20_000 }).toMatch(/target_timeline|current_strength_baseline/);
     await expect(page.locator("[data-testid='intake-confirm-goal-card']")).toHaveCount(2);
-    await expect(page.getByTestId("intake-summary-section-interpreted-goals")).toContainText(/bench|chest|shoulders/i);
+    await expect(page.getByTestId("intake-summary-section-optimize-first")).toContainText(/bench|chest|shoulders/i);
 
     await completeAnchors(page, {
       target_timeline: { type: "natural", value: "July" },
@@ -78,7 +78,7 @@ test.describe("synthetic athlete browser probe", () => {
     const beforeCache = await readLocalCache(page);
     await page.getByTestId("coach-mode-button-ask_coach").click();
     await expect(page.getByTestId("coach-mode-panel-ask_coach")).toBeVisible();
-    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/Answers only/i);
+    await expect(page.getByTestId("coach-advisory-boundary")).toContainText(/never changes your plan|advisory/i);
     await expect(page.getByTestId("coach-preview-accept")).toHaveCount(0);
 
     const afterCache = await readLocalCache(page);

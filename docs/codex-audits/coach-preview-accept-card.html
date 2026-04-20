@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Coach Preview Commit Card</title>
+  <style>
+    :root {
+      --ink: #18212d;
+      --muted: #667487;
+      --muted-strong: #536173;
+      --canvas: #f5f1ea;
+      --panel: rgba(255, 252, 248, 0.9);
+      --panel-soft: rgba(255, 255, 255, 0.74);
+      --line: rgba(24, 33, 45, 0.08);
+      --green: #3a8d63;
+      --amber: #c8832a;
+      --blue: #4f83c2;
+      --phone: #16202d;
+      --shadow: 0 24px 56px rgba(20, 28, 40, 0.12);
+      --phone-shadow: 0 18px 44px rgba(20, 28, 40, 0.18);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "SF Pro Text", "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(79, 131, 194, 0.14), transparent 28%),
+        radial-gradient(circle at top right, rgba(200, 131, 42, 0.14), transparent 26%),
+        linear-gradient(180deg, #f9f5ef 0%, #f1ebe2 100%);
+    }
+
+    .page {
+      width: min(1400px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    .intro {
+      display: grid;
+      gap: 18px;
+      max-width: 78ch;
+      margin-bottom: 34px;
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      line-height: 1.2;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-weight: 800;
+      color: var(--muted-strong);
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 12ch;
+      font-family: "Newsreader", Georgia, serif;
+      font-size: clamp(40px, 5vw, 60px);
+      line-height: 0.94;
+      letter-spacing: -0.05em;
+      font-weight: 500;
+    }
+
+    .lede {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.68;
+      color: var(--muted-strong);
+      max-width: 70ch;
+    }
+
+    .principles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.74);
+      border: 1px solid rgba(24, 33, 45, 0.08);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      backdrop-filter: blur(14px);
+    }
+
+    .review {
+      display: grid;
+      gap: 24px;
+      padding: 28px;
+      border-radius: 34px;
+      background: rgba(255, 249, 243, 0.88);
+      border: 1px solid rgba(24, 33, 45, 0.08);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .review-head {
+      display: grid;
+      gap: 10px;
+      max-width: 74ch;
+    }
+
+    .review-head h2 {
+      margin: 0;
+      font-size: clamp(28px, 3vw, 40px);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+    }
+
+    .review-head p {
+      margin: 0;
+      color: var(--muted-strong);
+      font-size: 17px;
+      line-height: 1.6;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 990px) minmax(280px, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    .phones {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(280px, 1fr));
+      gap: 22px;
+      align-items: start;
+    }
+
+    .phone-wrap {
+      display: grid;
+      gap: 12px;
+      justify-items: center;
+    }
+
+    .screen-label {
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .iphone {
+      width: 316px;
+      min-height: 700px;
+      padding: 14px;
+      border-radius: 42px;
+      background: linear-gradient(180deg, #1a2232 0%, #0f1520 100%);
+      box-shadow: var(--phone-shadow);
+    }
+
+    .iphone-inner {
+      min-height: 672px;
+      border-radius: 30px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background:
+        radial-gradient(circle at top left, rgba(79, 131, 194, 0.14), transparent 32%),
+        radial-gradient(circle at top right, rgba(200, 131, 42, 0.12), transparent 24%),
+        linear-gradient(180deg, #fbf8f3 0%, #f3eee6 100%);
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+    }
+
+    .status {
+      display: flex;
+      justify-content: space-between;
+      padding: 14px 18px 6px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 18px 12px;
+      color: var(--ink);
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .content {
+      display: grid;
+      gap: 12px;
+      padding: 0 14px 18px;
+      align-content: start;
+    }
+
+    .hero,
+    .card,
+    .preview-card,
+    .sidebar-card {
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 10px 28px rgba(24, 33, 45, 0.06);
+      backdrop-filter: blur(16px);
+    }
+
+    .hero,
+    .card,
+    .preview-card {
+      padding: 15px 16px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .micro {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .hero-title {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .body {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.58;
+      color: var(--muted-strong);
+    }
+
+    .job-chip-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .job-chip {
+      border-radius: 999px;
+      padding: 7px 10px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(24, 33, 45, 0.08);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted-strong);
+    }
+
+    .preview-card {
+      gap: 14px;
+    }
+
+    .preview-head {
+      display: grid;
+      gap: 6px;
+    }
+
+    .preview-title {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+    }
+
+    .preview-source {
+      font-size: 12px;
+      line-height: 1.3;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .impact {
+      display: grid;
+      gap: 8px;
+      padding: 13px 14px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(24, 33, 45, 0.08);
+    }
+
+    .impact-lead {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.08;
+      letter-spacing: -0.04em;
+      font-weight: 800;
+      color: var(--ink);
+    }
+
+    .impact-support {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--muted-strong);
+    }
+
+    .chip-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .chip {
+      border-radius: 999px;
+      padding: 8px 11px;
+      background: rgba(24, 33, 45, 0.06);
+      border: 1px solid rgba(24, 33, 45, 0.08);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--ink);
+    }
+
+    .why {
+      display: grid;
+      gap: 6px;
+    }
+
+    .why-copy {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.58;
+      color: var(--muted);
+    }
+
+    .detail {
+      display: grid;
+      gap: 6px;
+      padding-top: 2px;
+    }
+
+    .detail-line {
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--muted-strong);
+    }
+
+    .commit {
+      display: grid;
+      gap: 8px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(24, 33, 45, 0.08);
+    }
+
+    .commit-scope {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.48;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .commit-trust {
+      margin: 0;
+      font-size: 12.5px;
+      line-height: 1.52;
+      color: var(--muted);
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      min-height: 44px;
+      padding: 0 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(24, 33, 45, 0.1);
+      background: rgba(255, 255, 255, 0.76);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-primary {
+      background: linear-gradient(180deg, #22314b 0%, #162230 100%);
+      color: #f7fafc;
+      border-color: rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .today .impact { border-color: rgba(58, 141, 99, 0.16); }
+    .week .impact { border-color: rgba(200, 131, 42, 0.18); }
+    .ask .impact { border-color: rgba(79, 131, 194, 0.18); }
+
+    .sidebar {
+      display: grid;
+      gap: 14px;
+    }
+
+    .sidebar-card {
+      padding: 18px;
+      background: rgba(255, 255, 255, 0.72);
+      display: grid;
+      gap: 12px;
+    }
+
+    .sidebar-card h3 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+    }
+
+    .sidebar-card p,
+    .sidebar-card li {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.58;
+      color: var(--muted-strong);
+    }
+
+    .sidebar-card ul {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 8px;
+    }
+
+    @media (max-width: 1220px) {
+      .grid { grid-template-columns: 1fr; }
+      .phones { grid-template-columns: repeat(2, minmax(280px, 1fr)); }
+    }
+
+    @media (max-width: 820px) {
+      .page {
+        width: min(100vw - 24px, 980px);
+        padding: 28px 0 48px;
+      }
+      .phones { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="intro">
+      <div class="eyebrow">Coach redesign</div>
+      <h1>Preview should sell the impact, then ask for the commit.</h1>
+      <p class="lede">
+        The shared Coach preview card now leads with consequence, drops why into a quieter register, and closes on a real commit decision.
+        The action no longer reads like a generic accept button. It reads like making a version of the plan live.
+      </p>
+      <div class="principles">
+        <span class="pill">Consequence first</span>
+        <span class="pill">Why in support</span>
+        <span class="pill">Commit, not accept</span>
+        <span class="pill">Same card across all 3 jobs</span>
+      </div>
+    </section>
+
+    <section class="review">
+      <div class="review-head">
+        <div class="eyebrow">Preview review</div>
+        <h2>Three jobs, one commit shape.</h2>
+        <p>
+          Each mock uses the same preview-commit card. The only things that change are the recommendation, the consequence lead,
+          and the scope of the commit. The hierarchy stays fixed.
+        </p>
+      </div>
+
+      <div class="grid">
+        <div class="phones">
+          <div class="phone-wrap">
+            <div class="screen-label">Adjust Today</div>
+            <div class="iphone">
+              <div class="iphone-inner">
+                <div class="status"><span>9:41</span><span>FORMA</span></div>
+                <div class="nav"><span>Coach</span><span class="icon">[]</span></div>
+                <div class="content today">
+                  <div class="hero">
+                    <div class="micro">Adjust today</div>
+                    <h3 class="hero-title">Make today's smart call.</h3>
+                    <p class="body">Preview first. Nothing touches the plan unless you commit the change.</p>
+                    <div class="job-chip-row">
+                      <span class="job-chip">Bad sleep</span>
+                      <span class="job-chip">Soreness high</span>
+                    </div>
+                  </div>
+
+                  <div class="preview-card">
+                    <div class="preview-head">
+                      <div class="micro">Preview</div>
+                      <h4 class="preview-title">Swap the full session for a recovery-first version</h4>
+                      <div class="preview-source">Adjust today</div>
+                    </div>
+
+                    <div class="impact">
+                      <div class="micro">What changes</div>
+                      <p class="impact-lead">Duration -15 min, impact lower</p>
+                      <p class="impact-support">Warm-up stays, sharp work comes out, and tomorrow holds as written.</p>
+                      <div class="chip-row">
+                        <span class="chip">Today only</span>
+                        <span class="chip">Tomorrow unchanged</span>
+                      </div>
+                    </div>
+
+                    <div class="why">
+                      <div class="micro">Why this is the call</div>
+                      <p class="why-copy">Sleep and soreness are suppressing quality more than the extra volume would help.</p>
+                    </div>
+
+                    <div class="detail">
+                      <div class="detail-line">+ Tempo work drops out and the session becomes a lighter aerobic plus mobility slot.</div>
+                      <div class="detail-line">+ Tomorrow does not move.</div>
+                    </div>
+
+                    <div class="commit">
+                      <div class="micro">Commit</div>
+                      <p class="commit-scope">This replaces the live plan for today only.</p>
+                      <p class="commit-trust">Nothing changes until you commit this version.</p>
+                      <div class="actions">
+                        <button class="btn btn-primary">Commit today's change</button>
+                        <button class="btn">Keep current plan</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="phone-wrap">
+            <div class="screen-label">Adjust This Week</div>
+            <div class="iphone">
+              <div class="iphone-inner">
+                <div class="status"><span>9:41</span><span>FORMA</span></div>
+                <div class="nav"><span>Coach</span><span class="icon">[]</span></div>
+                <div class="content week">
+                  <div class="hero">
+                    <div class="micro">Adjust this week</div>
+                    <h3 class="hero-title">Change one thing cleanly.</h3>
+                    <p class="body">The weekly preview should make the cost and the preservation obvious in one scan.</p>
+                  </div>
+
+                  <div class="preview-card">
+                    <div class="preview-head">
+                      <div class="micro">Preview</div>
+                      <h4 class="preview-title">Reduce this week's volume</h4>
+                      <div class="preview-source">Adjust this week</div>
+                    </div>
+
+                    <div class="impact">
+                      <div class="micro">What changes</div>
+                      <p class="impact-lead">Volume -12%, long run stays</p>
+                      <p class="impact-support">The week gets smaller without changing the direction of the block.</p>
+                      <div class="chip-row">
+                        <span class="chip">Week 6 only</span>
+                        <span class="chip">Strength stays</span>
+                      </div>
+                    </div>
+
+                    <div class="why">
+                      <div class="micro">Why this is the call</div>
+                      <p class="why-copy">The cleanest win right now is protecting completions instead of forcing the full load.</p>
+                    </div>
+
+                    <div class="detail">
+                      <div class="detail-line">+ Nonessential accessory work trims back first.</div>
+                      <div class="detail-line">+ The long run stays in place, but the total week lands lighter.</div>
+                    </div>
+
+                    <div class="commit">
+                      <div class="micro">Commit</div>
+                      <p class="commit-scope">This replaces the live plan for the current week only.</p>
+                      <p class="commit-trust">Nothing changes until you commit this version.</p>
+                      <div class="actions">
+                        <button class="btn btn-primary">Commit weekly change</button>
+                        <button class="btn">Keep current plan</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="phone-wrap">
+            <div class="screen-label">Ask Coach</div>
+            <div class="iphone">
+              <div class="iphone-inner">
+                <div class="status"><span>9:41</span><span>FORMA</span></div>
+                <div class="nav"><span>Coach</span><span class="icon">[]</span></div>
+                <div class="content ask">
+                  <div class="hero">
+                    <div class="micro">Ask coach</div>
+                    <h3 class="hero-title">Answer first, commit only if it earns it.</h3>
+                    <p class="body">Ask remains advisory until a deterministic preview is ready. Once it is ready, it uses the same commit card.</p>
+                  </div>
+
+                  <div class="card">
+                    <div class="micro">Question</div>
+                    <p class="body">Should I push strength next week if the run is finally feeling easy again?</p>
+                  </div>
+
+                  <div class="preview-card">
+                    <div class="preview-head">
+                      <div class="micro">Preview</div>
+                      <h4 class="preview-title">Add one small strength progression next week</h4>
+                      <div class="preview-source">Ask coach</div>
+                    </div>
+
+                    <div class="impact">
+                      <div class="micro">What changes</div>
+                      <p class="impact-lead">Bench +1 top set, run quality stays</p>
+                      <p class="impact-support">The suggested change nudges the strength lane without asking the endurance side to pay for it.</p>
+                      <div class="chip-row">
+                        <span class="chip">Next 2 weeks</span>
+                        <span class="chip">Recovery unchanged</span>
+                      </div>
+                    </div>
+
+                    <div class="why">
+                      <div class="micro">Why this is the call</div>
+                      <p class="why-copy">The last stretch supports a nudge, but the endurance lane still has to stay clean.</p>
+                    </div>
+
+                    <div class="detail">
+                      <div class="detail-line">+ The extra set lands on the bench top work only.</div>
+                      <div class="detail-line">+ Run quality and long-run structure stay untouched.</div>
+                    </div>
+
+                    <div class="commit">
+                      <div class="micro">Commit</div>
+                      <p class="commit-scope">This makes the suggested change live for the next planned stretch.</p>
+                      <p class="commit-trust">Nothing changes until you commit this version.</p>
+                      <div class="actions">
+                        <button class="btn btn-primary">Commit suggested change</button>
+                        <button class="btn">Keep current plan</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="sidebar">
+          <div class="sidebar-card">
+            <div class="eyebrow">Hierarchy</div>
+            <h3>Impact should do the persuasive work.</h3>
+            <ul>
+              <li><strong>Headline:</strong> names the move.</li>
+              <li><strong>What changes:</strong> leads with delta plus preserved anchor.</li>
+              <li><strong>Why:</strong> supports the call in a quieter voice.</li>
+              <li><strong>Commit:</strong> makes scope and consequence explicit before the action.</li>
+            </ul>
+          </div>
+
+          <div class="sidebar-card">
+            <div class="eyebrow">Optionality</div>
+            <h3>Consequence should disappear rarely.</h3>
+            <p>Only omit the consequence block when there is no honest numeric delta, no preserved anchor worth surfacing, and the headline already contains the full outcome.</p>
+            <p>If inventing precision would be faker than staying quiet, omit it. Otherwise consequence stays mandatory.</p>
+          </div>
+
+          <div class="sidebar-card">
+            <div class="eyebrow">Commit language</div>
+            <h3>The final action should feel binding.</h3>
+            <ul>
+              <li>Use <strong>Commit</strong>, not <strong>Accept</strong>.</li>
+              <li>Name the scope when possible: today, weekly, suggested change.</li>
+              <li>Let the secondary action defend the status quo: <strong>Keep current plan</strong>.</li>
+            </ul>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -5,6 +5,12 @@ require("sucrase/register");
 const { normalizeSurfaceText } = require("./adversarial-test-helpers.js");
 const { LOCAL_CACHE_KEY, readLocalCache } = require("./intake-test-utils.js");
 const {
+  SUPABASE_KEY,
+  SUPABASE_URL,
+  makeSession,
+  mockSupabaseRuntime,
+} = require("./auth-runtime-test-helpers.js");
+const {
   buildPersistedTrainerPayload,
   DEFAULT_COACH_PLAN_ADJUSTMENTS,
   DEFAULT_NUTRITION_FAVORITES,
@@ -199,9 +205,10 @@ const buildSeedPayload = ({
 async function createFrozenPage(browser, {
   fixedIsoString = DEFAULT_FIXED_ISO,
   localCacheSeed = null,
+  authSessionSeed = null,
 } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORT });
-  await context.addInitScript(({ nextFixedIsoString, localCacheKey, payloadSeed }) => {
+  await context.addInitScript(({ nextFixedIsoString, localCacheKey, payloadSeed, authSession, supabaseUrl, supabaseKey }) => {
     const fixedNow = new Date(nextFixedIsoString).getTime();
     const OriginalDate = Date;
     function MockDate(...args) {
@@ -216,10 +223,15 @@ async function createFrozenPage(browser, {
     MockDate.prototype = OriginalDate.prototype;
     globalThis.Date = MockDate;
     window.Date = MockDate;
+    window.__SUPABASE_URL = supabaseUrl;
+    window.__SUPABASE_ANON_KEY = supabaseKey;
 
     try {
       window.localStorage.removeItem("trainer_auth_session_v1");
       window.localStorage.removeItem(localCacheKey);
+      if (authSession) {
+        window.localStorage.setItem("trainer_auth_session_v1", JSON.stringify(authSession));
+      }
       if (payloadSeed) {
         window.localStorage.setItem(localCacheKey, JSON.stringify(payloadSeed));
       }
@@ -228,6 +240,9 @@ async function createFrozenPage(browser, {
     nextFixedIsoString: fixedIsoString,
     localCacheKey: LOCAL_CACHE_KEY,
     payloadSeed: localCacheSeed,
+    authSession: authSessionSeed,
+    supabaseUrl: SUPABASE_URL,
+    supabaseKey: SUPABASE_KEY,
   });
   const page = await context.newPage();
   return { context, page };
@@ -237,8 +252,20 @@ async function openSeededApp(browser, {
   localCacheSeed,
   fixedIsoString = DEFAULT_FIXED_ISO,
 } = {}) {
-  const runtime = await createFrozenPage(browser, { localCacheSeed, fixedIsoString });
+  const authSessionSeed = makeSession({
+    userId: "00000000-0000-0000-0000-000000000001",
+    email: "tester@example.com",
+  });
+  const runtime = await createFrozenPage(browser, {
+    localCacheSeed,
+    fixedIsoString,
+    authSessionSeed,
+  });
   const { page } = runtime;
+  await mockSupabaseRuntime(page, {
+    session: authSessionSeed,
+    payload: localCacheSeed,
+  });
   await page.goto(`/?e2e=${Date.now()}`);
 
   const continueLocalMode = page.getByTestId("continue-local-mode");
@@ -272,7 +299,7 @@ function currentWeekDayRow(page, dayLabel) {
 }
 
 function hydrationButton(page) {
-  return page.locator(".card").filter({ hasText: "HYDRATION / SUPPLEMENT" }).getByRole("button").first();
+  return page.locator(".card").filter({ hasText: "HYDRATION" }).getByRole("button").first();
 }
 
 async function readHydrationNumbers(page) {
@@ -446,10 +473,18 @@ test.describe("settings anchor trust path", () => {
 
     await baselinePage.getByTestId("app-tab-program").click();
     await expect(baselinePage.getByTestId("program-tab")).toBeVisible();
-    const baselineWedRow = currentWeekDayRow(baselinePage, "Wed");
-    await expect(baselineWedRow).toBeVisible();
-    const baselineWedText = normalizeSurfaceText(await baselineWedRow.innerText());
-    expect(baselineWedText).toMatch(/30-40 min/i);
+    const baselineFutureWeekCard = baselinePage.getByTestId("program-future-weeks")
+      .locator("div[data-testid^='program-future-week-card-']")
+      .first();
+    await baselineFutureWeekCard.locator("[data-testid^='program-future-week-toggle-']").click();
+    const baselineFutureRows = baselineFutureWeekCard.locator("[data-testid^='program-future-week-session-item-']");
+    await expect(baselineFutureRows.first()).toBeVisible();
+    const baselineFutureFirstButton = baselineFutureRows.first().locator("[data-testid^='program-future-week-session-button-']");
+    await baselineFutureFirstButton.click();
+    const baselineFutureDetail = baselineFutureWeekCard.getByTestId("program-future-week-session-detail-panel");
+    await expect(baselineFutureDetail.getByTestId("planned-session-plan")).toBeVisible();
+    const baselineFutureText = normalizeSurfaceText(await baselineFutureDetail.innerText());
+    expect(baselineFutureText).toMatch(/30-40 min/i);
 
     const editedPayload = await saveAnchorEdits(baselinePage);
     await baselineRuntime.context.close();
@@ -468,14 +503,20 @@ test.describe("settings anchor trust path", () => {
 
     await page.getByTestId("app-tab-program").click();
     await expect(page.getByTestId("program-tab")).toBeVisible();
-    const adaptedWedRow = currentWeekDayRow(page, "Wed");
-    await expect(adaptedWedRow).toBeVisible();
-    const adaptedWedText = normalizeSurfaceText(await adaptedWedRow.innerText());
-    expect(adaptedWedText).not.toBe(baselineWedText);
-    expect(adaptedWedText).toMatch(/45-60 min/i);
-
-    await adaptedWedRow.locator("[data-testid^='program-this-week-session-button-']").click();
-    await expect(page.getByTestId("program-this-week-session-detail-panel")).toContainText(/45-60 min top set \+ backoff strength/i);
+    const adaptedFutureWeekCard = page.getByTestId("program-future-weeks")
+      .locator("div[data-testid^='program-future-week-card-']")
+      .first();
+    await adaptedFutureWeekCard.locator("[data-testid^='program-future-week-toggle-']").click();
+    const adaptedFutureRows = adaptedFutureWeekCard.locator("[data-testid^='program-future-week-session-item-']");
+    await expect(adaptedFutureRows.first()).toBeVisible();
+    const adaptedFutureFirstButton = adaptedFutureRows.first().locator("[data-testid^='program-future-week-session-button-']");
+    await adaptedFutureFirstButton.click();
+    const adaptedFutureDetail = adaptedFutureWeekCard.getByTestId("program-future-week-session-detail-panel");
+    await expect(adaptedFutureDetail.getByTestId("planned-session-plan")).toBeVisible();
+    const adaptedFutureText = normalizeSurfaceText(await adaptedFutureDetail.innerText());
+    expect(adaptedFutureText).not.toBe(baselineFutureText);
+    expect(adaptedFutureText).toMatch(/45-60 min/i);
+    await expect(adaptedFutureDetail).toContainText(/45-60 min top set \+ backoff strength/i);
 
     const dayReview = await openPastSavedDayReview(page, historyDateKey);
     await expect(dayReview.getByTestId("history-day-review-primary")).toContainText("Tempo Intervals");

@@ -7,6 +7,7 @@ import {
   SurfacePill,
   SurfaceQuietPanel,
 } from "./SurfaceSystem.jsx";
+import { IntakeTrajectoryArcDisclosure } from "./IntakeTrajectoryArcDisclosure.jsx";
 
 const sanitizeText = (value = "", maxLength = 220) => String(value || "")
   .replace(/\s+/g, " ")
@@ -223,6 +224,7 @@ export function IntakeSummaryRail({
                 </div>
               ))}
             </div>
+            <IntakeTrajectoryArcDisclosure model={previewModel?.arcDisclosure} />
             {!!previewModel?.arcLine && (
               <div style={{ fontSize: "0.48rem", color: "#8fa5c8", lineHeight: 1.45 }}>
                 {previewModel.arcLine}

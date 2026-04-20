@@ -245,7 +245,11 @@ const logUnderFueledDay = async (page, note) => {
   await expect(page.getByTestId("nutrition-save-status")).toContainText(/saved/i);
 };
 
-const readSyncSnapshot = async (page) => page.evaluate(() => window.__TRAINER_SYNC_TEST_HELPERS?.snapshot?.() || null);
+const readSyncSnapshot = async (page) => page.evaluate(() => {
+  const helpers = window.__TRAINER_SYNC_TEST_HELPERS;
+  if (!helpers || typeof helpers.snapshot !== "function") return null;
+  return helpers.snapshot() || null;
+});
 
 const waitForRetryStateToSettleOrExplain = async (page, label, timeoutMs = 12000) => {
   const deadline = Date.now() + timeoutMs;

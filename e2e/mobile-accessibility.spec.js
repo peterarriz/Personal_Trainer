@@ -69,18 +69,17 @@ test.describe("mobile accessibility pass", () => {
     await expect(page.getByTestId("log-tab")).toBeVisible();
 
     const logTargets = [
-      page.locator("summary").filter({ hasText: "Full session details" }).first(),
-      page.locator("summary").filter({ hasText: "Notes, feel, and context" }).first(),
+      page.getByTestId("log-advanced-fields").locator("summary").first(),
       page.getByTestId("log-save-quick"),
       page.getByTestId("log-day-review-disclosure").locator("summary").first(),
-      page.locator("summary").filter({ hasText: "Recent history" }).first(),
+      page.getByTestId("log-recent-history-disclosure").locator("summary").first(),
     ];
     for (const locator of logTargets) {
       const metrics = await readTapTarget(locator);
       expect(metrics.height).toBeGreaterThanOrEqual(44);
     }
 
-    await page.locator("summary").filter({ hasText: "Notes, feel, and context" }).first().click();
+    await page.getByTestId("log-advanced-fields").locator("summary").first().click();
 
     const alwaysVisibleLogFields = [
       page.getByLabel("How the session felt"),

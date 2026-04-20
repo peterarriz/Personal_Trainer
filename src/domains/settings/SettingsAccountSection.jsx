@@ -83,6 +83,7 @@ export function SettingsAccountSection({
   passwordReset = {},
   syncDiagnostics = null,
   showInternalSettingsTools = false,
+  showProtectedDiagnostics = false,
 }) {
   const resetDeviceUi = {
     open: false,
@@ -351,7 +352,7 @@ export function SettingsAccountSection({
           <textarea aria-label="Backup code to restore" value={backupUi.code} onChange={(e) => backupUi.onCodeChange(e.target.value)} placeholder="Paste backup code to restore" style={{ minHeight:62, fontSize:"max(16px, 0.5rem)" }} />
           <button className="btn" onClick={backupUi.onReviewRestore} style={{ width:"fit-content", fontSize:"0.47rem", ...brandButtonStyle }}>Review restore</button>
         </div>
-        {showInternalSettingsTools && (
+        {showInternalSettingsTools && showProtectedDiagnostics && (
           <div data-testid="settings-reviewer-report-card" style={{ border:"1px solid var(--border)", borderRadius:12, background:"var(--surface-1)", padding:"0.55rem 0.6rem", display:"grid", gap:"0.4rem" }}>
             <div style={{ display:"grid", gap:"0.14rem" }}>
               <div style={{ fontSize:"0.48rem", color:"var(--text-soft)", letterSpacing:"0.08em" }}>PLAN HISTORY EXPORT</div>

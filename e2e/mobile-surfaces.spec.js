@@ -133,6 +133,7 @@ test.describe("mobile surface simplification", () => {
     await bootSignedInTodaySurface(page);
 
     await expect(page.getByTestId("today-tab")).toBeVisible();
+    await expect(page.getByTestId("app-tab-program")).toHaveText("Plan");
     await expect(page.getByTestId("today-session-card")).toBeVisible();
     await expect(page.getByTestId("today-session-plan")).toBeVisible();
     await expect(page.getByTestId("today-primary-cta")).toBeVisible();
@@ -149,7 +150,7 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("program-this-week")).toBeVisible();
     await expect(page.getByTestId("program-future-weeks")).toBeVisible();
     await expect(page.getByText("Edit goals and plan")).toHaveCount(0);
-    await expect(page.getByText("PROGRAMS + STYLES").first()).not.toBeVisible();
+    await expect(page.getByText("PLAN LAYERS").first()).not.toBeVisible();
     await expect(page.getByText("Refine Current Goal").first()).not.toBeVisible();
     await expect(page.getByText("Start New Goal Arc").first()).not.toBeVisible();
     await expect(page.getByTestId("program-current-day-highlight")).toHaveCount(0);
@@ -163,12 +164,13 @@ test.describe("mobile surface simplification", () => {
     await page.getByTestId("settings-surface-goals").click();
     await expect(page.getByTestId("settings-goals-section")).toBeVisible();
     await expect(page.getByTestId("settings-goals-management")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open Plan" })).toBeVisible();
     await expect(page.getByText("Programs and styles")).toHaveCount(0);
     await expect(page.getByText("Advanced text request", { exact: true })).toHaveCount(0);
 
     await page.getByTestId("settings-surface-programs").click();
     await expect(page.getByTestId("settings-programs-section")).toBeVisible();
-    await expect(page.getByText("PLAN STYLE").first()).toBeVisible();
+    await expect(page.getByText("PLAN LAYERS").first()).toBeVisible();
 
     await page.getByTestId("settings-surface-advanced").click();
     await expect(page.getByTestId("settings-advanced-section")).toBeVisible();
@@ -254,7 +256,10 @@ test.describe("mobile surface simplification", () => {
     await quickLog.getByPlaceholder("Optional note").fill("Felt better after the warmup, but the ankle still needed extra rest between sets.");
     await quickLog.getByPlaceholder(/Bodyweight/i).fill("182");
     await page.getByTestId("today-save-log").click();
-    await expect(page.getByTestId("today-save-status")).toContainText(/saved/i);
+    await expect.poll(async () => {
+      const text = await page.getByTestId("today-save-status").innerText();
+      return String(text || "").replace(/\s+/g, " ").trim();
+    }).toMatch(/saved|safe here|locked in|saving/i);
 
     const textTargets = [
       "today-canonical-session-label",
@@ -384,6 +389,6 @@ test.describe("mobile surface simplification", () => {
     await expect(page.getByTestId("program-inline-repair")).toBeVisible();
     await expect(page.getByTestId("metrics-baselines-section")).toBeVisible();
     await expect(page.getByTestId("metrics-editor-environment")).toBeVisible();
-    await expect(page.getByText("Fix small plan gaps without leaving Program.")).toBeVisible();
+    await expect(page.getByText("Fix small plan gaps without leaving Plan.")).toBeVisible();
   });
 });

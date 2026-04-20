@@ -33,6 +33,7 @@ async function createFrozenPage(browser, { fixedIsoString, localCacheSeed = null
     window.Date = MockDate;
 
     try {
+      window.localStorage.setItem("trainer_debug", "1");
       window.localStorage.removeItem(localCacheKey);
       if (payloadSeed) {
         window.localStorage.setItem(localCacheKey, JSON.stringify(payloadSeed));

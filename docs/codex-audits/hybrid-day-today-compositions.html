@@ -1,0 +1,909 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hybrid-Day Today Compositions</title>
+  <style>
+    :root {
+      --page: #f3efe7;
+      --ink: #172033;
+      --muted: #5b6578;
+      --panel: #fffaf1;
+      --stroke: rgba(23, 32, 51, 0.1);
+      --soft: rgba(255, 255, 255, 0.7);
+      --ios-shell: #f7f4ed;
+      --ios-panel: rgba(255, 255, 255, 0.9);
+      --ios-line: rgba(23, 32, 51, 0.08);
+      --ios-text: #182033;
+      --ios-muted: #697386;
+      --accent-run: #1f8cff;
+      --accent-lift: #d5673d;
+      --accent-mix: #159a74;
+      --accent-ink: #0d1729;
+      --shadow: 0 24px 60px rgba(18, 24, 38, 0.14);
+      --phone-shadow: 0 18px 42px rgba(18, 24, 38, 0.18);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
+      font-family: "SF Pro Display", "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(31, 140, 255, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(213, 103, 61, 0.12), transparent 24%),
+        linear-gradient(180deg, #f8f4ec 0%, #efe9df 100%);
+      color: var(--ink);
+    }
+
+    .page {
+      width: min(1440px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    .intro {
+      display: grid;
+      gap: 18px;
+      margin-bottom: 36px;
+    }
+
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(34px, 5vw, 56px);
+      line-height: 0.96;
+      letter-spacing: -0.04em;
+      max-width: 10ch;
+    }
+
+    .lede {
+      max-width: 70ch;
+      font-size: 18px;
+      line-height: 1.6;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .principles {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(23, 32, 51, 0.08);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent-ink);
+      backdrop-filter: blur(18px);
+    }
+
+    .composition {
+      display: grid;
+      gap: 22px;
+      margin-top: 32px;
+      padding: 28px;
+      border-radius: 32px;
+      background: rgba(255, 250, 241, 0.84);
+      border: 1px solid rgba(23, 32, 51, 0.08);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .composition-head {
+      display: grid;
+      gap: 12px;
+      max-width: 76ch;
+    }
+
+    .composition-head h2 {
+      margin: 0;
+      font-size: clamp(28px, 3vw, 40px);
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .subhead {
+      font-size: 17px;
+      line-height: 1.6;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .rule {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      width: fit-content;
+      padding: 10px 14px;
+      border-radius: 16px;
+      background: rgba(23, 32, 51, 0.05);
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--accent-ink);
+    }
+
+    .rule strong {
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .phones {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 24px;
+      align-items: start;
+    }
+
+    .phone-wrap {
+      display: grid;
+      gap: 12px;
+      justify-items: center;
+    }
+
+    .screen-label {
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .iphone {
+      width: 316px;
+      min-height: 684px;
+      padding: 14px;
+      border-radius: 42px;
+      background: linear-gradient(180deg, #1b2333 0%, #0f1521 100%);
+      box-shadow: var(--phone-shadow);
+    }
+
+    .iphone-inner {
+      min-height: 656px;
+      border-radius: 30px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top right, rgba(31, 140, 255, 0.08), transparent 24%),
+        linear-gradient(180deg, #f9f6ef 0%, #f3eee4 100%);
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .status {
+      display: flex;
+      justify-content: space-between;
+      padding: 14px 18px 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--ios-text);
+    }
+
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 18px 12px;
+      color: var(--ios-text);
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .nav .icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.74);
+      display: grid;
+      place-items: center;
+      font-size: 14px;
+      color: var(--ios-muted);
+      border: 1px solid var(--ios-line);
+    }
+
+    .content {
+      display: grid;
+      gap: 12px;
+      padding: 0 14px 18px;
+      align-content: start;
+    }
+
+    .hero-card,
+    .sheet,
+    .note,
+    .save-rail,
+    .actuals,
+    .block-list,
+    .session-card {
+      background: var(--ios-panel);
+      border: 1px solid var(--ios-line);
+      border-radius: 24px;
+      box-shadow: 0 12px 28px rgba(24, 32, 51, 0.06);
+      backdrop-filter: blur(16px);
+    }
+
+    .hero-card {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .micro {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ios-muted);
+      font-weight: 700;
+    }
+
+    .hero-title {
+      margin: 4px 0 0;
+      font-size: 28px;
+      line-height: 0.96;
+      letter-spacing: -0.04em;
+      color: var(--ios-text);
+      max-width: 8ch;
+    }
+
+    .helper {
+      margin: 0;
+      color: var(--ios-muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .duration {
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: rgba(23, 32, 51, 0.05);
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--accent-ink);
+      white-space: nowrap;
+    }
+
+    .arc {
+      display: grid;
+      gap: 10px;
+    }
+
+    .arc-strip {
+      display: grid;
+      gap: 6px;
+    }
+
+    .arc-strip.prime {
+      grid-template-columns: 1.2fr 0.85fr;
+    }
+
+    .arc-strip.load {
+      grid-template-columns: 1fr 0.75fr;
+    }
+
+    .arc-strip.weave {
+      grid-template-columns: 0.7fr 1fr 0.7fr;
+    }
+
+    .seg {
+      min-height: 42px;
+      border-radius: 16px;
+      padding: 8px 10px;
+      display: grid;
+      align-content: center;
+      gap: 2px;
+      color: white;
+    }
+
+    .seg small {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      opacity: 0.8;
+      font-weight: 700;
+    }
+
+    .seg span {
+      font-size: 13px;
+      line-height: 1.2;
+      font-weight: 700;
+    }
+
+    .run {
+      background: linear-gradient(135deg, #1780e5 0%, #5eb3ff 100%);
+    }
+
+    .lift {
+      background: linear-gradient(135deg, #c45630 0%, #eb8b67 100%);
+    }
+
+    .mix {
+      background: linear-gradient(135deg, #118667 0%, #40c89f 100%);
+    }
+
+    .arc-lines {
+      display: grid;
+      gap: 8px;
+    }
+
+    .arc-row {
+      display: grid;
+      grid-template-columns: 74px 1fr;
+      gap: 10px;
+      align-items: start;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--ios-text);
+    }
+
+    .arc-row strong {
+      color: var(--accent-ink);
+    }
+
+    .note,
+    .sheet,
+    .save-rail {
+      padding: 14px 16px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .note p,
+    .sheet p,
+    .save-rail p {
+      margin: 0;
+      color: var(--ios-muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .session-card {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .summary-chip {
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: rgba(23, 32, 51, 0.05);
+      color: var(--accent-ink);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .actuals,
+    .block-list {
+      padding: 14px 14px 16px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .stage {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 18px;
+      background: rgba(23, 32, 51, 0.035);
+      border: 1px solid rgba(23, 32, 51, 0.06);
+    }
+
+    .stage-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .stage-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--accent-ink);
+    }
+
+    .stage-why {
+      font-size: 12px;
+      color: var(--ios-muted);
+      line-height: 1.45;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .metric,
+    .inline-metric {
+      border-radius: 14px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(23, 32, 51, 0.06);
+    }
+
+    .metric strong,
+    .inline-metric strong {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ios-muted);
+      margin-bottom: 4px;
+    }
+
+    .metric span,
+    .inline-metric span {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent-ink);
+      line-height: 1.25;
+    }
+
+    .inline-split {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-around;
+      padding: 10px 18px 16px;
+      background: linear-gradient(180deg, rgba(247, 244, 237, 0) 0%, rgba(247, 244, 237, 0.92) 38%, rgba(247, 244, 237, 1) 100%);
+      color: var(--ios-muted);
+      font-size: 11px;
+      font-weight: 700;
+      border-top: 1px solid rgba(23, 32, 51, 0.06);
+    }
+
+    .footer .active {
+      color: var(--accent-ink);
+    }
+
+    .takeaways {
+      display: grid;
+      gap: 8px;
+      padding-top: 4px;
+    }
+
+    .takeaways div {
+      font-size: 15px;
+      line-height: 1.55;
+      color: var(--muted);
+    }
+
+    .takeaways strong {
+      color: var(--accent-ink);
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        width: min(100vw - 24px, 1440px);
+        padding-top: 28px;
+      }
+
+      .composition {
+        padding: 20px;
+      }
+
+      .iphone {
+        width: min(316px, 100%);
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="intro">
+      <div class="eyebrow">Today x Log hybrid-day design</div>
+      <h1>Three ways to make hybrid feel coached.</h1>
+      <p class="lede">
+        Every composition treats the run and the lift as one session with one combined duration, one visible arc, and one shared rationale.
+        Log inherits the exact same framing so the athlete feels like they are finishing the session they were promised, not switching into a second tool.
+      </p>
+      <div class="principles">
+        <div class="pill">One touchpoint, not two cards</div>
+        <div class="pill">Session arc always visible</div>
+        <div class="pill">One combined duration</div>
+        <div class="pill">Shared rationale, not lane chatter</div>
+        <div class="pill">Log mirrors Today</div>
+      </div>
+    </section>
+
+    <section class="composition">
+      <div class="composition-head">
+        <div class="eyebrow">Composition 1</div>
+        <h2>Prime -> Build</h2>
+        <p class="subhead">
+          Run first, then finish under load. This is the right shape when the run is the more fragile signal and the lift is there to reinforce, not compete.
+        </p>
+        <div class="rule"><strong>Use when</strong> run quality or race specificity is primary, and the lift is supportive strength.</div>
+      </div>
+
+      <div class="phones">
+        <div class="phone-wrap">
+          <div class="screen-label">Today</div>
+          <section class="iphone">
+            <div class="iphone-inner">
+              <div class="status"><span>9:41</span><span>5G 100%</span></div>
+              <div class="nav"><span class="icon">&#8249;</span><span>Today</span><span class="icon">&#9719;</span></div>
+              <div class="content">
+                <article class="hero-card">
+                  <div class="hero-top">
+                    <div>
+                      <div class="micro">Hybrid day</div>
+                      <h3 class="hero-title">Prime, then load</h3>
+                    </div>
+                    <div class="duration">64 min total</div>
+                  </div>
+                  <p class="helper">
+                    Get the run while stride quality is clean. Then use the lift to lock in positions and supporting force.
+                  </p>
+                  <div class="arc">
+                    <div class="arc-strip prime">
+                      <div class="seg run"><small>First</small><span>Quality run 28 min</span></div>
+                      <div class="seg lift"><small>Finish</small><span>Strength support 26 min</span></div>
+                    </div>
+                    <div class="arc-lines">
+                      <div class="arc-row"><strong>Run first</strong><span>Fresh legs protect pace, rhythm, and mechanics.</span></div>
+                      <div class="arc-row"><strong>Lift second</strong><span>Moderate loading turns that clean pattern into durable support.</span></div>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="note">
+                  <div class="micro">Shared rationale</div>
+                  <p>This day should feel like one build, not one run plus one errand. The run sets the signal. The lift makes it stick.</p>
+                </article>
+
+                <article class="sheet">
+                  <div class="micro">Session arc</div>
+                  <p>Warm up 10 min -> quality run 28 min -> two lower-body support supersets -> short trunk finish.</p>
+                </article>
+              </div>
+              <div class="footer"><span class="active">Today</span><span>Program</span><span>Log</span><span>Coach</span></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="phone-wrap">
+          <div class="screen-label">Log inherits it</div>
+          <section class="iphone">
+            <div class="iphone-inner">
+              <div class="status"><span>9:41</span><span>5G 100%</span></div>
+              <div class="nav"><span class="icon">&#8249;</span><span>Log</span><span class="icon">&#10003;</span></div>
+              <div class="content">
+                <article class="session-card">
+                  <div class="summary-row">
+                    <div>
+                      <div class="micro">Log the session</div>
+                      <h3 class="hero-title">Prime, then load</h3>
+                    </div>
+                    <div class="duration">64 min total</div>
+                  </div>
+                  <div class="arc-strip prime">
+                    <div class="seg run"><small>Stage 1</small><span>Run capture first</span></div>
+                    <div class="seg lift"><small>Stage 2</small><span>Lift finish next</span></div>
+                  </div>
+                </article>
+
+                <article class="save-rail">
+                  <div class="micro">Save rail</div>
+                  <p>One save closes the whole session. Keep the feel and total time attached to the day, not to one lane.</p>
+                </article>
+
+                <article class="actuals">
+                  <div class="micro">Session actuals</div>
+                  <div class="stage">
+                    <div class="stage-head">
+                      <div class="stage-title">Stage 1: Quality run</div>
+                      <div class="summary-chip">Protect rhythm</div>
+                    </div>
+                    <div class="metric-grid">
+                      <div class="metric"><strong>Minutes</strong><span>28</span></div>
+                      <div class="metric"><strong>Distance</strong><span>3.8 mi</span></div>
+                      <div class="metric"><strong>Pace</strong><span>7:21 / mi</span></div>
+                    </div>
+                  </div>
+                  <div class="stage">
+                    <div class="stage-head">
+                      <div class="stage-title">Stage 2: Strength finish</div>
+                      <div class="summary-chip">Reinforce</div>
+                    </div>
+                    <div class="stage-why">Trap-bar deadlift, rear-foot split squat, and trunk work stay in the same container because they finish the same session.</div>
+                  </div>
+                </article>
+              </div>
+              <div class="footer"><span>Today</span><span>Program</span><span class="active">Log</span><span>Coach</span></div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="takeaways">
+        <div><strong>Why this works:</strong> the athlete understands the order immediately, and the lift reads as reinforcement instead of a second appointment.</div>
+        <div><strong>Log inheritance:</strong> the same title, duration, and run-first arc stay visible while the actuals sit inside one `Session actuals` container.</div>
+      </div>
+    </section>
+
+    <section class="composition">
+      <div class="composition-head">
+        <div class="eyebrow">Composition 2</div>
+        <h2>Load -> Flush</h2>
+        <p class="subhead">
+          Lift first, then clear the system with an easy run. This is the right shape when the lift is the real money work and the run is there to close the day cleanly.
+        </p>
+        <div class="rule"><strong>Use when</strong> strength quality, bar speed, or lift confidence is primary, and the run is easy support.</div>
+      </div>
+
+      <div class="phones">
+        <div class="phone-wrap">
+          <div class="screen-label">Today</div>
+          <section class="iphone">
+            <div class="iphone-inner">
+              <div class="status"><span>9:41</span><span>5G 100%</span></div>
+              <div class="nav"><span class="icon">&#8249;</span><span>Today</span><span class="icon">&#9719;</span></div>
+              <div class="content">
+                <article class="hero-card">
+                  <div class="hero-top">
+                    <div>
+                      <div class="micro">Hybrid day</div>
+                      <h3 class="hero-title">Lift, then clear</h3>
+                    </div>
+                    <div class="duration">71 min total</div>
+                  </div>
+                  <p class="helper">
+                    Hit the heavy work while you are fresh. Then use the run to clear fatigue and bank aerobic volume without dulling force output.
+                  </p>
+                  <div class="arc">
+                    <div class="arc-strip load">
+                      <div class="seg lift"><small>First</small><span>Main lift cluster 38 min</span></div>
+                      <div class="seg run"><small>Finish</small><span>Easy run flush 21 min</span></div>
+                    </div>
+                    <div class="arc-lines">
+                      <div class="arc-row"><strong>Lift first</strong><span>The first half protects bar speed, tension, and confidence under load.</span></div>
+                      <div class="arc-row"><strong>Run second</strong><span>The easy finish settles the nervous system and extends the week without stealing from the lift.</span></div>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="note">
+                  <div class="micro">Shared rationale</div>
+                  <p>The run exists in service of the block. It is a clean finish, not a competing session.</p>
+                </article>
+
+                <article class="sheet">
+                  <div class="micro">Session arc</div>
+                  <p>Movement prep -> squat and hinge work -> two assistance pieces -> easy aerobic flush -> quick downshift walk.</p>
+                </article>
+              </div>
+              <div class="footer"><span class="active">Today</span><span>Program</span><span>Log</span><span>Coach</span></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="phone-wrap">
+          <div class="screen-label">Log inherits it</div>
+          <section class="iphone">
+            <div class="iphone-inner">
+              <div class="status"><span>9:41</span><span>5G 100%</span></div>
+              <div class="nav"><span class="icon">&#8249;</span><span>Log</span><span class="icon">&#10003;</span></div>
+              <div class="content">
+                <article class="session-card">
+                  <div class="summary-row">
+                    <div>
+                      <div class="micro">Log the session</div>
+                      <h3 class="hero-title">Lift, then clear</h3>
+                    </div>
+                    <div class="duration">71 min total</div>
+                  </div>
+                  <div class="arc-strip load">
+                    <div class="seg lift"><small>Stage 1</small><span>Load while fresh</span></div>
+                    <div class="seg run"><small>Stage 2</small><span>Flush the day</span></div>
+                  </div>
+                </article>
+
+                <article class="actuals">
+                  <div class="micro">Session actuals</div>
+                  <div class="stage">
+                    <div class="stage-head">
+                      <div class="stage-title">Stage 1: Lift execution</div>
+                      <div class="summary-chip">Money work</div>
+                    </div>
+                    <div class="inline-split">
+                      <div class="inline-metric"><strong>Main lift</strong><span>Squat 5 x 3 @ 255</span></div>
+                      <div class="inline-metric"><strong>Assistance</strong><span>RDL + step-up</span></div>
+                    </div>
+                  </div>
+                  <div class="stage">
+                    <div class="stage-head">
+                      <div class="stage-title">Stage 2: Easy run flush</div>
+                      <div class="summary-chip">Settle</div>
+                    </div>
+                    <div class="metric-grid">
+                      <div class="metric"><strong>Minutes</strong><span>21</span></div>
+                      <div class="metric"><strong>Distance</strong><span>2.2 mi</span></div>
+                      <div class="metric"><strong>Feel</strong><span>Light</span></div>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="save-rail">
+                  <div class="micro">Save rail</div>
+                  <p>One closeout saves the whole day because the run is the back half of the same prescription, not a new card.</p>
+                </article>
+              </div>
+              <div class="footer"><span>Today</span><span>Program</span><span class="active">Log</span><span>Coach</span></div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="takeaways">
+        <div><strong>Why this works:</strong> it makes the priority obvious. The athlete sees that the lift deserves freshness and the run is there to complete the day, not sabotage it.</div>
+        <div><strong>Log inheritance:</strong> lift inputs come first inside the same `Session actuals` shell, then the easy run closes the same session with one save path.</div>
+      </div>
+    </section>
+
+    <section class="composition">
+      <div class="composition-head">
+        <div class="eyebrow">Composition 3</div>
+        <h2>Weave -> Finish</h2>
+        <p class="subhead">
+          Alternate run and strength inside repeating mixed blocks. This is the right shape when the session should feel continuous, dense, and athletic instead of split into two halves.
+        </p>
+        <div class="rule"><strong>Use when</strong> the time window is tight or the coaching goal is hybrid conditioning, not max-fresh performance in either lane.</div>
+      </div>
+
+      <div class="phones">
+        <div class="phone-wrap">
+          <div class="screen-label">Today</div>
+          <section class="iphone">
+            <div class="iphone-inner">
+              <div class="status"><span>9:41</span><span>5G 100%</span></div>
+              <div class="nav"><span class="icon">&#8249;</span><span>Today</span><span class="icon">&#9719;</span></div>
+              <div class="content">
+                <article class="hero-card">
+                  <div class="hero-top">
+                    <div>
+                      <div class="micro">Hybrid day</div>
+                      <h3 class="hero-title">Weave the work</h3>
+                    </div>
+                    <div class="duration">52 min total</div>
+                  </div>
+                  <p class="helper">
+                    Move back and forth on purpose. The run keeps the engine honest while the lift keeps the session athletic and forceful.
+                  </p>
+                  <div class="arc">
+                    <div class="arc-strip weave">
+                      <div class="seg mix"><small>Prime</small><span>6 min prep</span></div>
+                      <div class="seg mix"><small>Repeat</small><span>3 mixed blocks</span></div>
+                      <div class="seg mix"><small>Finish</small><span>8 min settle</span></div>
+                    </div>
+                    <div class="arc-lines">
+                      <div class="arc-row"><strong>Block A</strong><span>4 min run build -> 2 strength movements.</span></div>
+                      <div class="arc-row"><strong>Block B</strong><span>4 min run build -> 2 strength movements.</span></div>
+                      <div class="arc-row"><strong>Block C</strong><span>4 min run build -> 2 strength movements.</span></div>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="note">
+                  <div class="micro">Shared rationale</div>
+                  <p>This should feel like one continuous athletic session. No dead air. No identity switch halfway through.</p>
+                </article>
+
+                <article class="sheet">
+                  <div class="micro">Session arc</div>
+                  <p>Primer -> mixed block x 3 -> short carry and trunk finish. The day stays braided from start to finish.</p>
+                </article>
+              </div>
+              <div class="footer"><span class="active">Today</span><span>Program</span><span>Log</span><span>Coach</span></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="phone-wrap">
+          <div class="screen-label">Log inherits it</div>
+          <section class="iphone">
+            <div class="iphone-inner">
+              <div class="status"><span>9:41</span><span>5G 100%</span></div>
+              <div class="nav"><span class="icon">&#8249;</span><span>Log</span><span class="icon">&#10003;</span></div>
+              <div class="content">
+                <article class="session-card">
+                  <div class="summary-row">
+                    <div>
+                      <div class="micro">Log the session</div>
+                      <h3 class="hero-title">Weave the work</h3>
+                    </div>
+                    <div class="duration">52 min total</div>
+                  </div>
+                  <div class="arc-strip weave">
+                    <div class="seg mix"><small>Block A</small><span>Run + lift</span></div>
+                    <div class="seg mix"><small>Block B</small><span>Run + lift</span></div>
+                    <div class="seg mix"><small>Block C</small><span>Run + lift</span></div>
+                  </div>
+                </article>
+
+                <article class="block-list">
+                  <div class="micro">Block tracker</div>
+                  <div class="stage">
+                    <div class="stage-head">
+                      <div class="stage-title">Block A</div>
+                      <div class="summary-chip">Set the tone</div>
+                    </div>
+                    <div class="inline-split">
+                      <div class="inline-metric"><strong>Run split</strong><span>4 min steady</span></div>
+                      <div class="inline-metric"><strong>Lift</strong><span>KB clean + front squat</span></div>
+                    </div>
+                  </div>
+                  <div class="stage">
+                    <div class="stage-head">
+                      <div class="stage-title">Block B</div>
+                      <div class="summary-chip">Hold quality</div>
+                    </div>
+                    <div class="inline-split">
+                      <div class="inline-metric"><strong>Run split</strong><span>4 min moderate</span></div>
+                      <div class="inline-metric"><strong>Lift</strong><span>Push press + hinge</span></div>
+                    </div>
+                  </div>
+                  <div class="stage">
+                    <div class="stage-head">
+                      <div class="stage-title">Block C</div>
+                      <div class="summary-chip">Finish clean</div>
+                    </div>
+                    <div class="inline-split">
+                      <div class="inline-metric"><strong>Run split</strong><span>4 min moderate</span></div>
+                      <div class="inline-metric"><strong>Lift</strong><span>Carry + row</span></div>
+                    </div>
+                  </div>
+                </article>
+              </div>
+              <div class="footer"><span>Today</span><span>Program</span><span class="active">Log</span><span>Coach</span></div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="takeaways">
+        <div><strong>Why this works:</strong> the athlete never has to reinterpret the day midway through. The entire session reads like one continuous mixed demand.</div>
+        <div><strong>Log inheritance:</strong> the logger becomes a block tracker instead of separate run and lift zones, which preserves the braided feel of the workout.</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

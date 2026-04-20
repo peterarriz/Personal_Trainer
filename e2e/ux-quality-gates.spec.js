@@ -27,7 +27,10 @@ const resetTapCounter = async (page) => {
   });
 };
 
-const readTapCounter = async (page) => page.evaluate(() => window.__E2E_TAP_COUNTER?.count || 0);
+const readTapCounter = async (page) => page.evaluate(() => {
+  const counter = window.__E2E_TAP_COUNTER;
+  return counter && typeof counter.count === "number" ? counter.count : 0;
+});
 
 test.describe("UX quality gates", () => {
   test.beforeEach(async ({ page }) => {
