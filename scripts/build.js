@@ -396,9 +396,17 @@ window.__SUPABASE_ANON_KEY = window.__SUPABASE_ANON_KEY || ${JSON.stringify(SUPA
 
 const buildServiceWorkerRegistrationScript = () => `
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  window.addEventListener("load", function () {
-    navigator.serviceWorker.register("./service-worker.js").catch(function () {});
-  });
+  const hostname = String(location.hostname || "");
+  const isLocalHost =
+    hostname === "localhost"
+    || hostname === "127.0.0.1"
+    || hostname === "[::1]";
+  const isHostedVercelAlias = /\\.vercel\\.app$/i.test(hostname);
+  if (!isHostedVercelAlias || isLocalHost) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("./service-worker.js").catch(function () {});
+    });
+  }
 }
 `;
 
